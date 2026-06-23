@@ -2,8 +2,8 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "SnapSplit",
-  description: "Bill splitting with USDC payments and onchain recurring tabs on Arc Testnet.",
+  title: "Splitsy",
+  description: "A clean way to scan bills, split costs, and collect payments.",
 };
 
 export default function RootLayout({

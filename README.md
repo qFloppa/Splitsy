@@ -1,6 +1,6 @@
-# SnapSplit on Arc
+# Splitsy
 
-SnapSplit is a Next.js prototype for turning a receipt photo into USDC payment flows on Arc Testnet. It combines:
+Splitsy is a Next.js prototype for scanning receipts, splitting shared costs, and collecting payments on Arc Testnet. It combines:
 
 - Receipt scanning for structured bill extraction.
 - FX conversion into USD.
@@ -45,6 +45,9 @@ NEXT_PUBLIC_RECURRING_TAB_FACTORY_ADDRESS=0x6c4d980f7a9250e3892a3541b5a62420b628
 NEXT_PUBLIC_BILL_SPLIT_REGISTRY_ADDRESS=0x0000000000000000000000000000000000000000
 
 DEPLOYER_PRIVATE_KEY=0x... # only needed for factory deployment
+RECURRING_SETTLER_PRIVATE_KEY=0x... # server wallet that pays gas for recurring settlement
+RECURRING_SETTLER_SECRET=... # bearer token for /api/recurring/settle
+CRON_SECRET=... # optional host-provided cron bearer token
 ```
 
 Supabase and Circle API keys are included in `.env.example` for future persistence and server-side Circle flows. The current browser demo primarily uses receipt scanning, public FX data, browser wallets, and Arc Testnet contract calls.
@@ -76,12 +79,12 @@ npm run deploy:arc:factory
 2. Review the parsed merchant, totals, tax, tip, line items, and confidence.
 3. Convert non-USD bills into USD.
 4. Split equally or enter manual payer amounts.
-5. Submit the split bill onchain.
+5. Submit the split bill.
 6. Debtors connect the matching wallet and see unpaid debt in the app.
 7. Debtors pay fully or partially on Arc with a transaction memo, or bridge USDC from a supported CCTP source chain first.
 8. The splitter claims paid funds from the registry.
 9. Create weekly, monthly, or custom recurring tabs on Arc Testnet.
-10. Payers approve the recurring tab as a constrained USDC spender. Funds stay in their wallets until a due settlement call pulls that cycle's share.
+10. Payers approve the recurring tab as a constrained USDC spender. Funds stay in their wallets until the backend settler runs and pulls due recurring shares.
 
 The repository includes a small sample image at `.tmp/test-receipt.png` for local receipt-scan testing.
 
@@ -113,8 +116,30 @@ The recurring tab is designed for subscriptions such as weekly shared bills or m
 - The splitter creates a tab with a recipient, cycle length, member wallets, and fixed USDC shares.
 - Each payer connects once and approves the tab contract for a chosen USDC limit.
 - Funds remain in payer wallets until the cycle is due.
-- Anyone can call `settleTab()` after the interval. The contract pulls the fixed share from each payer with enough balance and allowance, skips the others, and sends collected USDC directly to the recipient.
+- The backend calls `settleTab()` on a schedule. The contract pulls the fixed share from each payer with enough balance and allowance, skips the others, and makes collected USDC claimable to the recipient.
 - Payers can revoke by setting the tab allowance back to `0`.
+
+### Backend recurring settlement
+
+Recurring settlement is not a user wallet action. The app exposes a protected server route:
+
+```bash
+curl -X POST "$APP_URL/api/recurring/settle" \
+  -H "Authorization: Bearer $RECURRING_SETTLER_SECRET"
+```
+
+The route scans every tab in `NEXT_PUBLIC_RECURRING_TAB_FACTORY_ADDRESS` and submits settlement transactions from `RECURRING_SETTLER_PRIVATE_KEY`. It skips tabs that are not due, have no collectible members, or are already complete.
+
+`vercel.json` schedules this route every hour, every day:
+
+```json
+{
+  "path": "/api/recurring/settle",
+  "schedule": "0 * * * *"
+}
+```
+
+Set `CRON_SECRET` or `RECURRING_SETTLER_SECRET` in the hosting environment so cron requests include the matching bearer token.
 
 The allowance-based recurring contract differs from the older prepaid tab deployment. Redeploy `RecurringTabFactory` and update `NEXT_PUBLIC_RECURRING_TAB_FACTORY_ADDRESS` before testing recurring collection on Arc Testnet.
 

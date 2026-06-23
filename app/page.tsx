@@ -18,6 +18,9 @@ import {
   Upload,
   WalletCards,
 } from "lucide-react";
+import { AnimatePresence, motion } from "framer-motion";
+import gsap from "gsap";
+import Image from "next/image";
 import { ChangeEvent, FormEvent, ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { getAddress, type EIP1193Provider } from "viem";
 import {
@@ -46,14 +49,15 @@ import {
 import {
   authorizeRecurringPayment,
   approveUsdc,
+  claimRecurringFunds,
   createRecurringTab,
   createRecurringWallet,
   readRecurringEvents,
   readRecurringTab,
+  readRecurringTabsForWallet,
   RecurringEvent,
   RecurringTabState,
   RecurringWallet,
-  settleRecurringTab,
   unitsToUsdc,
   usdcToUnits,
 } from "@/lib/recurring-contracts";
@@ -76,7 +80,7 @@ type OcrState = "idle" | "reading" | "ready" | "error";
 type BillRunState = "idle" | "connecting" | "working" | "success" | "error";
 type RecurringRunState = "idle" | "connecting" | "working" | "error" | "success";
 type AppTab = "bills" | "recurring";
-type RecurringCycle = "weekly" | "monthly" | "custom";
+type RecurringCycle = "test" | "weekly" | "monthly" | "custom";
 type RecurringMemberInput = {
   id: string;
   address: string;
@@ -84,6 +88,7 @@ type RecurringMemberInput = {
 };
 
 const recurringCycleOptions: Array<{ id: RecurringCycle; label: string; seconds: bigint }> = [
+  { id: "test", label: "Every 3 minutes", seconds: 3n * 60n },
   { id: "weekly", label: "Weekly", seconds: 7n * 24n * 60n * 60n },
   { id: "monthly", label: "Monthly", seconds: 30n * 24n * 60n * 60n },
   { id: "custom", label: "Custom", seconds: 30n * 24n * 60n * 60n },
@@ -100,11 +105,10 @@ export default function Home() {
     merchant: "Upload a bill",
   });
   const [fxQuote, setFxQuote] = useState<FxQuote | null>(null);
-  const [creatorAddress, setCreatorAddress] = useState("0xee42a492b183cdff04439f2cb6a9c49f857f70ac");
   const [splitMode, setSplitMode] = useState<"equal" | "manual">("equal");
   const [bridgeSession, setBridgeSession] = useState<BrowserWalletSession | null>(null);
   const [bridgeResults, setBridgeResults] = useState<Record<string, BridgeSummary>>({});
-  const [recurringCycle, setRecurringCycle] = useState<RecurringCycle>("monthly");
+  const [recurringCycle, setRecurringCycle] = useState<RecurringCycle>("test");
   const [customCycleDays, setCustomCycleDays] = useState("30");
   const [billWallet, setBillWallet] = useState<BillSplitWallet | null>(null);
   const [billState, setBillState] = useState<BillRunState>("idle");
@@ -121,16 +125,19 @@ export default function Home() {
   const [recurringWallet, setRecurringWallet] = useState<RecurringWallet | null>(null);
   const [recurringState, setRecurringState] = useState<RecurringRunState>("idle");
   const [recurringMessage, setRecurringMessage] = useState("");
-  const [recurringRecipient, setRecurringRecipient] = useState("0xee42a492b183cdff04439f2cb6a9c49f857f70ac");
+  const [recurringTotalUsd, setRecurringTotalUsd] = useState("200.00");
+  const [recurringCycleCount, setRecurringCycleCount] = useState("3");
+  const [recurringSplitMode, setRecurringSplitMode] = useState<"equal" | "manual">("equal");
   const [recurringMembers, setRecurringMembers] = useState<RecurringMemberInput[]>([
-    { id: "rec-member-1", address: "0x1111111111111111111111111111111111111111", share: "100.00" },
-    { id: "rec-member-2", address: "0x2222222222222222222222222222222222222222", share: "100.00" },
+    { id: "rec-member-1", address: "0x1111111111111111111111111111111111111111", share: "0.00" },
+    { id: "rec-member-2", address: "0x2222222222222222222222222222222222222222", share: "0.00" },
   ]);
   const [tabAddressInput, setTabAddressInput] = useState("");
   const [activeTabAddress, setActiveTabAddress] = useState<`0x${string}` | null>(null);
   const [tabState, setTabState] = useState<RecurringTabState | null>(null);
+  const [walletTabs, setWalletTabs] = useState<RecurringTabState[]>([]);
   const [tabEvents, setTabEvents] = useState<RecurringEvent[]>([]);
-  const [authorizationAmount, setAuthorizationAmount] = useState("100.00");
+  const [authorizationAmount, setAuthorizationAmount] = useState("");
   const [participants, setParticipants] = useState<SplitParticipant[]>([
     {
       id: "payer-1",
@@ -154,11 +161,48 @@ export default function Home() {
   }, [confirmedUsd, participants, splitMode]);
   const splitTotal = displayParticipants.reduce((sum, participant) => sum + participant.amountUsd, 0);
   const splitDelta = Number((confirmedUsd - splitTotal).toFixed(2));
+  const recurringShareUsd = recurringMembers.length > 0 ? Number(recurringTotalUsd || "0") / recurringMembers.length : 0;
+  const displayRecurringMembers = useMemo(
+    () =>
+      recurringSplitMode === "equal"
+        ? recurringMembers.map((member) => ({ ...member, share: recurringShareUsd.toFixed(2) }))
+        : recurringMembers,
+    [recurringMembers, recurringShareUsd, recurringSplitMode],
+  );
   const billIsScanned = ocrState === "ready";
+  const usdRate = fxQuote?.rate ?? 1;
+  const originCurrency = fxQuote?.source ?? bill.currency;
+  const receiptPrintRef = useRef<HTMLDivElement | null>(null);
+  const settlementStampRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
   }, [theme]);
+
+  useEffect(() => {
+    if (ocrState !== "ready" || !receiptPrintRef.current) {
+      return;
+    }
+
+    const rows = receiptPrintRef.current.querySelectorAll("[data-receipt-row]");
+    gsap.fromTo(
+      rows,
+      { opacity: 0, y: 8 },
+      { opacity: 1, y: 0, duration: 0.28, stagger: 0.055, ease: "power2.out" },
+    );
+  }, [ocrState, bill.lineItems.length]);
+
+  useEffect(() => {
+    if (billState !== "success" || !settlementStampRef.current) {
+      return;
+    }
+
+    gsap.fromTo(
+      settlementStampRef.current,
+      { opacity: 0, scale: 1.22, rotate: -12 },
+      { opacity: 1, scale: 1, rotate: -7, duration: 0.42, ease: "back.out(2)" },
+    );
+  }, [billState, submittedBillId]);
 
   async function parseBill(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -228,6 +272,23 @@ export default function Home() {
       }),
     );
     setFxQuote(null);
+  }
+
+  function updateBillUsdField(field: keyof ParsedBill, value: string) {
+    const nextUsd = Number(value);
+    const nextSourceValue = usdRate > 0 ? nextUsd / usdRate : nextUsd;
+    setBill((current) =>
+      normalizeParsedBill({
+        ...current,
+        [field]: Number.isFinite(nextSourceValue) ? nextSourceValue : 0,
+      }),
+    );
+    if (field === "total" && fxQuote) {
+      setFxQuote({
+        ...fxQuote,
+        amountUsd: Number.isFinite(nextUsd) ? Number(nextUsd.toFixed(2)) : 0,
+      });
+    }
   }
 
   function updateParticipant(id: string, field: keyof SplitParticipant, value: string) {
@@ -342,7 +403,7 @@ export default function Home() {
 
     try {
       setBillState("working");
-      setBillMessage("Submitting split bill onchain.");
+      setBillMessage("Writing the split to Arc.");
       const result = await createBillSplit({
         ...wallet,
         metadataHash: billMetadataHash({
@@ -357,7 +418,7 @@ export default function Home() {
 
       setSubmittedBillId(result.billId);
       setBillState("success");
-      setBillMessage(`Bill #${result.billId.toString()} submitted. Payers will see it when they connect.`);
+      setBillMessage(`Bill #${result.billId.toString()} is live on Arc. Payers will see it when they connect.`);
       await refreshBillRegistry(wallet.account);
     } catch (caught) {
       setBillState("error");
@@ -433,7 +494,7 @@ export default function Home() {
       setDebtMessage(
         result.state === "error"
           ? "Bridge failed."
-          : "USDC bridged to Arc. Pay the registered debt with a memo once funds arrive.",
+          : "USDC is moving to Arc. After the Arc claim transaction completes, use Pay on Arc to settle the debt with a memo.",
       );
     } catch (caught) {
       setBillState("error");
@@ -515,6 +576,7 @@ export default function Home() {
       setRecurringWallet(wallet);
       setRecurringState("idle");
       setRecurringMessage(`Connected ${shortAddress(wallet.account)} on Arc Testnet.`);
+      void refreshRecurringTabsForWallet(wallet.account);
       return wallet;
     } catch (caught) {
       setRecurringState("error");
@@ -533,14 +595,34 @@ export default function Home() {
     try {
       setRecurringState("working");
       setRecurringMessage("Creating recurring tab on Arc Testnet.");
+      const totalUsd = Number(recurringTotalUsd);
+      if (!Number.isFinite(totalUsd) || totalUsd <= 0) {
+        throw new Error("Enter a recurring total greater than 0 USDC.");
+      }
+      if (recurringMembers.length === 0) {
+        throw new Error("Add at least one member wallet.");
+      }
+      const cycleCount = BigInt(Math.max(1, Math.floor(Number(recurringCycleCount) || 1)));
       const members = recurringMembers.map((member) => normalizeAddress(member.address));
-      const shares = recurringMembers.map((member) => usdcToUnits(member.share));
+      if (new Set(members.map((member) => member.toLowerCase())).size !== members.length) {
+        throw new Error("Each recurring member wallet must be unique.");
+      }
+      const sourceMembers = recurringSplitMode === "equal" ? displayRecurringMembers : recurringMembers;
+      const shares = sourceMembers.map((member) => usdcToUnits(member.share));
+      const shareTotal = sourceMembers.reduce((sum, member) => sum + Number(member.share || "0"), 0);
+      if (shares.some((share) => share <= 0n)) {
+        throw new Error("Every recurring member needs a positive share.");
+      }
+      if (Math.abs(shareTotal - totalUsd) > 0.009) {
+        throw new Error("Recurring shares must add up to the Total USD amount.");
+      }
       const intervalSeconds =
         recurringCycle === "custom" ? BigInt(Math.max(1, Number(customCycleDays) || 1)) * 24n * 60n * 60n : recurringCycleOptions.find((option) => option.id === recurringCycle)?.seconds ?? 30n * 24n * 60n * 60n;
       const result = await createRecurringTab({
         ...wallet,
-        recipient: normalizeAddress(recurringRecipient),
+        recipient: wallet.account,
         intervalSeconds,
+        maxSettlements: cycleCount,
         members,
         fixedShares: shares,
       });
@@ -550,6 +632,7 @@ export default function Home() {
       setRecurringState("success");
       setRecurringMessage(`Created tab #${result.tabId.toString()} at ${shortAddress(result.tabAddress)}.`);
       await refreshRecurringTab(result.tabAddress);
+      await refreshRecurringTabsForWallet(wallet.account);
     } catch (caught) {
       setRecurringState("error");
       setRecurringMessage(errorMessage(caught));
@@ -566,7 +649,8 @@ export default function Home() {
     try {
       setRecurringState("working");
       setRecurringMessage("Loading tab state from Arc.");
-      const [state, events] = await Promise.all([readRecurringTab(address), readRecurringEvents(address)]);
+      const state = await readRecurringTab(address);
+      const events = await readRecurringEvents(address).catch(() => []);
       setActiveTabAddress(address);
       setTabAddressInput(address);
       setTabState(state);
@@ -579,23 +663,52 @@ export default function Home() {
     }
   }
 
+  async function refreshRecurringTabsForWallet(account = recurringWallet?.account) {
+    if (!account) {
+      return;
+    }
+
+    try {
+      const tabs = await readRecurringTabsForWallet(account);
+      setWalletTabs(tabs);
+      if (!activeTabAddress && tabs.length > 0) {
+        setActiveTabAddress(tabs[0].address);
+        setTabAddressInput(tabs[0].address);
+        setTabState(tabs[0]);
+        const events = await readRecurringEvents(tabs[0].address).catch(() => []);
+        setTabEvents(events);
+      }
+    } catch (caught) {
+      setRecurringState("error");
+      setRecurringMessage(errorMessage(caught));
+    }
+  }
+
+  async function selectRecurringTab(address: `0x${string}`) {
+    await refreshRecurringTab(address);
+  }
+
   async function authorizeActiveTab() {
     const wallet = recurringWallet ?? (await connectRecurring());
     const tabAddress = activeTabAddress ?? normalizeOptionalAddress(tabAddressInput);
 
     if (!wallet || !tabAddress) {
       setRecurringState("error");
-      setRecurringMessage("Connect a wallet and load a tab first.");
+      setRecurringMessage("Connect a wallet and select one of its recurring tabs first.");
       return;
     }
 
     try {
-      const amount = usdcToUnits(authorizationAmount);
+      const debtor = tabState?.members.find((member) => member.address.toLowerCase() === wallet.account.toLowerCase());
+      const remainingCycles = tabState ? tabState.remainingCycles : 1n;
+      const defaultApproval = debtor ? unitsToUsdc(debtor.dueNow > 0n ? debtor.dueNow : debtor.fixedShare * remainingCycles) : "0";
+      const approvalValue = authorizationAmount.trim() || defaultApproval;
+      const amount = usdcToUnits(approvalValue);
       setRecurringState("working");
-      setRecurringMessage("Approving the tab to collect from your wallet on cycle dates.");
+      setRecurringMessage("Approving the tab to collect outstanding recurring debt from your wallet.");
       await authorizeRecurringPayment({ ...wallet, tabAddress, amount });
       setRecurringState("success");
-      setRecurringMessage(`Authorized ${authorizationAmount} USDC. Funds stay in your wallet until settlement.`);
+      setRecurringMessage(`Authorized ${approvalValue} USDC. Funds stay in your wallet unless this tab has outstanding debt to collect.`);
       await refreshRecurringTab(tabAddress);
     } catch (caught) {
       setRecurringState("error");
@@ -609,7 +722,7 @@ export default function Home() {
 
     if (!wallet || !tabAddress) {
       setRecurringState("error");
-      setRecurringMessage("Connect a wallet and load a tab first.");
+      setRecurringMessage("Connect a wallet and select one of its recurring tabs first.");
       return;
     }
 
@@ -626,23 +739,24 @@ export default function Home() {
     }
   }
 
-  async function settleActiveTab() {
+  async function claimActiveRecurringFunds() {
     const wallet = recurringWallet ?? (await connectRecurring());
     const tabAddress = activeTabAddress ?? normalizeOptionalAddress(tabAddressInput);
 
     if (!wallet || !tabAddress) {
       setRecurringState("error");
-      setRecurringMessage("Connect a wallet and load a tab first.");
+      setRecurringMessage("Connect the splitter wallet and select one of its recurring tabs first.");
       return;
     }
 
     try {
       setRecurringState("working");
-      setRecurringMessage("Calling settleTab().");
-      await settleRecurringTab({ ...wallet, tabAddress });
+      setRecurringMessage("Claiming collected recurring funds.");
+      await claimRecurringFunds({ ...wallet, tabAddress });
       setRecurringState("success");
-      setRecurringMessage("Settlement transaction confirmed.");
+      setRecurringMessage("Collected recurring funds claimed.");
       await refreshRecurringTab(tabAddress);
+      await refreshRecurringTabsForWallet(wallet.account);
     } catch (caught) {
       setRecurringState("error");
       setRecurringMessage(errorMessage(caught));
@@ -658,7 +772,7 @@ export default function Home() {
   function addRecurringMember() {
     setRecurringMembers((current) => [
       ...current,
-      { id: `rec-member-${Date.now()}`, address: "", share: "100.00" },
+      { id: `rec-member-${Date.now()}`, address: "", share: "0.00" },
     ]);
   }
 
@@ -666,23 +780,39 @@ export default function Home() {
     setRecurringMembers((current) => current.filter((member) => member.id !== id));
   }
 
+  function switchAppTab(tab: AppTab) {
+    const transitionDocument = document as Document & {
+      startViewTransition?: (callback: () => void) => void;
+    };
+
+    if (transitionDocument.startViewTransition) {
+      transitionDocument.startViewTransition(() => setActiveTab(tab));
+      return;
+    }
+
+    setActiveTab(tab);
+  }
+
   return (
     <main className="app-shell min-h-screen text-[var(--text)]">
       <header className="sticky top-0 z-30 border-b border-[var(--border)] bg-[color:var(--header-bg)] backdrop-blur-xl">
-        <div className="mx-auto max-w-6xl px-4 py-5 sm:px-6 lg:px-8">
+        <div className="mx-auto max-w-7xl px-4 py-4 sm:px-6 lg:px-8">
           <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
             <div>
-              <p className="text-sm font-semibold text-[var(--accent)]">SnapSplit</p>
-              <h1 className="mt-1 text-2xl font-semibold tracking-normal sm:text-3xl">
-                Split bills and collect USDC on Arc
+              <p className="text-sm font-semibold text-[var(--accent)]">Splitsy</p>
+              <h1 className="mt-1 text-[clamp(1.55rem,3vw,2.5rem)] font-semibold leading-tight tracking-normal">
+                Split bills without the back-and-forth
               </h1>
+              <p className="mt-2 max-w-2xl text-sm text-[var(--text-muted)]">
+                Scan a receipt, choose who owes what, and keep every payment organized in one place.
+              </p>
             </div>
             <div className="flex flex-wrap items-center gap-2">
               <div className="segmented-control">
-                <TabButton active={activeTab === "bills"} onClick={() => setActiveTab("bills")}>
+                <TabButton active={activeTab === "bills"} onClick={() => switchAppTab("bills")}>
                   Bills
                 </TabButton>
-                <TabButton active={activeTab === "recurring"} onClick={() => setActiveTab("recurring")}>
+                <TabButton active={activeTab === "recurring"} onClick={() => switchAppTab("recurring")}>
                   Recurring
                 </TabButton>
               </div>
@@ -699,9 +829,17 @@ export default function Home() {
         </div>
       </header>
 
-      <section className="mx-auto max-w-6xl px-4 py-6 sm:px-6 lg:px-8">
+      <section className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
+        <AnimatePresence mode="wait">
         {activeTab === "bills" ? (
-          <div className="space-y-5">
+          <motion.div
+            animate={{ opacity: 1, y: 0 }}
+            className="space-y-5"
+            exit={{ opacity: 0, y: 8 }}
+            initial={{ opacity: 0, y: 8 }}
+            key="bills"
+            transition={{ duration: 0.22, ease: "easeOut" }}
+          >
             {billWallet ? (
               <DebtWorkspace
                 bridgeForDebt={bridgeForDebt}
@@ -727,20 +865,23 @@ export default function Home() {
               <div className="space-y-5">
               <Panel title="Upload bill" icon={<Upload size={19} />}>
                 <form className="space-y-4" onSubmit={parseBill}>
-                  <label className="flex min-h-60 cursor-pointer flex-col items-center justify-center rounded-lg border border-dashed border-[var(--border-strong)] bg-[var(--surface-muted)] p-4 text-center transition hover:border-[var(--accent)]">
+                  <label
+                    className="scan-surface flex min-h-72 cursor-pointer flex-col items-center justify-center rounded-[var(--radius)] border border-dashed border-[var(--border-strong)] bg-[var(--receipt)] p-4 text-center text-[var(--ink-950)] transition hover:border-[var(--accent)]"
+                    data-scanning={ocrState === "reading"}
+                  >
                     {imagePreview ? (
                       // eslint-disable-next-line @next/next/no-img-element
                       <img
                         alt="Bill preview"
-                        className="max-h-72 rounded-md object-contain"
+                        className="max-h-80 rounded-md object-contain shadow-sm"
                         src={imagePreview}
                       />
                     ) : (
                       <>
                         <Camera className="text-[var(--accent)]" size={32} />
-                        <p className="mt-3 font-semibold">Upload a receipt or bill photo</p>
-                        <p className="mt-1 max-w-sm text-sm text-[var(--text-muted)]">
-                          We extract the merchant, totals, tax, tip, and line items for review.
+                        <p className="mt-3 font-semibold">Upload the bill</p>
+                        <p className="mt-1 max-w-sm text-sm text-[#4d5c66]">
+                          Splitsy reads totals, tax, tip, and line items so the split starts clean.
                         </p>
                       </>
                     )}
@@ -751,7 +892,7 @@ export default function Home() {
 
                   <button className="primary-button w-full" disabled={ocrState === "reading"}>
                     {ocrState === "reading" ? <Loader2 className="animate-spin" size={18} /> : <FileJson size={18} />}
-                    Scan bill
+                    {ocrState === "reading" ? "Reading receipt" : "Scan receipt"}
                   </button>
                 </form>
               </Panel>
@@ -760,33 +901,46 @@ export default function Home() {
 
               <div className="space-y-5">
               <Panel title="Review bill" icon={<ReceiptText size={19} />}>
-                {billIsScanned ? (
-                  <div className="grid gap-3 sm:grid-cols-2">
-                    <Field label="Merchant" value={bill.merchant} onChange={(value) => updateBillField("merchant", value)} />
-                    <Field label="Currency" value={bill.currency} onChange={(value) => updateBillField("currency", value)} />
-                    <Field label="Subtotal" type="number" value={String(bill.subtotal)} onChange={(value) => updateBillField("subtotal", value)} />
-                    <Field label="Tax" type="number" value={String(bill.tax)} onChange={(value) => updateBillField("tax", value)} />
-                    <Field label="Tip" type="number" value={String(bill.tip)} onChange={(value) => updateBillField("tip", value)} />
-                    <Field label="Total" type="number" value={String(bill.total)} onChange={(value) => updateBillField("total", value)} />
-                  </div>
-                ) : (
-                  <Field label="Total" type="number" value={String(bill.total)} onChange={(value) => updateBillField("total", value)} />
-                )}
-
-                {billIsScanned && bill.lineItems.length > 0 ? (
-                  <div className="mt-4 overflow-hidden rounded-md border border-[var(--border)]">
-                    {bill.lineItems.map((item, index) => (
-                      <div className="grid gap-2 border-b border-[var(--border)] p-3 last:border-b-0 sm:grid-cols-[1fr_auto]" key={`${item.description}-${index}`}>
-                        <p className="text-sm font-medium">{item.description}</p>
-                        <p className="text-sm font-semibold">${item.amount.toFixed(2)}</p>
+                <div className="receipt-card p-4 sm:p-5" ref={receiptPrintRef}>
+                  {billIsScanned ? (
+                    <>
+                      <div className="mb-4 rounded-[var(--radius)] border border-[rgba(7,20,33,0.12)] bg-white/45 p-3 text-xs text-[#4d5c66]">
+                        <p className="font-semibold text-[var(--ink-950)]">Converted to USD for settlement</p>
+                        <p className="mt-1">
+                          Origin currency {originCurrency}. Rate{" "}
+                          <span className="amount-text">1 {originCurrency} = {usdRate.toFixed(6)} USD</span>
+                          {fxQuote?.asOf ? ` · ${new Date(fxQuote.asOf).toLocaleString()}` : ""}
+                        </p>
                       </div>
-                    ))}
-                  </div>
-                ) : null}
+                      <div className="grid gap-3 sm:grid-cols-2">
+                        <Field label="Merchant" value={bill.merchant} onChange={(value) => updateBillField("merchant", value)} />
+                        <Field label="Origin currency" value={bill.currency} onChange={(value) => updateBillField("currency", value)} />
+                        <Field label="Subtotal USD" type="number" value={toUsdInput(bill.subtotal, usdRate)} onChange={(value) => updateBillUsdField("subtotal", value)} />
+                        <Field label="Tax USD" type="number" value={toUsdInput(bill.tax, usdRate)} onChange={(value) => updateBillUsdField("tax", value)} />
+                        <Field label="Tip USD" type="number" value={toUsdInput(bill.tip, usdRate)} onChange={(value) => updateBillUsdField("tip", value)} />
+                        <Field label="Total USD" type="number" value={toUsdInput(bill.total, usdRate)} onChange={(value) => updateBillUsdField("total", value)} />
+                      </div>
+                    </>
+                  ) : (
+                    <Field label="Total" type="number" value={String(bill.total)} onChange={(value) => updateBillField("total", value)} />
+                  )}
+
+                  {billIsScanned && bill.lineItems.length > 0 ? (
+                    <div className="receipt-divider mt-5 pt-2">
+                      {bill.lineItems.map((item, index) => (
+                        <div className="receipt-row" data-receipt-row key={`${item.description}-${index}`}>
+                          <span className="receipt-index">{String(index + 1).padStart(2, "0")}</span>
+                          <span className="min-w-0 text-sm font-medium">{item.description}</span>
+                          <span className="amount-text text-sm font-semibold">${(item.amount * usdRate).toFixed(2)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
               </Panel>
 
               <Panel
-                title="Submit split bill"
+                title="Review your split"
                 icon={<WalletCards size={19} />}
                 action={
                   <div className="segmented-control">
@@ -799,12 +953,16 @@ export default function Home() {
                   </div>
                 }
               >
-                <div className="grid gap-3">
-                  <Field label="Arc recipient" value={creatorAddress} onChange={setCreatorAddress} />
-                </div>
-
-                <div className="mt-4 rounded-md border border-[var(--border)] bg-[var(--surface-muted)] p-3 text-sm text-[var(--text-muted)]">
-                  Each payer will discover their debt automatically after connecting the matching wallet.
+                <div className="route-strip text-sm">
+                  <div>
+                    <p className="font-semibold text-[var(--text)]">Bill registry</p>
+                    <p className="mt-1 text-[var(--text-muted)]">Debt is discovered by wallet address.</p>
+                  </div>
+                  <div className="route-line" aria-hidden="true" />
+                  <div>
+                    <p className="font-semibold text-[var(--text)]">Arc Testnet</p>
+                    <p className="mt-1 text-[var(--text-muted)]">Fees settle in USDC with transaction memos.</p>
+                  </div>
                 </div>
 
                 {billMessage ? (
@@ -813,10 +971,10 @@ export default function Home() {
                   </div>
                 ) : null}
 
-                <div className="mt-4 divide-y divide-[var(--border)] rounded-md border border-[var(--border)]">
+                <div className="receipt-card mt-4 p-4">
                   {displayParticipants.map((participant) => {
                     return (
-                      <div className="p-3" key={participant.id}>
+                      <div className="receipt-divider py-3 first:border-t-0 first:pt-0" key={participant.id}>
                         <div className="grid gap-3 md:grid-cols-[0.48fr_1fr_0.32fr_auto] md:items-end">
                           <Field
                             label="Name"
@@ -846,8 +1004,8 @@ export default function Home() {
                         </div>
 
                         <div className="mt-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                          <span className="text-sm text-[var(--text-muted)]">Registered debt recipient</span>
-                          <span className="font-semibold">${participant.amountUsd.toFixed(2)}</span>
+                          <span className="text-sm text-[#4d5c66]">Registered debt for this wallet</span>
+                          <span className="amount-text font-semibold">${participant.amountUsd.toFixed(2)}</span>
                         </div>
                       </div>
                     );
@@ -871,55 +1029,72 @@ export default function Home() {
                       type="button"
                     >
                       {billState === "working" ? <Loader2 className="animate-spin" size={16} /> : <Landmark size={16} />}
-                      Submit onchain
+                      Settle on Arc
                     </button>
                   </div>
                   <div className="text-sm text-[var(--text-muted)]">
-                    Split total <span className="font-semibold text-[var(--text)]">${splitTotal.toFixed(2)}</span>
+                    Split total <span className="amount-text font-semibold text-[var(--text)]">${splitTotal.toFixed(2)}</span>
                     {Math.abs(splitDelta) > 0.009 ? (
                       <span className="ml-2 text-[var(--warning-text)]">delta ${splitDelta.toFixed(2)}</span>
                     ) : null}
                   </div>
                 </div>
                 {submittedBillId ? (
-                  <div className="mt-4 rounded-md border border-[var(--border)] bg-[var(--surface-muted)] p-3 text-sm text-[var(--text-muted)]">
-                    Bill #{submittedBillId.toString()} is live on Arc. Debtors see it automatically when they connect the matching wallet.
+                  <div className="mt-4 flex flex-col gap-3 rounded-[var(--radius)] border border-[var(--border)] bg-[var(--surface-muted)] p-3 text-sm text-[var(--text-muted)] sm:flex-row sm:items-center sm:justify-between">
+                    <span>Bill #{submittedBillId.toString()} is live. Payers see it when they connect the matching wallet.</span>
+                    <div className="settlement-stamp" ref={settlementStampRef}>
+                      Settled
+                    </div>
                   </div>
                 ) : null}
               </Panel>
 
               </div>
             </div>
-          </div>
+          </motion.div>
         ) : (
+          <motion.div
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 8 }}
+            initial={{ opacity: 0, y: 8 }}
+            key="recurring"
+            transition={{ duration: 0.22, ease: "easeOut" }}
+          >
           <RecurringWorkspace
             addRecurringMember={addRecurringMember}
             authorizationAmount={authorizationAmount}
             authorizeActiveTab={authorizeActiveTab}
+            claimActiveRecurringFunds={claimActiveRecurringFunds}
             connectRecurring={connectRecurring}
             createOnchainTab={createOnchainTab}
             customCycleDays={customCycleDays}
-            refreshRecurringTab={refreshRecurringTab}
+            displayRecurringMembers={displayRecurringMembers}
+            recurringCycleCount={recurringCycleCount}
             recurringCycle={recurringCycle}
-            recurringMembers={recurringMembers}
             recurringMessage={recurringMessage}
-            recurringRecipient={recurringRecipient}
+            recurringShareUsd={recurringShareUsd}
+            recurringSplitMode={recurringSplitMode}
             recurringState={recurringState}
+            recurringTotalUsd={recurringTotalUsd}
             recurringWallet={recurringWallet}
             removeRecurringMember={removeRecurringMember}
             revokeActiveTab={revokeActiveTab}
+            refreshRecurringTabsForWallet={() => refreshRecurringTabsForWallet()}
+            selectRecurringTab={selectRecurringTab}
             setCustomCycleDays={setCustomCycleDays}
             setAuthorizationAmount={setAuthorizationAmount}
+            setRecurringCycleCount={setRecurringCycleCount}
             setRecurringCycle={setRecurringCycle}
-            setRecurringRecipient={setRecurringRecipient}
-            setTabAddressInput={setTabAddressInput}
-            settleActiveTab={settleActiveTab}
-            tabAddressInput={tabAddressInput}
+            setRecurringSplitMode={setRecurringSplitMode}
+            setRecurringTotalUsd={setRecurringTotalUsd}
             tabEvents={tabEvents}
             tabState={tabState}
             updateRecurringMember={updateRecurringMember}
+            walletTabs={walletTabs}
           />
+          </motion.div>
         )}
+        </AnimatePresence>
       </section>
     </main>
   );
@@ -992,10 +1167,13 @@ function DebtWorkspace({
         <div ref={debtAlertRef} className="debt-alert p-4">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
             <div>
-              <p className="text-sm font-semibold text-[var(--accent)]">Unpaid debt</p>
-              <h3 className="mt-1 text-xl font-semibold">
+              <p className="text-sm font-semibold text-[var(--accent)]">Action needed</p>
+              <h3 className="mt-1 text-[clamp(1.35rem,3vw,2.2rem)] font-semibold leading-tight">
                 You have {activeDebts.length} unpaid bill{activeDebts.length === 1 ? "" : "s"}
               </h3>
+              <p className="mt-2 text-sm text-[var(--text-muted)]">
+                Settle directly on Arc or bridge USDC through CCTP V2, then pay the registered debt with an Arc memo.
+              </p>
             </div>
             <button className="secondary-button" onClick={refreshBillRegistry} type="button">
               <RefreshCw size={16} />
@@ -1015,12 +1193,13 @@ function DebtWorkspace({
               const bridgeResult = bridgeResults[key];
 
               return (
-                <div className="rounded-md border border-[var(--border)] bg-[var(--surface-strong)] p-3" key={key}>
+                <div className="rounded-[var(--radius)] border border-[var(--border)] bg-[var(--surface-strong)] p-3" key={key}>
                   <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
                     <div>
                       <p className="font-semibold">Bill #{key}</p>
                       <p className="mt-1 text-sm text-[var(--text-muted)]">
-                        Owed ${billUnitsToUsdc(debt.owed)} · paid ${billUnitsToUsdc(debt.paid)}
+                        Owed <span className="amount-text">${billUnitsToUsdc(debt.owed)}</span> · paid{" "}
+                        <span className="amount-text">${billUnitsToUsdc(debt.paid)}</span>
                       </p>
                       <p className="mt-1 break-all text-xs text-[var(--text-muted)]">
                         Splitter {debt.splitter}
@@ -1038,17 +1217,41 @@ function DebtWorkspace({
                     />
                   </div>
 
-                  <div className="mt-3 rounded-md border border-[var(--border)] bg-[var(--surface-muted)] p-3 text-sm">
-                    <p className="font-semibold text-[var(--text)]">Pay from</p>
-                    <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                  <div className="route-strip mt-3 text-sm">
+                    <div>
+                      <p className="font-semibold text-[var(--text)]">Pay directly on Arc</p>
+                      <p className="mt-1 text-[var(--text-muted)]">One Arc memo payment when your USDC is already on Arc.</p>
+                    </div>
+                    <div className="route-line" aria-hidden="true" />
+                    <div>
+                      <p className="font-semibold text-[var(--text)]">Bridge first from another chain</p>
+                      <p className="mt-1 text-[var(--text-muted)]">CCTP V2 brings USDC to Arc, then you pay on Arc.</p>
+                    </div>
+                  </div>
+
+                  <div className="mt-3 rounded-[var(--radius)] border border-[var(--border)] bg-[var(--surface-muted)] p-3 text-sm">
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                      <div>
+                        <p className="font-semibold text-[var(--text)]">Pay on Arc</p>
+                        <p className="mt-1 text-[var(--text-muted)]">Use this after your USDC is already on Arc Testnet.</p>
+                      </div>
                       <button
-                        className="chain-button chain-button-active"
+                        className="chain-button chain-button-active sm:min-w-44"
                         disabled={billState === "working"}
                         onClick={() => payDebtOnArc(debt)}
                         type="button"
                       >
-                        Arc Testnet
+                        Pay on Arc Testnet
                       </button>
+                    </div>
+
+                    <div className="mt-4 border-t border-[var(--border)] pt-4">
+                      <p className="font-semibold text-[var(--text)]">Bridge USDC to Arc first</p>
+                      <p className="mt-1 text-[var(--text-muted)]">
+                        Bridging from another chain takes 3 transactions: approve USDC, bridge with CCTP V2, then claim the bridged USDC on Arc Testnet.
+                        After that, pay the debt on Arc.
+                      </p>
+                      <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
                       {bridgeSourceChains.map((chain) => (
                         <button
                           className={`chain-button ${fallbackBridgeChains[key] === chain.id ? "chain-button-active" : ""}`}
@@ -1060,15 +1263,16 @@ function DebtWorkspace({
                           }}
                           type="button"
                         >
-                          {chain.label}
+                          Bridge from {chain.label}
                         </button>
                       ))}
+                      </div>
                     </div>
                   </div>
 
                   {bridgeResult?.explorerUrls.length ? (
-                    <div className="mt-3 rounded-md bg-[var(--surface-muted)] p-3 text-sm">
-                      <p className="font-semibold">Bridge proofs</p>
+                    <div className="mt-3 rounded-[var(--radius)] bg-[var(--surface-muted)] p-3 text-sm">
+                      <p className="font-semibold">Testnet explorer</p>
                       <div className="mt-2 space-y-1">
                         {bridgeResult.explorerUrls.map((url) => (
                           <a className="flex items-center gap-2 break-all text-[var(--accent)] underline" href={url} key={url}>
@@ -1098,11 +1302,15 @@ function DebtWorkspace({
             {claimableBills.map((debt) => {
               const key = debt.billId.toString();
               return (
-                <div className="grid gap-3 rounded-md border border-[var(--border)] p-3 sm:grid-cols-[1fr_0.4fr_auto] sm:items-end" key={key}>
+                <div className="grid gap-3 rounded-[var(--radius)] border border-[var(--border)] bg-[var(--surface-strong)] p-3 sm:grid-cols-[1fr_0.4fr_auto] sm:items-end" key={key}>
                   <div>
                     <p className="font-semibold">Bill #{key}</p>
                     <p className="mt-1 text-sm text-[var(--text-muted)]">
-                      Paid ${billUnitsToUsdc(debt.totalPaid)} · claimed ${billUnitsToUsdc(debt.claimed)}
+                      Paid <span className="amount-text">${billUnitsToUsdc(debt.totalPaid)}</span> · claimed{" "}
+                      <span className="amount-text">${billUnitsToUsdc(debt.claimed)}</span>
+                    </p>
+                    <p className="mt-2 text-xs text-[var(--text-muted)]">
+                      Claim pulls paid USDC from the registry to your Arc wallet.
                     </p>
                   </div>
                   <Field
@@ -1112,14 +1320,16 @@ function DebtWorkspace({
                     onChange={(value) => setClaimAmounts({ ...claimAmounts, [key]: value })}
                   />
                   <button className="primary-button h-11" onClick={() => claimSplitterFunds(debt)} type="button">
-                    Claim
+                    Claim on Arc
                   </button>
                 </div>
               );
             })}
           </div>
         ) : (
-          <p className="text-sm text-[var(--text-muted)]">No claimable funds for the connected splitter wallet.</p>
+          <p className="text-sm text-[var(--text-muted)]">
+            Paid shares will appear here after payers settle their debt on Arc.
+          </p>
         )}
       </Panel>
       </div>
@@ -1131,62 +1341,125 @@ function RecurringWorkspace({
   addRecurringMember,
   authorizationAmount,
   authorizeActiveTab,
+  claimActiveRecurringFunds,
   connectRecurring,
   createOnchainTab,
   customCycleDays,
-  refreshRecurringTab,
+  displayRecurringMembers,
+  recurringCycleCount,
   recurringCycle,
-  recurringMembers,
   recurringMessage,
-  recurringRecipient,
+  recurringShareUsd,
+  recurringSplitMode,
   recurringState,
+  recurringTotalUsd,
   recurringWallet,
   removeRecurringMember,
   revokeActiveTab,
+  refreshRecurringTabsForWallet,
+  selectRecurringTab,
   setCustomCycleDays,
   setAuthorizationAmount,
+  setRecurringCycleCount,
   setRecurringCycle,
-  setRecurringRecipient,
-  setTabAddressInput,
-  settleActiveTab,
-  tabAddressInput,
+  setRecurringSplitMode,
+  setRecurringTotalUsd,
   tabEvents,
   tabState,
   updateRecurringMember,
+  walletTabs,
 }: {
   addRecurringMember: () => void;
   authorizationAmount: string;
   authorizeActiveTab: () => void;
+  claimActiveRecurringFunds: () => void;
   connectRecurring: () => Promise<RecurringWallet | null>;
   createOnchainTab: () => void;
   customCycleDays: string;
-  refreshRecurringTab: () => void;
+  displayRecurringMembers: RecurringMemberInput[];
+  recurringCycleCount: string;
   recurringCycle: RecurringCycle;
-  recurringMembers: RecurringMemberInput[];
   recurringMessage: string;
-  recurringRecipient: string;
+  recurringShareUsd: number;
+  recurringSplitMode: "equal" | "manual";
   recurringState: RecurringRunState;
+  recurringTotalUsd: string;
   recurringWallet: RecurringWallet | null;
   removeRecurringMember: (id: string) => void;
   revokeActiveTab: () => void;
+  refreshRecurringTabsForWallet: () => void;
+  selectRecurringTab: (address: `0x${string}`) => void;
   setCustomCycleDays: (value: string) => void;
   setAuthorizationAmount: (value: string) => void;
+  setRecurringCycleCount: (value: string) => void;
   setRecurringCycle: (value: RecurringCycle) => void;
-  setRecurringRecipient: (value: string) => void;
-  setTabAddressInput: (value: string) => void;
-  settleActiveTab: () => void;
-  tabAddressInput: string;
+  setRecurringSplitMode: (value: "equal" | "manual") => void;
+  setRecurringTotalUsd: (value: string) => void;
   tabEvents: RecurringEvent[];
   tabState: RecurringTabState | null;
   updateRecurringMember: (id: string, field: keyof RecurringMemberInput, value: string) => void;
+  walletTabs: RecurringTabState[];
 }) {
+  const isRecipient =
+    Boolean(recurringWallet && tabState?.recipient.toLowerCase() === recurringWallet.account.toLowerCase());
+  const visibleMembers =
+    !recurringWallet || !tabState || isRecipient
+      ? tabState?.members ?? []
+      : tabState.members.filter((member) => member.address.toLowerCase() === recurringWallet.account.toLowerCase());
+  const debtorShare = tabState?.members.find(
+    (member) => recurringWallet && member.address.toLowerCase() === recurringWallet.account.toLowerCase(),
+  )?.fixedShare;
+  const approvalPlaceholder = debtorShare
+    ? unitsToUsdc(
+        tabState?.members.find(
+          (member) => recurringWallet && member.address.toLowerCase() === recurringWallet.account.toLowerCase(),
+        )?.dueNow ?? debtorShare * (tabState ? tabState.remainingCycles : 1n),
+      )
+    : authorizationAmount;
+  const dueAmount = tabState?.members.reduce((sum, member) => sum + member.dueNow, 0n) ?? 0n;
+  const activeTabComplete = Boolean(tabState && tabState.settlementCount >= tabState.maxSettlements);
+  const recurringTabPaidForWallet = (tab: RecurringTabState) => {
+    if (!recurringWallet) {
+      return tab.members.every((member) => member.totalSettled >= member.fixedShare * tab.maxSettlements);
+    }
+
+    const debtor = tab.members.find((member) => member.address.toLowerCase() === recurringWallet.account.toLowerCase());
+    if (debtor) {
+      return debtor.totalSettled >= debtor.fixedShare * tab.maxSettlements;
+    }
+
+    return tab.members.every((member) => member.totalSettled >= member.fixedShare * tab.maxSettlements);
+  };
+
   return (
     <div className="grid gap-5 lg:grid-cols-[0.9fr_1.1fr]">
       <div className="space-y-5">
-        <Panel title="Create tab" icon={<Landmark size={19} />}>
+        <Panel title="Create recurring tab" icon={<Landmark size={19} />}>
           <div className="space-y-3">
-            <Field label="Recipient" value={recurringRecipient} onChange={setRecurringRecipient} />
-            <div className="grid gap-3 sm:grid-cols-[1fr_0.5fr]">
+            <div className="rounded-[var(--radius)] border border-[var(--border)] bg-[var(--surface-muted)] p-3 text-sm text-[var(--text-muted)]">
+              The connected creator wallet receives each recurring settlement.
+            </div>
+            <div className="segmented-control">
+              <ModeButton active={recurringSplitMode === "equal"} onClick={() => setRecurringSplitMode("equal")}>
+                Equal
+              </ModeButton>
+              <ModeButton active={recurringSplitMode === "manual"} onClick={() => setRecurringSplitMode("manual")}>
+                Manual
+              </ModeButton>
+            </div>
+            <div className="grid gap-3 sm:grid-cols-[1fr_0.45fr_0.7fr_0.5fr]">
+              <Field
+                label="Total USD"
+                type="number"
+                value={recurringTotalUsd}
+                onChange={setRecurringTotalUsd}
+              />
+              <Field
+                label="Cycles"
+                type="number"
+                value={recurringCycleCount}
+                onChange={setRecurringCycleCount}
+              />
               <label className="block text-sm font-medium text-[var(--text-soft)]">
                 Cycle
                 <select
@@ -1201,27 +1474,37 @@ function RecurringWorkspace({
                   ))}
                 </select>
               </label>
-              <Field
-                disabled={recurringCycle !== "custom"}
-                label="Custom days"
-                type="number"
-                value={customCycleDays}
-                onChange={setCustomCycleDays}
-              />
+              {recurringCycle === "custom" ? (
+                <Field
+                  label="Custom days"
+                  type="number"
+                  value={customCycleDays}
+                  onChange={setCustomCycleDays}
+                />
+              ) : null}
             </div>
-            {recurringMembers.map((member) => (
-              <div className="grid gap-2 rounded-md border border-[var(--border)] p-3 sm:grid-cols-[1fr_0.35fr_auto] sm:items-end" key={member.id}>
+            {displayRecurringMembers.map((member) => (
+              <div className="grid gap-2 rounded-[var(--radius)] border border-[var(--border)] bg-[var(--surface-strong)] p-3 sm:grid-cols-[1fr_0.35fr_auto] sm:items-end" key={member.id}>
                 <Field
                   label="Member wallet"
                   value={member.address}
                   onChange={(value) => updateRecurringMember(member.id, "address", value)}
                 />
-                <Field
-                  label="Share"
-                  type="number"
-                  value={member.share}
-                  onChange={(value) => updateRecurringMember(member.id, "share", value)}
-                />
+                {recurringSplitMode === "manual" ? (
+                  <Field
+                    label="Share"
+                    type="number"
+                    value={member.share}
+                    onChange={(value) => updateRecurringMember(member.id, "share", value)}
+                  />
+                ) : (
+                  <div className="metric">
+                    <p className="text-xs font-semibold uppercase text-[var(--text-muted)]">Share</p>
+                    <p className="amount-text mt-1 text-lg font-semibold text-[var(--text)]">
+                      ${recurringShareUsd.toFixed(2)}
+                    </p>
+                  </div>
+                )}
                 <button
                   aria-label="Remove member"
                   className="icon-button"
@@ -1245,16 +1528,20 @@ function RecurringWorkspace({
             </button>
             <button className="primary-button" disabled={recurringState === "working"} onClick={createOnchainTab} type="button">
               {recurringState === "working" ? <Loader2 className="animate-spin" size={16} /> : <Landmark size={16} />}
-              Create tab
+              Create cycle
             </button>
           </div>
         </Panel>
 
-        <Panel title="Load tab" icon={<RefreshCw size={19} />}>
-          <div className="grid gap-3 sm:grid-cols-[1fr_auto] sm:items-end">
-            <Field label="Contract address" value={tabAddressInput} onChange={setTabAddressInput} />
-            <button className="secondary-button h-11" onClick={refreshRecurringTab} type="button">
-              Load
+        <Panel title="Your recurring tabs" icon={<RefreshCw size={19} />}>
+          <div className="flex flex-wrap gap-2">
+            <button className="secondary-button" onClick={connectRecurring} type="button">
+              <WalletCards size={16} />
+              {recurringWallet ? "Wallet connected" : "Connect wallet"}
+            </button>
+            <button className="secondary-button" disabled={!recurringWallet} onClick={refreshRecurringTabsForWallet} type="button">
+              <RefreshCw size={16} />
+              Refresh tabs
             </button>
           </div>
           {recurringMessage ? (
@@ -1262,53 +1549,214 @@ function RecurringWorkspace({
               <Message tone={recurringState === "error" ? "error" : "neutral"}>{recurringMessage}</Message>
             </div>
           ) : null}
+          <div className="mt-4 space-y-2">
+            {walletTabs.length > 0 ? (
+              walletTabs.map((tab) => (
+                <button
+                  className={`w-full rounded-[var(--radius)] border p-3 text-left text-sm transition hover:bg-[var(--surface-muted)] ${
+                    tabState?.address === tab.address ? "border-[var(--accent)] bg-[var(--accent-soft)]" : "border-[var(--border)] bg-[var(--surface-strong)]"
+                  }`}
+                  key={tab.address}
+                  onClick={() => selectRecurringTab(tab.address)}
+                  type="button"
+                >
+                  <span className="block font-semibold text-[var(--text)]">{shortAddress(tab.address)}</span>
+                  <span className="mt-1 block text-[var(--text-muted)]">
+                    {recurringWallet && tab.members.some((member) => member.address.toLowerCase() === recurringWallet.account.toLowerCase())
+                      ? "You are a payer"
+                      : "You receive settlement"}{" "}
+                    ·{" "}
+                    {recurringTabPaidForWallet(tab)
+                      ? "paid off"
+                      : tab.dueCycles > 0n
+                        ? `${tab.dueCycles.toString()} due now`
+                        : `next ${formatUnix(tab.nextSettlementAt)}`}
+                  </span>
+                </button>
+              ))
+            ) : (
+              <p className="text-sm text-[var(--text-muted)]">
+                Connect a wallet to discover recurring tabs where this wallet pays or receives settlement.
+              </p>
+            )}
+          </div>
         </Panel>
       </div>
 
       <div className="space-y-5">
         {tabState ? (
           <>
-            <Panel title="Tab state" icon={<ReceiptText size={19} />}>
-              <div className="grid gap-3 sm:grid-cols-2">
-                <Metric label="Recipient" value={shortAddress(tabState.recipient)} />
-                <Metric label="Next settlement" value={formatUnix(tabState.nextSettlementAt)} />
-              </div>
+            <Panel title="Active cycle" icon={<ReceiptText size={19} />}>
+              {recurringWallet && visibleMembers.length === 1 && !isRecipient ? (
+                <div className={`relative overflow-hidden rounded-[var(--radius)] border border-[var(--accent)] bg-[var(--accent-soft)] p-4 ${recurringTabPaidForWallet(tabState) ? "paid-off-window" : ""}`}>
+                  {(() => {
+                    const debtor = visibleMembers[0];
+                    if (!debtor) {
+                      return null;
+                    }
+                    const debtorTotal = debtor.fixedShare * tabState.maxSettlements;
+                    const debtorPaidOff = debtor.totalSettled >= debtorTotal;
+                    const approvalNeeded = debtor.dueNow > 0n ? debtor.dueNow : activeTabComplete ? 0n : debtor.fixedShare;
+                    const balanceNeeded = debtor.dueNow > 0n ? debtor.dueNow : activeTabComplete ? 0n : debtor.fixedShare;
+                    const approvalShort = debtor.allowance < approvalNeeded;
+                    const balanceShort = debtor.walletBalance < balanceNeeded;
+                    const status = debtorPaidOff
+                      ? "Paid off"
+                      : debtor.dueNow > 0n && approvalShort
+                        ? "Needs approval"
+                        : debtor.dueNow > 0n && balanceShort
+                          ? "Low balance"
+                          : debtor.dueNow > 0n
+                            ? activeTabComplete
+                              ? "Partially paid"
+                              : "Ready to settle"
+                            : tabState.dueCycles === 0n
+                              ? "Not due yet"
+                              : "Ready to settle";
+                    return (
+                      <>
+                        <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                          <div>
+                            <p className="text-sm font-semibold text-[var(--accent)]">Your payment</p>
+                            <h3 className="amount-text mt-1 text-2xl font-semibold text-[var(--text)]">
+                              {debtorPaidOff
+                                ? "Paid off"
+                                : activeTabComplete
+                                  ? `$${unitsToUsdc(debtor.dueNow)} outstanding`
+                                  : `$${unitsToUsdc(debtor.dueNow)} due now`}
+                            </h3>
+                            <p className="mt-1 text-sm text-[var(--text-muted)]">
+                              ${unitsToUsdc(debtor.fixedShare)} per cycle ·{" "}
+                              {activeTabComplete ? "all cycles complete" : `next ${formatUnix(tabState.nextSettlementAt)}`}
+                            </p>
+                          </div>
+                          <span className={`status-dot ${status === "Ready to settle" || status === "Paid off" ? "status-ok" : "status-warn"}`}>
+                            {status}
+                          </span>
+                        </div>
+                        {debtorPaidOff ? <PaidBillStamp /> : null}
+                        <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                          <Metric label="Approved" value={`$${unitsToUsdc(debtor.allowance)}`} />
+                          <Metric label="Wallet balance" value={`$${unitsToUsdc(debtor.walletBalance)}`} />
+                          <Metric label="Paid total" value={`$${unitsToUsdc(debtor.totalSettled)}`} />
+                          <Metric label="Debt total" value={`$${unitsToUsdc(debtorTotal)}`} />
+                          <Metric label="Cycles due" value={tabState.dueCycles.toString()} />
+                          <Metric
+                            label="Progress"
+                            value={`${tabState.settlementCount.toString()} / ${tabState.maxSettlements.toString()}`}
+                          />
+                        </div>
+                        <p className="mt-4 text-sm text-[var(--text-muted)]">
+                          {debtorPaidOff
+                            ? "This recurring bill is fully paid."
+                            : debtor.dueNow > 0n
+                              ? activeTabComplete
+                                ? "All cycle windows have passed, but the outstanding recurring debt can still be collected after approval."
+                                : "Funds stay in your wallet unless this tab is approved for the due amount and the cycle time has arrived."
+                              : "No recurring debt is currently due for this wallet."}
+                        </p>
+                      </>
+                    );
+                  })()}
+                </div>
+              ) : (
+                <>
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <Metric label="Recipient" value={shortAddress(tabState.recipient)} />
+                    <Metric
+                      label="Cycle progress"
+                      value={`${tabState.settlementCount.toString()} / ${tabState.maxSettlements.toString()}`}
+                    />
+                    <Metric label="Overdue cycles" value={tabState.dueCycles.toString()} />
+                    <Metric label="Due now" value={`$${unitsToUsdc(dueAmount)}`} />
+                    <Metric label="Next settlement" value={formatUnix(tabState.nextSettlementAt)} />
+                    <Metric label="Cycle length" value={formatDuration(tabState.settlementInterval)} />
+                  </div>
 
-              <div className="mt-4 divide-y divide-[var(--border)] rounded-md border border-[var(--border)]">
-                {tabState.members.map((member) => (
-                  <div className="p-3" key={member.address}>
-                    <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                      <p className="break-all font-mono text-xs">{member.address}</p>
-                      <span className={`status-dot ${member.collectible ? "status-ok" : "status-warn"}`}>
-                        {member.collectible ? "ready" : "needs approval"}
-                      </span>
+                  <div className="route-strip mt-4 text-sm">
+                    <div>
+                      <p className="font-semibold text-[var(--text)]">RecurringTab.sol</p>
+                      <a
+                        className="mt-1 block break-all text-[var(--accent)] underline"
+                        href={`https://testnet.arcscan.app/address/${tabState.address}`}
+                      >
+                        {shortAddress(tabState.address)}
+                      </a>
                     </div>
-                    <div className="mt-3 grid gap-3 sm:grid-cols-2">
-                      <Metric label="Share" value={`$${unitsToUsdc(member.fixedShare)}`} />
-                      <Metric label="Wallet balance" value={`$${unitsToUsdc(member.walletBalance)}`} />
-                      <Metric label="Approved" value={`$${unitsToUsdc(member.allowance)}`} />
-                      <Metric label="Collected total" value={`$${unitsToUsdc(member.totalSettled)}`} />
+                    <div className="route-line" aria-hidden="true" />
+                    <div>
+                      <p className="font-semibold text-[var(--text)]">Funds stay in wallets</p>
+                      <p className="mt-1 text-[var(--text-muted)]">
+                        Collection needs payer approval, enough balance, and a due cycle.
+                      </p>
                     </div>
                   </div>
-                ))}
-              </div>
+
+                  <div className="mt-4 divide-y divide-[var(--border)] rounded-[var(--radius)] border border-[var(--border)]">
+                    {tabState.members.map((member) => {
+                      const memberDebtTotal = member.fixedShare * tabState.maxSettlements;
+                      const memberPaidOff = member.totalSettled >= memberDebtTotal;
+                      const memberStatus = memberPaidOff
+                        ? "paid"
+                        : activeTabComplete
+                          ? member.totalSettled > 0n
+                            ? "partial"
+                            : "unpaid"
+                          : tabState.dueCycles === 0n
+                            ? "waiting"
+                            : member.collectible
+                              ? "ready"
+                              : "short";
+
+                      return (
+                        <div className="p-3" key={member.address}>
+                          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                            <p className="break-all font-mono text-xs">{member.address}</p>
+                            <span className={`status-dot ${memberPaidOff || memberStatus === "ready" ? "status-ok" : "status-warn"}`}>
+                              {memberStatus}
+                            </span>
+                          </div>
+                          <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                            <Metric label="Share" value={`$${unitsToUsdc(member.fixedShare)}`} />
+                            <Metric label="Due now" value={`$${unitsToUsdc(member.dueNow)}`} />
+                            <Metric label="Remaining total" value={`$${unitsToUsdc(member.remainingTotal)}`} />
+                            <Metric label="Wallet balance" value={`$${unitsToUsdc(member.walletBalance)}`} />
+                            <Metric label="Approved" value={`$${unitsToUsdc(member.allowance)}`} />
+                            <Metric label="Collected total" value={`$${unitsToUsdc(member.totalSettled)}`} />
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </>
+              )}
             </Panel>
 
             <Panel title="Actions" icon={<BadgeDollarSign size={19} />}>
-              <Field label="Approval limit" type="number" value={authorizationAmount} onChange={setAuthorizationAmount} />
+              <Field
+                label="Approval limit"
+                type="number"
+                value={authorizationAmount}
+                onChange={setAuthorizationAmount}
+              />
+              <p className="mt-2 text-xs text-[var(--text-muted)]">
+                {approvalPlaceholder ? `Default: ${approvalPlaceholder} USDC` : "Default updates after you load a tab."}
+              </p>
               <p className="mt-3 text-sm text-[var(--text-muted)]">
-                Payers approve the tab as a constrained USDC spender. Funds stay in the wallet until a settlement call is due.
+                Funds stay in the payer wallet unless this tab is approved for the due amount and the cycle time has arrived.
               </p>
               <div className="mt-4 flex flex-wrap gap-2">
                 <button className="primary-button" onClick={authorizeActiveTab} type="button">
-                  Approve collection
+                  Approve
                 </button>
                 <button className="secondary-button" onClick={revokeActiveTab} type="button">
                   Revoke
                 </button>
-                <button className="secondary-button" onClick={settleActiveTab} type="button">
-                  Settle
-                </button>
+                {isRecipient ? (
+                  <button className="primary-button" onClick={claimActiveRecurringFunds} type="button">
+                    Claim recurring funds (${unitsToUsdc(tabState.claimable)})
+                  </button>
+                ) : null}
               </div>
             </Panel>
 
@@ -1317,7 +1765,7 @@ function RecurringWorkspace({
                 <div className="space-y-2">
                   {tabEvents.slice(0, 8).map((event) => (
                     <a
-                      className="block rounded-md border border-[var(--border)] p-3 text-sm hover:bg-[var(--surface-muted)]"
+                      className="block rounded-[var(--radius)] border border-[var(--border)] p-3 text-sm hover:bg-[var(--surface-muted)]"
                       href={`https://testnet.arcscan.app/tx/${event.txHash}`}
                       key={`${event.txHash}-${event.name}-${event.blockNumber.toString()}`}
                     >
@@ -1330,8 +1778,10 @@ function RecurringWorkspace({
             ) : null}
           </>
         ) : (
-          <Panel title="No tab loaded" icon={<Landmark size={19} />}>
-            <p className="text-sm text-[var(--text-muted)]">Create a tab or load an existing contract to inspect balances and settlement state.</p>
+          <Panel title="Load a recurring ledger" icon={<Landmark size={19} />}>
+            <p className="text-sm text-[var(--text-muted)]">
+              Create a cycle or load a RecurringTab contract to inspect collectible balances and settlement state.
+            </p>
           </Panel>
         )}
       </div>
@@ -1361,6 +1811,14 @@ function Panel({
       </div>
       {children}
     </section>
+  );
+}
+
+function PaidBillStamp() {
+  return (
+    <div className="paid-bill-stamp" aria-hidden="true">
+      <Image alt="Paid" height={788} priority src="/paid.png" width={1024} />
+    </div>
   );
 }
 
@@ -1447,12 +1905,30 @@ function sourceLabel(id: BridgeSourceChain) {
   return bridgeSourceChains.find((chain) => chain.id === id)?.label ?? id;
 }
 
+function toUsdInput(value: number, rate: number) {
+  return (value * rate).toFixed(2);
+}
+
 function shortAddress(address: string) {
   return `${address.slice(0, 6)}...${address.slice(-4)}`;
 }
 
 function errorMessage(caught: unknown) {
-  return caught instanceof Error ? caught.message : "Unexpected wallet or payment error.";
+  const message = caught instanceof Error ? caught.message : "Unexpected wallet or payment error.";
+
+  if (message.includes("TabComplete")) {
+    return "This tab's deployed contract considers the schedule complete. Redeploy the recurring factory and create a new tab to collect late underpaid cycles after the final cycle.";
+  }
+
+  if (message.includes("NoCollectibleMembers")) {
+    return "No member has collectable recurring debt right now. Check approval, wallet balance, and outstanding amount.";
+  }
+
+  if (message.includes("AlreadySettledForPeriod")) {
+    return "No recurring cycle or outstanding balance is currently ready to settle.";
+  }
+
+  return message;
 }
 
 function normalizeAddress(value: string) {
@@ -1471,7 +1947,7 @@ function normalizeOptionalAddress(value: string) {
 
 function formatUnix(value: bigint) {
   if (value === 0n) {
-    return "Not set";
+    return "Complete";
   }
 
   return new Intl.DateTimeFormat("en-US", {
@@ -1480,6 +1956,17 @@ function formatUnix(value: bigint) {
     hour: "2-digit",
     minute: "2-digit",
   }).format(new Date(Number(value) * 1000));
+}
+
+function formatDuration(seconds: bigint) {
+  const totalSeconds = Number(seconds);
+
+  if (totalSeconds < 3600) {
+    return `${Math.max(1, Math.round(totalSeconds / 60))} min`;
+  }
+
+  const days = Math.round(totalSeconds / 86_400);
+  return days >= 1 ? `${days} day${days === 1 ? "" : "s"}` : `${Math.round(totalSeconds / 3600)} hr`;
 }
 
 function getBrowserProvider() {

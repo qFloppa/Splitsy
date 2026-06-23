@@ -1,0 +1,8 @@
+{
+  "crons": [
+    {
+      "path": "/api/recurring/settle",
+      "schedule": "0 * * * *"
+    }
+  ]
+}

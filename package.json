@@ -16,7 +16,12 @@
   "dependencies": {
     "@circle-fin/adapter-viem-v2": "1.11.2",
     "@circle-fin/app-kit": "1.7.0",
+    "@radix-ui/react-dialog": "1.1.16",
+    "@radix-ui/react-dropdown-menu": "2.1.17",
     "@supabase/supabase-js": "2.108.1",
+    "canvas-confetti": "1.9.4",
+    "framer-motion": "12.40.0",
+    "gsap": "3.15.0",
     "lucide-react": "1.17.0",
     "next": "16.2.9",
     "react": "19.2.4",
@@ -26,6 +31,7 @@
   "devDependencies": {
     "@nomicfoundation/hardhat-toolbox-viem": "5.0.7",
     "@tailwindcss/postcss": "^4",
+    "@types/canvas-confetti": "1.9.0",
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",

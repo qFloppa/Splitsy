@@ -36,6 +36,7 @@ export const recurringTabFactoryAbi = [
       { indexed: true, internalType: "address", name: "tab", type: "address" },
       { indexed: true, internalType: "address", name: "recipient", type: "address" },
       { indexed: false, internalType: "uint256", name: "settlementInterval", type: "uint256" },
+      { indexed: false, internalType: "uint256", name: "maxSettlements", type: "uint256" },
     ],
   },
   {
@@ -45,6 +46,7 @@ export const recurringTabFactoryAbi = [
     inputs: [
       { internalType: "address", name: "recipient", type: "address" },
       { internalType: "uint256", name: "settlementInterval", type: "uint256" },
+      { internalType: "uint256", name: "maxSettlements", type: "uint256" },
       { internalType: "address[]", name: "members", type: "address[]" },
       { internalType: "uint256[]", name: "fixedShares", type: "uint256[]" },
     ],
@@ -59,6 +61,13 @@ export const recurringTabFactoryAbi = [
     stateMutability: "view",
     inputs: [{ internalType: "uint256", name: "tabId", type: "uint256" }],
     outputs: [{ internalType: "address", name: "tab", type: "address" }],
+  },
+  {
+    type: "function",
+    name: "nextTabId",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ internalType: "uint256", name: "", type: "uint256" }],
   },
 ] as const;
 
@@ -85,6 +94,16 @@ export const recurringTabAbi = [
   },
   {
     type: "event",
+    name: "FundsClaimed",
+    anonymous: false,
+    inputs: [
+      { indexed: true, internalType: "uint256", name: "tabId", type: "uint256" },
+      { indexed: true, internalType: "address", name: "recipient", type: "address" },
+      { indexed: false, internalType: "uint256", name: "amount", type: "uint256" },
+    ],
+  },
+  {
+    type: "event",
     name: "TabSettled",
     anonymous: false,
     inputs: [
@@ -93,10 +112,15 @@ export const recurringTabAbi = [
       { indexed: false, internalType: "uint256", name: "timestamp", type: "uint256" },
     ],
   },
+  { type: "function", name: "claim", stateMutability: "nonpayable", inputs: [], outputs: [] },
+  { type: "function", name: "claimable", stateMutability: "view", inputs: [], outputs: [{ type: "uint256" }] },
   { type: "function", name: "settleTab", stateMutability: "nonpayable", inputs: [], outputs: [] },
   { type: "function", name: "members", stateMutability: "view", inputs: [], outputs: [{ type: "address[]" }] },
   { type: "function", name: "recipient", stateMutability: "view", inputs: [], outputs: [{ type: "address" }] },
   { type: "function", name: "settlementInterval", stateMutability: "view", inputs: [], outputs: [{ type: "uint256" }] },
+  { type: "function", name: "maxSettlements", stateMutability: "view", inputs: [], outputs: [{ type: "uint256" }] },
+  { type: "function", name: "settlementCount", stateMutability: "view", inputs: [], outputs: [{ type: "uint256" }] },
+  { type: "function", name: "createdAt", stateMutability: "view", inputs: [], outputs: [{ type: "uint256" }] },
   { type: "function", name: "lastSettledAt", stateMutability: "view", inputs: [], outputs: [{ type: "uint256" }] },
   { type: "function", name: "nextSettlementAt", stateMutability: "view", inputs: [], outputs: [{ type: "uint256" }] },
   {
@@ -151,6 +175,8 @@ export type RecurringMemberState = {
   walletBalance: bigint;
   allowance: bigint;
   totalSettled: bigint;
+  dueNow: bigint;
+  remainingTotal: bigint;
   collectible: boolean;
 };
 
@@ -158,8 +184,14 @@ export type RecurringTabState = {
   address: `0x${string}`;
   recipient: `0x${string}`;
   settlementInterval: bigint;
+  maxSettlements: bigint;
+  settlementCount: bigint;
+  claimable: bigint;
+  createdAt: bigint;
   lastSettledAt: bigint;
   nextSettlementAt: bigint;
+  dueCycles: bigint;
+  remainingCycles: bigint;
   members: RecurringMemberState[];
 };
 
@@ -200,11 +232,13 @@ export async function createRecurringTab({
   account,
   recipient,
   intervalSeconds,
+  maxSettlements,
   members,
   fixedShares,
 }: RecurringWallet & {
   recipient: `0x${string}`;
   intervalSeconds: bigint;
+  maxSettlements: bigint;
   members: `0x${string}`[];
   fixedShares: bigint[];
 }) {
@@ -212,7 +246,7 @@ export async function createRecurringTab({
     address: RECURRING_TAB_FACTORY_ADDRESS,
     abi: recurringTabFactoryAbi,
     functionName: "createTab",
-    args: [recipient, intervalSeconds, members, fixedShares],
+    args: [recipient, intervalSeconds, maxSettlements, members, fixedShares],
     account,
     chain: arcTestnet,
   });
@@ -277,21 +311,45 @@ export async function settleRecurringTab({
   return publicClient.waitForTransactionReceipt({ hash });
 }
 
+export async function claimRecurringFunds({
+  walletClient,
+  account,
+  tabAddress,
+}: RecurringWallet & {
+  tabAddress: `0x${string}`;
+}) {
+  const hash = await walletClient.writeContract({
+    address: tabAddress,
+    abi: recurringTabAbi,
+    functionName: "claim",
+    account,
+    chain: arcTestnet,
+  });
+
+  return publicClient.waitForTransactionReceipt({ hash });
+}
+
 export async function readRecurringTab(address: `0x${string}`): Promise<RecurringTabState> {
-  const [recipient, settlementInterval, lastSettledAt, nextSettlementAt, members] =
+  const [recipient, settlementInterval, maxSettlements, settlementCount, claimable, lastSettledAt, nextSettlementAt, members] =
     await publicClient.multicall({
       allowFailure: false,
       contracts: [
         { address, abi: recurringTabAbi, functionName: "recipient" },
         { address, abi: recurringTabAbi, functionName: "settlementInterval" },
+        { address, abi: recurringTabAbi, functionName: "maxSettlements" },
+        { address, abi: recurringTabAbi, functionName: "settlementCount" },
+        { address, abi: recurringTabAbi, functionName: "claimable" },
         { address, abi: recurringTabAbi, functionName: "lastSettledAt" },
         { address, abi: recurringTabAbi, functionName: "nextSettlementAt" },
         { address, abi: recurringTabAbi, functionName: "members" },
       ],
     });
+  const createdAt = await publicClient
+    .readContract({ address, abi: recurringTabAbi, functionName: "createdAt" })
+    .catch(() => lastSettledAt);
 
   const memberRows = await publicClient.multicall({
-    allowFailure: false,
+    allowFailure: true,
     contracts: members.flatMap((member) => [
       { address, abi: recurringTabAbi, functionName: "fixedShare", args: [member] },
       { address: ARC_USDC_ADDRESS, abi: usdcAbi, functionName: "balanceOf", args: [member] },
@@ -300,39 +358,111 @@ export async function readRecurringTab(address: `0x${string}`): Promise<Recurrin
     ]),
   });
 
+  const latestBlock = await publicClient.getBlock();
+  const nowSeconds = latestBlock.timestamp;
+  const remainingCycles = maxSettlements > settlementCount ? maxSettlements - settlementCount : 0n;
+  const elapsed = nowSeconds > createdAt ? nowSeconds - createdAt : 0n;
+  const scheduledCycles = settlementInterval > 0n ? elapsed / settlementInterval : 0n;
+  const accruedCycles = scheduledCycles > maxSettlements ? maxSettlements : scheduledCycles;
+  const unsettledCycles = scheduledCycles > settlementCount ? scheduledCycles - settlementCount : 0n;
+  const dueCycles = unsettledCycles > remainingCycles ? remainingCycles : unsettledCycles;
+
   return {
     address,
     recipient,
     settlementInterval,
+    maxSettlements,
+    settlementCount,
+    claimable,
+    createdAt,
     lastSettledAt,
     nextSettlementAt,
+    dueCycles,
+    remainingCycles,
     members: members.map((member, index) => {
       const rowOffset = index * 4;
-      const fixedShare = memberRows[rowOffset] as bigint;
-      const walletBalance = memberRows[rowOffset + 1] as bigint;
-      const allowance = memberRows[rowOffset + 2] as bigint;
-      const totalSettled = memberRows[rowOffset + 3] as bigint;
+      const fixedShare = multicallValue(memberRows[rowOffset]);
+      const walletBalance = multicallValue(memberRows[rowOffset + 1]);
+      const allowance = multicallValue(memberRows[rowOffset + 2]);
+      const totalSettled = multicallValue(memberRows[rowOffset + 3]);
+      const totalDebt = fixedShare * maxSettlements;
+      const accruedDue = fixedShare * accruedCycles;
+      const dueNow = totalSettled >= accruedDue ? 0n : accruedDue - totalSettled;
+      const remainingTotal = totalSettled >= totalDebt ? 0n : totalDebt - totalSettled;
+      const collectibleAmount =
+        dueNow > 0n ? [dueNow, allowance, walletBalance].reduce((lowest, value) => (value < lowest ? value : lowest)) : 0n;
       return {
         address: member,
         fixedShare,
         walletBalance,
         allowance,
         totalSettled,
-        collectible: allowance >= fixedShare && walletBalance >= fixedShare,
+        dueNow,
+        remainingTotal,
+        collectible: collectibleAmount > 0n,
       };
     }),
   };
 }
 
+function multicallValue(result: { status: "success"; result: unknown } | { status: "failure"; error: Error }) {
+  return result.status === "success" && typeof result.result === "bigint" ? result.result : 0n;
+}
+
 export async function readRecurringEvents(address: `0x${string}`): Promise<RecurringEvent[]> {
   const latest = await publicClient.getBlockNumber();
-  const fromBlock = latest > 20_000n ? latest - 20_000n : 0n;
-  const logs = await publicClient.getLogs({ address, fromBlock, toBlock: latest });
+  const fromBlock = latest > 9_000n ? latest - 9_000n : 0n;
+  const logs = await publicClient.getLogs({ address, fromBlock, toBlock: latest }).catch(() => []);
 
   return logs
     .map(decodeRecurringEvent)
     .filter((event): event is RecurringEvent => Boolean(event))
     .reverse();
+}
+
+export async function readRecurringTabsForWallet(account: `0x${string}`): Promise<RecurringTabState[]> {
+  const nextTabId = await publicClient.readContract({
+    address: RECURRING_TAB_FACTORY_ADDRESS,
+    abi: recurringTabFactoryAbi,
+    functionName: "nextTabId",
+  });
+  const tabIds = Array.from({ length: Math.max(0, Number(nextTabId - 1n)) }, (_, index) => BigInt(index + 1));
+
+  if (tabIds.length === 0) {
+    return [];
+  }
+
+  const tabAddresses = await publicClient.multicall({
+    allowFailure: true,
+    contracts: tabIds.map((tabId) => ({
+      address: RECURRING_TAB_FACTORY_ADDRESS,
+      abi: recurringTabFactoryAbi,
+      functionName: "tabs",
+      args: [tabId],
+    })),
+  });
+
+  const states = await Promise.all(
+    tabAddresses
+      .map((result) => (result.status === "success" ? (result.result as unknown as `0x${string}`) : null))
+      .filter((address): address is `0x${string}` => Boolean(address) && address !== "0x0000000000000000000000000000000000000000")
+      .map(async (address) => {
+        try {
+          return await readRecurringTab(address);
+        } catch {
+          return null;
+        }
+      }),
+  );
+
+  const normalizedAccount = account.toLowerCase();
+  return states
+    .filter((state): state is RecurringTabState => Boolean(state))
+    .filter(
+      (state) =>
+        state.recipient.toLowerCase() === normalizedAccount ||
+        state.members.some((member) => member.address.toLowerCase() === normalizedAccount),
+    );
 }
 
 export function usdcToUnits(value: string) {
@@ -377,6 +507,7 @@ function parseTabCreated(receipt: TransactionReceipt) {
           tabAddress: decoded.args.tab,
           recipient: decoded.args.recipient,
           settlementInterval: decoded.args.settlementInterval,
+          maxSettlements: decoded.args.maxSettlements,
         };
       }
     } catch {
@@ -398,6 +529,10 @@ function eventSummary(name: string, args: Record<string, unknown>) {
 
   if (name === "TabSettled") {
     return `Tab settled ${unitsToUsdc(args.totalAmount as bigint)} USDC`;
+  }
+
+  if (name === "FundsClaimed") {
+    return `Recipient claimed ${unitsToUsdc(args.amount as bigint)} USDC`;
   }
 
   return name;
