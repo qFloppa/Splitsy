@@ -17,6 +17,13 @@
   --surface-muted: #f4f7f9;
   --surface-strong: #ffffff;
   --receipt: var(--paper-50);
+  --receipt-text: var(--ink-950);
+  --receipt-muted: #4d5c66;
+  --receipt-border: rgba(7, 20, 33, 0.14);
+  --receipt-border-soft: rgba(7, 20, 33, 0.1);
+  --receipt-line: rgba(7, 20, 33, 0.08);
+  --receipt-dash: rgba(7, 20, 33, 0.22);
+  --receipt-overlay: rgba(255, 255, 255, 0.48);
   --header-bg: rgba(238, 243, 246, 0.82);
   --border: rgba(7, 20, 33, 0.12);
   --border-strong: rgba(7, 20, 33, 0.24);
@@ -44,7 +51,14 @@
   --surface: rgba(13, 29, 44, 0.88);
   --surface-muted: #102235;
   --surface-strong: #132b42;
-  --receipt: #f3efe5;
+  --receipt: #0d1f31;
+  --receipt-text: #edf6fb;
+  --receipt-muted: #9eb3c5;
+  --receipt-border: rgba(231, 237, 242, 0.16);
+  --receipt-border-soft: rgba(231, 237, 242, 0.11);
+  --receipt-line: rgba(231, 237, 242, 0.09);
+  --receipt-dash: rgba(231, 237, 242, 0.2);
+  --receipt-overlay: rgba(255, 255, 255, 0.045);
   --header-bg: rgba(8, 17, 27, 0.84);
   --border: rgba(231, 237, 242, 0.13);
   --border-strong: rgba(231, 237, 242, 0.28);
@@ -463,12 +477,12 @@ input[type="number"],
   container-type: inline-size;
   position: relative;
   overflow: hidden;
-  border: 1px solid rgba(7, 20, 33, 0.14);
+  border: 1px solid var(--receipt-border);
   border-radius: var(--radius);
   background:
-    repeating-linear-gradient(180deg, transparent 0 31px, rgba(7, 20, 33, 0.035) 31px 32px),
+    repeating-linear-gradient(180deg, transparent 0 31px, var(--receipt-line) 31px 32px),
     var(--receipt);
-  color: var(--ink-950);
+  color: var(--receipt-text);
   box-shadow: 0 18px 50px rgba(7, 20, 33, 0.12);
 }
 
@@ -478,12 +492,12 @@ input[type="number"],
   inset-inline: 0;
   bottom: 0;
   height: 10px;
-  background: linear-gradient(135deg, transparent 33%, rgba(7, 20, 33, 0.09) 34% 66%, transparent 67%) 0 0 / 16px 10px;
+  background: linear-gradient(135deg, transparent 33%, var(--receipt-border-soft) 34% 66%, transparent 67%) 0 0 / 16px 10px;
   opacity: 0.5;
 }
 
 .receipt-divider {
-  border-top: 1px dashed rgba(7, 20, 33, 0.22);
+  border-top: 1px dashed var(--receipt-dash);
 }
 
 .receipt-row {
@@ -495,11 +509,11 @@ input[type="number"],
 }
 
 .receipt-row + .receipt-row {
-  border-top: 1px solid rgba(7, 20, 33, 0.08);
+  border-top: 1px solid var(--receipt-line);
 }
 
 .bill-items-disclosure {
-  border-top: 1px dashed rgba(7, 20, 33, 0.22);
+  border-top: 1px dashed var(--receipt-dash);
   padding-top: 0.9rem;
 }
 
@@ -509,10 +523,10 @@ input[type="number"],
   align-items: center;
   justify-content: space-between;
   gap: 1rem;
-  border: 1px solid rgba(7, 20, 33, 0.12);
+  border: 1px solid var(--receipt-border-soft);
   border-radius: var(--radius);
-  background: rgba(255, 255, 255, 0.48);
-  color: var(--ink-950);
+  background: var(--receipt-overlay);
+  color: var(--receipt-text);
   cursor: pointer;
   list-style: none;
   padding: 0.82rem 0.95rem;
@@ -527,8 +541,8 @@ input[type="number"],
 }
 
 .bill-items-disclosure summary:hover {
-  border-color: color-mix(in srgb, var(--accent) 36%, rgba(7, 20, 33, 0.12));
-  background: rgba(255, 255, 255, 0.66);
+  border-color: color-mix(in srgb, var(--accent) 36%, var(--receipt-border-soft));
+  background: color-mix(in srgb, var(--receipt-overlay) 70%, var(--surface-strong));
   box-shadow: 0 10px 24px rgba(7, 20, 33, 0.08);
 }
 
@@ -537,7 +551,7 @@ input[type="number"],
   flex-shrink: 0;
   align-items: center;
   gap: 0.55rem;
-  color: var(--ink-950);
+  color: var(--receipt-text);
   font-size: 0.95rem;
   font-weight: 780;
 }
@@ -554,16 +568,16 @@ input[type="number"],
 .bill-items-body {
   margin-top: 0.55rem;
   overflow: hidden;
-  border: 1px solid rgba(7, 20, 33, 0.1);
+  border: 1px solid var(--receipt-border-soft);
   border-radius: var(--radius);
-  background: rgba(255, 255, 255, 0.28);
+  background: var(--receipt-overlay);
   padding: 0.2rem 0.85rem;
   animation: bill-items-open 180ms ease-out;
 }
 
 .receipt-index {
   font-family: "Roboto Mono", "SFMono-Regular", Consolas, "Liberation Mono", monospace;
-  color: rgba(7, 20, 33, 0.46);
+  color: var(--receipt-muted);
   font-size: 0.8rem;
 }
 
@@ -574,7 +588,7 @@ input[type="number"],
 
 .upload-focus {
   box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.55),
+    inset 0 1px 0 color-mix(in srgb, var(--receipt-text) 12%, transparent),
     0 22px 58px rgba(7, 20, 33, 0.13);
 }
 

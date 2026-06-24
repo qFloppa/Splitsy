@@ -83,6 +83,7 @@ type OcrState = "idle" | "reading" | "ready" | "error";
 type BillRunState = "idle" | "connecting" | "working" | "success" | "error";
 type RecurringRunState = "idle" | "connecting" | "working" | "error" | "success";
 type AppTab = "bills" | "recurring";
+type AppTheme = "light" | "dark";
 type RecurringCycle = "test" | "weekly" | "monthly" | "custom";
 type RecurringMemberInput = {
   id: string;
@@ -99,7 +100,13 @@ const recurringCycleOptions: Array<{ id: RecurringCycle; label: string; seconds:
 
 export default function HomeClient({ testCycleEnabled = false }: { testCycleEnabled?: boolean }) {
   const [activeTab, setActiveTab] = useState<AppTab>("bills");
-  const [theme, setTheme] = useState<"light" | "dark">("light");
+  const [theme, setTheme] = useState<AppTheme>(() => {
+    if (typeof window === "undefined") {
+      return "light";
+    }
+    const storedTheme = window.sessionStorage.getItem("splitsy-theme");
+    return storedTheme === "dark" ? "dark" : "light";
+  });
   const [ocrState, setOcrState] = useState<OcrState>("idle");
   const [error, setError] = useState("");
   const [imagePreview, setImagePreview] = useState("");
@@ -189,6 +196,7 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
+    sessionStorage.setItem("splitsy-theme", theme);
   }, [theme]);
 
   useEffect(() => {
@@ -977,7 +985,7 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
               <Panel title="Upload bill" icon={<Upload size={19} />}>
                 <form className="space-y-4" onSubmit={parseBill}>
                   <label
-                    className="scan-surface upload-focus flex min-h-[28rem] cursor-pointer flex-col items-center justify-center rounded-[var(--radius)] border border-dashed border-[var(--border-strong)] bg-[var(--receipt)] p-6 text-center text-[var(--ink-950)] transition hover:border-[var(--accent)] sm:min-h-[34rem]"
+                    className="scan-surface upload-focus flex min-h-[28rem] cursor-pointer flex-col items-center justify-center rounded-[var(--radius)] border border-dashed border-[var(--border-strong)] bg-[var(--receipt)] p-6 text-center text-[var(--receipt-text)] transition hover:border-[var(--accent)] sm:min-h-[34rem]"
                     data-scanning={ocrState === "reading"}
                   >
                     {imagePreview ? (
@@ -991,7 +999,7 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
                       <>
                         <Camera className="text-[var(--accent)]" size={44} />
                         <p className="mt-4 text-xl font-semibold">Upload the bill</p>
-                        <p className="mt-2 max-w-md text-sm leading-6 text-[#4d5c66]">
+                        <p className="mt-2 max-w-md text-sm leading-6 text-[var(--receipt-muted)]">
                           Use a local receipt or bill photo in any language. Splitsy reads totals, tax, tip, and line items so the split starts clean.
                         </p>
                       </>
@@ -1031,8 +1039,8 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
                       <div className="receipt-card p-4 sm:p-5" ref={receiptPrintRef}>
                         {billIsScanned ? (
                           <>
-                            <div className="mb-4 rounded-[var(--radius)] border border-[rgba(7,20,33,0.12)] bg-white/45 p-3 text-xs text-[#4d5c66]">
-                              <p className="font-semibold text-[var(--ink-950)]">Converted to USD for settlement</p>
+                            <div className="mb-4 rounded-[var(--radius)] border border-[var(--receipt-border-soft)] bg-[var(--receipt-overlay)] p-3 text-xs text-[var(--receipt-muted)]">
+                              <p className="font-semibold text-[var(--receipt-text)]">Converted to USD for settlement</p>
                               <p className="mt-1">
                                 Origin currency {originCurrency}. Rate{" "}
                                 <span className="amount-text">1 {originCurrency} = {usdRate.toFixed(6)} USD</span>
@@ -1059,8 +1067,8 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
                           <details className="bill-items-disclosure mt-5">
                             <summary>
                               <span>
-                                <span className="block text-sm font-semibold text-[var(--ink-950)]">Bill items</span>
-                                <span className="mt-0.5 block text-xs text-[#5b6972]">
+                                <span className="block text-sm font-semibold text-[var(--receipt-text)]">Bill items</span>
+                                <span className="mt-0.5 block text-xs text-[var(--receipt-muted)]">
                                   {bill.lineItems.length} extracted item{bill.lineItems.length === 1 ? "" : "s"}
                                 </span>
                               </span>
@@ -1166,7 +1174,7 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
                         </div>
 
                         <div className="mt-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                          <span className="text-sm text-[#4d5c66]">Registered debt for this wallet</span>
+                          <span className="text-sm text-[var(--receipt-muted)]">Registered debt for this wallet</span>
                           <span className="amount-text font-semibold">${participant.amountUsd.toFixed(2)}</span>
                         </div>
                       </div>

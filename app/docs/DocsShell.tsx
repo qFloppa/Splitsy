@@ -3,11 +3,20 @@
 import { Moon, Sun } from "lucide-react";
 import { ReactNode, useEffect, useState } from "react";
 
+type DocsTheme = "light" | "dark";
+
 export default function DocsShell({ children }: { children: ReactNode }) {
-  const [theme, setTheme] = useState<"light" | "dark">("light");
+  const [theme, setTheme] = useState<DocsTheme>(() => {
+    if (typeof window === "undefined") {
+      return "light";
+    }
+    const storedTheme = window.sessionStorage.getItem("splitsy-docs-theme");
+    return storedTheme === "dark" ? "dark" : "light";
+  });
 
   useEffect(() => {
     document.documentElement.dataset.docsTheme = theme;
+    sessionStorage.setItem("splitsy-docs-theme", theme);
   }, [theme]);
 
   return (
