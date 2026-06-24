@@ -136,6 +136,8 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
   const [recurringWallet, setRecurringWallet] = useState<RecurringWallet | null>(null);
   const [recurringState, setRecurringState] = useState<RecurringRunState>("idle");
   const [recurringMessage, setRecurringMessage] = useState("");
+  const [recurringCreateMessage, setRecurringCreateMessage] = useState("");
+  const [recurringCreateMessageTone, setRecurringCreateMessageTone] = useState<"error" | "neutral">("neutral");
   const [recurringTotalUsd, setRecurringTotalUsd] = useState("200.00");
   const [recurringCycleCount, setRecurringCycleCount] = useState("3");
   const [recurringSplitMode, setRecurringSplitMode] = useState<"equal" | "manual">("equal");
@@ -512,6 +514,12 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
   }
 
   async function submitBillOnchain() {
+    if (splitMode === "manual" && splitTotal - confirmedUsd > 0.009) {
+      setBillState("error");
+      setBillMessage("Manual shares cannot be larger than the bill Total USD amount.");
+      return;
+    }
+
     const wallet = billWallet ?? (await connectBillWallet());
 
     if (!wallet) {
@@ -730,7 +738,8 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
 
     try {
       setRecurringState("working");
-      setRecurringMessage("Creating recurring tab on Arc Testnet.");
+      setRecurringCreateMessageTone("neutral");
+      setRecurringCreateMessage("Creating recurring tab on Arc Testnet.");
       const totalUsd = Number(recurringTotalUsd);
       if (!Number.isFinite(totalUsd) || totalUsd <= 0) {
         throw new Error("Enter a recurring total greater than 0 USDC.");
@@ -766,12 +775,14 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
       setTabAddressInput(result.tabAddress);
       setActiveTabAddress(result.tabAddress);
       setRecurringState("success");
-      setRecurringMessage(`Created tab #${result.tabId.toString()} at ${shortAddress(result.tabAddress)}.`);
+      setRecurringCreateMessageTone("neutral");
+      setRecurringCreateMessage(`Created tab #${result.tabId.toString()} at ${shortAddress(result.tabAddress)}.`);
       await refreshRecurringTab(result.tabAddress);
       await refreshRecurringTabsForWallet(wallet.account);
     } catch (caught) {
       setRecurringState("error");
-      setRecurringMessage(errorMessage(caught));
+      setRecurringCreateMessageTone("error");
+      setRecurringCreateMessage(errorMessage(caught));
     }
   }
 
@@ -1240,7 +1251,7 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
                       type="button"
                     >
                       {billState === "working" ? <Loader2 className="animate-spin" size={16} /> : <Landmark size={16} />}
-                      Settle on Arc
+                      Write on Arc
                     </button>
                   </div>
                   <div className="text-sm text-[var(--text-muted)]">
@@ -1281,6 +1292,8 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
             createOnchainTab={createOnchainTab}
             customCycleDays={customCycleDays}
             displayRecurringMembers={displayRecurringMembers}
+            recurringCreateMessage={recurringCreateMessage}
+            recurringCreateMessageTone={recurringCreateMessageTone}
             recurringCycleCount={recurringCycleCount}
             recurringCycle={recurringCycle}
             recurringMessage={recurringMessage}
@@ -1555,6 +1568,8 @@ function RecurringWorkspace({
   createOnchainTab,
   customCycleDays,
   displayRecurringMembers,
+  recurringCreateMessage,
+  recurringCreateMessageTone,
   recurringCycleCount,
   recurringCycle,
   recurringMessage,
@@ -1586,6 +1601,8 @@ function RecurringWorkspace({
   createOnchainTab: () => void;
   customCycleDays: string;
   displayRecurringMembers: RecurringMemberInput[];
+  recurringCreateMessage: string;
+  recurringCreateMessageTone: "error" | "neutral";
   recurringCycleCount: string;
   recurringCycle: RecurringCycle;
   recurringMessage: string;
@@ -1737,6 +1754,11 @@ function RecurringWorkspace({
               Create
             </button>
           </div>
+          {recurringCreateMessage ? (
+            <div className="mt-4">
+              <Message tone={recurringCreateMessageTone}>{recurringCreateMessage}</Message>
+            </div>
+          ) : null}
         </Panel>
 
         {showRecurringDetails ? (
