@@ -5,9 +5,14 @@ export const metadata: Metadata = {
   title: "Splitsy",
   description: "A clean way to scan bills, split costs, and collect payments.",
   icons: {
-    icon: "/splitsy.png",
-    apple: "/splitsy.png",
+    icon: [
+      { url: "/favicon-96x96.png", type: "image/png", sizes: "96x96" },
+      { url: "/favicon.svg", type: "image/svg+xml" },
+    ],
+    shortcut: "/favicon.ico",
+    apple: [{ url: "/apple-touch-icon.png", sizes: "180x180" }],
   },
+  manifest: "/site.webmanifest",
 };
 
 export default function RootLayout({

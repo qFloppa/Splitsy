@@ -138,7 +138,7 @@ a {
 }
 
 .logo-crop-app {
-  --logo-width: clamp(11.5rem, 16vw, 15.5rem);
+  --logo-width: clamp(9.6rem, 13vw, 12.8rem);
 }
 
 .logo-crop-docs {
@@ -168,13 +168,21 @@ a {
   letter-spacing: 0;
 }
 
+.header-title-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.55rem;
+}
+
 .app-title {
-  max-width: 18ch;
+  max-width: none;
   color: var(--text);
-  font-size: clamp(1.45rem, 2.7vw, 2.35rem);
+  font-size: clamp(1.2rem, 2vw, 1.72rem);
   font-weight: 820;
   letter-spacing: 0;
-  line-height: 1.06;
+  line-height: 1.08;
+  white-space: nowrap;
 }
 
 .network-stamp {
@@ -189,10 +197,10 @@ a {
     color-mix(in srgb, var(--surface-strong) 86%, transparent);
   color: var(--accent-strong);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.45), 0 10px 24px rgba(7, 20, 33, 0.08);
-  font-size: 0.72rem;
+  font-size: 0.66rem;
   font-weight: 850;
   letter-spacing: 0.08em;
-  padding: 0.38rem 0.68rem;
+  padding: 0.31rem 0.58rem;
   text-transform: uppercase;
 }
 

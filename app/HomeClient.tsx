@@ -888,21 +888,21 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
   return (
     <main className="app-shell min-h-screen text-[var(--text)]">
       <header className="sticky top-0 z-30 border-b border-[var(--border)] bg-[color:var(--header-bg)] backdrop-blur-xl">
-        <div className="mx-auto max-w-7xl px-4 py-4 sm:px-6 lg:px-8">
-          <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-            <div>
+        <div className="mx-auto max-w-7xl px-4 py-3 sm:px-6 lg:px-8">
+          <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+            <div className="min-w-0">
               <div aria-label="Splitsy" className="brand-lockup">
                 <span className="logo-crop logo-crop-app">
                   <Image alt="Splitsy" className="logo-crop-image" height={1024} priority src="/splitsy.png" width={1536} />
                 </span>
               </div>
-              <h1 className="app-title mt-2">
-                Split bills. Settle cleanly.
-              </h1>
-              <div className="mt-3">
+              <div className="header-title-row mt-1">
+                <h1 className="app-title">
+                  Split bills. Settle cleanly.
+                </h1>
                 <span className="network-stamp">Arc Testnet</span>
               </div>
-              <p className="mt-2 max-w-2xl text-sm text-[var(--text-muted)]">
+              <p className="mt-1 max-w-2xl text-sm text-[var(--text-muted)]">
                 Scan a receipt, choose who owes what, and keep every payment organized in one place.
               </p>
             </div>
