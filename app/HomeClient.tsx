@@ -898,7 +898,7 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
               </div>
               <div className="header-title-row mt-1">
                 <h1 className="app-title">
-                  Split bills. Settle cleanly.
+                  Split bills, Settle cleanly
                 </h1>
                 <span className="network-stamp">Arc Testnet</span>
               </div>
