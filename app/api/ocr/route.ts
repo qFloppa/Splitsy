@@ -90,11 +90,10 @@ export async function POST(request: Request) {
   try {
     return Response.json({
       bill: normalizeParsedBill(JSON.parse(stripJsonFences(text))),
-      model: RECEIPT_SCANNER_MODEL,
     });
   } catch {
     return Response.json(
-      { error: "The receipt scanner returned malformed bill data.", rawText: text.slice(0, 2000) },
+      { error: "The receipt scanner returned malformed bill data." },
       { status: 502 },
     );
   }
