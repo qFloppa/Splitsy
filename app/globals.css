@@ -690,6 +690,10 @@ input[type="number"],
   --docs-card: #ffffff;
   --docs-card-soft: #fbfcfe;
   --docs-link: #1f66ff;
+  --docs-accent-soft: #eef4ff;
+  --docs-code-bg: #f6f8fb;
+  --docs-code-text: #26384a;
+  --docs-callout-bg: #f4f8ff;
 }
 
 .docs-shell[data-docs-theme="dark"] {
@@ -702,6 +706,10 @@ input[type="number"],
   --docs-card: #101f30;
   --docs-card-soft: #13283c;
   --docs-link: #7ab8ff;
+  --docs-accent-soft: rgba(122, 184, 255, 0.14);
+  --docs-code-bg: #0b1826;
+  --docs-code-text: #dbeafe;
+  --docs-callout-bg: rgba(122, 184, 255, 0.1);
 }
 
 .docs-hero {
@@ -935,8 +943,8 @@ input[type="number"],
   width: 2.2rem;
   height: 2.2rem;
   border-radius: 7px;
-  background: #eef4ff;
-  color: #1f66ff;
+  background: var(--docs-accent-soft);
+  color: var(--docs-link);
 }
 
 .docs-heading h2 {
@@ -961,10 +969,10 @@ input[type="number"],
 }
 
 .docs-section code {
-  border: 1px solid #dfe7f0;
+  border: 1px solid var(--docs-border);
   border-radius: 5px;
-  background: #f6f8fb;
-  color: #26384a;
+  background: var(--docs-code-bg);
+  color: var(--docs-code-text);
   padding: 0.1rem 0.28rem;
   font-size: 0.88em;
 }
@@ -989,7 +997,7 @@ input[type="number"],
 
 .docs-card-icon {
   display: inline-flex;
-  color: #1f66ff;
+  color: var(--docs-link);
 }
 
 .docs-card-icon svg {
@@ -1051,15 +1059,15 @@ input[type="number"],
 
 .docs-table-wrap th,
 .docs-table-wrap td {
-  border-bottom: 1px solid #e8eef5;
+  border-bottom: 1px solid var(--docs-border);
   padding: 0.85rem;
   text-align: left;
   vertical-align: top;
 }
 
 .docs-table-wrap th {
-  background: #f4f7fb;
-  color: #26384a;
+  background: var(--docs-card-soft);
+  color: var(--docs-text);
   font-size: 0.78rem;
   font-weight: 850;
   text-transform: uppercase;
@@ -1071,9 +1079,9 @@ input[type="number"],
 
 .docs-callout {
   margin-top: 1.1rem;
-  border-left: 4px solid #1f66ff;
+  border-left: 4px solid var(--docs-link);
   border-radius: 7px;
-  background: #f4f8ff;
+  background: var(--docs-callout-bg);
   padding: 1rem;
 }
 
@@ -1086,7 +1094,7 @@ input[type="number"],
   flex-wrap: wrap;
   gap: 0.65rem;
   margin-top: 1.25rem;
-  border-top: 1px solid #e8eef5;
+  border-top: 1px solid var(--docs-border);
   padding-top: 1rem;
 }
 
@@ -1126,7 +1134,7 @@ input[type="number"],
   display: grid;
   grid-template-columns: 13rem 1fr;
   gap: 1rem;
-  border-bottom: 1px solid #e8eef5;
+  border-bottom: 1px solid var(--docs-border);
   padding: 0.75rem 0;
 }
 
@@ -1151,10 +1159,10 @@ input[type="number"],
 .docs-section pre {
   overflow-x: auto;
   margin: 1rem 0;
-  border: 1px solid #d9e3ee;
+  border: 1px solid var(--docs-border);
   border-radius: 8px;
-  background: #111827;
-  color: #e5edf7;
+  background: var(--docs-code-bg);
+  color: var(--docs-code-text);
   padding: 1rem;
 }
 
