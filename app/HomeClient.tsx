@@ -193,6 +193,7 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
   const reviewBillRef = useRef<HTMLDivElement | null>(null);
   const reviewSplitRef = useRef<HTMLDivElement | null>(null);
   const settlementStampRef = useRef<HTMLDivElement | null>(null);
+  const totalUsdScrollTimerRef = useRef<ReturnType<Window["setTimeout"]> | null>(null);
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -229,14 +230,36 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
   }, [showBillEditor]);
 
   useEffect(() => {
-    if (!manualBillEntry || confirmedUsd <= 0 || !reviewSplitRef.current) {
+    if (!manualBillEntry || confirmedUsd <= 0) {
+      return;
+    }
+
+    if (totalUsdScrollTimerRef.current) {
+      window.clearTimeout(totalUsdScrollTimerRef.current);
+    }
+
+    totalUsdScrollTimerRef.current = window.setTimeout(() => {
+      reviewSplitRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+      totalUsdScrollTimerRef.current = null;
+    }, 850);
+
+    return () => {
+      if (totalUsdScrollTimerRef.current) {
+        window.clearTimeout(totalUsdScrollTimerRef.current);
+        totalUsdScrollTimerRef.current = null;
+      }
+    };
+  }, [manualBillEntry, confirmedUsd]);
+
+  useEffect(() => {
+    if (!billIsScanned || !reviewSplitRef.current) {
       return;
     }
 
     window.requestAnimationFrame(() => {
       reviewSplitRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
     });
-  }, [manualBillEntry, confirmedUsd]);
+  }, [billIsScanned]);
 
   useEffect(() => {
     if (billState !== "success" || !settlementStampRef.current) {
@@ -433,6 +456,29 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
   async function connectBillWallet() {
     const connected = await connectWallets();
     return connected?.bill ?? null;
+  }
+
+  function disconnectWallets() {
+    setBridgeSession(null);
+    setBridgeResults({});
+    setBillWallet(null);
+    setRecurringWallet(null);
+    setDebts([]);
+    setSplitterBills([]);
+    setPartialPayments({});
+    setClaimAmounts({});
+    setDebtMessages({});
+    setClaimMessage("");
+    setBillMessage("Wallet disconnected.");
+    setBillState("idle");
+    setWalletTabs([]);
+    setTabState(null);
+    setTabEvents([]);
+    setActiveTabAddress(null);
+    setTabAddressInput("");
+    setAuthorizationAmount("");
+    setRecurringMessage("Wallet disconnected.");
+    setRecurringState("idle");
   }
 
   async function refreshBillRegistry(account = billWallet?.account) {
@@ -890,6 +936,11 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
   }
 
   async function connectActiveWallet() {
+    if (billWallet || recurringWallet) {
+      disconnectWallets();
+      return null;
+    }
+
     return connectWallets();
   }
 
@@ -929,13 +980,7 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
               </div>
               <button className="secondary-button" onClick={connectActiveWallet} type="button">
                 <WalletCards size={16} />
-                {activeTab === "recurring"
-                  ? recurringWallet
-                    ? "Wallet connected"
-                    : "Connect wallet"
-                  : billWallet
-                    ? "Wallet connected"
-                    : "Connect wallet"}
+                {billWallet || recurringWallet ? "Disconnect wallet" : "Connect wallet"}
               </button>
               <button
                 aria-label={`Switch to ${theme === "light" ? "dark" : "light"} mode`}
@@ -1009,7 +1054,7 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
 
                   {error ? <Message tone="error">{error}</Message> : null}
 
-                  <button className="primary-button w-full" disabled={ocrState === "reading"}>
+                  <button className="primary-button scan-receipt-button w-full" disabled={ocrState === "reading"}>
                     {ocrState === "reading" ? <Loader2 className="animate-spin" size={18} /> : <FileJson size={18} />}
                     {ocrState === "reading" ? "Reading receipt" : "Scan receipt"}
                   </button>

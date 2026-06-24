@@ -323,6 +323,11 @@ input[type="number"],
   transform: none;
 }
 
+.scan-receipt-button {
+  min-height: 3.45rem;
+  font-size: 0.96rem;
+}
+
 .secondary-button,
 .chain-button {
   border: 1px solid var(--border);
