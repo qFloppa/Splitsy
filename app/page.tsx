@@ -3,7 +3,9 @@
 import {
   AlertTriangle,
   BadgeDollarSign,
+  BookOpen,
   Camera,
+  ChevronDown,
   CheckCircle2,
   ExternalLink,
   FileJson,
@@ -21,6 +23,7 @@ import {
 import { AnimatePresence, motion } from "framer-motion";
 import gsap from "gsap";
 import Image from "next/image";
+import Link from "next/link";
 import { ChangeEvent, FormEvent, ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { getAddress, type EIP1193Provider } from "viem";
 import {
@@ -100,6 +103,7 @@ export default function Home() {
   const [ocrState, setOcrState] = useState<OcrState>("idle");
   const [error, setError] = useState("");
   const [imagePreview, setImagePreview] = useState("");
+  const [manualBillEntry, setManualBillEntry] = useState(false);
   const [bill, setBill] = useState<ParsedBill>({
     ...emptyParsedBill,
     merchant: "Upload a bill",
@@ -113,8 +117,7 @@ export default function Home() {
   const [billWallet, setBillWallet] = useState<BillSplitWallet | null>(null);
   const [billState, setBillState] = useState<BillRunState>("idle");
   const [billMessage, setBillMessage] = useState("");
-  const [debtMessage, setDebtMessage] = useState("");
-  const [debtMessageTone, setDebtMessageTone] = useState<"error" | "neutral">("neutral");
+  const [debtMessages, setDebtMessages] = useState<Record<string, { message: string; tone: "error" | "neutral" }>>({});
   const [claimMessage, setClaimMessage] = useState("");
   const [claimMessageTone, setClaimMessageTone] = useState<"error" | "neutral">("neutral");
   const [submittedBillId, setSubmittedBillId] = useState<bigint | null>(null);
@@ -122,6 +125,7 @@ export default function Home() {
   const [splitterBills, setSplitterBills] = useState<BillSplitDebt[]>([]);
   const [partialPayments, setPartialPayments] = useState<Record<string, string>>({});
   const [claimAmounts, setClaimAmounts] = useState<Record<string, string>>({});
+  const [participantShareInputs, setParticipantShareInputs] = useState<Record<string, string>>({});
   const [recurringWallet, setRecurringWallet] = useState<RecurringWallet | null>(null);
   const [recurringState, setRecurringState] = useState<RecurringRunState>("idle");
   const [recurringMessage, setRecurringMessage] = useState("");
@@ -170,9 +174,13 @@ export default function Home() {
     [recurringMembers, recurringShareUsd, recurringSplitMode],
   );
   const billIsScanned = ocrState === "ready";
+  const showBillEditor = billIsScanned || manualBillEntry;
+  const billReadyForSplit = billIsScanned || (manualBillEntry && confirmedUsd > 0);
   const usdRate = fxQuote?.rate ?? 1;
   const originCurrency = fxQuote?.source ?? bill.currency;
   const receiptPrintRef = useRef<HTMLDivElement | null>(null);
+  const reviewBillRef = useRef<HTMLDivElement | null>(null);
+  const reviewSplitRef = useRef<HTMLDivElement | null>(null);
   const settlementStampRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -191,6 +199,26 @@ export default function Home() {
       { opacity: 1, y: 0, duration: 0.28, stagger: 0.055, ease: "power2.out" },
     );
   }, [ocrState, bill.lineItems.length]);
+
+  useEffect(() => {
+    if (!showBillEditor || !reviewBillRef.current) {
+      return;
+    }
+
+    window.requestAnimationFrame(() => {
+      reviewBillRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+  }, [showBillEditor]);
+
+  useEffect(() => {
+    if (!manualBillEntry || confirmedUsd <= 0 || !reviewSplitRef.current) {
+      return;
+    }
+
+    window.requestAnimationFrame(() => {
+      reviewSplitRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+  }, [manualBillEntry, confirmedUsd]);
 
   useEffect(() => {
     if (billState !== "success" || !settlementStampRef.current) {
@@ -232,6 +260,7 @@ export default function Home() {
 
     const parsed = normalizeParsedBill(payload.bill);
     setBill(parsed);
+    setManualBillEntry(false);
     setOcrState("ready");
 
     if (parsed.currency === "USD") {
@@ -304,6 +333,22 @@ export default function Home() {
     );
   }
 
+  function updateParticipantShare(id: string, value: string) {
+    setParticipantShareInputs((current) => ({ ...current, [id]: value }));
+
+    const nextAmount = Number(value);
+    setParticipants((current) =>
+      current.map((participant) =>
+        participant.id === id
+          ? {
+              ...participant,
+              amountUsd: Number.isFinite(nextAmount) && nextAmount >= 0 ? nextAmount : 0,
+            }
+          : participant,
+      ),
+    );
+  }
+
   function addParticipant() {
     setParticipants((current) => [
       ...current,
@@ -319,32 +364,57 @@ export default function Home() {
 
   function removeParticipant(id: string) {
     setParticipants((current) => current.filter((participant) => participant.id !== id));
+    setParticipantShareInputs((current) => {
+      const next = { ...current };
+      delete next[id];
+      return next;
+    });
   }
 
-  async function connectBillWallet() {
+  async function connectWallets() {
     const provider = getBrowserProvider();
 
     if (!provider) {
       setBillState("error");
       setBillMessage("No EVM browser wallet found.");
+      setRecurringState("error");
+      setRecurringMessage("No EVM browser wallet found.");
       return null;
     }
 
     setBillState("connecting");
     setBillMessage("");
+    setRecurringState("connecting");
+    setRecurringMessage("");
 
     try {
-      const wallet = await createBillSplitWallet(provider);
-      setBillWallet(wallet);
+      const [bill, recurring] = await Promise.all([
+        createBillSplitWallet(provider),
+        createRecurringWallet(provider),
+      ]);
+      setBillWallet(bill);
+      setRecurringWallet(recurring);
       setBillState("idle");
-      setBillMessage(`Connected ${shortAddress(wallet.account)} on Arc Testnet.`);
-      await refreshBillRegistry(wallet.account);
-      return wallet;
+      setRecurringState("idle");
+      setBillMessage(`Connected ${shortAddress(bill.account)} on Arc Testnet.`);
+      setRecurringMessage(`Connected ${shortAddress(recurring.account)} on Arc Testnet.`);
+      await Promise.all([
+        refreshBillRegistry(bill.account),
+        refreshRecurringTabsForWallet(recurring.account),
+      ]);
+      return { bill, recurring };
     } catch (caught) {
       setBillState("error");
       setBillMessage(errorMessage(caught));
+      setRecurringState("error");
+      setRecurringMessage(errorMessage(caught));
       return null;
     }
+  }
+
+  async function connectBillWallet() {
+    const connected = await connectWallets();
+    return connected?.bill ?? null;
   }
 
   async function refreshBillRegistry(account = billWallet?.account) {
@@ -373,8 +443,7 @@ export default function Home() {
       }));
     } catch (caught) {
       setBillState("error");
-      setDebtMessageTone("error");
-      setDebtMessage(errorMessage(caught));
+      setBillMessage(errorMessage(caught));
     }
   }
 
@@ -428,6 +497,7 @@ export default function Home() {
 
   async function payDebtOnArc(debt: BillSplitDebt) {
     const wallet = billWallet ?? (await connectBillWallet());
+    const debtKey = debt.billId.toString();
 
     if (!wallet) {
       return;
@@ -437,36 +507,50 @@ export default function Home() {
 
     if (amount <= 0n || amount > debt.remaining) {
       setBillState("error");
-      setDebtMessageTone("error");
-      setDebtMessage("Enter an amount up to the remaining debt.");
+      setDebtMessages((current) => ({
+        ...current,
+        [debtKey]: { tone: "error", message: "Enter an amount up to the remaining debt." },
+      }));
       return;
     }
 
     try {
       setBillState("working");
-      setDebtMessageTone("neutral");
-      setDebtMessage("Approving USDC.");
+      setDebtMessages((current) => ({
+        ...current,
+        [debtKey]: { tone: "neutral", message: "Approving USDC." },
+      }));
       await approveBillRegistry({ ...wallet, amount });
-      setDebtMessage("Paying debt with transaction memo.");
+      setDebtMessages((current) => ({
+        ...current,
+        [debtKey]: { tone: "neutral", message: "Paying debt with transaction memo." },
+      }));
       await payBillDebtWithMemo({ ...wallet, billId: debt.billId, amount });
       setBillState("success");
-      setDebtMessageTone("neutral");
-      setDebtMessage(`Paid ${billUnitsToUsdc(amount)} USDC toward bill #${debt.billId.toString()}.`);
+      setDebtMessages((current) => ({
+        ...current,
+        [debtKey]: { tone: "neutral", message: `Paid ${billUnitsToUsdc(amount)} USDC toward bill #${debt.billId.toString()}.` },
+      }));
       await refreshBillRegistry(wallet.account);
     } catch (caught) {
       setBillState("error");
-      setDebtMessageTone("error");
-      setDebtMessage(errorMessage(caught));
+      setDebtMessages((current) => ({
+        ...current,
+        [debtKey]: { tone: "error", message: errorMessage(caught) },
+      }));
     }
   }
 
   async function bridgeForDebt(debt: BillSplitDebt, debtSourceChain: BridgeSourceChain) {
     const session = bridgeSession ?? (await connectForBridge());
+    const debtKey = debt.billId.toString();
 
     if (!session || !billWallet) {
       setBillState("error");
-      setDebtMessageTone("error");
-      setDebtMessage("Connect your wallet first so bridged USDC can arrive at your Arc address.");
+      setDebtMessages((current) => ({
+        ...current,
+        [debtKey]: { tone: "error", message: "Connect your wallet first so bridged USDC can arrive at your Arc address." },
+      }));
       return;
     }
 
@@ -474,14 +558,18 @@ export default function Home() {
 
     if (amount <= 0n || amount > debt.remaining) {
       setBillState("error");
-      setDebtMessageTone("error");
-      setDebtMessage("Enter an amount up to the remaining debt.");
+      setDebtMessages((current) => ({
+        ...current,
+        [debtKey]: { tone: "error", message: "Enter an amount up to the remaining debt." },
+      }));
       return;
     }
 
     try {
-      setDebtMessageTone("neutral");
-      setDebtMessage(`Bridging ${billUnitsToUsdc(amount)} USDC to your Arc wallet from ${sourceLabel(debtSourceChain)}.`);
+      setDebtMessages((current) => ({
+        ...current,
+        [debtKey]: { tone: "neutral", message: `Bridging ${billUnitsToUsdc(amount)} USDC to your Arc wallet from ${sourceLabel(debtSourceChain)}.` },
+      }));
       const result = await bridgeUsdcToArc({
         session,
         sourceChain: debtSourceChain,
@@ -490,16 +578,22 @@ export default function Home() {
       });
       setBridgeResults((current) => ({ ...current, [debt.billId.toString()]: result }));
       setBillState(result.state === "error" ? "error" : "success");
-      setDebtMessageTone(result.state === "error" ? "error" : "neutral");
-      setDebtMessage(
-        result.state === "error"
-          ? "Bridge failed."
-          : "USDC is moving to Arc. After the Arc claim transaction completes, use Pay on Arc to settle the debt with a memo.",
-      );
+      setDebtMessages((current) => ({
+        ...current,
+        [debtKey]: {
+          tone: result.state === "error" ? "error" : "neutral",
+          message:
+            result.state === "error"
+              ? "Bridge failed."
+              : "USDC is moving to Arc. After the Arc claim transaction completes, use Pay on Arc to settle the debt with a memo.",
+        },
+      }));
     } catch (caught) {
       setBillState("error");
-      setDebtMessageTone("error");
-      setDebtMessage(errorMessage(caught));
+      setDebtMessages((current) => ({
+        ...current,
+        [debtKey]: { tone: "error", message: errorMessage(caught) },
+      }));
     }
   }
 
@@ -553,36 +647,14 @@ export default function Home() {
       return session;
     } catch (caught) {
       setBillState("error");
-      setDebtMessageTone("error");
-      setDebtMessage(errorMessage(caught));
+      setBillMessage(errorMessage(caught));
       return null;
     }
   }
 
   async function connectRecurring() {
-    const provider = getBrowserProvider();
-
-    if (!provider) {
-      setRecurringState("error");
-      setRecurringMessage("No EVM browser wallet found.");
-      return null;
-    }
-
-    setRecurringState("connecting");
-    setRecurringMessage("");
-
-    try {
-      const wallet = await createRecurringWallet(provider);
-      setRecurringWallet(wallet);
-      setRecurringState("idle");
-      setRecurringMessage(`Connected ${shortAddress(wallet.account)} on Arc Testnet.`);
-      void refreshRecurringTabsForWallet(wallet.account);
-      return wallet;
-    } catch (caught) {
-      setRecurringState("error");
-      setRecurringMessage(errorMessage(caught));
-      return null;
-    }
+    const connected = await connectWallets();
+    return connected?.recurring ?? null;
   }
 
   async function createOnchainTab() {
@@ -669,15 +741,21 @@ export default function Home() {
     }
 
     try {
+      setRecurringState("working");
+      setRecurringMessage("Refreshing recurring tabs.");
       const tabs = await readRecurringTabsForWallet(account);
       setWalletTabs(tabs);
-      if (!activeTabAddress && tabs.length > 0) {
-        setActiveTabAddress(tabs[0].address);
-        setTabAddressInput(tabs[0].address);
-        setTabState(tabs[0]);
-        const events = await readRecurringEvents(tabs[0].address).catch(() => []);
+      const selectedAddress = activeTabAddress ?? tabs[0]?.address ?? null;
+      if (selectedAddress) {
+        setActiveTabAddress(selectedAddress);
+        setTabAddressInput(selectedAddress);
+        const selectedTab = tabs.find((tab) => tab.address.toLowerCase() === selectedAddress.toLowerCase()) ?? (await readRecurringTab(selectedAddress));
+        const events = await readRecurringEvents(selectedAddress).catch(() => []);
+        setTabState(selectedTab);
         setTabEvents(events);
       }
+      setRecurringState("idle");
+      setRecurringMessage(tabs.length > 0 ? "Recurring tabs refreshed." : "No recurring tabs found for this wallet.");
     } catch (caught) {
       setRecurringState("error");
       setRecurringMessage(errorMessage(caught));
@@ -793,15 +871,23 @@ export default function Home() {
     setActiveTab(tab);
   }
 
+  async function connectActiveWallet() {
+    return connectWallets();
+  }
+
   return (
     <main className="app-shell min-h-screen text-[var(--text)]">
       <header className="sticky top-0 z-30 border-b border-[var(--border)] bg-[color:var(--header-bg)] backdrop-blur-xl">
         <div className="mx-auto max-w-7xl px-4 py-4 sm:px-6 lg:px-8">
           <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
             <div>
-              <p className="text-sm font-semibold text-[var(--accent)]">Splitsy</p>
-              <h1 className="mt-1 text-[clamp(1.55rem,3vw,2.5rem)] font-semibold leading-tight tracking-normal">
-                Split bills without the back-and-forth
+              <div aria-label="Splitsy" className="brand-lockup">
+                <span className="logo-crop logo-crop-app">
+                  <Image alt="Splitsy" className="logo-crop-image" height={1024} priority src="/splitsy.png" width={1536} />
+                </span>
+              </div>
+              <h1 className="app-title mt-2">
+                Split bills. Settle cleanly.
               </h1>
               <p className="mt-2 max-w-2xl text-sm text-[var(--text-muted)]">
                 Scan a receipt, choose who owes what, and keep every payment organized in one place.
@@ -815,7 +901,21 @@ export default function Home() {
                 <TabButton active={activeTab === "recurring"} onClick={() => switchAppTab("recurring")}>
                   Recurring
                 </TabButton>
+                <Link className="tab-button" href="/docs">
+                  <BookOpen size={16} />
+                  Docs
+                </Link>
               </div>
+              <button className="secondary-button" onClick={connectActiveWallet} type="button">
+                <WalletCards size={16} />
+                {activeTab === "recurring"
+                  ? recurringWallet
+                    ? "Wallet connected"
+                    : "Connect wallet"
+                  : billWallet
+                    ? "Wallet connected"
+                    : "Connect wallet"}
+              </button>
               <button
                 aria-label={`Switch to ${theme === "light" ? "dark" : "light"} mode`}
                 className="icon-button"
@@ -852,8 +952,7 @@ export default function Home() {
                 debts={debts}
                 partialPayments={partialPayments}
                 payDebtOnArc={payDebtOnArc}
-                debtMessage={debtMessage}
-                debtMessageTone={debtMessageTone}
+                debtMessages={debtMessages}
                 refreshBillRegistry={() => refreshBillRegistry()}
                 setClaimAmounts={setClaimAmounts}
                 setPartialPayments={setPartialPayments}
@@ -861,12 +960,11 @@ export default function Home() {
               />
             ) : null}
 
-            <div className="grid gap-5 lg:grid-cols-[0.82fr_1.18fr]">
-              <div className="space-y-5">
+            <div className="space-y-5">
               <Panel title="Upload bill" icon={<Upload size={19} />}>
                 <form className="space-y-4" onSubmit={parseBill}>
                   <label
-                    className="scan-surface flex min-h-72 cursor-pointer flex-col items-center justify-center rounded-[var(--radius)] border border-dashed border-[var(--border-strong)] bg-[var(--receipt)] p-4 text-center text-[var(--ink-950)] transition hover:border-[var(--accent)]"
+                    className="scan-surface upload-focus flex min-h-[28rem] cursor-pointer flex-col items-center justify-center rounded-[var(--radius)] border border-dashed border-[var(--border-strong)] bg-[var(--receipt)] p-6 text-center text-[var(--ink-950)] transition hover:border-[var(--accent)] sm:min-h-[34rem]"
                     data-scanning={ocrState === "reading"}
                   >
                     {imagePreview ? (
@@ -878,10 +976,10 @@ export default function Home() {
                       />
                     ) : (
                       <>
-                        <Camera className="text-[var(--accent)]" size={32} />
-                        <p className="mt-3 font-semibold">Upload the bill</p>
-                        <p className="mt-1 max-w-sm text-sm text-[#4d5c66]">
-                          Splitsy reads totals, tax, tip, and line items so the split starts clean.
+                        <Camera className="text-[var(--accent)]" size={44} />
+                        <p className="mt-4 text-xl font-semibold">Upload the bill</p>
+                        <p className="mt-2 max-w-md text-sm leading-6 text-[#4d5c66]">
+                          Use a local receipt or bill photo in any language. Splitsy reads totals, tax, tip, and line items so the split starts clean.
                         </p>
                       </>
                     )}
@@ -894,65 +992,112 @@ export default function Home() {
                     {ocrState === "reading" ? <Loader2 className="animate-spin" size={18} /> : <FileJson size={18} />}
                     {ocrState === "reading" ? "Reading receipt" : "Scan receipt"}
                   </button>
+                  <button
+                    className="manual-entry-link"
+                    onClick={() => {
+                      setManualBillEntry(true);
+                      setError("");
+                    }}
+                    type="button"
+                  >
+                    Or enter manually
+                  </button>
                 </form>
               </Panel>
 
-              </div>
+              <AnimatePresence>
+                {showBillEditor ? (
+                  <motion.div
+                    animate={{ opacity: 1, y: 0, scale: 1 }}
+                    exit={{ opacity: 0, y: 12, scale: 0.985 }}
+                    initial={{ opacity: 0, y: 16, scale: 0.985 }}
+                    ref={reviewBillRef}
+                    transition={{ duration: 0.26, ease: "easeOut" }}
+                  >
+                    <Panel title="Review bill" icon={<ReceiptText size={19} />}>
+                      <div className="receipt-card p-4 sm:p-5" ref={receiptPrintRef}>
+                        {billIsScanned ? (
+                          <>
+                            <div className="mb-4 rounded-[var(--radius)] border border-[rgba(7,20,33,0.12)] bg-white/45 p-3 text-xs text-[#4d5c66]">
+                              <p className="font-semibold text-[var(--ink-950)]">Converted to USD for settlement</p>
+                              <p className="mt-1">
+                                Origin currency {originCurrency}. Rate{" "}
+                                <span className="amount-text">1 {originCurrency} = {usdRate.toFixed(6)} USD</span>
+                                {fxQuote?.asOf ? ` · ${new Date(fxQuote.asOf).toLocaleString()}` : ""}
+                              </p>
+                            </div>
+                            <div className="grid gap-3 sm:grid-cols-2">
+                              <Field label="Merchant" value={bill.merchant} onChange={(value) => updateBillField("merchant", value)} />
+                              <Field label="Origin currency" value={bill.currency} onChange={(value) => updateBillField("currency", value)} />
+                              <Field label="Subtotal USD" type="number" value={toUsdInput(bill.subtotal, usdRate)} onChange={(value) => updateBillUsdField("subtotal", value)} />
+                              <Field label="Tax USD" type="number" value={toUsdInput(bill.tax, usdRate)} onChange={(value) => updateBillUsdField("tax", value)} />
+                              <Field label="Tip USD" type="number" value={toUsdInput(bill.tip, usdRate)} onChange={(value) => updateBillUsdField("tip", value)} />
+                              <Field label="Total USD" type="number" value={toUsdInput(bill.total, usdRate)} onChange={(value) => updateBillUsdField("total", value)} />
+                            </div>
+                          </>
+                        ) : (
+                          <div className="grid gap-3 sm:grid-cols-2">
+                            <Field label="Merchant" value={bill.merchant} onChange={(value) => updateBillField("merchant", value)} />
+                            <Field label="Total USD" type="number" value={String(bill.total)} onChange={(value) => updateBillField("total", value)} />
+                          </div>
+                        )}
 
-              <div className="space-y-5">
-              <Panel title="Review bill" icon={<ReceiptText size={19} />}>
-                <div className="receipt-card p-4 sm:p-5" ref={receiptPrintRef}>
-                  {billIsScanned ? (
-                    <>
-                      <div className="mb-4 rounded-[var(--radius)] border border-[rgba(7,20,33,0.12)] bg-white/45 p-3 text-xs text-[#4d5c66]">
-                        <p className="font-semibold text-[var(--ink-950)]">Converted to USD for settlement</p>
-                        <p className="mt-1">
-                          Origin currency {originCurrency}. Rate{" "}
-                          <span className="amount-text">1 {originCurrency} = {usdRate.toFixed(6)} USD</span>
-                          {fxQuote?.asOf ? ` · ${new Date(fxQuote.asOf).toLocaleString()}` : ""}
-                        </p>
+                        {billIsScanned && bill.lineItems.length > 0 ? (
+                          <details className="bill-items-disclosure mt-5">
+                            <summary>
+                              <span>
+                                <span className="block text-sm font-semibold text-[var(--ink-950)]">Bill items</span>
+                                <span className="mt-0.5 block text-xs text-[#5b6972]">
+                                  {bill.lineItems.length} extracted item{bill.lineItems.length === 1 ? "" : "s"}
+                                </span>
+                              </span>
+                              <span className="bill-items-summary-total">
+                                <span className="amount-text">
+                                  ${bill.lineItems.reduce((sum, item) => sum + item.amount * usdRate, 0).toFixed(2)}
+                                </span>
+                                <ChevronDown className="bill-items-chevron" size={18} />
+                              </span>
+                            </summary>
+                            <div className="bill-items-body">
+                              {bill.lineItems.map((item, index) => (
+                                <div className="receipt-row" data-receipt-row key={`${item.description}-${index}`}>
+                                  <span className="receipt-index">{String(index + 1).padStart(2, "0")}</span>
+                                  <span className="min-w-0 text-sm font-medium">{item.description}</span>
+                                  <span className="amount-text text-sm font-semibold">${(item.amount * usdRate).toFixed(2)}</span>
+                                </div>
+                              ))}
+                            </div>
+                          </details>
+                        ) : null}
                       </div>
-                      <div className="grid gap-3 sm:grid-cols-2">
-                        <Field label="Merchant" value={bill.merchant} onChange={(value) => updateBillField("merchant", value)} />
-                        <Field label="Origin currency" value={bill.currency} onChange={(value) => updateBillField("currency", value)} />
-                        <Field label="Subtotal USD" type="number" value={toUsdInput(bill.subtotal, usdRate)} onChange={(value) => updateBillUsdField("subtotal", value)} />
-                        <Field label="Tax USD" type="number" value={toUsdInput(bill.tax, usdRate)} onChange={(value) => updateBillUsdField("tax", value)} />
-                        <Field label="Tip USD" type="number" value={toUsdInput(bill.tip, usdRate)} onChange={(value) => updateBillUsdField("tip", value)} />
-                        <Field label="Total USD" type="number" value={toUsdInput(bill.total, usdRate)} onChange={(value) => updateBillUsdField("total", value)} />
-                      </div>
-                    </>
-                  ) : (
-                    <Field label="Total" type="number" value={String(bill.total)} onChange={(value) => updateBillField("total", value)} />
-                  )}
+                    </Panel>
+                  </motion.div>
+                ) : null}
+              </AnimatePresence>
 
-                  {billIsScanned && bill.lineItems.length > 0 ? (
-                    <div className="receipt-divider mt-5 pt-2">
-                      {bill.lineItems.map((item, index) => (
-                        <div className="receipt-row" data-receipt-row key={`${item.description}-${index}`}>
-                          <span className="receipt-index">{String(index + 1).padStart(2, "0")}</span>
-                          <span className="min-w-0 text-sm font-medium">{item.description}</span>
-                          <span className="amount-text text-sm font-semibold">${(item.amount * usdRate).toFixed(2)}</span>
+              <AnimatePresence>
+                {billReadyForSplit ? (
+                  <motion.div
+                    animate={{ opacity: 1, y: 0, scale: 1 }}
+                    exit={{ opacity: 0, y: 12, scale: 0.985 }}
+                    initial={{ opacity: 0, y: 18, scale: 0.985 }}
+                    ref={reviewSplitRef}
+                    transition={{ duration: 0.3, ease: "easeOut" }}
+                  >
+                    <Panel
+                      title="Review your split"
+                      icon={<WalletCards size={19} />}
+                      action={
+                        <div className="segmented-control">
+                          <ModeButton active={splitMode === "equal"} onClick={() => setSplitMode("equal")}>
+                            Equal
+                          </ModeButton>
+                          <ModeButton active={splitMode === "manual"} onClick={() => setSplitMode("manual")}>
+                            Manual
+                          </ModeButton>
                         </div>
-                      ))}
-                    </div>
-                  ) : null}
-                </div>
-              </Panel>
-
-              <Panel
-                title="Review your split"
-                icon={<WalletCards size={19} />}
-                action={
-                  <div className="segmented-control">
-                    <ModeButton active={splitMode === "equal"} onClick={() => setSplitMode("equal")}>
-                      Equal
-                    </ModeButton>
-                    <ModeButton active={splitMode === "manual"} onClick={() => setSplitMode("manual")}>
-                      Manual
-                    </ModeButton>
-                  </div>
-                }
-              >
+                      }
+                    >
                 <div className="route-strip text-sm">
                   <div>
                     <p className="font-semibold text-[var(--text)]">Bill registry</p>
@@ -990,8 +1135,12 @@ export default function Home() {
                             disabled={splitMode === "equal"}
                             label="Share"
                             type="number"
-                            value={participant.amountUsd.toFixed(2)}
-                            onChange={(value) => updateParticipant(participant.id, "amountUsd", value)}
+                            value={
+                              splitMode === "manual"
+                                ? (participantShareInputs[participant.id] ?? (participant.amountUsd > 0 ? String(participant.amountUsd) : ""))
+                                : participant.amountUsd.toFixed(2)
+                            }
+                            onChange={(value) => updateParticipantShare(participant.id, value)}
                           />
                           <button
                             aria-label={`Remove ${participant.label}`}
@@ -1018,10 +1167,6 @@ export default function Home() {
                       <Plus size={16} />
                       Add payer
                     </button>
-                    <button className="secondary-button" onClick={connectBillWallet} type="button">
-                      <WalletCards size={16} />
-                      {billWallet ? "Wallet connected" : "Connect wallet"}
-                    </button>
                     <button
                       className="primary-button"
                       disabled={billState === "working" || billState === "connecting"}
@@ -1047,9 +1192,10 @@ export default function Home() {
                     </div>
                   </div>
                 ) : null}
-              </Panel>
-
-              </div>
+                    </Panel>
+                  </motion.div>
+                ) : null}
+              </AnimatePresence>
             </div>
           </motion.div>
         ) : (
@@ -1065,7 +1211,6 @@ export default function Home() {
             authorizationAmount={authorizationAmount}
             authorizeActiveTab={authorizeActiveTab}
             claimActiveRecurringFunds={claimActiveRecurringFunds}
-            connectRecurring={connectRecurring}
             createOnchainTab={createOnchainTab}
             customCycleDays={customCycleDays}
             displayRecurringMembers={displayRecurringMembers}
@@ -1109,8 +1254,7 @@ function DebtWorkspace({
   claimMessageTone,
   claimSplitterFunds,
   debts,
-  debtMessage,
-  debtMessageTone,
+  debtMessages,
   partialPayments,
   payDebtOnArc,
   refreshBillRegistry,
@@ -1126,8 +1270,7 @@ function DebtWorkspace({
   claimMessageTone: "error" | "neutral";
   claimSplitterFunds: (debt: BillSplitDebt) => void;
   debts: BillSplitDebt[];
-  debtMessage: string;
-  debtMessageTone: "error" | "neutral";
+  debtMessages: Record<string, { message: string; tone: "error" | "neutral" }>;
   partialPayments: Record<string, string>;
   payDebtOnArc: (debt: BillSplitDebt) => void;
   refreshBillRegistry: () => void;
@@ -1181,16 +1324,11 @@ function DebtWorkspace({
             </button>
           </div>
 
-          {debtMessage ? (
-            <div className="mt-4">
-              <Message tone={debtMessageTone}>{debtMessage}</Message>
-            </div>
-          ) : null}
-
           <div className="mt-4 space-y-3">
             {activeDebts.map((debt) => {
               const key = debt.billId.toString();
               const bridgeResult = bridgeResults[key];
+              const debtMessage = debtMessages[key];
 
               return (
                 <div className="rounded-[var(--radius)] border border-[var(--border)] bg-[var(--surface-strong)] p-3" key={key}>
@@ -1216,6 +1354,12 @@ function DebtWorkspace({
                       onChange={(value) => setPartialPayments({ ...partialPayments, [key]: value })}
                     />
                   </div>
+
+                  {debtMessage ? (
+                    <div className="mt-3">
+                      <Message tone={debtMessage.tone}>{debtMessage.message}</Message>
+                    </div>
+                  ) : null}
 
                   <div className="route-strip mt-3 text-sm">
                     <div>
@@ -1290,14 +1434,14 @@ function DebtWorkspace({
         </div>
       ) : null}
 
-      <div ref={claimRef}>
-      <Panel title="Claim funds" icon={<BadgeDollarSign size={19} />}>
-        {claimMessage ? (
-          <div className="mb-4">
-            <Message tone={claimMessageTone}>{claimMessage}</Message>
-          </div>
-        ) : null}
-        {claimableBills.length > 0 ? (
+      {claimableBills.length > 0 ? (
+        <div ref={claimRef}>
+        <Panel title="Claim funds" icon={<BadgeDollarSign size={19} />}>
+          {claimMessage ? (
+            <div className="mb-4">
+              <Message tone={claimMessageTone}>{claimMessage}</Message>
+            </div>
+          ) : null}
           <div className="space-y-3">
             {claimableBills.map((debt) => {
               const key = debt.billId.toString();
@@ -1326,13 +1470,9 @@ function DebtWorkspace({
               );
             })}
           </div>
-        ) : (
-          <p className="text-sm text-[var(--text-muted)]">
-            Paid shares will appear here after payers settle their debt on Arc.
-          </p>
-        )}
-      </Panel>
-      </div>
+        </Panel>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -1342,7 +1482,6 @@ function RecurringWorkspace({
   authorizationAmount,
   authorizeActiveTab,
   claimActiveRecurringFunds,
-  connectRecurring,
   createOnchainTab,
   customCycleDays,
   displayRecurringMembers,
@@ -1373,7 +1512,6 @@ function RecurringWorkspace({
   authorizationAmount: string;
   authorizeActiveTab: () => void;
   claimActiveRecurringFunds: () => void;
-  connectRecurring: () => Promise<RecurringWallet | null>;
   createOnchainTab: () => void;
   customCycleDays: string;
   displayRecurringMembers: RecurringMemberInput[];
@@ -1418,6 +1556,7 @@ function RecurringWorkspace({
     : authorizationAmount;
   const dueAmount = tabState?.members.reduce((sum, member) => sum + member.dueNow, 0n) ?? 0n;
   const activeTabComplete = Boolean(tabState && tabState.settlementCount >= tabState.maxSettlements);
+  const showRecurringDetails = Boolean(recurringWallet && (walletTabs.length > 0 || tabState));
   const recurringTabPaidForWallet = (tab: RecurringTabState) => {
     if (!recurringWallet) {
       return tab.members.every((member) => member.totalSettled >= member.fixedShare * tab.maxSettlements);
@@ -1432,7 +1571,7 @@ function RecurringWorkspace({
   };
 
   return (
-    <div className="grid gap-5 lg:grid-cols-[0.9fr_1.1fr]">
+    <div className={`grid gap-5 ${showRecurringDetails ? "lg:grid-cols-[0.9fr_1.1fr]" : "lg:grid-cols-1"}`}>
       <div className="space-y-5">
         <Panel title="Create recurring tab" icon={<Landmark size={19} />}>
           <div className="space-y-3">
@@ -1522,10 +1661,6 @@ function RecurringWorkspace({
               <Plus size={16} />
               Add member
             </button>
-            <button className="secondary-button" onClick={connectRecurring} type="button">
-              <WalletCards size={16} />
-              {recurringWallet ? "Wallet connected" : "Connect wallet"}
-            </button>
             <button className="primary-button" disabled={recurringState === "working"} onClick={createOnchainTab} type="button">
               {recurringState === "working" ? <Loader2 className="animate-spin" size={16} /> : <Landmark size={16} />}
               Create cycle
@@ -1533,25 +1668,21 @@ function RecurringWorkspace({
           </div>
         </Panel>
 
-        <Panel title="Your recurring tabs" icon={<RefreshCw size={19} />}>
-          <div className="flex flex-wrap gap-2">
-            <button className="secondary-button" onClick={connectRecurring} type="button">
-              <WalletCards size={16} />
-              {recurringWallet ? "Wallet connected" : "Connect wallet"}
-            </button>
-            <button className="secondary-button" disabled={!recurringWallet} onClick={refreshRecurringTabsForWallet} type="button">
-              <RefreshCw size={16} />
-              Refresh tabs
-            </button>
-          </div>
-          {recurringMessage ? (
-            <div className="mt-4">
-              <Message tone={recurringState === "error" ? "error" : "neutral"}>{recurringMessage}</Message>
+        {showRecurringDetails ? (
+          <Panel title="Your recurring tabs" icon={<RefreshCw size={19} />}>
+            <div className="flex flex-wrap gap-2">
+              <button className="secondary-button" disabled={!recurringWallet} onClick={refreshRecurringTabsForWallet} type="button">
+                <RefreshCw size={16} />
+                Refresh tabs
+              </button>
             </div>
-          ) : null}
-          <div className="mt-4 space-y-2">
-            {walletTabs.length > 0 ? (
-              walletTabs.map((tab) => (
+            {recurringMessage ? (
+              <div className="mt-4">
+                <Message tone={recurringState === "error" ? "error" : "neutral"}>{recurringMessage}</Message>
+              </div>
+            ) : null}
+            <div className="mt-4 space-y-2">
+              {walletTabs.map((tab) => (
                 <button
                   className={`w-full rounded-[var(--radius)] border p-3 text-left text-sm transition hover:bg-[var(--surface-muted)] ${
                     tabState?.address === tab.address ? "border-[var(--accent)] bg-[var(--accent-soft)]" : "border-[var(--border)] bg-[var(--surface-strong)]"
@@ -1573,18 +1704,14 @@ function RecurringWorkspace({
                         : `next ${formatUnix(tab.nextSettlementAt)}`}
                   </span>
                 </button>
-              ))
-            ) : (
-              <p className="text-sm text-[var(--text-muted)]">
-                Connect a wallet to discover recurring tabs where this wallet pays or receives settlement.
-              </p>
-            )}
-          </div>
-        </Panel>
+              ))}
+            </div>
+          </Panel>
+        ) : null}
       </div>
 
-      <div className="space-y-5">
-        {tabState ? (
+      {showRecurringDetails && tabState ? (
+        <div className="space-y-5">
           <>
             <Panel title="Active cycle" icon={<ReceiptText size={19} />}>
               {recurringWallet && visibleMembers.length === 1 && !isRecipient ? (
@@ -1736,7 +1863,7 @@ function RecurringWorkspace({
               <Field
                 label="Approval limit"
                 type="number"
-                value={authorizationAmount}
+                value={authorizationAmount || approvalPlaceholder}
                 onChange={setAuthorizationAmount}
               />
               <p className="mt-2 text-xs text-[var(--text-muted)]">
@@ -1763,28 +1890,22 @@ function RecurringWorkspace({
             {tabEvents.length > 0 ? (
               <Panel title="Events" icon={<CheckCircle2 size={19} />}>
                 <div className="space-y-2">
-                  {tabEvents.slice(0, 8).map((event) => (
+                  {tabEvents.slice(0, 5).map((event) => (
                     <a
-                      className="block rounded-[var(--radius)] border border-[var(--border)] p-3 text-sm hover:bg-[var(--surface-muted)]"
+                      className="flex items-center justify-between gap-3 rounded-[var(--radius)] border border-[var(--border)] p-3 text-sm hover:bg-[var(--surface-muted)]"
                       href={`https://testnet.arcscan.app/tx/${event.txHash}`}
                       key={`${event.txHash}-${event.name}-${event.blockNumber.toString()}`}
                     >
                       <span className="font-semibold">{event.name}</span>
-                      <span className="ml-2 text-[var(--text-muted)]">{event.summary}</span>
+                      <span className="font-mono text-xs text-[var(--text-muted)]">{shortAddress(event.txHash)}</span>
                     </a>
                   ))}
                 </div>
               </Panel>
             ) : null}
           </>
-        ) : (
-          <Panel title="Load a recurring ledger" icon={<Landmark size={19} />}>
-            <p className="text-sm text-[var(--text-muted)]">
-              Create a cycle or load a RecurringTab contract to inspect collectible balances and settlement state.
-            </p>
-          </Panel>
-        )}
-      </div>
+        </div>
+      ) : null}
     </div>
   );
 }

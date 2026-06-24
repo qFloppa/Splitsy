@@ -123,6 +123,38 @@ a {
   background: transparent;
 }
 
+.brand-lockup {
+  display: inline-flex;
+  align-items: center;
+}
+
+.logo-crop {
+  --logo-width: 12rem;
+  display: block;
+  position: relative;
+  width: var(--logo-width);
+  aspect-ratio: 1227 / 372;
+  overflow: hidden;
+}
+
+.logo-crop-app {
+  --logo-width: clamp(10.5rem, 15vw, 14rem);
+}
+
+.logo-crop-docs {
+  --logo-width: clamp(8.5rem, 12vw, 10rem);
+}
+
+.logo-crop-image {
+  position: absolute;
+  top: calc(var(--logo-width) * -0.26);
+  left: calc(var(--logo-width) * -0.121);
+  width: calc(var(--logo-width) * 1.252);
+  height: auto;
+  max-width: none;
+  object-fit: contain;
+}
+
 .panel {
   border: 1px solid var(--border);
   border-radius: var(--radius);
@@ -134,6 +166,15 @@ a {
 
 .panel h2 {
   letter-spacing: 0;
+}
+
+.app-title {
+  max-width: 12ch;
+  color: var(--text);
+  font-size: clamp(2.05rem, 5vw, 4.45rem);
+  font-weight: 850;
+  letter-spacing: 0;
+  line-height: 0.96;
 }
 
 .segmented-control {
@@ -421,6 +462,69 @@ input[type="number"],
   border-top: 1px solid rgba(7, 20, 33, 0.08);
 }
 
+.bill-items-disclosure {
+  border-top: 1px dashed rgba(7, 20, 33, 0.22);
+  padding-top: 0.9rem;
+}
+
+.bill-items-disclosure summary {
+  display: flex;
+  min-height: 3.45rem;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  border: 1px solid rgba(7, 20, 33, 0.12);
+  border-radius: var(--radius);
+  background: rgba(255, 255, 255, 0.48);
+  color: var(--ink-950);
+  cursor: pointer;
+  list-style: none;
+  padding: 0.82rem 0.95rem;
+  transition:
+    border-color 160ms ease,
+    background-color 160ms ease,
+    box-shadow 160ms ease;
+}
+
+.bill-items-disclosure summary::-webkit-details-marker {
+  display: none;
+}
+
+.bill-items-disclosure summary:hover {
+  border-color: color-mix(in srgb, var(--accent) 36%, rgba(7, 20, 33, 0.12));
+  background: rgba(255, 255, 255, 0.66);
+  box-shadow: 0 10px 24px rgba(7, 20, 33, 0.08);
+}
+
+.bill-items-summary-total {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 0.55rem;
+  color: var(--ink-950);
+  font-size: 0.95rem;
+  font-weight: 780;
+}
+
+.bill-items-chevron {
+  color: var(--accent);
+  transition: transform 180ms ease;
+}
+
+.bill-items-disclosure[open] .bill-items-chevron {
+  transform: rotate(180deg);
+}
+
+.bill-items-body {
+  margin-top: 0.55rem;
+  overflow: hidden;
+  border: 1px solid rgba(7, 20, 33, 0.1);
+  border-radius: var(--radius);
+  background: rgba(255, 255, 255, 0.28);
+  padding: 0.2rem 0.85rem;
+  animation: bill-items-open 180ms ease-out;
+}
+
 .receipt-index {
   font-family: "Roboto Mono", "SFMono-Regular", Consolas, "Liberation Mono", monospace;
   color: rgba(7, 20, 33, 0.46);
@@ -430,6 +534,30 @@ input[type="number"],
 .scan-surface {
   position: relative;
   overflow: hidden;
+}
+
+.upload-focus {
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.55),
+    0 22px 58px rgba(7, 20, 33, 0.13);
+}
+
+.manual-entry-link {
+  display: inline-flex;
+  width: 100%;
+  justify-content: center;
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  font-size: 0.92rem;
+  font-weight: 780;
+  text-decoration: underline;
+  text-underline-offset: 0.22em;
+  cursor: pointer;
+}
+
+.manual-entry-link:hover {
+  color: color-mix(in srgb, var(--accent) 78%, var(--arc-cyan));
 }
 
 .scan-surface[data-scanning="true"]::after {
@@ -513,6 +641,8 @@ input[type="number"],
 }
 
 .docs-brand {
+  display: inline-flex;
+  align-items: center;
   color: #111827;
   font-size: 1.05rem;
   font-weight: 800;
@@ -995,6 +1125,18 @@ input[type="number"],
 
   100% {
     transform: translateY(620%);
+  }
+}
+
+@keyframes bill-items-open {
+  0% {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+
+  100% {
+    opacity: 1;
+    transform: translateY(0);
   }
 }
 

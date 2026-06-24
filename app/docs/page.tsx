@@ -1,4 +1,5 @@
 import Link from "next/link";
+import Image from "next/image";
 import {
   ArrowRight,
   BadgeDollarSign,
@@ -31,26 +32,12 @@ const sections = [
 ];
 
 const stack = [
-  ["Next.js 16 App Router", "React 19 client surfaces for wallet workflows and server route handlers for OCR, FX, and cron settlement."],
-  ["TypeScript", "Strict application logic, typed contract helpers, typed bridge summaries, and predictable USDC amount conversion."],
-  ["Viem", "Wallet clients, public clients, contract reads/writes, event decoding, and Arc Testnet chain switching."],
-  ["Solidity 0.8.28", "Bill registry and recurring tab contracts, tested with Hardhat 3."],
+  ["Application interface", "A responsive web experience for receipt upload, bill review, split creation, wallet connection, and recurring payment management."],
+  ["Typed transaction layer", "Strongly typed contract reads and writes for USDC payments, approvals, event history, and Arc Testnet wallet interactions."],
+  ["Solidity contracts", "Bill registry and recurring tab contracts define the accounting rules that keep payments verifiable onchain."],
   ["Circle AppKit", "Browser-wallet USDC bridging into Arc Testnet through Circle bridge capability."],
   ["CCTP", "Native USDC burn-and-mint movement between supported source chains and Arc."],
-  ["Hardhat 3", "Contract tests, deployment scripts, and Arc Testnet deployment configuration."],
-  ["Supabase schema", "Prepared persistence model for tabs, members, charges, and settlements."],
-];
-
-const envVars = [
-  ["RECEIPT_SCANNER_API_KEY", "Server-side key used by the OCR route to parse uploaded bill images."],
-  ["RECEIPT_SCANNER_MODEL", "Model name used by the receipt scanner route."],
-  ["ARC_TESTNET_RPC_URL", "RPC endpoint used by server and client contract reads."],
-  ["ARC_TESTNET_USDC_ADDRESS", "Native USDC contract address for Arc Testnet."],
-  ["NEXT_PUBLIC_BILL_SPLIT_REGISTRY_ADDRESS", "BillSplitRegistry contract address used for one-time bills."],
-  ["NEXT_PUBLIC_RECURRING_TAB_FACTORY_ADDRESS", "RecurringTabFactory address used to create and discover recurring tabs."],
-  ["RECURRING_SETTLER_PRIVATE_KEY", "Server wallet used by the scheduled backend settlement route to pay gas."],
-  ["RECURRING_SETTLER_SECRET or CRON_SECRET", "Bearer token required by /api/recurring/settle."],
-  ["DEPLOYER_PRIVATE_KEY", "Deployment key for Hardhat scripts. It can be separate from the recurring settler key."],
+  ["Settlement automation", "Protected automation checks recurring tabs on a schedule so payers do not need to press a settle button each cycle."],
 ];
 
 export const metadata = {
@@ -64,7 +51,9 @@ export default function DocsPage() {
       <header className="docs-hero">
         <nav className="docs-topbar" aria-label="Docs navigation">
           <Link href="/" className="docs-brand">
-            Splitsy
+            <span className="logo-crop logo-crop-docs">
+              <Image alt="Splitsy" className="logo-crop-image" height={1024} priority src="/splitsy.png" width={1536} />
+            </span>
           </Link>
           <div className="docs-toplinks">
             <a href="#configuration">Configuration</a>
@@ -77,11 +66,11 @@ export default function DocsPage() {
         <div className="docs-hero-grid">
           <div>
             <p className="docs-eyebrow">Product documentation</p>
-            <h1>Everything you need to run, use, and understand Splitsy.</h1>
+            <h1>Everything users need to understand Splitsy.</h1>
             <p className="docs-lede">
               Splitsy turns shared bills into trackable USDC payment flows. It scans receipts, calculates who owes what, records
-              debts on Arc Testnet, lets payers fund and pay from their wallets, and automates recurring collection through a
-              backend settlement runner.
+              debts on Arc Testnet, lets payers fund and pay from their wallets, and automates recurring collection when a cycle
+              becomes due.
             </p>
             <div className="docs-hero-actions">
               <Link href="/" className="docs-primary-link">
@@ -152,8 +141,8 @@ export default function DocsPage() {
                 into Arc Testnet.
               </InfoCard>
               <InfoCard icon={<CalendarClock />} title="Automated recurring settlement">
-                A server-held settler key calls recurring settlement on a schedule, so users approve once and do not manually
-                press a settlement button every cycle.
+                Once a payer has approved a recurring tab, Splitsy checks due cycles automatically so users do not manually press
+                a settlement button every cycle.
               </InfoCard>
             </div>
           </section>
@@ -229,8 +218,8 @@ export default function DocsPage() {
               </table>
             </div>
             <p>
-              Amounts are represented with 6 decimals to match USDC. The app converts human-readable amounts with Viem&apos;s unit
-              helpers and internal utility functions such as <code>usdcToBillUnits</code> and <code>billUnitsToUsdc</code>.
+              Amounts are represented with 6 decimals to match USDC. User-entered dollar values are converted into USDC base
+              units before they are submitted to the contract.
             </p>
             <Callout title="About netting">
               Splitsy includes a netting module for group ledger previews. It calculates each member&apos;s net position from charges,
@@ -252,9 +241,9 @@ export default function DocsPage() {
                 <code>RecurringTabFactory</code> deploys one <code>RecurringTab</code> contract per tab. Each tab has immutable
                 recipient, interval, max cycle count, member list, and fixed shares.
               </InfoCard>
-              <InfoCard icon={<CalendarClock />} title="Scheduled backend calls">
-                <code>/api/recurring/settle</code> scans all factory tabs and calls <code>settleTab()</code> from a server wallet.
-                <code>vercel.json</code> schedules it hourly.
+              <InfoCard icon={<CalendarClock />} title="Scheduled settlement">
+                Splitsy checks factory-created tabs on a schedule and calls <code>settleTab()</code> for tabs that have collectible
+                balances.
               </InfoCard>
               <InfoCard icon={<ShieldCheck />} title="Shortfall handling">
                 If a member has insufficient allowance or balance, the contract emits shortfall events and collects from members
@@ -267,7 +256,7 @@ export default function DocsPage() {
             </div>
             <p>
               The debtor view shows approved amount, wallet balance, paid total, total debt, cycles due, and progress. A paid tab
-              uses the <code>/public/paid.png</code> stamp. The splitter view shows every member&apos;s share, due amount, remaining
+              uses a paid-bill stamp. The splitter view shows every member&apos;s share, due amount, remaining
               total, wallet balance, allowance, and collected total.
             </p>
           </section>
@@ -303,18 +292,17 @@ export default function DocsPage() {
             <SectionHeading icon={<Code2 size={20} />} title="Architecture" />
             <div className="docs-architecture">
               <div>
-                <h3>Client</h3>
+                <h3>Experience layer</h3>
                 <p>
-                  <code>app/page.tsx</code> is the primary interactive surface. It manages receipt scanning, split editing, wallet
-                  connection, bill creation, debt payment, claim flows, recurring tab creation, approval and revoke flows, tab
-                  selection, and event display.
+                  The Splitsy web app handles receipt upload, bill review, split editing, wallet connection, debt payment,
+                  claim flows, recurring tab creation, approval management, tab selection, and event display.
                 </p>
               </div>
               <div>
-                <h3>Server routes</h3>
+                <h3>Service layer</h3>
                 <p>
-                  <code>/api/ocr</code> parses receipt images, <code>/api/fx</code> quotes non-USD bills into USD, and
-                  <code>/api/recurring/settle</code> runs protected recurring settlement from a server wallet.
+                  Receipt extraction, currency conversion, and recurring settlement automation are handled outside the payment
+                  interface so users only see the actions they need.
                 </p>
               </div>
               <div>
@@ -325,10 +313,10 @@ export default function DocsPage() {
                 </p>
               </div>
               <div>
-                <h3>Support libraries</h3>
+                <h3>Integration layer</h3>
                 <p>
-                  <code>lib/bill-split-contracts.ts</code>, <code>lib/recurring-contracts.ts</code>, and
-                  <code>lib/appkit-bridge.ts</code> isolate contract and Circle AppKit integration details from the UI.
+                  Wallet, contract, and Circle bridge integrations are separated from the interface so payment flows remain
+                  consistent across one-time bills and recurring tabs.
                 </p>
               </div>
             </div>
@@ -385,17 +373,13 @@ export default function DocsPage() {
           <section id="operations" className="docs-section">
             <SectionHeading icon={<CalendarClock size={20} />} title="Operations" />
             <p>
-              Recurring settlement is designed as backend infrastructure. Users approve spending and maintain balances; the server
-              calls settlement on a schedule. The current schedule is <code>0 * * * *</code>, which runs once every hour, every
-              day.
+              Recurring settlement is designed to be automatic after user approval. Payers maintain enough USDC and allowance for
+              the tab, while Splitsy periodically checks whether a cycle is due and collectible.
             </p>
-            <pre><code>{`curl -X POST "$APP_URL/api/recurring/settle" \\
-  -H "Authorization: Bearer $RECURRING_SETTLER_SECRET"`}</code></pre>
             <p>
-              The endpoint scans tab ids from <code>1</code> to <code>nextTabId - 1</code>. For each tab it simulates settlement,
-              writes the transaction if simulation succeeds, waits for the receipt, and reports <code>settled</code>,
-              <code>skipped</code>, or <code>failed</code>. Expected skip reasons include <code>AlreadySettledForPeriod</code>,
-              <code>NoCollectibleMembers</code>, <code>TabComplete</code>, and <code>UnknownTab</code>.
+              If a payer has insufficient balance or allowance, the contract records a shortfall and Splitsy can collect the
+              unpaid portion later after the payer funds or re-approves their wallet. Recipients can claim collected funds when a
+              claimable balance is available.
             </p>
           </section>
 
@@ -404,8 +388,8 @@ export default function DocsPage() {
             <ul className="docs-list">
               <li>Users explicitly approve USDC spend before contracts can pull funds.</li>
               <li>Recurring approval is constrained to the tab contract address and can be revoked by setting allowance to zero.</li>
-              <li>The cron route requires a bearer token through <code>RECURRING_SETTLER_SECRET</code> or <code>CRON_SECRET</code>.</li>
-              <li>Server private keys must remain server-only. Do not expose <code>RECURRING_SETTLER_PRIVATE_KEY</code> to the browser.</li>
+              <li>Recurring settlement is protected by operational controls and is not exposed as a public user action.</li>
+              <li>Sensitive operational credentials must never be exposed in browser code, screenshots, public docs, or client logs.</li>
               <li>Contracts use custom errors and explicit checks for invalid amounts, unknown bills, unauthorized claims, and duplicate recurring members.</li>
               <li>Receipt OCR data should be reviewed by the splitter before submission. The scanner is a convenience layer, not an accounting authority.</li>
               <li>Bridge flows depend on the connected wallet signing each step and on Circle attestation for CCTP minting.</li>
@@ -415,35 +399,20 @@ export default function DocsPage() {
           <section id="configuration" className="docs-section">
             <SectionHeading icon={<ShieldCheck size={20} />} title="Configuration" />
             <p>
-              Configure Splitsy through environment variables. Public variables identify deployed contracts; private variables
-              power server routes, cron settlement, OCR, and deployment.
+              Splitsy should be connected to the intended Arc Testnet contracts before users create bills or recurring tabs.
+              Contract addresses, USDC token settings, bridge support, receipt scanning, and settlement automation are managed by
+              the operator during deployment.
             </p>
-            <div className="docs-table-wrap">
-              <table>
-                <thead>
-                  <tr>
-                    <th>Variable</th>
-                    <th>Description</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {envVars.map(([name, detail]) => (
-                    <tr key={name}>
-                      <td><code>{name}</code></td>
-                      <td>{detail}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+            <div className="docs-card-grid two">
+              <InfoCard icon={<WalletCards />} title="For users">
+                Use a compatible browser wallet, switch to the supported Arc Testnet network, keep enough USDC for payments, and
+                review every wallet prompt before signing.
+              </InfoCard>
+              <InfoCard icon={<ShieldCheck />} title="For operators">
+                Keep sensitive operational configuration outside public documentation. Publish only user-safe details such as supported
+                network, supported asset, verified contract addresses, and contract source links.
+              </InfoCard>
             </div>
-            <h3>Useful commands</h3>
-            <pre><code>{`npm run dev
-npm run lint
-npm run build
-npm run test:netting
-npm run test:contracts
-npm run deploy:arc:bill-registry
-npm run deploy:arc:factory`}</code></pre>
           </section>
         </article>
       </div>

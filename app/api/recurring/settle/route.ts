@@ -12,6 +12,12 @@ const factoryAddress = (
 const rpcUrl = process.env.ARC_TESTNET_RPC_URL ?? "https://rpc.testnet.arc.network";
 
 const recurringTabFactoryAbi = [
+  { type: "error", name: "AlreadySettledForPeriod", inputs: [] },
+  { type: "error", name: "InvalidConfiguration", inputs: [] },
+  { type: "error", name: "MemberPaymentFailed", inputs: [{ internalType: "address", name: "member", type: "address" }] },
+  { type: "error", name: "NoCollectibleMembers", inputs: [] },
+  { type: "error", name: "TabComplete", inputs: [] },
+  { type: "error", name: "UnknownTab", inputs: [{ internalType: "uint256", name: "tabId", type: "uint256" }] },
   {
     type: "function",
     name: "nextTabId",
@@ -164,7 +170,7 @@ function errorName(caught: unknown) {
   const message = errorMessage(caught);
 
   for (const name of ignorableSettlementErrors) {
-    if (message.includes(name)) {
+    if (message.includes(name) || message.includes(errorSelector(name))) {
       return name;
     }
   }
@@ -174,4 +180,19 @@ function errorName(caught: unknown) {
 
 function errorMessage(caught: unknown) {
   return caught instanceof Error ? caught.message : "Unexpected recurring settlement error.";
+}
+
+function errorSelector(name: string) {
+  switch (name) {
+    case "AlreadySettledForPeriod":
+      return "0x8d551f43";
+    case "NoCollectibleMembers":
+      return "0xcf1c99b2";
+    case "TabComplete":
+      return "0xadf8f88b";
+    case "UnknownTab":
+      return "0x7881bfaa";
+    default:
+      return "";
+  }
 }
