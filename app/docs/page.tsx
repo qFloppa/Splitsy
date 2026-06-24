@@ -1,5 +1,6 @@
 import Link from "next/link";
 import Image from "next/image";
+import DocsShell from "./DocsShell";
 import {
   ArrowRight,
   BadgeDollarSign,
@@ -47,7 +48,7 @@ export const metadata = {
 
 export default function DocsPage() {
   return (
-    <main className="docs-shell min-h-screen">
+    <DocsShell>
       <header className="docs-hero">
         <nav className="docs-topbar" aria-label="Docs navigation">
           <Link href="/" className="docs-brand">
@@ -416,7 +417,7 @@ export default function DocsPage() {
           </section>
         </article>
       </div>
-    </main>
+    </DocsShell>
   );
 }
 
