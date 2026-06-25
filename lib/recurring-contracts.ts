@@ -2,14 +2,11 @@
 
 import {
   createPublicClient,
-  createWalletClient,
-  custom,
   decodeEventLog,
   formatUnits,
   getAddress,
   http,
   parseUnits,
-  type EIP1193Provider,
   type Log,
   type TransactionReceipt,
   type WalletClient,
@@ -212,19 +209,18 @@ export const publicClient = createPublicClient({
   transport: http(process.env.NEXT_PUBLIC_ARC_TESTNET_RPC_URL ?? "https://rpc.testnet.arc.network"),
 });
 
-export async function createRecurringWallet(provider: EIP1193Provider) {
-  await provider.request({ method: "eth_requestAccounts", params: undefined });
-  const accounts = (await provider.request({ method: "eth_accounts", params: undefined })) as string[];
-  const account = getAddress(accounts[0] ?? "") as `0x${string}`;
-  const walletClient = createWalletClient({
-    account,
-    chain: arcTestnet,
-    transport: custom(provider),
-  });
+export async function createRecurringWallet(walletClient: WalletClient) {
+  const account = walletClient.account?.address;
 
-  await walletClient.switchChain({ id: arcTestnet.id });
+  if (!account) {
+    throw new Error("Wallet did not return an account.");
+  }
 
-  return { account, walletClient };
+  if (walletClient.chain?.id !== arcTestnet.id) {
+    await walletClient.switchChain({ id: arcTestnet.id });
+  }
+
+  return { account: getAddress(account) as `0x${string}`, walletClient };
 }
 
 export async function createRecurringTab({

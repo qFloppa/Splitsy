@@ -11,6 +11,10 @@ import {
   ShieldCheck,
 } from "lucide-react";
 
+// Render at request time so the nonce-based CSP (see proxy.ts) is applied to
+// this page's framework scripts.
+export const dynamic = "force-dynamic";
+
 export const metadata = {
   title: "Disclaimer & acknowledgments",
   description:

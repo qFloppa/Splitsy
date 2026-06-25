@@ -1,8 +1,6 @@
 "use client";
 
 import {
-  createWalletClient,
-  custom,
   decodeEventLog,
   encodeAbiParameters,
   encodeFunctionData,
@@ -11,7 +9,7 @@ import {
   keccak256,
   parseAbiParameters,
   parseUnits,
-  type EIP1193Provider,
+  stringToHex,
   type TransactionReceipt,
   type WalletClient,
 } from "viem";
@@ -23,6 +21,8 @@ export const BILL_SPLIT_REGISTRY_ADDRESS = (
 ) as `0x${string}`;
 
 export const ARC_MEMO_ADDRESS = "0x5294E9927c3306DcBaDb03fe70b92e01cCede505" as const;
+const SPLITSY_MEMO_APP = "Splitsy";
+const BILL_PAYMENT_MEMO_TYPE = "bill-payment";
 
 export const memoAbi = [
   {
@@ -187,19 +187,18 @@ export type BillSplitDebt = {
   claimable: bigint;
 };
 
-export async function createBillSplitWallet(provider: EIP1193Provider): Promise<BillSplitWallet> {
-  await provider.request({ method: "eth_requestAccounts", params: undefined });
-  const accounts = (await provider.request({ method: "eth_accounts", params: undefined })) as string[];
-  const account = getAddress(accounts[0] ?? "") as `0x${string}`;
-  const walletClient = createWalletClient({
-    account,
-    chain: arcTestnet,
-    transport: custom(provider),
-  });
+export async function createBillSplitWallet(walletClient: WalletClient): Promise<BillSplitWallet> {
+  const account = walletClient.account?.address;
 
-  await walletClient.switchChain({ id: arcTestnet.id });
+  if (!account) {
+    throw new Error("Wallet did not return an account.");
+  }
 
-  return { account, walletClient };
+  if (walletClient.chain?.id !== arcTestnet.id) {
+    await walletClient.switchChain({ id: arcTestnet.id });
+  }
+
+  return { account: getAddress(account) as `0x${string}`, walletClient };
 }
 
 export async function ensureBillSplitWalletOnArc({ walletClient }: BillSplitWallet) {
@@ -296,10 +295,7 @@ export async function payBillDebtWithMemo({
     args: [billId, amount],
   });
   const memoId = billPaymentMemoId({ billId, payer: account });
-  const memoData = encodeAbiParameters(
-    parseAbiParameters("string app, uint256 billId, address payer, uint256 amount"),
-    ["snapsplit.bill-payment", billId, account, amount],
-  );
+  const memoData = billPaymentMemoData({ billId, payer: account, amount });
 
   const hash = await walletClient.writeContract({
     address: ARC_MEMO_ADDRESS,
@@ -423,11 +419,34 @@ export function billMetadataHash({
 
 export function billPaymentMemoId({ billId, payer }: { billId: bigint; payer: `0x${string}` }) {
   return keccak256(
-    encodeAbiParameters(parseAbiParameters("string app, uint256 billId, address payer"), [
-      "snapsplit.bill-payment",
+    encodeAbiParameters(parseAbiParameters("string app, string type, uint256 billId, address payer"), [
+      SPLITSY_MEMO_APP,
+      BILL_PAYMENT_MEMO_TYPE,
       billId,
       payer,
     ]),
+  );
+}
+
+export function billPaymentMemoData({
+  billId,
+  payer,
+  amount,
+}: {
+  billId: bigint;
+  payer: `0x${string}`;
+  amount: bigint;
+}) {
+  return stringToHex(
+    JSON.stringify({
+      app: SPLITSY_MEMO_APP,
+      type: BILL_PAYMENT_MEMO_TYPE,
+      billId: billId.toString(),
+      payer,
+      amountUnits: amount.toString(),
+      amountUsdc: billUnitsToUsdc(amount),
+      target: BILL_SPLIT_REGISTRY_ADDRESS,
+    }),
   );
 }
 

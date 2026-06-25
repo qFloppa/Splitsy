@@ -41,6 +41,10 @@ const stack = [
   ["Settlement automation", "Protected automation checks recurring tabs on a schedule so payers do not need to press a settle button each cycle."],
 ];
 
+// Render at request time so the nonce-based CSP (see proxy.ts) is applied to
+// this page's framework scripts.
+export const dynamic = "force-dynamic";
+
 export const metadata = {
   title: "Splitsy Docs",
   description: "User and technical documentation for Splitsy bill splitting, recurring payments, Circle AppKit bridging, and Arc settlement.",

@@ -11,6 +11,7 @@ import {
   PolygonAmoy,
 } from "@circle-fin/app-kit/chains";
 import { createViemAdapterFromProvider, resolveChainIdentifier } from "@circle-fin/adapter-viem-v2";
+import type { Connector } from "wagmi";
 import type { EIP1193Provider } from "viem";
 
 export type BridgeSourceChain =
@@ -36,6 +37,41 @@ export type BrowserWalletSession = {
   connectedAddress: string;
   walletName: string;
 };
+
+export async function createBrowserWalletSessionFromConnector({
+  connector,
+  connectedAddress,
+}: {
+  connector: Connector;
+  connectedAddress: string;
+}): Promise<BrowserWalletSession> {
+  const provider = (await connector.getProvider()) as EIP1193Provider | null;
+
+  if (!provider) {
+    throw new Error("Connected wallet provider is unavailable.");
+  }
+
+  const adapter = await createViemAdapterFromProvider({
+    provider,
+    capabilities: {
+      supportedChains: [
+        ArbitrumSepolia,
+        AvalancheFuji,
+        BaseSepolia,
+        EthereumSepolia,
+        OptimismSepolia,
+        PolygonAmoy,
+        ArcTestnet,
+      ],
+    },
+  });
+
+  return {
+    adapter,
+    connectedAddress,
+    walletName: connector.name,
+  };
+}
 
 export type BridgeSummary = {
   state: string;

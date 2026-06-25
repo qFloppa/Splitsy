@@ -25,14 +25,17 @@ import gsap from "gsap";
 import Image from "next/image";
 import Link from "next/link";
 import { ChangeEvent, FormEvent, ReactNode, useEffect, useMemo, useRef, useState } from "react";
-import { getAddress, type EIP1193Provider } from "viem";
+import { getAddress } from "viem";
+import { arcTestnet } from "viem/chains";
+import { useConnect, useConnection, useDisconnect, useSwitchChain } from "wagmi";
+import { getWalletClient } from "wagmi/actions";
 import {
   bridgeSourceChains,
   bridgeUsdcToArc,
   BridgeSourceChain,
   BridgeSummary,
-  BrowserWalletSession,
-  connectBrowserWallet,
+  type BrowserWalletSession,
+  createBrowserWalletSessionFromConnector,
 } from "@/lib/appkit-bridge";
 import {
   approveBillRegistry,
@@ -72,6 +75,7 @@ import {
   ParsedBill,
   SplitParticipant,
 } from "@/lib/snapsplit";
+import { wagmiConfig } from "@/lib/wagmi";
 
 type FxQuote = {
   amountUsd: number;
@@ -118,8 +122,8 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
   });
   const [fxQuote, setFxQuote] = useState<FxQuote | null>(null);
   const [splitMode, setSplitMode] = useState<"equal" | "manual">("equal");
-  const [bridgeSession, setBridgeSession] = useState<BrowserWalletSession | null>(null);
   const [bridgeResults, setBridgeResults] = useState<Record<string, BridgeSummary>>({});
+  const [bridgeSession, setBridgeSession] = useState<BrowserWalletSession | null>(null);
   const [recurringCycle, setRecurringCycle] = useState<RecurringCycle>("weekly");
   const [customCycleDays, setCustomCycleDays] = useState("30");
   const [billWallet, setBillWallet] = useState<BillSplitWallet | null>(null);
@@ -168,6 +172,10 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
       status: "unpaid",
     },
   ]);
+  const { address, connector } = useConnection();
+  const { connectors, connectAsync } = useConnect();
+  const { disconnectAsync } = useDisconnect();
+  const { switchChainAsync } = useSwitchChain();
 
   const confirmedUsd = fxQuote?.amountUsd ?? (bill.currency === "USD" ? bill.total : 0);
   const displayParticipants = useMemo(() => {
@@ -416,13 +424,13 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
   }
 
   async function connectWallets() {
-    const provider = getBrowserProvider();
+    const connector = connectors[0];
 
-    if (!provider) {
+    if (!connector) {
       setBillState("error");
-      setBillMessage("No EVM browser wallet found.");
+      setBillMessage("No EVM browser wallet found. Install a wallet supported by wagmi, then try again.");
       setRecurringState("error");
-      setRecurringMessage("No EVM browser wallet found.");
+      setRecurringMessage("No EVM browser wallet found. Install a wallet supported by wagmi, then try again.");
       return null;
     }
 
@@ -432,9 +440,12 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
     setRecurringMessage("");
 
     try {
+      await connectAsync({ connector, chainId: arcTestnet.id });
+      await switchChainAsync({ chainId: arcTestnet.id });
+      const nextWalletClient = await getWalletClient(wagmiConfig, { chainId: arcTestnet.id });
       const [bill, recurring] = await Promise.all([
-        createBillSplitWallet(provider),
-        createRecurringWallet(provider),
+        createBillSplitWallet(nextWalletClient),
+        createRecurringWallet(nextWalletClient),
       ]);
       setBillWallet(bill);
       setRecurringWallet(recurring);
@@ -446,6 +457,14 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
         refreshBillRegistry(bill.account),
         refreshRecurringTabsForWallet(recurring.account),
       ]);
+      if (connector) {
+        setBridgeSession(
+          await createBrowserWalletSessionFromConnector({
+            connector,
+            connectedAddress: bill.account,
+          }),
+        );
+      }
       return { bill, recurring };
     } catch (caught) {
       setBillState("error");
@@ -462,6 +481,7 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
   }
 
   function disconnectWallets() {
+    void disconnectAsync();
     setBridgeSession(null);
     setBridgeResults({});
     setBillWallet(null);
@@ -719,8 +739,21 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
   }
 
   async function connectForBridge() {
+    if (bridgeSession) {
+      return bridgeSession;
+    }
+
+    if (!connector || !address) {
+      setBillState("error");
+      setBillMessage("Connect your wallet first.");
+      return null;
+    }
+
     try {
-      const session = await connectBrowserWallet();
+      const session = await createBrowserWalletSessionFromConnector({
+        connector,
+        connectedAddress: address,
+      });
       setBridgeSession(session);
       return session;
     } catch (caught) {
@@ -953,7 +986,7 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
   }
 
   async function connectActiveWallet() {
-    if (billWallet || recurringWallet) {
+    if (bridgeSession || billWallet || recurringWallet) {
       disconnectWallets();
       return null;
     }
@@ -2187,9 +2220,4 @@ function formatDuration(seconds: bigint) {
 
   const days = Math.round(totalSeconds / 86_400);
   return days >= 1 ? `${days} day${days === 1 ? "" : "s"}` : `${Math.round(totalSeconds / 3600)} hr`;
-}
-
-function getBrowserProvider() {
-  const ethereum = (window as Window & { ethereum?: EIP1193Provider }).ethereum;
-  return ethereum ?? null;
 }

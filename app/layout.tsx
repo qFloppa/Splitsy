@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import Link from "next/link";
 import "./globals.css";
+import WagmiProviders from "./WagmiProviders";
 
 const siteUrl = "https://splitsy.xyz";
 const siteDescription =
@@ -77,7 +78,7 @@ export default function RootLayout({
   return (
     <html lang="en" className="h-full antialiased">
       <body className="min-h-full flex flex-col">
-        {children}
+        <WagmiProviders>{children}</WagmiProviders>
         <footer className="site-footer">
           <p className="site-footer-disclaimer">
             Splitsy is an experimental demo on <strong>Arc Testnet</strong> — it uses test USDC only and
