@@ -395,6 +395,11 @@ export default function DocsPage() {
               <li>Receipt OCR data should be reviewed by the splitter before submission. The scanner is a convenience layer, not an accounting authority.</li>
               <li>Bridge flows depend on the connected wallet signing each step and on Circle attestation for CCTP minting.</li>
             </ul>
+            <Callout title="Disclaimer & acknowledgments">
+              Splitsy is an experimental demo on Arc Testnet that uses test USDC only — no real funds — and is not
+              affiliated with any referenced brand. See the full <Link href="/disclaimer">disclaimer and
+              acknowledgments</Link> for testnet, trademark, privacy, and liability details.
+            </Callout>
           </section>
 
           <section id="configuration" className="docs-section">

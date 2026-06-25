@@ -1268,3 +1268,51 @@ input[type="number"],
     animation-iteration-count: 1 !important;
   }
 }
+
+.site-footer {
+  margin-top: auto;
+  border-top: 1px solid var(--border);
+  background: var(--surface-muted);
+  color: var(--text-muted);
+  padding: 1.5rem 1.25rem 2rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.75rem;
+  text-align: center;
+}
+
+.site-footer-disclaimer {
+  max-width: 64rem;
+  margin: 0;
+  font-size: 0.8rem;
+  line-height: 1.5;
+}
+
+.site-footer-disclaimer strong {
+  color: var(--text-soft);
+  font-weight: 600;
+}
+
+.site-footer-links {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0.4rem 1.1rem;
+  font-size: 0.8rem;
+}
+
+.site-footer-links a {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.site-footer-links a:hover {
+  text-decoration: underline;
+}
+
+.site-footer-copy {
+  margin: 0;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
