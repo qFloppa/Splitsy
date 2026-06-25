@@ -202,6 +202,14 @@ export async function createBillSplitWallet(provider: EIP1193Provider): Promise<
   return { account, walletClient };
 }
 
+export async function ensureBillSplitWalletOnArc({ walletClient }: BillSplitWallet) {
+  const chainId = await walletClient.getChainId();
+
+  if (chainId !== arcTestnet.id) {
+    await walletClient.switchChain({ id: arcTestnet.id });
+  }
+}
+
 export async function createBillSplit({
   walletClient,
   account,
