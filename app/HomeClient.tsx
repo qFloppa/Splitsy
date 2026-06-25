@@ -27,8 +27,9 @@ import Link from "next/link";
 import { ChangeEvent, FormEvent, ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { getAddress } from "viem";
 import { arcTestnet } from "viem/chains";
-import { useConnect, useConnection, useDisconnect, useSwitchChain } from "wagmi";
+import { useAccount, useConnect, useDisconnect, useSwitchChain } from "wagmi";
 import { getWalletClient } from "wagmi/actions";
+import { ConnectButton } from "@rainbow-me/rainbowkit";
 import {
   bridgeSourceChains,
   bridgeUsdcToArc,
@@ -172,7 +173,7 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
       status: "unpaid",
     },
   ]);
-  const { address, connector } = useConnection();
+  const { address, connector } = useAccount();
   const { connectors, connectAsync } = useConnect();
   const { disconnectAsync } = useDisconnect();
   const { switchChainAsync } = useSwitchChain();
@@ -424,9 +425,9 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
   }
 
   async function connectWallets() {
-    const connector = connectors[0];
+    const activeConnector = connector ?? connectors[0];
 
-    if (!connector) {
+    if (!activeConnector) {
       setBillState("error");
       setBillMessage("No EVM browser wallet found. Install a wallet supported by wagmi, then try again.");
       setRecurringState("error");
@@ -440,7 +441,9 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
     setRecurringMessage("");
 
     try {
-      await connectAsync({ connector, chainId: arcTestnet.id });
+      if (!address) {
+        await connectAsync({ connector: activeConnector, chainId: arcTestnet.id });
+      }
       await switchChainAsync({ chainId: arcTestnet.id });
       const nextWalletClient = await getWalletClient(wagmiConfig, { chainId: arcTestnet.id });
       const [bill, recurring] = await Promise.all([
@@ -457,14 +460,12 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
         refreshBillRegistry(bill.account),
         refreshRecurringTabsForWallet(recurring.account),
       ]);
-      if (connector) {
-        setBridgeSession(
-          await createBrowserWalletSessionFromConnector({
-            connector,
-            connectedAddress: bill.account,
-          }),
-        );
-      }
+      setBridgeSession(
+        await createBrowserWalletSessionFromConnector({
+          connector: activeConnector,
+          connectedAddress: bill.account,
+        }),
+      );
       return { bill, recurring };
     } catch (caught) {
       setBillState("error");
@@ -985,14 +986,19 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
     setActiveTab(tab);
   }
 
-  async function connectActiveWallet() {
-    if (bridgeSession || billWallet || recurringWallet) {
+  // Keep the app-specific wallet setup in sync with the RainbowKit / wagmi
+  // connection. Connecting via the RainbowKit modal builds the bill/recurring
+  // wallets; disconnecting from it tears the app state back down. The imperative
+  // connectWallets()/connectBillWallet() path remains as a fallback for the
+  // inline "connect-then-act" handlers.
+  useEffect(() => {
+    if (address && !billWallet && billState !== "connecting") {
+      void connectWallets();
+    } else if (!address && (billWallet || recurringWallet || bridgeSession)) {
       disconnectWallets();
-      return null;
     }
-
-    return connectWallets();
-  }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [address]);
 
   return (
     <main className="app-shell min-h-screen text-[var(--text)]">
@@ -1028,10 +1034,7 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
                   Docs
                 </Link>
               </div>
-              <button className="secondary-button" onClick={connectActiveWallet} type="button">
-                <WalletCards size={16} />
-                {billWallet || recurringWallet ? "Disconnect wallet" : "Connect wallet"}
-              </button>
+              <ConnectButton accountStatus="address" chainStatus="icon" showBalance={false} />
               <button
                 aria-label={`Switch to ${theme === "light" ? "dark" : "light"} mode`}
                 className="icon-button"
