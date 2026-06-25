@@ -42,6 +42,7 @@ import {
   billUnitsToUsdc,
   createBillSplit,
   createBillSplitWallet,
+  ensureBillSplitWalletOnArc,
   isBillRegistryConfigured,
   payBillDebtWithMemo,
   readBillsForSplitter,
@@ -575,19 +576,24 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
       return;
     }
 
-    const amount = usdcToBillUnits(partialPayments[debt.billId.toString()] ?? billUnitsToUsdc(debt.remaining));
-
-    if (amount <= 0n || amount > debt.remaining) {
-      setBillState("error");
-      setDebtMessages((current) => ({
-        ...current,
-        [debtKey]: { tone: "error", message: "Enter an amount up to the remaining debt." },
-      }));
-      return;
-    }
-
     try {
       setBillState("working");
+      setDebtMessages((current) => ({
+        ...current,
+        [debtKey]: { tone: "neutral", message: "Switching wallet to Arc Testnet." },
+      }));
+      await ensureBillSplitWalletOnArc(wallet);
+      const amount = usdcToBillUnits(partialPayments[debt.billId.toString()] ?? billUnitsToUsdc(debt.remaining));
+
+      if (amount <= 0n || amount > debt.remaining) {
+        setBillState("error");
+        setDebtMessages((current) => ({
+          ...current,
+          [debtKey]: { tone: "error", message: "Enter an amount up to the remaining debt." },
+        }));
+        return;
+      }
+
       setDebtMessages((current) => ({
         ...current,
         [debtKey]: { tone: "neutral", message: "Approving USDC." },
