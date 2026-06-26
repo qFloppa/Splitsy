@@ -11,6 +11,7 @@ import {
   PolygonAmoy,
 } from "@circle-fin/app-kit/chains";
 import { createViemAdapterFromProvider, resolveChainIdentifier } from "@circle-fin/adapter-viem-v2";
+import type { AppKitActions } from "@circle-fin/app-kit";
 import type { Connector } from "wagmi";
 import type { EIP1193Provider } from "viem";
 
@@ -77,6 +78,17 @@ export type BridgeSummary = {
   state: string;
   explorerUrls: string[];
   steps: string[];
+};
+
+// Live, per-transaction progress emitted by the CCTP v2 provider while a bridge
+// runs. The flow is: approve (source) -> burn (source) -> fetchAttestation
+// (Circle) -> mint (Arc). `reAttest` only appears if an attestation expires.
+export type BridgeStepEvent = {
+  method: "approve" | "burn" | "fetchAttestation" | "mint" | "reAttest";
+  state: "pending" | "success" | "error" | "noop";
+  explorerUrl?: string;
+  txHash?: string;
+  errorMessage?: string;
 };
 
 type EIP6963ProviderInfo = {
@@ -171,11 +183,13 @@ export async function bridgeUsdcToArc({
   sourceChain,
   recipientAddress,
   amount,
+  onStep,
 }: {
   session: BrowserWalletSession;
   sourceChain: BridgeSourceChain;
   recipientAddress: string;
   amount: string;
+  onStep?: (event: BridgeStepEvent) => void;
 }): Promise<BridgeSummary> {
   const chain = resolveChainIdentifier(sourceChain);
 
@@ -185,18 +199,51 @@ export async function bridgeUsdcToArc({
 
   await session.adapter.ensureChain(chain);
 
-  const result = (await kit.bridge({
-    from: { adapter: session.adapter, chain: sourceChain },
-    to: {
-      adapter: session.adapter,
-      chain: "Arc_Testnet",
-      recipientAddress,
-    },
-    amount,
-    token: "USDC",
-  })) as BridgeResultLike;
+  const unsubscribe = onStep ? subscribeBridgeSteps(onStep) : undefined;
 
-  return summarizeBridgeResult(result);
+  try {
+    const result = (await kit.bridge({
+      from: { adapter: session.adapter, chain: sourceChain },
+      to: {
+        adapter: session.adapter,
+        chain: "Arc_Testnet",
+        recipientAddress,
+      },
+      amount,
+      token: "USDC",
+    })) as BridgeResultLike;
+
+    return summarizeBridgeResult(result);
+  } finally {
+    unsubscribe?.();
+  }
+}
+
+// Bridge over the AppKit event bus so the UI can render live per-transaction
+// progress. A single wildcard subscriber is used and torn down when the bridge
+// settles, so concurrent bridges never cross wires.
+function subscribeBridgeSteps(onStep: (event: BridgeStepEvent) => void): () => void {
+  const handler = (payload: AppKitActions[keyof AppKitActions]) => {
+    const action = payload as unknown as {
+      method?: string;
+      values?: { state?: string; explorerUrl?: string; txHash?: string; errorMessage?: string };
+    };
+
+    if (!action.method || !action.values) {
+      return;
+    }
+
+    onStep({
+      method: action.method as BridgeStepEvent["method"],
+      state: (action.values.state ?? "pending") as BridgeStepEvent["state"],
+      explorerUrl: action.values.explorerUrl,
+      txHash: action.values.txHash,
+      errorMessage: action.values.errorMessage,
+    });
+  };
+
+  kit.on("*", handler);
+  return () => kit.off("*", handler);
 }
 
 async function discoverBrowserWallets(): Promise<EIP6963ProviderDetail[]> {

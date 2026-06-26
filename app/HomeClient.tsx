@@ -2,6 +2,7 @@
 
 import {
   AlertTriangle,
+  ArrowLeftRight,
   BadgeDollarSign,
   BookOpen,
   Camera,
@@ -39,6 +40,7 @@ import {
   bridgeSourceChains,
   bridgeUsdcToArc,
   BridgeSourceChain,
+  type BridgeStepEvent,
   BridgeSummary,
   type BrowserWalletSession,
   createBrowserWalletSessionFromConnector,
@@ -101,20 +103,24 @@ type RecurringMemberInput = {
   address: string;
   share: string;
 };
-type PayStepState = "pending" | "active" | "done" | "error";
-type PaymentStep = {
-  key: "switch" | "approve" | "pay";
+type FlowStepState = "pending" | "active" | "done" | "error";
+type FlowStepIcon = "switch" | "approve" | "pay" | "bridge" | "claim";
+type FlowStep = {
+  key: string;
+  icon: FlowStepIcon;
   label: string;
   hint: string;
-  state: PayStepState;
+  state: FlowStepState;
+  explorerUrl?: string;
 };
-type PaymentFlow = {
+type ProgressFlow = {
+  kind: "pay" | "bridge";
   open: boolean;
-  billId: string;
   amountLabel: string;
+  contextLabel: string;
   status: "running" | "success" | "error";
   errorMessage: string;
-  steps: PaymentStep[];
+  steps: FlowStep[];
 };
 
 const recurringCycleOptions: Array<{ id: RecurringCycle; label: string; seconds: bigint }> = [
@@ -151,7 +157,7 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
   const [billState, setBillState] = useState<BillRunState>("idle");
   const [billMessage, setBillMessage] = useState("");
   const [debtMessages, setDebtMessages] = useState<Record<string, { message: string; tone: "error" | "neutral" }>>({});
-  const [paymentFlow, setPaymentFlow] = useState<PaymentFlow | null>(null);
+  const [progressFlow, setProgressFlow] = useState<ProgressFlow | null>(null);
   const [claimMessage, setClaimMessage] = useState("");
   const [claimMessageTone, setClaimMessageTone] = useState<"error" | "neutral">("neutral");
   const [submittedBillId, setSubmittedBillId] = useState<bigint | null>(null);
@@ -610,30 +616,55 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
     }
   }
 
-  function beginPaymentFlow(billId: string, amountLabel: string) {
-    setPaymentFlow({
+  function beginPayFlow(billId: string, amountLabel: string) {
+    setProgressFlow({
+      kind: "pay",
       open: true,
-      billId,
       amountLabel,
+      contextLabel: `bill #${billId}`,
       status: "running",
       errorMessage: "",
       steps: [
-        { key: "switch", label: "Connect to Arc Testnet", hint: "Approve the network switch in your wallet", state: "active" },
-        { key: "approve", label: "Approve USDC", hint: "Let the bill registry move your USDC", state: "pending" },
-        { key: "pay", label: "Send payment", hint: "Settle the debt on Arc with a memo", state: "pending" },
+        { key: "switch", icon: "switch", label: "Connect to Arc Testnet", hint: "Approve the network switch in your wallet", state: "active" },
+        { key: "approve", icon: "approve", label: "Approve USDC", hint: "Let the bill registry move your USDC", state: "pending" },
+        { key: "pay", icon: "pay", label: "Send payment", hint: "Settle the debt on Arc with a memo", state: "pending" },
       ],
     });
   }
 
-  function advancePaymentStep(doneKey: PaymentStep["key"], nextKey?: PaymentStep["key"]) {
-    setPaymentFlow((current) =>
+  function beginBridgeFlow(amountLabel: string, source: string) {
+    setProgressFlow({
+      kind: "bridge",
+      open: true,
+      amountLabel,
+      contextLabel: `from ${source}`,
+      status: "running",
+      errorMessage: "",
+      steps: [
+        { key: "approve", icon: "approve", label: "Approve USDC", hint: `Allow CCTP to move USDC on ${source}`, state: "active" },
+        { key: "bridge", icon: "bridge", label: "Bridge via CCTP", hint: "Burn on the source chain, then await Circle's attestation", state: "pending" },
+        { key: "claim", icon: "claim", label: "Claim on Arc", hint: "Mint the bridged USDC on Arc Testnet", state: "pending" },
+      ],
+    });
+  }
+
+  function setFlowStep(key: string, state: FlowStepState, patch?: Partial<FlowStep>) {
+    setProgressFlow((current) =>
+      current
+        ? { ...current, steps: current.steps.map((step) => (step.key === key ? { ...step, state, ...patch } : step)) }
+        : current,
+    );
+  }
+
+  function advanceFlow(doneKey: string, nextKey?: string) {
+    setProgressFlow((current) =>
       current
         ? {
             ...current,
             steps: current.steps.map((step) =>
               step.key === doneKey
                 ? { ...step, state: "done" }
-                : step.key === nextKey
+                : step.key === nextKey && step.state !== "done"
                   ? { ...step, state: "active" }
                   : step,
             ),
@@ -642,8 +673,8 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
     );
   }
 
-  function completePaymentFlow() {
-    setPaymentFlow((current) =>
+  function completeFlow() {
+    setProgressFlow((current) =>
       current
         ? { ...current, status: "success", steps: current.steps.map((step) => ({ ...step, state: "done" })) }
         : current,
@@ -651,8 +682,8 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
     fireSuccessConfetti();
   }
 
-  function failPaymentFlow(message: string) {
-    setPaymentFlow((current) =>
+  function failFlow(message: string) {
+    setProgressFlow((current) =>
       current
         ? {
             ...current,
@@ -664,8 +695,8 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
     );
   }
 
-  function closePaymentFlow() {
-    setPaymentFlow((current) => (current ? { ...current, open: false } : current));
+  function closeFlow() {
+    setProgressFlow((current) => (current ? { ...current, open: false } : current));
   }
 
   async function payDebtOnArc(debt: BillSplitDebt) {
@@ -688,7 +719,7 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
     }
 
     const amountLabel = billUnitsToUsdc(amount);
-    beginPaymentFlow(debtKey, amountLabel);
+    beginPayFlow(debtKey, amountLabel);
 
     try {
       setBillState("working");
@@ -698,13 +729,13 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
         return next;
       });
       await ensureBillSplitWalletOnArc(wallet);
-      advancePaymentStep("switch", "approve");
+      advanceFlow("switch", "approve");
 
       await approveBillRegistry({ ...wallet, amount });
-      advancePaymentStep("approve", "pay");
+      advanceFlow("approve", "pay");
 
       await payBillDebtWithMemo({ ...wallet, billId: debt.billId, amount });
-      completePaymentFlow();
+      completeFlow();
 
       setBillState("success");
       setDebtMessages((current) => ({
@@ -714,7 +745,7 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
       await refreshBillRegistry(wallet.account);
     } catch (caught) {
       setBillState("error");
-      failPaymentFlow(errorMessage(caught));
+      failFlow(errorMessage(caught));
       setDebtMessages((current) => ({
         ...current,
         [debtKey]: { tone: "error", message: errorMessage(caught) },
@@ -746,35 +777,95 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
       return;
     }
 
+    const source = sourceLabel(debtSourceChain);
+    const amountLabel = billUnitsToUsdc(amount);
+    beginBridgeFlow(amountLabel, source);
+
     try {
-      setDebtMessages((current) => ({
-        ...current,
-        [debtKey]: { tone: "neutral", message: `Bridging ${billUnitsToUsdc(amount)} USDC to your Arc wallet from ${sourceLabel(debtSourceChain)}.` },
-      }));
+      setBillState("working");
+      setDebtMessages((current) => {
+        const next = { ...current };
+        delete next[debtKey];
+        return next;
+      });
       const result = await bridgeUsdcToArc({
         session,
         sourceChain: debtSourceChain,
         recipientAddress: billWallet.account,
-        amount: billUnitsToUsdc(amount),
+        amount: amountLabel,
+        onStep: (event) => handleBridgeStep(event, source),
       });
-      setBridgeResults((current) => ({ ...current, [debt.billId.toString()]: result }));
-      setBillState(result.state === "error" ? "error" : "success");
+      setBridgeResults((current) => ({ ...current, [debtKey]: result }));
+
+      if (result.state === "error") {
+        failFlow("The bridge did not complete. No funds were claimed on Arc.");
+        setBillState("error");
+        setDebtMessages((current) => ({
+          ...current,
+          [debtKey]: { tone: "error", message: "Bridge failed." },
+        }));
+        return;
+      }
+
+      completeFlow();
+      setBillState("success");
       setDebtMessages((current) => ({
         ...current,
         [debtKey]: {
-          tone: result.state === "error" ? "error" : "neutral",
+          tone: "neutral",
           message:
-            result.state === "error"
-              ? "Bridge failed."
-              : "USDC is moving to Arc. After the Arc claim transaction completes, use Pay on Arc to settle the debt with a memo.",
+            "USDC has been bridged to your Arc wallet. Use Pay on Arc to settle the debt with a memo.",
         },
       }));
     } catch (caught) {
       setBillState("error");
+      failFlow(errorMessage(caught));
       setDebtMessages((current) => ({
         ...current,
         [debtKey]: { tone: "error", message: errorMessage(caught) },
       }));
+    }
+  }
+
+  function handleBridgeStep(event: BridgeStepEvent, source: string) {
+    const settled = event.state === "success" || event.state === "noop";
+
+    if (event.state === "error") {
+      failFlow(event.errorMessage || `The ${event.method} transaction failed.`);
+      return;
+    }
+
+    switch (event.method) {
+      case "approve":
+        if (settled) {
+          advanceFlow("approve", "bridge");
+        } else {
+          setFlowStep("approve", "active");
+        }
+        break;
+      case "burn":
+        advanceFlow("approve", "bridge");
+        setFlowStep("bridge", "active", {
+          hint: settled ? "Burned — waiting for Circle's attestation…" : `Burning USDC on ${source} via CCTP…`,
+          explorerUrl: event.explorerUrl,
+        });
+        break;
+      case "fetchAttestation":
+      case "reAttest":
+        if (settled) {
+          advanceFlow("bridge", "claim");
+        } else {
+          setFlowStep("bridge", "active", { hint: "Waiting for Circle's attestation…" });
+        }
+        break;
+      case "mint":
+        advanceFlow("bridge", "claim");
+        if (settled) {
+          setFlowStep("claim", "done", { explorerUrl: event.explorerUrl });
+        } else {
+          setFlowStep("claim", "active", { hint: "Minting USDC on Arc Testnet…" });
+        }
+        break;
     }
   }
 
@@ -1446,7 +1537,7 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
         </AnimatePresence>
       </section>
 
-      {paymentFlow ? <PaymentProgressModal flow={paymentFlow} onClose={closePaymentFlow} /> : null}
+      {progressFlow ? <ProgressModal flow={progressFlow} onClose={closeFlow} /> : null}
     </main>
   );
 }
@@ -2129,31 +2220,55 @@ function RecurringWorkspace({
   );
 }
 
-function PaymentProgressModal({ flow, onClose }: { flow: PaymentFlow; onClose: () => void }) {
+const flowStepIcons: Record<FlowStepIcon, typeof ShieldCheck> = {
+  switch: WalletCards,
+  approve: ShieldCheck,
+  pay: Send,
+  bridge: ArrowLeftRight,
+  claim: Landmark,
+};
+
+function ProgressModal({ flow, onClose }: { flow: ProgressFlow; onClose: () => void }) {
   const running = flow.status === "running";
   const succeeded = flow.status === "success";
-  const failed = flow.status === "error";
+  const isBridge = flow.kind === "bridge";
 
   const headIcon = succeeded ? (
     <CheckCircle2 size={22} />
-  ) : failed ? (
+  ) : flow.status === "error" ? (
     <AlertTriangle size={22} />
+  ) : isBridge ? (
+    <ArrowLeftRight size={22} />
   ) : (
     <BadgeDollarSign size={22} />
   );
 
-  const title = succeeded ? "Payment settled" : failed ? "Payment failed" : "Settling on Arc";
-  const subtitle = succeeded
-    ? `Paid $${flow.amountLabel} USDC toward bill #${flow.billId}.`
-    : failed
-      ? flow.errorMessage || "Something went wrong while paying."
-      : `Paying $${flow.amountLabel} USDC toward bill #${flow.billId}.`;
+  const title = isBridge
+    ? succeeded
+      ? "Bridged to Arc"
+      : flow.status === "error"
+        ? "Bridge failed"
+        : "Bridging to Arc"
+    : succeeded
+      ? "Payment settled"
+      : flow.status === "error"
+        ? "Payment failed"
+        : "Settling on Arc";
 
-  const stepIcons: Record<PaymentStep["key"], typeof ShieldCheck> = {
-    switch: WalletCards,
-    approve: ShieldCheck,
-    pay: Send,
-  };
+  const verb = isBridge ? "Moving" : "Paying";
+  const destination = isBridge ? "to Arc" : "toward";
+  const subtitle =
+    flow.status === "error"
+      ? flow.errorMessage || "Something went wrong."
+      : succeeded
+        ? isBridge
+          ? `$${flow.amountLabel} USDC has arrived on your Arc wallet ${flow.contextLabel}.`
+          : `Paid $${flow.amountLabel} USDC ${flow.contextLabel}.`
+        : `${verb} $${flow.amountLabel} USDC ${destination} ${flow.contextLabel}.`;
+
+  const explorerLinks = flow.steps
+    .filter((step) => step.explorerUrl)
+    .map((step) => ({ key: step.key, label: step.label, url: step.explorerUrl as string }));
 
   return (
     <Dialog.Root
@@ -2191,7 +2306,7 @@ function PaymentProgressModal({ flow, onClose }: { flow: PaymentFlow; onClose: (
 
           <ol className="pay-steps">
             {flow.steps.map((step) => {
-              const StepIcon = stepIcons[step.key];
+              const StepIcon = flowStepIcons[step.icon];
               return (
                 <li className="pay-step" data-state={step.state} key={step.key}>
                   <span className="pay-step-icon" aria-hidden="true">
@@ -2208,13 +2323,11 @@ function PaymentProgressModal({ flow, onClose }: { flow: PaymentFlow; onClose: (
                   <span className="pay-step-body">
                     <span className="pay-step-label">{step.label}</span>
                     <span className="pay-step-hint">
-                      {step.state === "active"
-                        ? "Waiting for wallet confirmation…"
-                        : step.state === "done"
-                          ? "Done"
-                          : step.state === "error"
-                            ? "Failed"
-                            : step.hint}
+                      {step.state === "done"
+                        ? "Confirmed"
+                        : step.state === "error"
+                          ? "Failed"
+                          : step.hint}
                     </span>
                   </span>
                 </li>
@@ -2222,12 +2335,23 @@ function PaymentProgressModal({ flow, onClose }: { flow: PaymentFlow; onClose: (
             })}
           </ol>
 
+          {explorerLinks.length > 0 ? (
+            <div className="pay-modal-links">
+              {explorerLinks.map((link) => (
+                <a className="pay-modal-link" href={link.url} key={link.key} rel="noreferrer" target="_blank">
+                  <ExternalLink size={13} />
+                  {link.label} transaction
+                </a>
+              ))}
+            </div>
+          ) : null}
+
           <div className="pay-modal-foot">
             <span className={`pay-modal-status pay-modal-status-${flow.status}`}>
               {running ? (
                 <>
                   <Loader2 className="animate-spin" size={15} />
-                  Confirm each step in your wallet
+                  {isBridge ? "Keep this open until the bridge finishes" : "Confirm each step in your wallet"}
                 </>
               ) : succeeded ? (
                 <>
@@ -2237,7 +2361,7 @@ function PaymentProgressModal({ flow, onClose }: { flow: PaymentFlow; onClose: (
               ) : (
                 <>
                   <AlertTriangle size={15} />
-                  No funds were moved
+                  No funds were lost
                 </>
               )}
             </span>

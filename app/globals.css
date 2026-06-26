@@ -1463,6 +1463,29 @@ input[type="number"],
   color: var(--danger-text);
 }
 
+.pay-modal-links {
+  margin-top: 1.1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  border-top: 1px solid var(--border);
+  padding-top: 1rem;
+}
+
+.pay-modal-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.78rem;
+  font-weight: 620;
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.pay-modal-link:hover {
+  text-decoration: underline;
+}
+
 @keyframes pay-overlay-in {
   from {
     opacity: 0;
