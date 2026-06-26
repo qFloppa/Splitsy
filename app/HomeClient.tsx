@@ -291,16 +291,6 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
   }, [manualBillEntry, confirmedUsd]);
 
   useEffect(() => {
-    if (!billIsScanned || !reviewSplitRef.current) {
-      return;
-    }
-
-    window.requestAnimationFrame(() => {
-      reviewSplitRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
-    });
-  }, [billIsScanned]);
-
-  useEffect(() => {
     if (billState !== "success" || !settlementStampRef.current) {
       return;
     }
