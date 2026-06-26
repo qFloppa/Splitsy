@@ -498,8 +498,7 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
     return connected?.bill ?? null;
   }
 
-  function disconnectWallets() {
-    void disconnectAsync();
+  function resetAccountState() {
     setBridgeSession(null);
     setBridgeResults({});
     setBillWallet(null);
@@ -510,14 +509,19 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
     setClaimAmounts({});
     setDebtMessages({});
     setClaimMessage("");
-    setBillMessage("Wallet disconnected.");
-    setBillState("idle");
     setWalletTabs([]);
     setTabState(null);
     setTabEvents([]);
     setActiveTabAddress(null);
     setTabAddressInput("");
     setAuthorizationAmount("");
+  }
+
+  function disconnectWallets() {
+    void disconnectAsync();
+    resetAccountState();
+    setBillMessage("Wallet disconnected.");
+    setBillState("idle");
     setRecurringMessage("Wallet disconnected.");
     setRecurringState("idle");
   }
@@ -1151,14 +1155,34 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
 
   // Keep the app-specific wallet setup in sync with the RainbowKit / wagmi
   // connection. Connecting via the RainbowKit modal builds the bill/recurring
-  // wallets; disconnecting from it tears the app state back down. The imperative
+  // wallets; disconnecting from it tears the app state back down. Switching the
+  // active account in the wallet keeps `address` truthy but changes its value,
+  // so we also rebuild whenever the connected address no longer matches the
+  // account the app wallets were built for. The imperative
   // connectWallets()/connectBillWallet() path remains as a fallback for the
   // inline "connect-then-act" handlers.
   useEffect(() => {
-    if (address && !billWallet && billState !== "connecting") {
+    if (!address) {
+      if (billWallet || recurringWallet || bridgeSession) {
+        disconnectWallets();
+      }
+      return;
+    }
+
+    if (billState === "connecting") {
+      return;
+    }
+
+    const builtAccount = billWallet?.account;
+    const addressChanged = builtAccount && getAddress(builtAccount) !== getAddress(address);
+
+    if (!builtAccount || addressChanged) {
+      if (addressChanged) {
+        // Drop the previous account's wallets, debts, tabs, and messages before
+        // rebuilding so nothing from the old address leaks into the new session.
+        resetAccountState();
+      }
       void connectWallets();
-    } else if (!address && (billWallet || recurringWallet || bridgeSession)) {
-      disconnectWallets();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [address]);
