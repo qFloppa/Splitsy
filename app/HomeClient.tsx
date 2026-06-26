@@ -15,12 +15,17 @@ import {
   Plus,
   ReceiptText,
   RefreshCw,
+  Send,
+  ShieldCheck,
   Sun,
   Trash2,
   Upload,
   WalletCards,
+  X,
 } from "lucide-react";
+import * as Dialog from "@radix-ui/react-dialog";
 import { AnimatePresence, motion } from "framer-motion";
+import confetti from "canvas-confetti";
 import gsap from "gsap";
 import Image from "next/image";
 import Link from "next/link";
@@ -96,6 +101,21 @@ type RecurringMemberInput = {
   address: string;
   share: string;
 };
+type PayStepState = "pending" | "active" | "done" | "error";
+type PaymentStep = {
+  key: "switch" | "approve" | "pay";
+  label: string;
+  hint: string;
+  state: PayStepState;
+};
+type PaymentFlow = {
+  open: boolean;
+  billId: string;
+  amountLabel: string;
+  status: "running" | "success" | "error";
+  errorMessage: string;
+  steps: PaymentStep[];
+};
 
 const recurringCycleOptions: Array<{ id: RecurringCycle; label: string; seconds: bigint }> = [
   { id: "test", label: "Every 3 minutes", seconds: 3n * 60n },
@@ -131,6 +151,7 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
   const [billState, setBillState] = useState<BillRunState>("idle");
   const [billMessage, setBillMessage] = useState("");
   const [debtMessages, setDebtMessages] = useState<Record<string, { message: string; tone: "error" | "neutral" }>>({});
+  const [paymentFlow, setPaymentFlow] = useState<PaymentFlow | null>(null);
   const [claimMessage, setClaimMessage] = useState("");
   const [claimMessageTone, setClaimMessageTone] = useState<"error" | "neutral">("neutral");
   const [submittedBillId, setSubmittedBillId] = useState<bigint | null>(null);
@@ -589,6 +610,64 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
     }
   }
 
+  function beginPaymentFlow(billId: string, amountLabel: string) {
+    setPaymentFlow({
+      open: true,
+      billId,
+      amountLabel,
+      status: "running",
+      errorMessage: "",
+      steps: [
+        { key: "switch", label: "Connect to Arc Testnet", hint: "Approve the network switch in your wallet", state: "active" },
+        { key: "approve", label: "Approve USDC", hint: "Let the bill registry move your USDC", state: "pending" },
+        { key: "pay", label: "Send payment", hint: "Settle the debt on Arc with a memo", state: "pending" },
+      ],
+    });
+  }
+
+  function advancePaymentStep(doneKey: PaymentStep["key"], nextKey?: PaymentStep["key"]) {
+    setPaymentFlow((current) =>
+      current
+        ? {
+            ...current,
+            steps: current.steps.map((step) =>
+              step.key === doneKey
+                ? { ...step, state: "done" }
+                : step.key === nextKey
+                  ? { ...step, state: "active" }
+                  : step,
+            ),
+          }
+        : current,
+    );
+  }
+
+  function completePaymentFlow() {
+    setPaymentFlow((current) =>
+      current
+        ? { ...current, status: "success", steps: current.steps.map((step) => ({ ...step, state: "done" })) }
+        : current,
+    );
+    fireSuccessConfetti();
+  }
+
+  function failPaymentFlow(message: string) {
+    setPaymentFlow((current) =>
+      current
+        ? {
+            ...current,
+            status: "error",
+            errorMessage: message,
+            steps: current.steps.map((step) => (step.state === "active" ? { ...step, state: "error" } : step)),
+          }
+        : current,
+    );
+  }
+
+  function closePaymentFlow() {
+    setPaymentFlow((current) => (current ? { ...current, open: false } : current));
+  }
+
   async function payDebtOnArc(debt: BillSplitDebt) {
     const wallet = billWallet ?? (await connectBillWallet());
     const debtKey = debt.billId.toString();
@@ -597,42 +676,45 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
       return;
     }
 
+    const amount = usdcToBillUnits(partialPayments[debtKey] ?? billUnitsToUsdc(debt.remaining));
+
+    if (amount <= 0n || amount > debt.remaining) {
+      setBillState("error");
+      setDebtMessages((current) => ({
+        ...current,
+        [debtKey]: { tone: "error", message: "Enter an amount up to the remaining debt." },
+      }));
+      return;
+    }
+
+    const amountLabel = billUnitsToUsdc(amount);
+    beginPaymentFlow(debtKey, amountLabel);
+
     try {
       setBillState("working");
-      setDebtMessages((current) => ({
-        ...current,
-        [debtKey]: { tone: "neutral", message: "Switching wallet to Arc Testnet." },
-      }));
+      setDebtMessages((current) => {
+        const next = { ...current };
+        delete next[debtKey];
+        return next;
+      });
       await ensureBillSplitWalletOnArc(wallet);
-      const amount = usdcToBillUnits(partialPayments[debt.billId.toString()] ?? billUnitsToUsdc(debt.remaining));
+      advancePaymentStep("switch", "approve");
 
-      if (amount <= 0n || amount > debt.remaining) {
-        setBillState("error");
-        setDebtMessages((current) => ({
-          ...current,
-          [debtKey]: { tone: "error", message: "Enter an amount up to the remaining debt." },
-        }));
-        return;
-      }
-
-      setDebtMessages((current) => ({
-        ...current,
-        [debtKey]: { tone: "neutral", message: "Approving USDC." },
-      }));
       await approveBillRegistry({ ...wallet, amount });
-      setDebtMessages((current) => ({
-        ...current,
-        [debtKey]: { tone: "neutral", message: "Paying debt with transaction memo." },
-      }));
+      advancePaymentStep("approve", "pay");
+
       await payBillDebtWithMemo({ ...wallet, billId: debt.billId, amount });
+      completePaymentFlow();
+
       setBillState("success");
       setDebtMessages((current) => ({
         ...current,
-        [debtKey]: { tone: "neutral", message: `Paid ${billUnitsToUsdc(amount)} USDC toward bill #${debt.billId.toString()}.` },
+        [debtKey]: { tone: "neutral", message: `Paid ${amountLabel} USDC toward bill #${debtKey}.` },
       }));
       await refreshBillRegistry(wallet.account);
     } catch (caught) {
       setBillState("error");
+      failPaymentFlow(errorMessage(caught));
       setDebtMessages((current) => ({
         ...current,
         [debtKey]: { tone: "error", message: errorMessage(caught) },
@@ -1363,6 +1445,8 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
         )}
         </AnimatePresence>
       </section>
+
+      {paymentFlow ? <PaymentProgressModal flow={paymentFlow} onClose={closePaymentFlow} /> : null}
     </main>
   );
 }
@@ -2043,6 +2127,147 @@ function RecurringWorkspace({
       ) : null}
     </div>
   );
+}
+
+function PaymentProgressModal({ flow, onClose }: { flow: PaymentFlow; onClose: () => void }) {
+  const running = flow.status === "running";
+  const succeeded = flow.status === "success";
+  const failed = flow.status === "error";
+
+  const headIcon = succeeded ? (
+    <CheckCircle2 size={22} />
+  ) : failed ? (
+    <AlertTriangle size={22} />
+  ) : (
+    <BadgeDollarSign size={22} />
+  );
+
+  const title = succeeded ? "Payment settled" : failed ? "Payment failed" : "Settling on Arc";
+  const subtitle = succeeded
+    ? `Paid $${flow.amountLabel} USDC toward bill #${flow.billId}.`
+    : failed
+      ? flow.errorMessage || "Something went wrong while paying."
+      : `Paying $${flow.amountLabel} USDC toward bill #${flow.billId}.`;
+
+  const stepIcons: Record<PaymentStep["key"], typeof ShieldCheck> = {
+    switch: WalletCards,
+    approve: ShieldCheck,
+    pay: Send,
+  };
+
+  return (
+    <Dialog.Root
+      open={flow.open}
+      onOpenChange={(open) => {
+        if (!open && !running) {
+          onClose();
+        }
+      }}
+    >
+      <Dialog.Portal>
+        <Dialog.Overlay className="pay-modal-overlay" />
+        <Dialog.Content
+          aria-describedby="pay-modal-sub"
+          className={`pay-modal pay-modal-${flow.status}`}
+          onEscapeKeyDown={(event) => running && event.preventDefault()}
+          onInteractOutside={(event) => running && event.preventDefault()}
+        >
+          <div className="pay-modal-head">
+            <span className={`pay-modal-icon pay-modal-icon-${flow.status}`} aria-hidden="true">
+              {headIcon}
+            </span>
+            <div className="min-w-0">
+              <Dialog.Title className="pay-modal-title">{title}</Dialog.Title>
+              <Dialog.Description className="pay-modal-sub" id="pay-modal-sub">
+                {subtitle}
+              </Dialog.Description>
+            </div>
+            {!running ? (
+              <Dialog.Close className="icon-button pay-modal-close" aria-label="Close">
+                <X size={17} />
+              </Dialog.Close>
+            ) : null}
+          </div>
+
+          <ol className="pay-steps">
+            {flow.steps.map((step) => {
+              const StepIcon = stepIcons[step.key];
+              return (
+                <li className="pay-step" data-state={step.state} key={step.key}>
+                  <span className="pay-step-icon" aria-hidden="true">
+                    {step.state === "active" ? (
+                      <Loader2 className="animate-spin" size={16} />
+                    ) : step.state === "done" ? (
+                      <CheckCircle2 size={16} />
+                    ) : step.state === "error" ? (
+                      <AlertTriangle size={16} />
+                    ) : (
+                      <StepIcon size={15} />
+                    )}
+                  </span>
+                  <span className="pay-step-body">
+                    <span className="pay-step-label">{step.label}</span>
+                    <span className="pay-step-hint">
+                      {step.state === "active"
+                        ? "Waiting for wallet confirmation…"
+                        : step.state === "done"
+                          ? "Done"
+                          : step.state === "error"
+                            ? "Failed"
+                            : step.hint}
+                    </span>
+                  </span>
+                </li>
+              );
+            })}
+          </ol>
+
+          <div className="pay-modal-foot">
+            <span className={`pay-modal-status pay-modal-status-${flow.status}`}>
+              {running ? (
+                <>
+                  <Loader2 className="animate-spin" size={15} />
+                  Confirm each step in your wallet
+                </>
+              ) : succeeded ? (
+                <>
+                  <CheckCircle2 size={15} />
+                  All transactions confirmed
+                </>
+              ) : (
+                <>
+                  <AlertTriangle size={15} />
+                  No funds were moved
+                </>
+              )}
+            </span>
+            {!running ? (
+              <button className="primary-button" onClick={onClose} type="button">
+                {succeeded ? "Done" : "Close"}
+              </button>
+            ) : null}
+          </div>
+        </Dialog.Content>
+      </Dialog.Portal>
+    </Dialog.Root>
+  );
+}
+
+function fireSuccessConfetti() {
+  if (typeof window === "undefined") {
+    return;
+  }
+  if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) {
+    return;
+  }
+  void confetti({
+    particleCount: 120,
+    spread: 70,
+    startVelocity: 38,
+    origin: { y: 0.42 },
+    colors: ["#2775ca", "#3ee6d6", "#17a56b"],
+    scalar: 0.9,
+  });
 }
 
 function Panel({
