@@ -230,7 +230,7 @@ export async function createBillSplit({
     account,
     chain: arcTestnet,
   });
-  const receipt = await publicClient.waitForTransactionReceipt({ hash });
+  const receipt = assertReceiptSuccess(await publicClient.waitForTransactionReceipt({ hash }), "Bill creation");
   const created = parseBillCreated(receipt);
 
   if (!created) {
@@ -238,6 +238,13 @@ export async function createBillSplit({
   }
 
   return { hash, ...created };
+}
+
+function assertReceiptSuccess(receipt: TransactionReceipt, action: string): TransactionReceipt {
+  if (receipt.status !== "success") {
+    throw new Error(`${action} failed: the transaction reverted on Arc and no funds were moved.`);
+  }
+  return receipt;
 }
 
 export async function approveBillRegistry({ walletClient, account, amount }: BillSplitWallet & { amount: bigint }) {
@@ -252,7 +259,7 @@ export async function approveBillRegistry({ walletClient, account, amount }: Bil
     chain: arcTestnet,
   });
 
-  return publicClient.waitForTransactionReceipt({ hash });
+  return assertReceiptSuccess(await publicClient.waitForTransactionReceipt({ hash }), "USDC approval");
 }
 
 export async function payBillDebt({
@@ -275,7 +282,7 @@ export async function payBillDebt({
     chain: arcTestnet,
   });
 
-  return publicClient.waitForTransactionReceipt({ hash });
+  return assertReceiptSuccess(await publicClient.waitForTransactionReceipt({ hash }), "Payment");
 }
 
 export async function payBillDebtWithMemo({
@@ -306,7 +313,7 @@ export async function payBillDebtWithMemo({
     chain: arcTestnet,
   });
 
-  return publicClient.waitForTransactionReceipt({ hash });
+  return assertReceiptSuccess(await publicClient.waitForTransactionReceipt({ hash }), "Payment");
 }
 
 export async function claimBillFunds({
@@ -329,7 +336,7 @@ export async function claimBillFunds({
     chain: arcTestnet,
   });
 
-  return publicClient.waitForTransactionReceipt({ hash });
+  return assertReceiptSuccess(await publicClient.waitForTransactionReceipt({ hash }), "Claim");
 }
 
 export async function readDebtsForWallet(account: `0x${string}`) {
