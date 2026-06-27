@@ -226,12 +226,6 @@ export default function DocsPage() {
               Amounts are represented with 6 decimals to match USDC. User-entered dollar values are converted into USDC base
               units before they are submitted to the contract.
             </p>
-            <Callout title="About netting">
-              Splitsy includes a netting module for group ledger previews. It calculates each member&apos;s net position from charges,
-              splits each charge across unique participants, and computes the minimum debtor-to-creditor transfers. The current
-              onchain bill registry stores direct participant debts for a submitted bill; the netting module is available for
-              richer group settlement previews and future persistence-backed ledgers.
-            </Callout>
           </section>
 
           <section id="recurring-tabs" className="docs-section">

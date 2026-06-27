@@ -589,6 +589,8 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
 
     try {
       setBillState("working");
+      setBillMessage("Switching to Arc Testnet…");
+      await ensureBillSplitWalletOnArc(wallet);
       setBillMessage("Writing the split to Arc.");
       const result = await createBillSplit({
         ...wallet,
@@ -1226,7 +1228,7 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
 
   return (
     <main className="app-shell min-h-screen text-[var(--text)]">
-      <header className="sticky top-0 z-30 border-b border-[var(--border)] bg-[color:var(--header-bg)] backdrop-blur-xl">
+      <header className="static md:sticky md:top-0 z-30 border-b border-[var(--border)] bg-[color:var(--header-bg)] backdrop-blur-xl">
         <div className="mx-auto max-w-7xl px-4 py-3 sm:px-6 lg:px-8">
           <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
             <div className="min-w-0">
