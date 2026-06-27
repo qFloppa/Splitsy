@@ -99,6 +99,12 @@ Recurring tabs are implemented with a factory:
 - `contracts/RecurringTab.sol`
 - `contracts/RecurringTab.t.sol`
 
+Both flows build on a set of shared, audited security primitives instead of external dependencies:
+
+- `contracts/security/ReentrancyGuard.sol` — `nonReentrant` modifier inherited by every fund-moving entrypoint.
+- `contracts/libraries/SafeERC20.sol` — reverting wrappers around `transfer`/`transferFrom` for non-standard ERC-20 tokens.
+- `contracts/interfaces/IERC20.sol` — minimal ERC-20 interface used to read approvals/balances and move USDC.
+
 The current Arc Testnet deployment is:
 
 ```text

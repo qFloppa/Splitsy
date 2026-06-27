@@ -369,6 +369,38 @@ export default function DocsPage() {
                 </tbody>
               </table>
             </div>
+            <p>
+              The payment contracts build on a small set of shared, audited security primitives rather than external dependencies.
+              Each is intentionally minimal and carries no owner, upgrade, or privileged path.
+            </p>
+            <div className="docs-table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Module</th>
+                    <th>Type</th>
+                    <th>Role</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td><code>ReentrancyGuard</code></td>
+                    <td>Abstract base</td>
+                    <td>Provides the <code>nonReentrant</code> modifier. Every fund-moving entrypoint (<code>payDebt</code>, <code>claim</code>, <code>settleTab</code>) inherits it, so a function cannot be re-entered while it executes.</td>
+                  </tr>
+                  <tr>
+                    <td><code>SafeERC20</code></td>
+                    <td>Library</td>
+                    <td>Wraps <code>transfer</code> and <code>transferFrom</code> so a token that returns no data or <code>false</code> can never be mistaken for a successful transfer; any non-success reverts with <code>SafeERC20FailedOperation</code>.</td>
+                  </tr>
+                  <tr>
+                    <td><code>IERC20</code></td>
+                    <td>Interface</td>
+                    <td>Minimal ERC-20 surface (<code>allowance</code>, <code>balanceOf</code>, <code>transfer</code>, <code>transferFrom</code>) the contracts use to read approvals and balances and to move USDC.</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
             <Callout title="Deployment note">
               Existing recurring tabs keep the bytecode they were created with. Changes to <code>RecurringTab.sol</code> require a
               new factory deployment and newly created tabs to use the updated behavior.
@@ -394,6 +426,9 @@ export default function DocsPage() {
               <li>Users explicitly approve USDC spend before contracts can pull funds.</li>
               <li>Recurring approval is constrained to the tab contract address and can be revoked by setting allowance to zero.</li>
               <li>Recurring settlement is protected by operational controls and is not exposed as a public user action.</li>
+              <li>Every fund-moving entrypoint follows checks-effects-interactions and is guarded by the shared <code>ReentrancyGuard</code> (<code>nonReentrant</code>) module.</li>
+              <li>All USDC movement routes through the <code>SafeERC20</code> library, so a token that returns no data or <code>false</code> can never be treated as a successful transfer.</li>
+              <li>Contracts hold no privileged owner and expose no upgrade, pause, sweep, or <code>selfdestruct</code> path; funds can only ever leave to a bill&apos;s splitter or a tab&apos;s immutable recipient.</li>
               <li>Sensitive operational credentials must never be exposed in browser code, screenshots, public docs, or client logs.</li>
               <li>Contracts use custom errors and explicit checks for invalid amounts, unknown bills, unauthorized claims, and duplicate recurring members.</li>
               <li>Receipt OCR data should be reviewed by the splitter before submission. The scanner is a convenience layer, not an accounting authority.</li>
