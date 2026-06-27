@@ -30,7 +30,7 @@ import confetti from "canvas-confetti";
 import gsap from "gsap";
 import Image from "next/image";
 import Link from "next/link";
-import { ChangeEvent, FormEvent, ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { ChangeEvent, DragEvent, FormEvent, ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { getAddress } from "viem";
 import { arcTestnet } from "viem/chains";
 import { useAccount, useConnect, useDisconnect, useSwitchChain } from "wagmi";
@@ -142,6 +142,7 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
   const [ocrState, setOcrState] = useState<OcrState>("idle");
   const [error, setError] = useState("");
   const [imagePreview, setImagePreview] = useState("");
+  const [isDraggingBill, setIsDraggingBill] = useState(false);
   const [manualBillEntry, setManualBillEntry] = useState(false);
   const [bill, setBill] = useState<ParsedBill>({
     ...emptyParsedBill,
@@ -228,6 +229,7 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
   const billReadyForSplit = billIsScanned || (manualBillEntry && confirmedUsd > 0);
   const usdRate = fxQuote?.rate ?? 1;
   const originCurrency = fxQuote?.source ?? bill.currency;
+  const imageInputRef = useRef<HTMLInputElement | null>(null);
   const receiptPrintRef = useRef<HTMLDivElement | null>(null);
   const reviewBillRef = useRef<HTMLDivElement | null>(null);
   const reviewSplitRef = useRef<HTMLDivElement | null>(null);
@@ -895,15 +897,50 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
     }
   }
 
-  function updatePreview(event: ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0];
-
+  function showBillPreview(file: File | null) {
     if (!file) {
       setImagePreview("");
       return;
     }
 
     setImagePreview(URL.createObjectURL(file));
+  }
+
+  function updatePreview(event: ChangeEvent<HTMLInputElement>) {
+    showBillPreview(event.target.files?.[0] ?? null);
+  }
+
+  function handleBillDragOver(event: DragEvent<HTMLLabelElement>) {
+    event.preventDefault();
+    setIsDraggingBill(true);
+  }
+
+  function handleBillDragLeave(event: DragEvent<HTMLLabelElement>) {
+    event.preventDefault();
+    setIsDraggingBill(false);
+  }
+
+  function handleBillDrop(event: DragEvent<HTMLLabelElement>) {
+    event.preventDefault();
+    setIsDraggingBill(false);
+
+    const file = event.dataTransfer.files?.[0];
+
+    if (!file || !file.type.startsWith("image/")) {
+      setError("Drop an image of the bill.");
+      return;
+    }
+
+    const input = imageInputRef.current;
+
+    if (input) {
+      const transfer = new DataTransfer();
+      transfer.items.add(file);
+      input.files = transfer.files;
+    }
+
+    setError("");
+    showBillPreview(file);
   }
 
   async function connectForBridge() {
@@ -1270,8 +1307,13 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
               <Panel title="Upload bill" icon={<Upload size={19} />}>
                 <form className="space-y-4" onSubmit={parseBill}>
                   <label
-                    className="scan-surface upload-focus flex min-h-[28rem] cursor-pointer flex-col items-center justify-center rounded-[var(--radius)] border border-dashed border-[var(--border-strong)] bg-[var(--receipt)] p-6 text-center text-[var(--receipt-text)] transition hover:border-[var(--accent)] sm:min-h-[34rem]"
+                    className={`scan-surface upload-focus flex min-h-[28rem] cursor-pointer flex-col items-center justify-center rounded-[var(--radius)] border border-dashed bg-[var(--receipt)] p-6 text-center text-[var(--receipt-text)] transition hover:border-[var(--accent)] sm:min-h-[34rem] ${
+                      isDraggingBill ? "border-[var(--accent)]" : "border-[var(--border-strong)]"
+                    }`}
                     data-scanning={ocrState === "reading"}
+                    onDragLeave={handleBillDragLeave}
+                    onDragOver={handleBillDragOver}
+                    onDrop={handleBillDrop}
                   >
                     {imagePreview ? (
                       // eslint-disable-next-line @next/next/no-img-element
@@ -1284,12 +1326,13 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
                       <>
                         <Camera className="text-[var(--accent)]" size={44} />
                         <p className="mt-4 text-xl font-semibold">Upload the bill</p>
+                        <p className="mt-1 text-sm text-[var(--receipt-muted)]">Click to browse or drag &amp; drop an image</p>
                         <p className="mt-2 max-w-md text-sm leading-6 text-[var(--receipt-muted)]">
                           Use a local receipt or bill photo in any language. Splitsy reads totals, tax, tip, and line items so the split starts clean.
                         </p>
                       </>
                     )}
-                    <input accept="image/*" className="sr-only" name="image" onChange={updatePreview} type="file" />
+                    <input accept="image/*" className="sr-only" name="image" onChange={updatePreview} ref={imageInputRef} type="file" />
                   </label>
 
                   {error ? <Message tone="error">{error}</Message> : null}
