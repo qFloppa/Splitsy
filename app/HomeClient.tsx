@@ -1877,7 +1877,7 @@ function DebtWorkspace({
                   className="relative flex items-center justify-between gap-3 overflow-hidden rounded-[var(--radius)] border border-[var(--border)] bg-[var(--surface-strong)] p-3"
                   key={key}
                 >
-                  <PaidBillStamp compact />
+                  <PaidBillStamp compact alt="Claimed" src="/claimed.png" width={652} height={512} />
                   <div>
                     <p className="font-semibold">Bill #{key}</p>
                     <p className="mt-1 text-sm text-[var(--text-muted)]">
@@ -2538,10 +2538,22 @@ function Panel({
   );
 }
 
-function PaidBillStamp({ compact = false }: { compact?: boolean }) {
+function PaidBillStamp({
+  compact = false,
+  src = "/paid.png",
+  alt = "Paid",
+  width = 1024,
+  height = 788,
+}: {
+  compact?: boolean;
+  src?: string;
+  alt?: string;
+  width?: number;
+  height?: number;
+}) {
   return (
     <div className={`paid-bill-stamp ${compact ? "paid-bill-stamp-compact" : ""}`} aria-hidden="true">
-      <Image alt="Paid" height={788} priority src="/paid.png" width={1024} />
+      <Image alt={alt} height={height} priority src={src} width={width} />
     </div>
   );
 }
