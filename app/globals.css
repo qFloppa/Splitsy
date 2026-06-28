@@ -668,10 +668,12 @@ input[type="number"],
 }
 
 .paid-bill-stamp-compact {
-  right: 0.75rem;
-  bottom: 0.65rem;
-  width: clamp(5.2rem, 13vw, 7.2rem);
+  top: 50%;
+  bottom: auto;
+  right: 1rem;
+  width: clamp(3.4rem, 9vw, 4.6rem);
   opacity: 0.9;
+  transform: translateY(-50%) rotate(-8deg);
 }
 
 .paid-bill-stamp img {

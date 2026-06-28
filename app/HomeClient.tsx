@@ -1803,7 +1803,7 @@ function DebtWorkspace({
 
               return (
                 <div
-                  className="relative flex items-center justify-between gap-3 overflow-hidden rounded-[var(--radius)] border border-[var(--border)] bg-[var(--surface-strong)] p-3"
+                  className="relative flex items-center justify-between gap-3 overflow-hidden rounded-[var(--radius)] border border-[var(--border)] bg-[var(--surface-strong)] p-3 pr-24"
                   key={key}
                 >
                   <PaidBillStamp compact />
@@ -1874,7 +1874,7 @@ function DebtWorkspace({
 
               return (
                 <div
-                  className="relative flex items-center justify-between gap-3 overflow-hidden rounded-[var(--radius)] border border-[var(--border)] bg-[var(--surface-strong)] p-3"
+                  className="relative flex items-center justify-between gap-3 overflow-hidden rounded-[var(--radius)] border border-[var(--border)] bg-[var(--surface-strong)] p-3 pr-24"
                   key={key}
                 >
                   <PaidBillStamp compact alt="Claimed" src="/claimed.png" width={652} height={512} />
