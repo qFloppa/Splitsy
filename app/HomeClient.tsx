@@ -1504,8 +1504,7 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
                           </button>
                         </div>
 
-                        <div className="mt-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                          <span className="text-sm text-[var(--receipt-muted)]">Registered debt for this wallet</span>
+                        <div className="mt-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-end">
                           <span className="amount-text font-semibold">${participant.amountUsd.toFixed(2)}</span>
                         </div>
                       </div>
@@ -1638,6 +1637,7 @@ function DebtWorkspace({
   const activeDebts = debts.filter((debt) => debt.remaining > 0n);
   const paidDebts = debts.filter((debt) => debt.remaining <= 0n);
   const claimableBills = splitterBills.filter((debt) => debt.claimable > 0n);
+  const claimedBills = splitterBills.filter((debt) => debt.claimable <= 0n && debt.claimed > 0n);
   const [fallbackBridgeChains, setFallbackBridgeChains] = useState<Record<string, BridgeSourceChain>>({});
   const debtAlertRef = useRef<HTMLDivElement | null>(null);
   const claimRef = useRef<HTMLDivElement | null>(null);
@@ -1860,6 +1860,35 @@ function DebtWorkspace({
             })}
           </div>
         </Panel>
+        </div>
+      ) : null}
+
+      {claimedBills.length > 0 ? (
+        <div className="space-y-2">
+          <p className="text-sm font-semibold text-[var(--text-muted)]">
+            Claimed bill{claimedBills.length === 1 ? "" : "s"} — your collected records
+          </p>
+          <div className="space-y-2">
+            {claimedBills.map((debt) => {
+              const key = debt.billId.toString();
+
+              return (
+                <div
+                  className="relative flex items-center justify-between gap-3 overflow-hidden rounded-[var(--radius)] border border-[var(--border)] bg-[var(--surface-strong)] p-3"
+                  key={key}
+                >
+                  <PaidBillStamp compact />
+                  <div>
+                    <p className="font-semibold">Bill #{key}</p>
+                    <p className="mt-1 text-sm text-[var(--text-muted)]">
+                      Claimed <span className="amount-text">${billUnitsToUsdc(debt.claimed)}</span> of{" "}
+                      <span className="amount-text">${billUnitsToUsdc(debt.totalPaid)}</span> paid
+                    </p>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
         </div>
       ) : null}
     </div>
