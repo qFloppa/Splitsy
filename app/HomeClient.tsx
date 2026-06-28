@@ -1858,22 +1858,55 @@ function HistoryWorkspace({
   hasWallet: boolean;
 }) {
   const paidDebts = debts.filter((debt) => debt.remaining <= 0n);
+  // Creditor POV: bills this wallet split that debtors haven't fully paid yet.
+  const pendingBills = splitterBills.filter((debt) => debt.totalPaid < debt.totalOwed);
   const claimedBills = splitterBills.filter((debt) => debt.claimable <= 0n && debt.claimed > 0n);
-  const isEmpty = paidDebts.length === 0 && claimedBills.length === 0;
+  const isEmpty = paidDebts.length === 0 && pendingBills.length === 0 && claimedBills.length === 0;
 
   return (
     <div className="space-y-5">
       <Panel title="History" icon={<BadgeDollarSign size={19} />}>
         {!hasWallet ? (
           <p className="text-sm text-[var(--text-muted)]">
-            Connect your wallet to see your paid and claimed bills.
+            Connect your wallet to see your bill history.
           </p>
         ) : isEmpty ? (
           <p className="text-sm text-[var(--text-muted)]">
-            No paid or claimed bills yet. Settled bills you pay and funds you claim will appear here as records.
+            No bill history yet. Bills you split, settle, or claim will appear here as records.
           </p>
         ) : (
           <div className="space-y-6">
+            {pendingBills.length > 0 ? (
+              <div className="space-y-2">
+                <p className="text-sm font-semibold text-[var(--text-muted)]">
+                  Pending bill{pendingBills.length === 1 ? "" : "s"} — awaiting payment from debtors
+                </p>
+                <div className="space-y-2">
+                  {pendingBills.map((debt) => {
+                    const key = debt.billId.toString();
+                    const remaining = debt.totalOwed - debt.totalPaid;
+
+                    return (
+                      <div
+                        className="relative flex items-center justify-between gap-3 rounded-[var(--radius)] border border-[var(--border)] bg-[var(--surface-strong)] p-3"
+                        key={key}
+                      >
+                        <div>
+                          <p className="font-semibold">Bill #{key}</p>
+                          <p className="mt-1 text-sm text-[var(--text-muted)]">
+                            Paid <span className="amount-text">${billUnitsToUsdc(debt.totalPaid)}</span> of{" "}
+                            <span className="amount-text">${billUnitsToUsdc(debt.totalOwed)}</span> ·{" "}
+                            <span className="amount-text">${billUnitsToUsdc(remaining)}</span> outstanding
+                          </p>
+                        </div>
+                        <span className="status-dot status-warn">Pending</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            ) : null}
+
             {paidDebts.length > 0 ? (
               <div className="space-y-2">
                 <p className="text-sm font-semibold text-[var(--text-muted)]">
