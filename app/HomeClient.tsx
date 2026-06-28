@@ -538,7 +538,8 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
         readDebtsForWallet(account),
         readBillsForSplitter(account),
       ]);
-      setDebts(nextDebts.filter((debt) => debt.remaining > 0n));
+      // Keep fully-paid debts in state so the debtor retains a shrunk, stamped record of what they paid.
+      setDebts(nextDebts);
       setSplitterBills(nextSplitterBills);
       setPartialPayments((current) => ({
         ...Object.fromEntries(
@@ -1635,6 +1636,7 @@ function DebtWorkspace({
   splitterBills: BillSplitDebt[];
 }) {
   const activeDebts = debts.filter((debt) => debt.remaining > 0n);
+  const paidDebts = debts.filter((debt) => debt.remaining <= 0n);
   const claimableBills = splitterBills.filter((debt) => debt.claimable > 0n);
   const [fallbackBridgeChains, setFallbackBridgeChains] = useState<Record<string, BridgeSourceChain>>({});
   const debtAlertRef = useRef<HTMLDivElement | null>(null);
@@ -1783,6 +1785,35 @@ function DebtWorkspace({
                       </div>
                     </div>
                   ) : null}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      ) : null}
+
+      {paidDebts.length > 0 ? (
+        <div className="space-y-2">
+          <p className="text-sm font-semibold text-[var(--text-muted)]">
+            Paid bill{paidDebts.length === 1 ? "" : "s"} — your settled records
+          </p>
+          <div className="space-y-2">
+            {paidDebts.map((debt) => {
+              const key = debt.billId.toString();
+
+              return (
+                <div
+                  className="relative flex items-center justify-between gap-3 overflow-hidden rounded-[var(--radius)] border border-[var(--border)] bg-[var(--surface-strong)] p-3"
+                  key={key}
+                >
+                  <PaidBillStamp compact />
+                  <div>
+                    <p className="font-semibold">Bill #{key}</p>
+                    <p className="mt-1 text-sm text-[var(--text-muted)]">
+                      Paid <span className="amount-text">${billUnitsToUsdc(debt.paid)}</span> of{" "}
+                      <span className="amount-text">${billUnitsToUsdc(debt.owed)}</span>
+                    </p>
+                  </div>
                 </div>
               );
             })}
