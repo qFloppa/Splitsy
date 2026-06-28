@@ -95,7 +95,7 @@ type FxQuote = {
 type OcrState = "idle" | "reading" | "ready" | "error";
 type BillRunState = "idle" | "connecting" | "working" | "success" | "error";
 type RecurringRunState = "idle" | "connecting" | "working" | "error" | "success";
-type AppTab = "bills" | "recurring";
+type AppTab = "bills" | "recurring" | "history";
 type AppTheme = "light" | "dark";
 type RecurringCycle = "test" | "weekly" | "monthly" | "custom";
 type RecurringMemberInput = {
@@ -1256,6 +1256,9 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
                 <TabButton active={activeTab === "recurring"} onClick={() => switchAppTab("recurring")}>
                   Recurring
                 </TabButton>
+                <TabButton active={activeTab === "history"} onClick={() => switchAppTab("history")}>
+                  History
+                </TabButton>
                 <Link className="tab-button" href="/docs">
                   <BookOpen size={16} />
                   Docs
@@ -1549,7 +1552,7 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
               </AnimatePresence>
             </div>
           </motion.div>
-        ) : (
+        ) : activeTab === "recurring" ? (
           <motion.div
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: 8 }}
@@ -1591,6 +1594,16 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
             updateRecurringMember={updateRecurringMember}
             walletTabs={walletTabs}
           />
+          </motion.div>
+        ) : (
+          <motion.div
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 8 }}
+            initial={{ opacity: 0, y: 8 }}
+            key="history"
+            transition={{ duration: 0.22, ease: "easeOut" }}
+          >
+            <HistoryWorkspace debts={debts} splitterBills={splitterBills} hasWallet={Boolean(billWallet)} />
           </motion.div>
         )}
         </AnimatePresence>
@@ -1635,9 +1648,7 @@ function DebtWorkspace({
   splitterBills: BillSplitDebt[];
 }) {
   const activeDebts = debts.filter((debt) => debt.remaining > 0n);
-  const paidDebts = debts.filter((debt) => debt.remaining <= 0n);
   const claimableBills = splitterBills.filter((debt) => debt.claimable > 0n);
-  const claimedBills = splitterBills.filter((debt) => debt.claimable <= 0n && debt.claimed > 0n);
   const [fallbackBridgeChains, setFallbackBridgeChains] = useState<Record<string, BridgeSourceChain>>({});
   const debtAlertRef = useRef<HTMLDivElement | null>(null);
   const claimRef = useRef<HTMLDivElement | null>(null);
@@ -1792,35 +1803,6 @@ function DebtWorkspace({
         </div>
       ) : null}
 
-      {paidDebts.length > 0 ? (
-        <div className="space-y-2">
-          <p className="text-sm font-semibold text-[var(--text-muted)]">
-            Paid bill{paidDebts.length === 1 ? "" : "s"} — your settled records
-          </p>
-          <div className="space-y-2">
-            {paidDebts.map((debt) => {
-              const key = debt.billId.toString();
-
-              return (
-                <div
-                  className="relative flex items-center justify-between gap-3 overflow-hidden rounded-[var(--radius)] border border-[var(--border)] bg-[var(--surface-strong)] p-3 pr-24"
-                  key={key}
-                >
-                  <PaidBillStamp compact />
-                  <div>
-                    <p className="font-semibold">Bill #{key}</p>
-                    <p className="mt-1 text-sm text-[var(--text-muted)]">
-                      Paid <span className="amount-text">${billUnitsToUsdc(debt.paid)}</span> of{" "}
-                      <span className="amount-text">${billUnitsToUsdc(debt.owed)}</span>
-                    </p>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      ) : null}
-
       {claimableBills.length > 0 ? (
         <div ref={claimRef}>
         <Panel title="Claim funds" icon={<BadgeDollarSign size={19} />}>
@@ -1862,35 +1844,96 @@ function DebtWorkspace({
         </Panel>
         </div>
       ) : null}
+    </div>
+  );
+}
 
-      {claimedBills.length > 0 ? (
-        <div className="space-y-2">
-          <p className="text-sm font-semibold text-[var(--text-muted)]">
-            Claimed bill{claimedBills.length === 1 ? "" : "s"} — your collected records
+function HistoryWorkspace({
+  debts,
+  splitterBills,
+  hasWallet,
+}: {
+  debts: BillSplitDebt[];
+  splitterBills: BillSplitDebt[];
+  hasWallet: boolean;
+}) {
+  const paidDebts = debts.filter((debt) => debt.remaining <= 0n);
+  const claimedBills = splitterBills.filter((debt) => debt.claimable <= 0n && debt.claimed > 0n);
+  const isEmpty = paidDebts.length === 0 && claimedBills.length === 0;
+
+  return (
+    <div className="space-y-5">
+      <Panel title="History" icon={<BadgeDollarSign size={19} />}>
+        {!hasWallet ? (
+          <p className="text-sm text-[var(--text-muted)]">
+            Connect your wallet to see your paid and claimed bills.
           </p>
-          <div className="space-y-2">
-            {claimedBills.map((debt) => {
-              const key = debt.billId.toString();
+        ) : isEmpty ? (
+          <p className="text-sm text-[var(--text-muted)]">
+            No paid or claimed bills yet. Settled bills you pay and funds you claim will appear here as records.
+          </p>
+        ) : (
+          <div className="space-y-6">
+            {paidDebts.length > 0 ? (
+              <div className="space-y-2">
+                <p className="text-sm font-semibold text-[var(--text-muted)]">
+                  Paid bill{paidDebts.length === 1 ? "" : "s"} — your settled records
+                </p>
+                <div className="space-y-2">
+                  {paidDebts.map((debt) => {
+                    const key = debt.billId.toString();
 
-              return (
-                <div
-                  className="relative flex items-center justify-between gap-3 overflow-hidden rounded-[var(--radius)] border border-[var(--border)] bg-[var(--surface-strong)] p-3 pr-24"
-                  key={key}
-                >
-                  <PaidBillStamp compact alt="Claimed" src="/claimed.png" width={652} height={512} />
-                  <div>
-                    <p className="font-semibold">Bill #{key}</p>
-                    <p className="mt-1 text-sm text-[var(--text-muted)]">
-                      Claimed <span className="amount-text">${billUnitsToUsdc(debt.claimed)}</span> of{" "}
-                      <span className="amount-text">${billUnitsToUsdc(debt.totalPaid)}</span> paid
-                    </p>
-                  </div>
+                    return (
+                      <div
+                        className="relative flex items-center justify-between gap-3 overflow-hidden rounded-[var(--radius)] border border-[var(--border)] bg-[var(--surface-strong)] p-3 pr-24"
+                        key={key}
+                      >
+                        <PaidBillStamp compact />
+                        <div>
+                          <p className="font-semibold">Bill #{key}</p>
+                          <p className="mt-1 text-sm text-[var(--text-muted)]">
+                            Paid <span className="amount-text">${billUnitsToUsdc(debt.paid)}</span> of{" "}
+                            <span className="amount-text">${billUnitsToUsdc(debt.owed)}</span>
+                          </p>
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
-              );
-            })}
+              </div>
+            ) : null}
+
+            {claimedBills.length > 0 ? (
+              <div className="space-y-2">
+                <p className="text-sm font-semibold text-[var(--text-muted)]">
+                  Claimed bill{claimedBills.length === 1 ? "" : "s"} — your collected records
+                </p>
+                <div className="space-y-2">
+                  {claimedBills.map((debt) => {
+                    const key = debt.billId.toString();
+
+                    return (
+                      <div
+                        className="relative flex items-center justify-between gap-3 overflow-hidden rounded-[var(--radius)] border border-[var(--border)] bg-[var(--surface-strong)] p-3 pr-24"
+                        key={key}
+                      >
+                        <PaidBillStamp compact alt="Claimed" src="/claimed.png" width={652} height={512} />
+                        <div>
+                          <p className="font-semibold">Bill #{key}</p>
+                          <p className="mt-1 text-sm text-[var(--text-muted)]">
+                            Claimed <span className="amount-text">${billUnitsToUsdc(debt.claimed)}</span> of{" "}
+                            <span className="amount-text">${billUnitsToUsdc(debt.totalPaid)}</span> paid
+                          </p>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            ) : null}
           </div>
-        </div>
-      ) : null}
+        )}
+      </Panel>
     </div>
   );
 }
