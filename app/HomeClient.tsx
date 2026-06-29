@@ -166,6 +166,7 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
   const [debts, setDebts] = useState<BillSplitDebt[]>([]);
   const [splitterBills, setSplitterBills] = useState<BillSplitDebt[]>([]);
   const [arcUsdcBalance, setArcUsdcBalance] = useState<bigint | null>(null);
+  const [arcUsdcBalanceFlash, setArcUsdcBalanceFlash] = useState(false);
   const [partialPayments, setPartialPayments] = useState<Record<string, string>>({});
   const [claimAmounts, setClaimAmounts] = useState<Record<string, string>>({});
   const [participantShareInputs, setParticipantShareInputs] = useState<Record<string, string>>({});
@@ -563,6 +564,32 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
     }
   }
 
+  // After a bridge mints on Arc, the RPC node can lag a block or two behind the
+  // claim before it reports the new balance. Poll briefly until it moves past
+  // `previousBalance` (or we run out of attempts) so the UI updates on its own.
+  async function refreshArcUsdcBalance(account: `0x${string}`, previousBalance: bigint | null = arcUsdcBalance) {
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      try {
+        const next = await readArcUsdcBalance(account);
+        setArcUsdcBalance(next);
+        if (previousBalance === null || next !== previousBalance) {
+          if (previousBalance !== null) {
+            // Re-arm the animation: clear first so the class re-adds and replays.
+            setArcUsdcBalanceFlash(false);
+            window.requestAnimationFrame(() => setArcUsdcBalanceFlash(true));
+            window.setTimeout(() => setArcUsdcBalanceFlash(false), 1000);
+          }
+          return;
+        }
+      } catch {
+        // Swallow transient RPC errors and try again on the next tick.
+      }
+
+      await new Promise((resolve) => window.setTimeout(resolve, 1500));
+    }
+  }
+
+
   async function submitBillOnchain() {
     if (splitMode === "manual" && splitTotal - confirmedUsd > 0.009) {
       setBillState("error");
@@ -782,6 +809,7 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
 
     const source = sourceLabel(debtSourceChain);
     const amountLabel = billUnitsToUsdc(amount);
+    const balanceBeforeBridge = arcUsdcBalance;
     beginBridgeFlow(amountLabel, source);
 
     try {
@@ -820,6 +848,8 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
             "USDC has been bridged to your Arc wallet. Use Pay on Arc to settle the debt with a memo.",
         },
       }));
+      // The mint just landed on Arc; poll until the node reports the new balance.
+      void refreshArcUsdcBalance(billWallet.account, balanceBeforeBridge);
     } catch (caught) {
       setBillState("error");
       failFlow(errorMessage(caught));
@@ -1296,6 +1326,7 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
             {billWallet ? (
               <DebtWorkspace
                 arcUsdcBalance={arcUsdcBalance}
+                arcUsdcBalanceFlash={arcUsdcBalanceFlash}
                 bridgeForDebt={bridgeForDebt}
                 bridgeResults={bridgeResults}
                 billState={billState}
@@ -1624,6 +1655,7 @@ function DebtWorkspace({
   bridgeResults,
   billState,
   arcUsdcBalance,
+  arcUsdcBalanceFlash,
   claimAmounts,
   claimMessage,
   claimMessageTone,
@@ -1641,6 +1673,7 @@ function DebtWorkspace({
   bridgeResults: Record<string, BridgeSummary>;
   billState: BillRunState;
   arcUsdcBalance: bigint | null;
+  arcUsdcBalanceFlash: boolean;
   claimAmounts: Record<string, string>;
   claimMessage: string;
   claimMessageTone: "error" | "neutral";
@@ -1766,7 +1799,7 @@ function DebtWorkspace({
                         </button>
                         <p className="text-xs text-[var(--text-muted)] sm:text-right">
                           Balance:{" "}
-                          <span className="amount-text">
+                          <span className={`amount-text${arcUsdcBalanceFlash ? " balance-flash" : ""}`}>
                             ${arcUsdcBalance === null ? "—" : billUnitsToUsdc(arcUsdcBalance)}
                           </span>{" "}
                           USDC on Arc Testnet

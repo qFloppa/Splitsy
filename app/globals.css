@@ -1225,6 +1225,34 @@ input[type="number"],
   }
 }
 
+@keyframes balance-flash {
+  0% {
+    color: var(--success);
+    transform: scale(1);
+  }
+
+  18% {
+    color: var(--success);
+    transform: scale(1.16);
+  }
+
+  100% {
+    color: inherit;
+    transform: scale(1);
+  }
+}
+
+.balance-flash {
+  display: inline-block;
+  animation: balance-flash 0.9s ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .balance-flash {
+    animation: none;
+  }
+}
+
 @keyframes debt-sheen {
   0% {
     transform: translateX(-120%);
