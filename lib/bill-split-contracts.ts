@@ -187,6 +187,29 @@ export type BillSplitDebt = {
   claimable: bigint;
 };
 
+export type BillPaymentRecord = {
+  payer: `0x${string}`;
+  amount: bigint;
+  paidTotal: bigint;
+  timestamp: bigint | null; // unix seconds; null if the block timestamp could not be read
+  txHash: `0x${string}`;
+};
+
+export type BillClaimRecord = {
+  splitter: `0x${string}`;
+  amount: bigint;
+  timestamp: bigint | null;
+  txHash: `0x${string}`;
+};
+
+export type BillActivity = {
+  billId: bigint;
+  createdAt: bigint | null; // null if the bill's creation predates the scanned log window
+  createdTxHash: `0x${string}` | null;
+  payments: BillPaymentRecord[]; // oldest first
+  claims: BillClaimRecord[]; // oldest first
+};
+
 export async function createBillSplitWallet(walletClient: WalletClient): Promise<BillSplitWallet> {
   const account = walletClient.account?.address;
 
@@ -410,6 +433,107 @@ export async function readDebt(billId: bigint, account: `0x${string}`): Promise<
     remaining: exists ? owed - paid : 0n,
     claimable,
   };
+}
+
+// Reads the on-chain event history for a single bill: when it was created, every
+// payment (payer + amount + time + tx), and every claim (amount + time + tx).
+// Used by the History tab's expandable records. Tolerates RPC limits and old
+// bills by scanning a recent block window and degrading to nulls/empty arrays.
+export async function readBillActivity(billId: bigint): Promise<BillActivity> {
+  const empty: BillActivity = {
+    billId,
+    createdAt: null,
+    createdTxHash: null,
+    payments: [],
+    claims: [],
+  };
+
+  try {
+    const latest = await publicClient.getBlockNumber();
+    const fromBlock = latest > 9_000n ? latest - 9_000n : 0n;
+    const logs = await publicClient
+      .getLogs({ address: BILL_SPLIT_REGISTRY_ADDRESS, fromBlock, toBlock: latest })
+      .catch(() => []);
+
+    type DecodedBillLog = {
+      eventName: string;
+      args: Record<string, unknown>;
+      blockNumber: bigint;
+      txHash: `0x${string}`;
+    };
+
+    const decoded: DecodedBillLog[] = [];
+    for (const log of logs) {
+      if (log.blockNumber === null || log.transactionHash === null) {
+        continue;
+      }
+
+      try {
+        const event = decodeEventLog({ abi: billSplitRegistryAbi, data: log.data, topics: log.topics });
+        decoded.push({
+          eventName: event.eventName,
+          args: event.args as Record<string, unknown>,
+          blockNumber: log.blockNumber,
+          txHash: log.transactionHash,
+        });
+      } catch {
+        continue;
+      }
+    }
+
+    const forThisBill = decoded.filter((entry) => entry.args.billId === billId);
+
+    if (forThisBill.length === 0) {
+      return empty;
+    }
+
+    // Resolve each distinct block's timestamp once.
+    const blockNumbers = [...new Set(forThisBill.map((entry) => entry.blockNumber))];
+    const timestamps = new Map<bigint, bigint>();
+    await Promise.all(
+      blockNumbers.map(async (blockNumber) => {
+        try {
+          const block = await publicClient.getBlock({ blockNumber });
+          timestamps.set(blockNumber, block.timestamp);
+        } catch {
+          // Missing entry is treated as null below.
+        }
+      }),
+    );
+    const timestampFor = (blockNumber: bigint) => timestamps.get(blockNumber) ?? null;
+
+    const sorted = [...forThisBill].sort((a, b) => Number(a.blockNumber - b.blockNumber));
+    const created = sorted.find((entry) => entry.eventName === "BillCreated") ?? null;
+
+    const payments: BillPaymentRecord[] = sorted
+      .filter((entry) => entry.eventName === "DebtPaid")
+      .map((entry) => ({
+        payer: getAddress(entry.args.payer as `0x${string}`),
+        amount: entry.args.amount as bigint,
+        paidTotal: entry.args.paidTotal as bigint,
+        timestamp: timestampFor(entry.blockNumber),
+        txHash: entry.txHash,
+      }));
+
+    const claims: BillClaimRecord[] = sorted
+      .filter((entry) => entry.eventName === "FundsClaimed")
+      .map((entry) => ({
+        splitter: getAddress(entry.args.splitter as `0x${string}`),
+        amount: entry.args.amount as bigint,
+        timestamp: timestampFor(entry.blockNumber),
+        txHash: entry.txHash,
+      }));
+
+    return {
+      billId,
+      createdAt: created ? timestampFor(created.blockNumber) : null,
+      createdTxHash: created ? created.txHash : null,
+      payments,
+      claims,
+    };
+  } catch {
+    return empty;
+  }
 }
 
 export function billMetadataHash({

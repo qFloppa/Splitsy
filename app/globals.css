@@ -580,6 +580,106 @@ input[type="number"],
   animation: bill-items-open 180ms ease-out;
 }
 
+/* History tab — expandable bill records */
+.history-record {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-strong);
+  overflow: hidden;
+}
+
+.history-record-toggle {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.75rem;
+  text-align: left;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  transition: background-color 160ms ease;
+}
+
+.history-record-toggle:hover {
+  background: var(--surface-muted);
+}
+
+.history-record-badge {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+/* The paid/claimed stamp is normally an absolute overlay; render it inline
+   beside the chevron inside the history toggle. */
+.history-record-badge .paid-bill-stamp {
+  position: static;
+  inset: auto;
+  width: clamp(2.8rem, 7vw, 3.6rem);
+  transform: rotate(-6deg);
+}
+
+.history-chevron {
+  color: var(--accent);
+  transition: transform 180ms ease;
+}
+
+.history-record[data-open="true"] .history-chevron {
+  transform: rotate(180deg);
+}
+
+.history-detail {
+  border-top: 1px solid var(--border);
+  padding: 0.85rem;
+  animation: bill-items-open 180ms ease-out;
+}
+
+.history-detail-grid {
+  display: grid;
+  gap: 0.85rem;
+}
+
+@media (min-width: 640px) {
+  .history-detail-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+.history-detail-label {
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+}
+
+.history-event-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.history-tx-link {
+  color: var(--accent);
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.history-tx-link:hover {
+  color: var(--accent-strong);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .history-detail {
+    animation: none;
+  }
+}
+
 .receipt-index {
   font-family: "Roboto Mono", "SFMono-Regular", Consolas, "Liberation Mono", monospace;
   color: var(--receipt-muted);

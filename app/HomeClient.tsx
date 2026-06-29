@@ -48,6 +48,7 @@ import {
 import {
   approveBillRegistry,
   billMetadataHash,
+  BillActivity,
   BillSplitDebt,
   BillSplitWallet,
   billUnitsToUsdc,
@@ -57,6 +58,7 @@ import {
   isBillRegistryConfigured,
   payBillDebtWithMemo,
   readArcUsdcBalance,
+  readBillActivity,
   readBillsForSplitter,
   readDebtsForWallet,
   usdcToBillUnits,
@@ -1930,24 +1932,21 @@ function HistoryWorkspace({
                 </p>
                 <div className="space-y-2">
                   {pendingBills.map((debt) => {
-                    const key = debt.billId.toString();
                     const remaining = debt.totalOwed - debt.totalPaid;
 
                     return (
-                      <div
-                        className="relative flex items-center justify-between gap-3 rounded-[var(--radius)] border border-[var(--border)] bg-[var(--surface-strong)] p-3"
-                        key={key}
-                      >
-                        <div>
-                          <p className="font-semibold">Bill #{key}</p>
-                          <p className="mt-1 text-sm text-[var(--text-muted)]">
+                      <HistoryRecordCard
+                        debt={debt}
+                        key={debt.billId.toString()}
+                        badge={<span className="status-dot status-warn">Pending</span>}
+                        summary={
+                          <>
                             Paid <span className="amount-text">${billUnitsToUsdc(debt.totalPaid)}</span> of{" "}
                             <span className="amount-text">${billUnitsToUsdc(debt.totalOwed)}</span> ·{" "}
                             <span className="amount-text">${billUnitsToUsdc(remaining)}</span> outstanding
-                          </p>
-                        </div>
-                        <span className="status-dot status-warn">Pending</span>
-                      </div>
+                          </>
+                        }
+                      />
                     );
                   })}
                 </div>
@@ -1960,25 +1959,19 @@ function HistoryWorkspace({
                   Paid bill{paidDebts.length === 1 ? "" : "s"} — your settled records
                 </p>
                 <div className="space-y-2">
-                  {paidDebts.map((debt) => {
-                    const key = debt.billId.toString();
-
-                    return (
-                      <div
-                        className="relative flex items-center justify-between gap-3 overflow-hidden rounded-[var(--radius)] border border-[var(--border)] bg-[var(--surface-strong)] p-3 pr-24"
-                        key={key}
-                      >
-                        <PaidBillStamp compact />
-                        <div>
-                          <p className="font-semibold">Bill #{key}</p>
-                          <p className="mt-1 text-sm text-[var(--text-muted)]">
-                            Paid <span className="amount-text">${billUnitsToUsdc(debt.paid)}</span> of{" "}
-                            <span className="amount-text">${billUnitsToUsdc(debt.owed)}</span>
-                          </p>
-                        </div>
-                      </div>
-                    );
-                  })}
+                  {paidDebts.map((debt) => (
+                    <HistoryRecordCard
+                      debt={debt}
+                      key={debt.billId.toString()}
+                      badge={<PaidBillStamp compact />}
+                      summary={
+                        <>
+                          Paid <span className="amount-text">${billUnitsToUsdc(debt.paid)}</span> of{" "}
+                          <span className="amount-text">${billUnitsToUsdc(debt.owed)}</span>
+                        </>
+                      }
+                    />
+                  ))}
                 </div>
               </div>
             ) : null}
@@ -1989,31 +1982,189 @@ function HistoryWorkspace({
                   Claimed bill{claimedBills.length === 1 ? "" : "s"} — your collected records
                 </p>
                 <div className="space-y-2">
-                  {claimedBills.map((debt) => {
-                    const key = debt.billId.toString();
-
-                    return (
-                      <div
-                        className="relative flex items-center justify-between gap-3 overflow-hidden rounded-[var(--radius)] border border-[var(--border)] bg-[var(--surface-strong)] p-3 pr-24"
-                        key={key}
-                      >
-                        <PaidBillStamp compact alt="Claimed" src="/claimed.png" width={652} height={512} />
-                        <div>
-                          <p className="font-semibold">Bill #{key}</p>
-                          <p className="mt-1 text-sm text-[var(--text-muted)]">
-                            Claimed <span className="amount-text">${billUnitsToUsdc(debt.claimed)}</span> of{" "}
-                            <span className="amount-text">${billUnitsToUsdc(debt.totalPaid)}</span> paid
-                          </p>
-                        </div>
-                      </div>
-                    );
-                  })}
+                  {claimedBills.map((debt) => (
+                    <HistoryRecordCard
+                      debt={debt}
+                      key={debt.billId.toString()}
+                      badge={<PaidBillStamp compact alt="Claimed" src="/claimed.png" width={652} height={512} />}
+                      summary={
+                        <>
+                          Claimed <span className="amount-text">${billUnitsToUsdc(debt.claimed)}</span> of{" "}
+                          <span className="amount-text">${billUnitsToUsdc(debt.totalPaid)}</span> paid
+                        </>
+                      }
+                    />
+                  ))}
                 </div>
               </div>
             ) : null}
           </div>
         )}
       </Panel>
+    </div>
+  );
+}
+
+function formatTimestamp(ts: bigint | null) {
+  return ts === null ? "—" : new Date(Number(ts) * 1000).toLocaleString();
+}
+
+function HistoryRecordCard({
+  debt,
+  summary,
+  badge,
+}: {
+  debt: BillSplitDebt;
+  summary: ReactNode;
+  badge: ReactNode;
+}) {
+  const key = debt.billId.toString();
+  const [open, setOpen] = useState(false);
+  const [activity, setActivity] = useState<{
+    status: "idle" | "loading" | "ready" | "error";
+    data?: BillActivity;
+  }>({ status: "idle" });
+
+  async function toggle() {
+    const next = !open;
+    setOpen(next);
+
+    if (next && activity.status === "idle") {
+      setActivity({ status: "loading" });
+      try {
+        const data = await readBillActivity(debt.billId);
+        setActivity({ status: "ready", data });
+      } catch {
+        setActivity({ status: "error" });
+      }
+    }
+  }
+
+  // Distinct debtor wallets: prefer the actual payers from chain activity, and
+  // fall back to the bill's registered participant list before any payment.
+  const data = activity.data;
+  const debtorWallets = (() => {
+    const payers = data ? data.payments.map((payment) => payment.payer) : [];
+    const source = payers.length > 0 ? payers : [...debt.participantList];
+    return [...new Set(source.map((address) => getAddress(address)))];
+  })();
+
+  return (
+    <div className="history-record" data-open={open}>
+      <button className="history-record-toggle" onClick={toggle} type="button" aria-expanded={open}>
+        <span className="min-w-0">
+          <span className="block font-semibold">Bill #{key}</span>
+          <span className="mt-1 block text-sm text-[var(--text-muted)]">{summary}</span>
+        </span>
+        <span className="history-record-badge">
+          {badge}
+          <ChevronDown className="history-chevron" size={18} />
+        </span>
+      </button>
+
+      {open ? (
+        <div className="history-detail">
+          {activity.status === "loading" ? (
+            <p className="text-sm text-[var(--text-muted)]">Loading on-chain activity…</p>
+          ) : activity.status === "error" ? (
+            <Message tone="error">Could not load on-chain activity. Try again shortly.</Message>
+          ) : data ? (
+            <div className="space-y-4 text-sm">
+              <div className="history-detail-grid">
+                <div>
+                  <p className="history-detail-label">Created</p>
+                  <p className="mt-1">
+                    {formatTimestamp(data.createdAt)}
+                    {data.createdAt === null ? (
+                      <span className="text-[var(--text-muted)]"> (before indexed history)</span>
+                    ) : null}
+                  </p>
+                  {data.createdTxHash ? (
+                    <a className="history-tx-link" href={`https://testnet.arcscan.app/tx/${data.createdTxHash}`} rel="noreferrer" target="_blank">
+                      {shortAddress(data.createdTxHash)}
+                    </a>
+                  ) : null}
+                </div>
+                <div>
+                  <p className="history-detail-label">Splitter</p>
+                  <a
+                    className="history-tx-link mt-1 inline-block"
+                    href={`https://testnet.arcscan.app/address/${getAddress(debt.splitter)}`}
+                    rel="noreferrer"
+                    target="_blank"
+                  >
+                    {shortAddress(getAddress(debt.splitter))}
+                  </a>
+                </div>
+              </div>
+
+              <div>
+                <p className="history-detail-label">Debtor wallet{debtorWallets.length === 1 ? "" : "s"}</p>
+                <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1">
+                  {debtorWallets.length > 0 ? (
+                    debtorWallets.map((address) => (
+                      <a
+                        className="history-tx-link"
+                        href={`https://testnet.arcscan.app/address/${address}`}
+                        key={address}
+                        rel="noreferrer"
+                        target="_blank"
+                      >
+                        {shortAddress(address)}
+                      </a>
+                    ))
+                  ) : (
+                    <span className="text-[var(--text-muted)]">—</span>
+                  )}
+                </div>
+              </div>
+
+              <div>
+                <p className="history-detail-label">Payments</p>
+                {data.payments.length > 0 ? (
+                  <ul className="mt-1 space-y-1">
+                    {data.payments.map((payment) => (
+                      <li className="history-event-row" key={payment.txHash}>
+                        <span>
+                          <span className="font-mono text-xs">{shortAddress(payment.payer)}</span> paid{" "}
+                          <span className="amount-text">${billUnitsToUsdc(payment.amount)}</span>
+                          <span className="text-[var(--text-muted)]"> · {formatTimestamp(payment.timestamp)}</span>
+                        </span>
+                        <a className="history-tx-link" href={`https://testnet.arcscan.app/tx/${payment.txHash}`} rel="noreferrer" target="_blank">
+                          tx
+                        </a>
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="mt-1 text-[var(--text-muted)]">No payments recorded in the recent block window.</p>
+                )}
+              </div>
+
+              {data.claims.length > 0 ? (
+                <div>
+                  <p className="history-detail-label">Claims</p>
+                  <ul className="mt-1 space-y-1">
+                    {data.claims.map((claim) => (
+                      <li className="history-event-row" key={claim.txHash}>
+                        <span>
+                          <span className="amount-text">${billUnitsToUsdc(claim.amount)}</span> claimed
+                          <span className="text-[var(--text-muted)]"> · {formatTimestamp(claim.timestamp)}</span>
+                        </span>
+                        <a className="history-tx-link" href={`https://testnet.arcscan.app/tx/${claim.txHash}`} rel="noreferrer" target="_blank">
+                          tx
+                        </a>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
+            </div>
+          ) : (
+            <p className="text-sm text-[var(--text-muted)]">No on-chain activity found in the recent block window.</p>
+          )}
+        </div>
+      ) : null}
     </div>
   );
 }
