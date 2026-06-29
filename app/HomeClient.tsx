@@ -56,6 +56,7 @@ import {
   ensureBillSplitWalletOnArc,
   isBillRegistryConfigured,
   payBillDebtWithMemo,
+  readArcUsdcBalance,
   readBillsForSplitter,
   readDebtsForWallet,
   usdcToBillUnits,
@@ -164,6 +165,7 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
   const [submittedBillId, setSubmittedBillId] = useState<bigint | null>(null);
   const [debts, setDebts] = useState<BillSplitDebt[]>([]);
   const [splitterBills, setSplitterBills] = useState<BillSplitDebt[]>([]);
+  const [arcUsdcBalance, setArcUsdcBalance] = useState<bigint | null>(null);
   const [partialPayments, setPartialPayments] = useState<Record<string, string>>({});
   const [claimAmounts, setClaimAmounts] = useState<Record<string, string>>({});
   const [participantShareInputs, setParticipantShareInputs] = useState<Record<string, string>>({});
@@ -534,13 +536,15 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
     }
 
     try {
-      const [nextDebts, nextSplitterBills] = await Promise.all([
+      const [nextDebts, nextSplitterBills, nextArcUsdcBalance] = await Promise.all([
         readDebtsForWallet(account),
         readBillsForSplitter(account),
+        readArcUsdcBalance(account),
       ]);
       // Keep fully-paid debts in state so the debtor retains a shrunk, stamped record of what they paid.
       setDebts(nextDebts);
       setSplitterBills(nextSplitterBills);
+      setArcUsdcBalance(nextArcUsdcBalance);
       setPartialPayments((current) => ({
         ...Object.fromEntries(
           nextDebts.map((debt) => [debt.billId.toString(), billUnitsToUsdc(debt.remaining)]),
@@ -1291,6 +1295,7 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
           >
             {billWallet ? (
               <DebtWorkspace
+                arcUsdcBalance={arcUsdcBalance}
                 bridgeForDebt={bridgeForDebt}
                 bridgeResults={bridgeResults}
                 billState={billState}
@@ -1618,6 +1623,7 @@ function DebtWorkspace({
   bridgeForDebt,
   bridgeResults,
   billState,
+  arcUsdcBalance,
   claimAmounts,
   claimMessage,
   claimMessageTone,
@@ -1634,6 +1640,7 @@ function DebtWorkspace({
   bridgeForDebt: (debt: BillSplitDebt, debtSourceChain: BridgeSourceChain) => void;
   bridgeResults: Record<string, BridgeSummary>;
   billState: BillRunState;
+  arcUsdcBalance: bigint | null;
   claimAmounts: Record<string, string>;
   claimMessage: string;
   claimMessageTone: "error" | "neutral";
@@ -1684,7 +1691,7 @@ function DebtWorkspace({
                 You have {activeDebts.length} unpaid bill{activeDebts.length === 1 ? "" : "s"}
               </h3>
               <p className="mt-2 text-sm text-[var(--text-muted)]">
-                Settle directly on Arc or bridge USDC through CCTP V2, then pay the registered debt with an Arc memo.
+                Settle directly on Arc, or bridge USDC through CCTP V2 and then pay the registered debt.
               </p>
             </div>
             <button className="secondary-button" onClick={refreshBillRegistry} type="button">
@@ -1748,14 +1755,23 @@ function DebtWorkspace({
                         <p className="font-semibold text-[var(--text)]">Pay on Arc</p>
                         <p className="mt-1 text-[var(--text-muted)]">Use this after your USDC is already on Arc Testnet.</p>
                       </div>
-                      <button
-                        className="chain-button chain-button-active sm:min-w-44"
-                        disabled={billState === "working"}
-                        onClick={() => payDebtOnArc(debt)}
-                        type="button"
-                      >
-                        Pay on Arc Testnet
-                      </button>
+                      <div className="flex flex-col items-stretch gap-1 sm:items-end">
+                        <button
+                          className="chain-button chain-button-active sm:min-w-44"
+                          disabled={billState === "working"}
+                          onClick={() => payDebtOnArc(debt)}
+                          type="button"
+                        >
+                          Pay on Arc Testnet
+                        </button>
+                        <p className="text-xs text-[var(--text-muted)] sm:text-right">
+                          Balance:{" "}
+                          <span className="amount-text">
+                            ${arcUsdcBalance === null ? "—" : billUnitsToUsdc(arcUsdcBalance)}
+                          </span>{" "}
+                          USDC on Arc Testnet
+                        </p>
+                      </div>
                     </div>
 
                     <div className="mt-4 border-t border-[var(--border)] pt-4">

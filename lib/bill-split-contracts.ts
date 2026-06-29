@@ -352,6 +352,15 @@ export async function readDebtsForWallet(account: `0x${string}`) {
   return Promise.all(billIds.map((billId) => readDebt(billId, account)));
 }
 
+export async function readArcUsdcBalance(account: `0x${string}`) {
+  return publicClient.readContract({
+    address: ARC_USDC_ADDRESS,
+    abi: usdcAbi,
+    functionName: "balanceOf",
+    args: [account],
+  });
+}
+
 export async function readBillsForSplitter(account: `0x${string}`) {
   ensureRegistryConfigured();
 
