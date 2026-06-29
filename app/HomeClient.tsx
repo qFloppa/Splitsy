@@ -1863,10 +1863,8 @@ function DebtWorkspace({
           <div className="space-y-3">
             {claimableBills.map((debt) => {
               const key = debt.billId.toString();
-              const billPaidOff = debt.totalPaid >= debt.totalOwed;
               return (
                 <div className="relative grid gap-3 overflow-hidden rounded-[var(--radius)] border border-[var(--border)] bg-[var(--surface-strong)] p-3 sm:grid-cols-[1fr_0.4fr_auto] sm:items-end" key={key}>
-                  {billPaidOff ? <PaidBillStamp compact /> : null}
                   <div>
                     <p className="font-semibold">Bill #{key}</p>
                     <p className="mt-1 text-sm text-[var(--text-muted)]">
