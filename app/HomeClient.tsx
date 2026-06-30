@@ -1092,7 +1092,11 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
       if (recurringMembers.length === 0) {
         throw new Error("Add at least one member wallet.");
       }
-      const cycleCount = BigInt(Math.max(1, Math.floor(Number(recurringCycleCount) || 1)));
+      const cycleCountNum = Math.floor(Number(recurringCycleCount));
+      if (!Number.isFinite(cycleCountNum) || cycleCountNum < 1) {
+        throw new Error("Enter at least 1 cycle.");
+      }
+      const cycleCount = BigInt(cycleCountNum);
       const members = recurringMembers.map((member) => normalizeAddress(member.address));
       if (new Set(members.map((member) => member.toLowerCase())).size !== members.length) {
         throw new Error("Each recurring member wallet must be unique.");
@@ -2350,7 +2354,9 @@ function RecurringWorkspace({
   // Each member's share is per cycle, so the whole schedule collects
   // share x members x cycles. Surface the per-cycle total so the Total USD field
   // reads as the full amount across every cycle, not the per-cycle charge.
-  const createCycleCount = Math.max(1, Math.floor(Number(recurringCycleCount) || 1));
+  const parsedCycleCount = Math.floor(Number(recurringCycleCount));
+  const cyclesValid = Number.isFinite(parsedCycleCount) && parsedCycleCount >= 1;
+  const createCycleCount = cyclesValid ? parsedCycleCount : 1;
   const perCycleTotalUsd = recurringShareUsd * displayRecurringMembers.length;
 
   return (
@@ -2405,12 +2411,14 @@ function RecurringWorkspace({
                 />
               ) : null}
             </div>
-            {Number(recurringTotalUsd) > 0 ? (
+            {Number(recurringTotalUsd) > 0 && cyclesValid ? (
               <p className="text-xs text-[var(--text-muted)]">
                 Total USD is the full amount across all {createCycleCount} cycle{createCycleCount === 1 ? "" : "s"}. Each cycle
                 collects ${perCycleTotalUsd.toFixed(2)}
                 {displayRecurringMembers.length > 1 ? ` across ${displayRecurringMembers.length} members` : ""}.
               </p>
+            ) : !cyclesValid ? (
+              <p className="text-xs text-[var(--warning-text)]">Cycles must be at least 1.</p>
             ) : null}
             {displayRecurringMembers.map((member) => (
               <div className="grid gap-2 rounded-[var(--radius)] border border-[var(--border)] bg-[var(--surface-strong)] p-3 sm:grid-cols-[1fr_0.35fr_auto] sm:items-end" key={member.id}>
@@ -2451,7 +2459,7 @@ function RecurringWorkspace({
               <Plus size={16} />
               Add member
             </button>
-            <button className="primary-button" disabled={recurringState === "working"} onClick={createOnchainTab} type="button">
+            <button className="primary-button" disabled={recurringState === "working" || !cyclesValid} onClick={createOnchainTab} type="button">
               {recurringState === "working" ? <Loader2 className="animate-spin" size={16} /> : <Landmark size={16} />}
               Create
             </button>
