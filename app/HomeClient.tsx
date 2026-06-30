@@ -217,7 +217,15 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
   }, [confirmedUsd, participants, splitMode]);
   const splitTotal = displayParticipants.reduce((sum, participant) => sum + participant.amountUsd, 0);
   const splitDelta = Number((confirmedUsd - splitTotal).toFixed(2));
-  const recurringShareUsd = recurringMembers.length > 0 ? Number(recurringTotalUsd || "0") / recurringMembers.length : 0;
+  // "Total USD" is the full amount across the whole schedule, so a $3 tab over 3
+  // cycles is $1 collected per cycle — not $3/cycle (which would total $9). The
+  // contract's fixedShare is per-cycle, so divide the total by both members and
+  // cycle count to get each member's per-cycle share.
+  const recurringCycleCountNum = Math.max(1, Math.floor(Number(recurringCycleCount) || 1));
+  const recurringShareUsd =
+    recurringMembers.length > 0
+      ? Number(recurringTotalUsd || "0") / recurringMembers.length / recurringCycleCountNum
+      : 0;
   const availableRecurringCycleOptions = useMemo(
     () => recurringCycleOptions.filter((option) => option.id !== "test" || testCycleEnabled),
     [testCycleEnabled],
@@ -1088,12 +1096,17 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
       }
       const sourceMembers = recurringSplitMode === "equal" ? displayRecurringMembers : recurringMembers;
       const shares = sourceMembers.map((member) => usdcToUnits(member.share));
+      // Member shares are per-cycle. Across the whole schedule they should sum to
+      // the Total USD, so per cycle they must sum to Total ÷ cycles.
+      const perCycleTotal = totalUsd / Number(cycleCount);
       const shareTotal = sourceMembers.reduce((sum, member) => sum + Number(member.share || "0"), 0);
       if (shares.some((share) => share <= 0n)) {
         throw new Error("Every recurring member needs a positive share.");
       }
-      if (Math.abs(shareTotal - totalUsd) > 0.009) {
-        throw new Error("Recurring shares must add up to the Total USD amount.");
+      if (Math.abs(shareTotal - perCycleTotal) > 0.009) {
+        throw new Error(
+          `Recurring shares are per cycle and must add up to $${perCycleTotal.toFixed(2)} (Total USD ÷ ${cycleCount.toString()} cycles).`,
+        );
       }
       const intervalSeconds =
         recurringCycle === "custom" ? BigInt(Math.max(1, Number(customCycleDays) || 1)) * 24n * 60n * 60n : availableRecurringCycleOptions.find((option) => option.id === recurringCycle)?.seconds ?? 7n * 24n * 60n * 60n;
@@ -2323,6 +2336,13 @@ function RecurringWorkspace({
   };
 
   const [selectedBridgeChain, setSelectedBridgeChain] = useState<BridgeSourceChain | null>(null);
+  const [showBridge, setShowBridge] = useState(false);
+
+  // Each member's share is per cycle, so the whole schedule collects
+  // share x members x cycles. Surface the per-cycle total so the Total USD field
+  // reads as the full amount across every cycle, not the per-cycle charge.
+  const createCycleCount = Math.max(1, Math.floor(Number(recurringCycleCount) || 1));
+  const perCycleTotalUsd = recurringShareUsd * displayRecurringMembers.length;
 
   return (
     <div className={`grid gap-5 ${showRecurringDetails ? "lg:grid-cols-[0.9fr_1.1fr]" : "lg:grid-cols-1"}`}>
@@ -2376,6 +2396,13 @@ function RecurringWorkspace({
                 />
               ) : null}
             </div>
+            {Number(recurringTotalUsd) > 0 ? (
+              <p className="text-xs text-[var(--text-muted)]">
+                Total USD is the full amount across all {createCycleCount} cycle{createCycleCount === 1 ? "" : "s"}. Each cycle
+                collects ${perCycleTotalUsd.toFixed(2)}
+                {displayRecurringMembers.length > 1 ? ` across ${displayRecurringMembers.length} members` : ""}.
+              </p>
+            ) : null}
             {displayRecurringMembers.map((member) => (
               <div className="grid gap-2 rounded-[var(--radius)] border border-[var(--border)] bg-[var(--surface-strong)] p-3 sm:grid-cols-[1fr_0.35fr_auto] sm:items-end" key={member.id}>
                 <Field
@@ -2541,31 +2568,52 @@ function RecurringWorkspace({
                                 : "Funds stay in your wallet unless this tab is approved for the due amount and the cycle time has arrived."
                               : "No recurring debt is currently due for this wallet."}
                         </p>
-                        {!debtorPaidOff && balanceShort && balanceNeeded > 0n ? (
-                          <div className="mt-4 border-t border-[var(--border)] pt-4">
-                            <p className="font-semibold text-[var(--text)]">Bridge USDC to Arc first</p>
-                            <p className="mt-1 text-sm text-[var(--text-muted)]">
-                              Your Arc balance is below the ${unitsToUsdc(balanceNeeded)} USDC due this cycle. Bridging from
-                              another chain takes 3 transactions: approve USDC, bridge with CCTP V2, then claim the bridged
-                              USDC on Arc Testnet. After that, approve the tab so the due cycle can be collected.
-                            </p>
-                            <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-                              {bridgeSourceChains.map((chain) => (
-                                <button
-                                  className={`chain-button ${selectedBridgeChain === chain.id ? "chain-button-active" : ""}`}
-                                  disabled={recurringState === "working"}
-                                  key={chain.id}
-                                  onClick={() => {
-                                    setSelectedBridgeChain(chain.id);
-                                    bridgeForRecurring(unitsToUsdc(balanceNeeded), chain.id);
-                                  }}
-                                  type="button"
-                                >
-                                  Bridge from {chain.label}
-                                </button>
-                              ))}
-                            </div>
-                          </div>
+                        {!debtorPaidOff ? (
+                          (() => {
+                            const bridgeAmount = balanceNeeded > 0n ? balanceNeeded : debtor.fixedShare;
+                            return (
+                              <div className="mt-4 border-t border-[var(--border)] pt-4">
+                                <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                                  <div>
+                                    <p className="font-semibold text-[var(--text)]">Bridge USDC to Arc</p>
+                                    <p className="mt-1 text-sm text-[var(--text-muted)]">
+                                      {balanceShort
+                                        ? `Your Arc balance is below the $${unitsToUsdc(bridgeAmount)} USDC needed this cycle. `
+                                        : ""}
+                                      Move USDC from another chain to Arc in 3 transactions: approve USDC, bridge with CCTP V2,
+                                      then claim on Arc Testnet. After that, approve the tab so the due cycle can be collected.
+                                    </p>
+                                  </div>
+                                  <button
+                                    className="secondary-button shrink-0"
+                                    onClick={() => setShowBridge((open) => !open)}
+                                    type="button"
+                                  >
+                                    <ArrowLeftRight size={16} />
+                                    {showBridge ? "Hide bridge options" : "Bridge USDC"}
+                                  </button>
+                                </div>
+                                {showBridge ? (
+                                  <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                                    {bridgeSourceChains.map((chain) => (
+                                      <button
+                                        className={`chain-button ${selectedBridgeChain === chain.id ? "chain-button-active" : ""}`}
+                                        disabled={recurringState === "working"}
+                                        key={chain.id}
+                                        onClick={() => {
+                                          setSelectedBridgeChain(chain.id);
+                                          bridgeForRecurring(unitsToUsdc(bridgeAmount), chain.id);
+                                        }}
+                                        type="button"
+                                      >
+                                        Bridge from {chain.label}
+                                      </button>
+                                    ))}
+                                  </div>
+                                ) : null}
+                              </div>
+                            );
+                          })()
                         ) : null}
                       </>
                     );
@@ -2665,7 +2713,12 @@ function RecurringWorkspace({
                   Revoke
                 </button>
                 {isRecipient ? (
-                  <button className="primary-button" onClick={claimActiveRecurringFunds} type="button">
+                  <button
+                    className="primary-button"
+                    disabled={tabState.claimable <= 0n || recurringState === "working"}
+                    onClick={claimActiveRecurringFunds}
+                    type="button"
+                  >
                     Claim recurring funds (${unitsToUsdc(tabState.claimable)})
                   </button>
                 ) : null}
