@@ -904,6 +904,57 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
     }
   }
 
+  // Recurring counterpart to bridgeForDebt: a payer whose Arc USDC is below the
+  // due cycle amount can top up by bridging from a CCTP source chain. It reuses
+  // the same progress popup and step handler as the Bills bridge, but mints to
+  // the recurring wallet and refreshes the tab so the "Low balance" state clears
+  // and the cron settler can pull the approved share next run.
+  async function bridgeForRecurring(amountLabel: string, sourceChain: BridgeSourceChain) {
+    const session = bridgeSession ?? (await connectForBridge());
+
+    if (!session || !recurringWallet) {
+      setRecurringState("error");
+      setRecurringMessage("Connect your wallet first so bridged USDC can arrive at your Arc address.");
+      return;
+    }
+
+    const source = sourceLabel(sourceChain);
+    const balanceBeforeBridge = arcUsdcBalance;
+    beginBridgeFlow(amountLabel, source);
+
+    try {
+      setRecurringState("working");
+      const result = await bridgeUsdcToArc({
+        session,
+        sourceChain,
+        recipientAddress: recurringWallet.account,
+        amount: amountLabel,
+        onStep: (event) => handleBridgeStep(event, source),
+      });
+
+      if (result.state === "error") {
+        failFlow("The bridge did not complete. No funds were claimed on Arc.");
+        setRecurringState("error");
+        setRecurringMessage("Bridge failed.");
+        return;
+      }
+
+      completeFlow();
+      setRecurringState("success");
+      setRecurringMessage("USDC bridged to your Arc wallet. Approve the tab so the due cycle can be collected.");
+      // The mint just landed on Arc; poll until the node reports the new balance,
+      // then re-read the tab so the debtor's wallet balance and status update.
+      void refreshArcUsdcBalance(recurringWallet.account, balanceBeforeBridge);
+      if (activeTabAddress) {
+        void refreshRecurringTab(activeTabAddress);
+      }
+    } catch (caught) {
+      setRecurringState("error");
+      failFlow(errorMessage(caught));
+      setRecurringMessage(errorMessage(caught));
+    }
+  }
+
   async function claimSplitterFunds(debt: BillSplitDebt) {
     const wallet = billWallet ?? (await connectBillWallet());
 
@@ -1603,6 +1654,7 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
             authorizationAmount={authorizationAmount}
             authorizeActiveTab={authorizeActiveTab}
             availableRecurringCycleOptions={availableRecurringCycleOptions}
+            bridgeForRecurring={bridgeForRecurring}
             claimActiveRecurringFunds={claimActiveRecurringFunds}
             createOnchainTab={createOnchainTab}
             customCycleDays={customCycleDays}
@@ -2174,6 +2226,7 @@ function RecurringWorkspace({
   authorizationAmount,
   authorizeActiveTab,
   availableRecurringCycleOptions,
+  bridgeForRecurring,
   claimActiveRecurringFunds,
   createOnchainTab,
   customCycleDays,
@@ -2207,6 +2260,7 @@ function RecurringWorkspace({
   authorizationAmount: string;
   authorizeActiveTab: () => void;
   availableRecurringCycleOptions: Array<{ id: RecurringCycle; label: string; seconds: bigint }>;
+  bridgeForRecurring: (amountLabel: string, sourceChain: BridgeSourceChain) => void;
   claimActiveRecurringFunds: () => void;
   createOnchainTab: () => void;
   customCycleDays: string;
@@ -2267,6 +2321,8 @@ function RecurringWorkspace({
 
     return tab.members.every((member) => member.totalSettled >= member.fixedShare * tab.maxSettlements);
   };
+
+  const [selectedBridgeChain, setSelectedBridgeChain] = useState<BridgeSourceChain | null>(null);
 
   return (
     <div className={`grid gap-5 ${showRecurringDetails ? "lg:grid-cols-[0.9fr_1.1fr]" : "lg:grid-cols-1"}`}>
@@ -2485,6 +2541,32 @@ function RecurringWorkspace({
                                 : "Funds stay in your wallet unless this tab is approved for the due amount and the cycle time has arrived."
                               : "No recurring debt is currently due for this wallet."}
                         </p>
+                        {!debtorPaidOff && balanceShort && balanceNeeded > 0n ? (
+                          <div className="mt-4 border-t border-[var(--border)] pt-4">
+                            <p className="font-semibold text-[var(--text)]">Bridge USDC to Arc first</p>
+                            <p className="mt-1 text-sm text-[var(--text-muted)]">
+                              Your Arc balance is below the ${unitsToUsdc(balanceNeeded)} USDC due this cycle. Bridging from
+                              another chain takes 3 transactions: approve USDC, bridge with CCTP V2, then claim the bridged
+                              USDC on Arc Testnet. After that, approve the tab so the due cycle can be collected.
+                            </p>
+                            <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                              {bridgeSourceChains.map((chain) => (
+                                <button
+                                  className={`chain-button ${selectedBridgeChain === chain.id ? "chain-button-active" : ""}`}
+                                  disabled={recurringState === "working"}
+                                  key={chain.id}
+                                  onClick={() => {
+                                    setSelectedBridgeChain(chain.id);
+                                    bridgeForRecurring(unitsToUsdc(balanceNeeded), chain.id);
+                                  }}
+                                  type="button"
+                                >
+                                  Bridge from {chain.label}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        ) : null}
                       </>
                     );
                   })()}
