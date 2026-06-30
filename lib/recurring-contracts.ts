@@ -223,6 +223,17 @@ export async function createRecurringWallet(walletClient: WalletClient) {
   return { account: getAddress(account) as `0x${string}`, walletClient };
 }
 
+// Recurring writes pin `chain: arcTestnet`, which makes viem throw if the wallet
+// is connected to another network. Switch to Arc Testnet first so creating a
+// tab, approving, revoking, or claiming works regardless of the active chain.
+export async function ensureRecurringWalletOnArc({ walletClient }: RecurringWallet) {
+  const chainId = await walletClient.getChainId();
+
+  if (chainId !== arcTestnet.id) {
+    await walletClient.switchChain({ id: arcTestnet.id });
+  }
+}
+
 export async function createRecurringTab({
   walletClient,
   account,

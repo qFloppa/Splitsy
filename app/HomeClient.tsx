@@ -70,6 +70,7 @@ import {
   claimRecurringFunds,
   createRecurringTab,
   createRecurringWallet,
+  ensureRecurringWalletOnArc,
   readRecurringEvents,
   readRecurringTab,
   readRecurringTabsForWallet,
@@ -1081,6 +1082,8 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
     try {
       setRecurringState("working");
       setRecurringCreateMessageTone("neutral");
+      setRecurringCreateMessage("Switching to Arc Testnet…");
+      await ensureRecurringWalletOnArc(wallet);
       setRecurringCreateMessage("Creating recurring tab on Arc Testnet.");
       const totalUsd = Number(recurringTotalUsd);
       if (!Number.isFinite(totalUsd) || totalUsd <= 0) {
@@ -1205,6 +1208,8 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
       const approvalValue = authorizationAmount.trim() || defaultApproval;
       const amount = usdcToUnits(approvalValue);
       setRecurringState("working");
+      setRecurringMessage("Switching to Arc Testnet…");
+      await ensureRecurringWalletOnArc(wallet);
       setRecurringMessage("Approving the tab to collect outstanding recurring debt from your wallet.");
       await authorizeRecurringPayment({ ...wallet, tabAddress, amount });
       setRecurringState("success");
@@ -1228,6 +1233,8 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
 
     try {
       setRecurringState("working");
+      setRecurringMessage("Switching to Arc Testnet…");
+      await ensureRecurringWalletOnArc(wallet);
       setRecurringMessage("Revoking recurring collection approval.");
       await approveUsdc({ ...wallet, spender: tabAddress, amount: 0n });
       setRecurringState("success");
@@ -1251,6 +1258,8 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
 
     try {
       setRecurringState("working");
+      setRecurringMessage("Switching to Arc Testnet…");
+      await ensureRecurringWalletOnArc(wallet);
       setRecurringMessage("Claiming collected recurring funds.");
       await claimRecurringFunds({ ...wallet, tabAddress });
       setRecurringState("success");
@@ -3058,8 +3067,45 @@ function shortAddress(address: string) {
   return `${address.slice(0, 6)}...${address.slice(-4)}`;
 }
 
+// Walk an error and its `cause` chain looking for the signatures wallets use
+// when a user declines a request: EIP-1193 code 4001, ethers' ACTION_REJECTED,
+// or viem's "User rejected the request." Returning a short, friendly message
+// keeps a cancelled transaction from dumping a wall of provider text on the page.
+function isUserRejection(caught: unknown, depth = 0): boolean {
+  if (!caught || typeof caught !== "object" || depth > 5) {
+    return false;
+  }
+
+  const err = caught as { code?: number | string; name?: string; shortMessage?: string; message?: string; cause?: unknown };
+
+  if (err.code === 4001 || err.code === "ACTION_REJECTED") {
+    return true;
+  }
+
+  const text = `${err.name ?? ""} ${err.shortMessage ?? ""} ${err.message ?? ""}`.toLowerCase();
+  if (/user rejected|user denied|rejected the request|request rejected|denied transaction signature|action_rejected/.test(text)) {
+    return true;
+  }
+
+  return err.cause && err.cause !== caught ? isUserRejection(err.cause, depth + 1) : false;
+}
+
+// Provider/viem errors can be hundreds of characters with request dumps and
+// stack details. Prefer viem's concise `shortMessage`, otherwise take the first
+// line, and always cap the length so a failure never blows out the layout.
+function conciseError(caught: unknown, fallback: string) {
+  const shortMessage = (caught as { shortMessage?: string })?.shortMessage;
+  const base = (typeof shortMessage === "string" && shortMessage.trim()) || fallback;
+  const firstLine = base.split("\n")[0].trim();
+  return firstLine.length > 180 ? `${firstLine.slice(0, 177)}…` : firstLine;
+}
+
 function errorMessage(caught: unknown) {
-  const message = caught instanceof Error ? caught.message : "Unexpected wallet or payment error.";
+  if (isUserRejection(caught)) {
+    return "Transaction cancelled.";
+  }
+
+  const message = caught instanceof Error ? caught.message : typeof caught === "string" ? caught : "Unexpected wallet or payment error.";
 
   if (message.includes("TabComplete")) {
     return "This tab's deployed contract considers the schedule complete. Redeploy the recurring factory and create a new tab to collect late underpaid cycles after the final cycle.";
@@ -3073,7 +3119,7 @@ function errorMessage(caught: unknown) {
     return "No recurring cycle or outstanding balance is currently ready to settle.";
   }
 
-  return message;
+  return conciseError(caught, message);
 }
 
 function normalizeAddress(value: string) {
