@@ -1115,8 +1115,17 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
           `Recurring shares are per cycle and must add up to $${perCycleTotal.toFixed(2)} (Total USD ÷ ${cycleCount.toString()} cycles).`,
         );
       }
-      const intervalSeconds =
-        recurringCycle === "custom" ? BigInt(Math.max(1, Number(customCycleDays) || 1)) * 24n * 60n * 60n : availableRecurringCycleOptions.find((option) => option.id === recurringCycle)?.seconds ?? 7n * 24n * 60n * 60n;
+      let intervalSeconds: bigint;
+      if (recurringCycle === "custom") {
+        const customDays = Number(customCycleDays);
+        if (!Number.isInteger(customDays) || customDays < 1) {
+          throw new Error("Custom days must be a whole number of at least 1 day.");
+        }
+        intervalSeconds = BigInt(customDays) * 24n * 60n * 60n;
+      } else {
+        intervalSeconds =
+          availableRecurringCycleOptions.find((option) => option.id === recurringCycle)?.seconds ?? 7n * 24n * 60n * 60n;
+      }
       const result = await createRecurringTab({
         ...wallet,
         recipient: wallet.account,
@@ -2357,6 +2366,9 @@ function RecurringWorkspace({
   const parsedCycleCount = Math.floor(Number(recurringCycleCount));
   const cyclesValid = Number.isFinite(parsedCycleCount) && parsedCycleCount >= 1;
   const createCycleCount = cyclesValid ? parsedCycleCount : 1;
+  const customDaysNum = Number(customCycleDays);
+  const customDaysValid = recurringCycle !== "custom" || (Number.isInteger(customDaysNum) && customDaysNum >= 1);
+  const scheduleValid = cyclesValid && customDaysValid;
   const perCycleTotalUsd = recurringShareUsd * displayRecurringMembers.length;
 
   return (
@@ -2411,14 +2423,16 @@ function RecurringWorkspace({
                 />
               ) : null}
             </div>
-            {Number(recurringTotalUsd) > 0 && cyclesValid ? (
+            {!cyclesValid ? (
+              <p className="text-xs text-[var(--warning-text)]">Cycles must be at least 1.</p>
+            ) : !customDaysValid ? (
+              <p className="text-xs text-[var(--warning-text)]">Custom days must be a whole number of at least 1 day.</p>
+            ) : Number(recurringTotalUsd) > 0 ? (
               <p className="text-xs text-[var(--text-muted)]">
                 Total USD is the full amount across all {createCycleCount} cycle{createCycleCount === 1 ? "" : "s"}. Each cycle
                 collects ${perCycleTotalUsd.toFixed(2)}
                 {displayRecurringMembers.length > 1 ? ` across ${displayRecurringMembers.length} members` : ""}.
               </p>
-            ) : !cyclesValid ? (
-              <p className="text-xs text-[var(--warning-text)]">Cycles must be at least 1.</p>
             ) : null}
             {displayRecurringMembers.map((member) => (
               <div className="grid gap-2 rounded-[var(--radius)] border border-[var(--border)] bg-[var(--surface-strong)] p-3 sm:grid-cols-[1fr_0.35fr_auto] sm:items-end" key={member.id}>
@@ -2459,7 +2473,7 @@ function RecurringWorkspace({
               <Plus size={16} />
               Add member
             </button>
-            <button className="primary-button" disabled={recurringState === "working" || !cyclesValid} onClick={createOnchainTab} type="button">
+            <button className="primary-button" disabled={recurringState === "working" || !scheduleValid} onClick={createOnchainTab} type="button">
               {recurringState === "working" ? <Loader2 className="animate-spin" size={16} /> : <Landmark size={16} />}
               Create
             </button>
