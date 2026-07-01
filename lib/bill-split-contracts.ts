@@ -493,24 +493,41 @@ export async function readBillActivity(billId: bigint): Promise<BillActivity> {
       forThisBill.find((entry) => entry.eventName === "BillCreated") ?? null;
 
     if (!created) {
-      const createdLog = await publicClient
-        .getLogs({
-          address: BILL_SPLIT_REGISTRY_ADDRESS,
-          event: billCreatedEvent,
-          args: { billId },
-          fromBlock: 0n,
-          toBlock: latest,
-        })
-        .then((entries) => entries[0])
-        .catch(() => undefined);
+      // The RPC caps eth_getLogs at a 10,000-block range, so we can't scan from
+      // genesis in one call. Walk backwards in safe chunks; because billId is
+      // indexed each chunk returns at most one BillCreated log, so we stop at
+      // the first hit. Bounded so a missing/very old bill degrades gracefully.
+      const CHUNK = 9_000n;
+      const MAX_CHUNKS = 40;
+      let toBlock = fromBlock > 0n ? fromBlock - 1n : 0n;
 
-      if (createdLog && createdLog.blockNumber !== null && createdLog.transactionHash !== null) {
-        created = {
-          eventName: "BillCreated",
-          args: createdLog.args as Record<string, unknown>,
-          blockNumber: createdLog.blockNumber,
-          txHash: createdLog.transactionHash,
-        };
+      for (let scanned = 0; scanned < MAX_CHUNKS && created === null; scanned += 1) {
+        const chunkFrom = toBlock > CHUNK ? toBlock - CHUNK : 0n;
+        const createdLog = await publicClient
+          .getLogs({
+            address: BILL_SPLIT_REGISTRY_ADDRESS,
+            event: billCreatedEvent,
+            args: { billId },
+            fromBlock: chunkFrom,
+            toBlock,
+          })
+          .then((entries) => entries[0])
+          .catch(() => undefined);
+
+        if (createdLog && createdLog.blockNumber !== null && createdLog.transactionHash !== null) {
+          created = {
+            eventName: "BillCreated",
+            args: createdLog.args as Record<string, unknown>,
+            blockNumber: createdLog.blockNumber,
+            txHash: createdLog.transactionHash,
+          };
+          break;
+        }
+
+        if (chunkFrom === 0n) {
+          break;
+        }
+        toBlock = chunkFrom - 1n;
       }
     }
 
