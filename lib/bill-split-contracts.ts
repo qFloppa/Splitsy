@@ -5,6 +5,7 @@ import {
   encodeAbiParameters,
   encodeFunctionData,
   formatUnits,
+  getAbiItem,
   getAddress,
   keccak256,
   parseAbiParameters,
@@ -447,6 +448,7 @@ export async function readBillActivity(billId: bigint): Promise<BillActivity> {
     payments: [],
     claims: [],
   };
+  const billCreatedEvent = getAbiItem({ abi: billSplitRegistryAbi, name: "BillCreated" });
 
   try {
     const latest = await publicClient.getBlockNumber();
@@ -483,12 +485,42 @@ export async function readBillActivity(billId: bigint): Promise<BillActivity> {
 
     const forThisBill = decoded.filter((entry) => entry.args.billId === billId);
 
-    if (forThisBill.length === 0) {
+    // The BillCreated event may sit outside the recent scan window for older
+    // bills. Because billId is indexed, we can pull just that one event across
+    // the full range cheaply — this lets us always surface at least the
+    // creation tx (and its timestamp when the block is still readable).
+    let created =
+      forThisBill.find((entry) => entry.eventName === "BillCreated") ?? null;
+
+    if (!created) {
+      const createdLog = await publicClient
+        .getLogs({
+          address: BILL_SPLIT_REGISTRY_ADDRESS,
+          event: billCreatedEvent,
+          args: { billId },
+          fromBlock: 0n,
+          toBlock: latest,
+        })
+        .then((entries) => entries[0])
+        .catch(() => undefined);
+
+      if (createdLog && createdLog.blockNumber !== null && createdLog.transactionHash !== null) {
+        created = {
+          eventName: "BillCreated",
+          args: createdLog.args as Record<string, unknown>,
+          blockNumber: createdLog.blockNumber,
+          txHash: createdLog.transactionHash,
+        };
+      }
+    }
+
+    if (forThisBill.length === 0 && !created) {
       return empty;
     }
 
     // Resolve each distinct block's timestamp once.
-    const blockNumbers = [...new Set(forThisBill.map((entry) => entry.blockNumber))];
+    const relevant = created ? [...forThisBill, created] : forThisBill;
+    const blockNumbers = [...new Set(relevant.map((entry) => entry.blockNumber))];
     const timestamps = new Map<bigint, bigint>();
     await Promise.all(
       blockNumbers.map(async (blockNumber) => {
@@ -503,7 +535,6 @@ export async function readBillActivity(billId: bigint): Promise<BillActivity> {
     const timestampFor = (blockNumber: bigint) => timestamps.get(blockNumber) ?? null;
 
     const sorted = [...forThisBill].sort((a, b) => Number(a.blockNumber - b.blockNumber));
-    const created = sorted.find((entry) => entry.eventName === "BillCreated") ?? null;
 
     const payments: BillPaymentRecord[] = sorted
       .filter((entry) => entry.eventName === "DebtPaid")

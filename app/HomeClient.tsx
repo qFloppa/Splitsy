@@ -2160,16 +2160,20 @@ function HistoryRecordCard({
               <div className="history-detail-grid">
                 <div>
                   <p className="history-detail-label">Created</p>
-                  <p className="mt-1">
-                    {formatTimestamp(data.createdAt)}
-                    {data.createdAt === null ? (
-                      <span className="text-[var(--text-muted)]"> (before indexed history)</span>
-                    ) : null}
-                  </p>
+                  {data.createdAt !== null ? (
+                    <p className="mt-1">{formatTimestamp(data.createdAt)}</p>
+                  ) : null}
                   {data.createdTxHash ? (
-                    <a className="history-tx-link" href={`https://testnet.arcscan.app/tx/${data.createdTxHash}`} rel="noreferrer" target="_blank">
+                    <a
+                      className="history-tx-link mt-1 inline-block"
+                      href={`https://testnet.arcscan.app/tx/${data.createdTxHash}`}
+                      rel="noreferrer"
+                      target="_blank"
+                    >
                       {shortAddress(data.createdTxHash)}
                     </a>
+                  ) : data.createdAt === null ? (
+                    <p className="mt-1 text-[var(--text-muted)]">—</p>
                   ) : null}
                 </div>
                 <div>
