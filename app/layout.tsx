@@ -88,6 +88,8 @@ export default function RootLayout({
           </p>
           <nav className="site-footer-links" aria-label="Legal and help">
             <Link href="/disclaimer">Disclaimer &amp; acknowledgments</Link>
+            <Link href="/privacy">Privacy</Link>
+            <Link href="/terms">Terms</Link>
             <Link href="/docs">Docs</Link>
             <a href="mailto:support@splitsy.xyz">Contact</a>
           </nav>
