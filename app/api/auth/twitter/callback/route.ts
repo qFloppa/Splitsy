@@ -1,11 +1,14 @@
 import { NextResponse, type NextRequest } from "next/server";
 import {
   exchangeCodeForToken,
+  fetchTwitterUser,
   getRedirectUri,
   OAUTH_STATE_COOKIE,
   OAUTH_VERIFIER_COOKIE,
+  TwitterApiError,
   TwitterTokenError,
   type TwitterTokenResponse,
+  type TwitterUser,
 } from "@/lib/twitter-oauth";
 
 export const runtime = "nodejs";
@@ -78,7 +81,37 @@ export async function GET(request: NextRequest) {
 
   try {
     const token = await exchangeCodeForToken({ code, redirectUri, verifier, clientId, clientSecret });
-    return clearOauthCookies(successPage(token));
+
+    // Stage 2: probe GET /2/users/me. Attempting it is free — if the account
+    // has no credit, X returns an error (quota/paywall) rather than charging,
+    // so the outcome tells us whether the profile read works pre-billing.
+    try {
+      const user = await fetchTwitterUser(token.access_token);
+      return clearOauthCookies(profileSuccessPage(token, user));
+    } catch (profileCaught) {
+      const detail =
+        profileCaught instanceof TwitterApiError
+          ? [`HTTP ${profileCaught.status}`, profileCaught.body.slice(0, 800)]
+          : [profileCaught instanceof Error ? profileCaught.message : "Unexpected error during profile lookup."];
+
+      return clearOauthCookies(
+        resultPage({
+          ok: false,
+          status: 200,
+          title: "Login worked — but the profile read was blocked",
+          lines: [
+            `scope: ${token.scope}`,
+            "",
+            "The OAuth handshake and token exchange succeeded, so your app config is correct.",
+            "GET /2/users/me failed:",
+            ...detail,
+            "",
+            "A 402 / 403 / 429 here means the profile read needs an X account credit top-up.",
+            "The login itself is fine — only the metered handle+email lookup is gated.",
+          ],
+        }),
+      );
+    }
   } catch (caught) {
     const detail =
       caught instanceof TwitterTokenError
@@ -95,25 +128,24 @@ export async function GET(request: NextRequest) {
   }
 }
 
-function successPage(token: TwitterTokenResponse) {
-  const masked =
-    token.access_token.length > 16
-      ? `${token.access_token.slice(0, 8)}…${token.access_token.slice(-6)}`
-      : "(short token)";
-
+function profileSuccessPage(token: TwitterTokenResponse, user: TwitterUser) {
   return resultPage({
     ok: true,
     status: 200,
-    title: "Sign in with X works ✓",
+    title: "Sign in with X + profile read works ✓",
     lines: [
-      `token_type: ${token.token_type}`,
-      `scope: ${token.scope}`,
-      `expires_in: ${token.expires_in}s`,
-      `refresh_token: ${token.refresh_token ? "present" : "not issued"}`,
-      `access_token: ${masked} (length ${token.access_token.length})`,
+      `username (handle): @${user.username}`,
+      `name: ${user.name}`,
+      `id: ${user.id}`,
+      `confirmed_email: ${user.confirmed_email ?? "(not returned — see note below)"}`,
+      `profile_image_url: ${user.profile_image_url ?? "(none)"}`,
       "",
-      "The OAuth handshake and token exchange succeeded — no billed endpoint was called.",
-      "We did NOT call GET /2/users/me (the metered profile lookup for handle + email).",
+      `scope granted: ${token.scope}`,
+      "",
+      "GET /2/users/me returned your handle — the profile read works.",
+      user.confirmed_email
+        ? "Your confirmed email came through too, so the email-seeded wallet path is viable."
+        : "No confirmed_email was returned: either your X account has no confirmed email, or 'Request email from users' is off in the app settings.",
     ],
   });
 }

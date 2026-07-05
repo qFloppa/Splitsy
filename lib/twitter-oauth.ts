@@ -13,6 +13,7 @@ import { createHash, randomBytes } from "crypto";
 // historically documented endpoints.
 export const TWITTER_AUTHORIZE_URL = "https://twitter.com/i/oauth2/authorize";
 export const TWITTER_TOKEN_URL = "https://api.twitter.com/2/oauth2/token";
+export const TWITTER_USERS_ME_URL = "https://api.twitter.com/2/users/me";
 
 // Read-only scopes. `users.email` additionally requires the "Request email from
 // users" permission to be enabled in the X app settings, otherwise authorize
@@ -123,4 +124,46 @@ export async function exchangeCodeForToken(params: {
   }
 
   return JSON.parse(text) as TwitterTokenResponse;
+}
+
+export type TwitterUser = {
+  id: string;
+  name: string;
+  username: string; // the @handle, without the leading @
+  confirmed_email?: string;
+  profile_image_url?: string;
+};
+
+export class TwitterApiError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+    readonly body: string,
+  ) {
+    super(message);
+    this.name = "TwitterApiError";
+  }
+}
+
+// Read the authenticating user's own profile. Under 2026 pay-per-use this is a
+// "user read" and may require account credit; attempting it is free (a blocked
+// call returns an error rather than a charge), which lets us probe whether it
+// works without a top-up. `confirmed_email` requires the `users.email` scope
+// AND the field to be explicitly requested.
+export async function fetchTwitterUser(accessToken: string): Promise<TwitterUser> {
+  const url = new URL(TWITTER_USERS_ME_URL);
+  url.searchParams.set("user.fields", "confirmed_email,profile_image_url");
+
+  const response = await fetch(url, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+    cache: "no-store",
+  });
+
+  const text = await response.text();
+  if (!response.ok) {
+    throw new TwitterApiError(`Profile lookup failed (${response.status}).`, response.status, text);
+  }
+
+  const parsed = JSON.parse(text) as { data: TwitterUser };
+  return parsed.data;
 }
