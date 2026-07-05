@@ -174,6 +174,7 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
   const [partialPayments, setPartialPayments] = useState<Record<string, string>>({});
   const [claimAmounts, setClaimAmounts] = useState<Record<string, string>>({});
   const [participantShareInputs, setParticipantShareInputs] = useState<Record<string, string>>({});
+  const [splitBy, setSplitBy] = useState<"address" | "handle">("address");
   const [recurringWallet, setRecurringWallet] = useState<RecurringWallet | null>(null);
   const [recurringState, setRecurringState] = useState<RecurringRunState>("idle");
   const [recurringMessage, setRecurringMessage] = useState("");
@@ -652,6 +653,52 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
       setBillState("success");
       setBillMessage(`Bill #${result.billId.toString()} is live on Arc. Payers will see it when they connect.`);
       await refreshBillRegistry(wallet.account);
+    } catch (caught) {
+      setBillState("error");
+      setBillMessage(errorMessage(caught));
+    }
+  }
+
+  // Off-chain path: tag payers by @handle and store the bill in Supabase. Tagged
+  // people discover it and settle from their DCW after signing in with X.
+  async function submitBillOffchain() {
+    if (splitMode === "manual" && splitTotal - confirmedUsd > 0.009) {
+      setBillState("error");
+      setBillMessage("Manual shares cannot be larger than the bill Total USD amount.");
+      return;
+    }
+
+    const debts = displayParticipants
+      .filter((participant) => participant.amountUsd > 0 && participant.walletAddress.trim())
+      .map((participant) => ({ handle: participant.walletAddress.trim(), amount: participant.amountUsd }));
+
+    if (debts.length === 0) {
+      setBillState("error");
+      setBillMessage("Add at least one @handle with a positive share.");
+      return;
+    }
+
+    try {
+      setBillState("working");
+      setBillMessage("Saving the split…");
+      const res = await fetch("/api/bills", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ merchant: bill.merchant, currency: bill.currency, debts }),
+      });
+      if (res.status === 401) {
+        setBillState("error");
+        setBillMessage("Sign in with X (top right) to split by @handle.");
+        return;
+      }
+      const data = await res.json();
+      if (!res.ok) {
+        setBillState("error");
+        setBillMessage(data.error ?? "Could not create the bill.");
+        return;
+      }
+      setBillState("success");
+      setBillMessage("Bill created. Tagged people will see it when they sign in with X — track it on the Bills page.");
     } catch (caught) {
       setBillState("error");
       setBillMessage(errorMessage(caught));
@@ -1569,20 +1616,36 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
                       title="Review your split"
                       icon={<WalletCards size={19} />}
                       action={
-                        <div className="segmented-control">
-                          <ModeButton active={splitMode === "equal"} onClick={() => setSplitMode("equal")}>
-                            Equal
-                          </ModeButton>
-                          <ModeButton active={splitMode === "manual"} onClick={() => setSplitMode("manual")}>
-                            Manual
-                          </ModeButton>
+                        <div className="flex flex-wrap gap-2">
+                          <div className="segmented-control">
+                            <ModeButton active={splitBy === "address"} onClick={() => setSplitBy("address")}>
+                              Wallet
+                            </ModeButton>
+                            <ModeButton active={splitBy === "handle"} onClick={() => setSplitBy("handle")}>
+                              @handle
+                            </ModeButton>
+                          </div>
+                          <div className="segmented-control">
+                            <ModeButton active={splitMode === "equal"} onClick={() => setSplitMode("equal")}>
+                              Equal
+                            </ModeButton>
+                            <ModeButton active={splitMode === "manual"} onClick={() => setSplitMode("manual")}>
+                              Manual
+                            </ModeButton>
+                          </div>
                         </div>
                       }
                     >
                 <div className="route-strip text-sm">
                   <div>
-                    <p className="font-semibold text-[var(--text)]">Bill registry</p>
-                    <p className="mt-1 text-[var(--text-muted)]">Debt is discovered by wallet address.</p>
+                    <p className="font-semibold text-[var(--text)]">
+                      {splitBy === "handle" ? "Off-chain bill" : "Bill registry"}
+                    </p>
+                    <p className="mt-1 text-[var(--text-muted)]">
+                      {splitBy === "handle"
+                        ? "Tag payers by @handle; they settle after signing in with X."
+                        : "Debt is discovered by wallet address."}
+                    </p>
                   </div>
                   <div className="route-line" aria-hidden="true" />
                   <div>
@@ -1608,7 +1671,7 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
                             onChange={(value) => updateParticipant(participant.id, "label", value)}
                           />
                           <Field
-                            label="Wallet"
+                            label={splitBy === "handle" ? "@handle" : "Wallet"}
                             value={participant.walletAddress}
                             onChange={(value) => updateParticipant(participant.id, "walletAddress", value)}
                           />
@@ -1650,11 +1713,11 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
                     <button
                       className="primary-button"
                       disabled={billState === "working" || billState === "connecting"}
-                      onClick={submitBillOnchain}
+                      onClick={splitBy === "handle" ? submitBillOffchain : submitBillOnchain}
                       type="button"
                     >
                       {billState === "working" ? <Loader2 className="animate-spin" size={16} /> : <Landmark size={16} />}
-                      Write on Arc
+                      {splitBy === "handle" ? "Create bill" : "Write on Arc"}
                     </button>
                   </div>
                   <div className="text-sm text-[var(--text-muted)]">
