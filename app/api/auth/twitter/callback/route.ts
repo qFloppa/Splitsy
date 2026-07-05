@@ -7,17 +7,18 @@ import {
   OAUTH_VERIFIER_COOKIE,
   TwitterApiError,
   TwitterTokenError,
-  type TwitterTokenResponse,
   type TwitterUser,
 } from "@/lib/twitter-oauth";
+import { upsertUserFromX } from "@/lib/users-repo";
+import { signSession, SESSION_COOKIE_NAME, SESSION_MAX_AGE } from "@/lib/session";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 // GET /api/auth/twitter/callback — X redirects here with ?code&state (or an
-// error). We validate state, exchange the code for a token, and render a plain
-// confirmation page. This is the free stage-1 verification: we deliberately do
-// NOT call GET /2/users/me (the billed profile read).
+// error). We validate state, exchange the code for a token, read the profile,
+// upsert the user into Supabase, and set a signed session cookie before
+// redirecting into the app. Errors render a plain HTML result page.
 export async function GET(request: NextRequest) {
   const params = request.nextUrl.searchParams;
 
@@ -82,36 +83,66 @@ export async function GET(request: NextRequest) {
   try {
     const token = await exchangeCodeForToken({ code, redirectUri, verifier, clientId, clientSecret });
 
-    // Stage 2: probe GET /2/users/me. Attempting it is free — if the account
-    // has no credit, X returns an error (quota/paywall) rather than charging,
-    // so the outcome tells us whether the profile read works pre-billing.
+    const sessionSecret = process.env.SESSION_SECRET;
+    if (!sessionSecret || sessionSecret.length < 32) {
+      return clearOauthCookies(
+        resultPage({
+          ok: false,
+          status: 500,
+          title: "Server not configured",
+          lines: ["SESSION_SECRET is missing or shorter than 32 chars. Add it to .env.local."],
+        }),
+      );
+    }
+
+    let user: TwitterUser;
     try {
-      const user = await fetchTwitterUser(token.access_token);
-      return clearOauthCookies(profileSuccessPage(token, user));
+      user = await fetchTwitterUser(token.access_token);
     } catch (profileCaught) {
       const detail =
         profileCaught instanceof TwitterApiError
           ? [`HTTP ${profileCaught.status}`, profileCaught.body.slice(0, 800)]
           : [profileCaught instanceof Error ? profileCaught.message : "Unexpected error during profile lookup."];
-
       return clearOauthCookies(
         resultPage({
           ok: false,
           status: 200,
           title: "Login worked — but the profile read was blocked",
-          lines: [
-            `scope: ${token.scope}`,
-            "",
-            "The OAuth handshake and token exchange succeeded, so your app config is correct.",
-            "GET /2/users/me failed:",
-            ...detail,
-            "",
-            "A 402 / 403 / 429 here means the profile read needs an X account credit top-up.",
-            "The login itself is fine — only the metered handle+email lookup is gated.",
-          ],
+          lines: ["GET /2/users/me failed:", ...detail],
         }),
       );
     }
+
+    let appUserId: string;
+    try {
+      const appUser = await upsertUserFromX({
+        xUserId: user.id,
+        handle: user.username,
+        name: user.name ?? null,
+        avatarUrl: user.profile_image_url ?? null,
+        email: user.confirmed_email ?? null,
+      });
+      appUserId = appUser.id;
+    } catch (dbCaught) {
+      return clearOauthCookies(
+        resultPage({
+          ok: false,
+          status: 500,
+          title: "Could not save your account",
+          lines: [dbCaught instanceof Error ? dbCaught.message : "Unexpected database error."],
+        }),
+      );
+    }
+
+    const response = NextResponse.redirect(new URL("/", request.nextUrl.origin));
+    response.cookies.set(SESSION_COOKIE_NAME, signSession(appUserId, sessionSecret), {
+      httpOnly: true,
+      secure: request.nextUrl.protocol === "https:",
+      sameSite: "lax",
+      path: "/",
+      maxAge: SESSION_MAX_AGE,
+    });
+    return clearOauthCookies(response);
   } catch (caught) {
     const detail =
       caught instanceof TwitterTokenError
@@ -126,28 +157,6 @@ export async function GET(request: NextRequest) {
       }),
     );
   }
-}
-
-function profileSuccessPage(token: TwitterTokenResponse, user: TwitterUser) {
-  return resultPage({
-    ok: true,
-    status: 200,
-    title: "Sign in with X + profile read works ✓",
-    lines: [
-      `username (handle): @${user.username}`,
-      `name: ${user.name}`,
-      `id: ${user.id}`,
-      `confirmed_email: ${user.confirmed_email ?? "(not returned — see note below)"}`,
-      `profile_image_url: ${user.profile_image_url ?? "(none)"}`,
-      "",
-      `scope granted: ${token.scope}`,
-      "",
-      "GET /2/users/me returned your handle — the profile read works.",
-      user.confirmed_email
-        ? "Your confirmed email came through too, so the email-seeded wallet path is viable."
-        : "No confirmed_email was returned: either your X account has no confirmed email, or 'Request email from users' is off in the app settings.",
-    ],
-  });
 }
 
 function clearOauthCookies(response: NextResponse) {

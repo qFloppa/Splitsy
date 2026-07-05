@@ -18,7 +18,7 @@ export const TWITTER_USERS_ME_URL = "https://api.twitter.com/2/users/me";
 // Read-only scopes. `users.email` additionally requires the "Request email from
 // users" permission to be enabled in the X app settings, otherwise authorize
 // returns an error.
-export const TWITTER_SCOPES = ["tweet.read", "users.read", "users.email"];
+export const TWITTER_SCOPES = ["tweet.read", "users.read", "users.email", "offline.access"];
 
 export const OAUTH_STATE_COOKIE = "x_oauth_state";
 export const OAUTH_VERIFIER_COOKIE = "x_oauth_verifier";
