@@ -1,4 +1,5 @@
 import { randomBytes } from "crypto";
+import { mkdirSync } from "fs";
 import {
   initiateDeveloperControlledWalletsClient,
   registerEntitySecretCiphertext,
@@ -18,6 +19,7 @@ if (!apiKey || apiKey.includes("your_circle_api_key")) {
 let entitySecret = process.env.CIRCLE_ENTITY_SECRET;
 if (!entitySecret) {
   entitySecret = randomBytes(32).toString("hex");
+  mkdirSync("./recovery", { recursive: true }); // SDK requires the dir to exist
   await registerEntitySecretCiphertext({ apiKey, entitySecret, recoveryFileDownloadPath: "./recovery" });
   console.log("\nRegistered a NEW entity secret. Save both of these:");
   console.log(`CIRCLE_ENTITY_SECRET=${entitySecret}`);
