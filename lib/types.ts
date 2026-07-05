@@ -27,6 +27,18 @@ export type Charge = {
   created_at: string;
 };
 
+export type AppUser = {
+  id: string;
+  x_user_id: string;
+  x_handle: string;
+  x_name: string | null;
+  x_avatar_url: string | null;
+  email: string | null;
+  wallet_address: string | null;
+  circle_wallet_id: string | null;
+  created_at: string;
+};
+
 export type NetPosition = {
   memberId: string;
   amountMicros: bigint;
