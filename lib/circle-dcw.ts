@@ -16,7 +16,36 @@ function getConfig(): { client: Client; walletSetId: string } | null {
   return { client: cachedClient, walletSetId };
 }
 
+const ARC_USDC_ADDRESS = process.env.ARC_TESTNET_USDC_ADDRESS ?? "0x3600000000000000000000000000000000000000";
+
 export type ArcWallet = { address: string; walletId: string };
+
+// Transfer USDC on Arc Testnet from a DCW to any address. The wallet pays its
+// own gas (USDC on Arc) at the MEDIUM fee level.
+// ponytail: no Gas Station paymaster — add a policy + sponsor gas if we want
+// truly gasless payments; for now the debtor's wallet needs a little USDC for gas.
+export async function transferUsdcOnArc(
+  fromWalletId: string,
+  toAddress: string,
+  amountUsdc: string,
+): Promise<{ id: string; state: string }> {
+  const config = getConfig();
+  if (!config) throw new Error("Circle is not configured");
+
+  // ponytail: cast the whole input — SDK 9.2.0's transfer union types lag the API
+  // (ARC-TESTNET missing) and mis-discriminate the walletId+tokenAddress branch.
+  // Shape verified against Circle's createTransaction docs.
+  const res = await config.client.createTransaction({
+    walletId: fromWalletId,
+    blockchain: "ARC-TESTNET",
+    tokenAddress: ARC_USDC_ADDRESS,
+    amount: [amountUsdc],
+    destinationAddress: toAddress,
+    fee: { type: "level", config: { feeLevel: "MEDIUM" } },
+  } as unknown as Parameters<typeof config.client.createTransaction>[0]);
+  if (!res.data?.id) throw new Error("Circle transfer returned no transaction id");
+  return { id: res.data.id, state: res.data.state };
+}
 
 // Get the user's Arc developer-controlled wallet, creating it (SCA) on first
 // call. refId = X user id makes it idempotent — a repeat call returns the same

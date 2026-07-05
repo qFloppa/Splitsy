@@ -91,4 +91,31 @@ export async function resolveDebtsForHandle(userId: string, handle: string): Pro
   }
 }
 
+// A debt with the creator's wallet, for settlement.
+export async function getDebtForSettlement(id: string) {
+  const client = requireClient();
+  const { data, error } = await client
+    .from("bill_debts")
+    .select("*, bill:bills(creator:users!creator_user_id(id, wallet_address))")
+    .eq("id", id)
+    .maybeSingle();
+  if (error) {
+    throw new Error(`Failed to read debt: ${error.message}`);
+  }
+  return data as
+    | (BillDebt & { bill: { creator: { id: string; wallet_address: string | null } | null } | null })
+    | null;
+}
+
+export async function markDebtPaid(id: string, txRef: string): Promise<void> {
+  const client = requireClient();
+  const { error } = await client
+    .from("bill_debts")
+    .update({ status: "paid", paid_tx_hash: txRef, paid_at: new Date().toISOString() })
+    .eq("id", id);
+  if (error) {
+    throw new Error(`Failed to mark debt paid: ${error.message}`);
+  }
+}
+
 export type { Bill, BillDebt };

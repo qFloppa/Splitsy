@@ -26,6 +26,7 @@ export default function BillsPage() {
   const [rows, setRows] = useState<Row[]>([{ handle: "", amount: "" }]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [payingId, setPayingId] = useState<string | null>(null);
 
   function apply(data: { iOwe?: IOwe[]; owedToMe?: OwedToMe[] }) {
     setAuthed(true);
@@ -80,6 +81,22 @@ export default function BillsPage() {
       await load();
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function pay(debtId: string) {
+    setPayingId(debtId);
+    setError(null);
+    try {
+      const res = await fetch(`/api/debts/${debtId}/pay`, { method: "POST" });
+      const data = await res.json();
+      if (!res.ok) {
+        setError(data.error ?? "Payment failed.");
+        return;
+      }
+      await load();
+    } finally {
+      setPayingId(null);
     }
   }
 
@@ -149,9 +166,16 @@ export default function BillsPage() {
               <span>
                 {d.bill?.merchant ?? "Bill"} — to @{d.bill?.creator?.x_handle ?? "?"}
               </span>
-              <strong>
-                {d.amount_usdc} USDC {d.status === "paid" ? "✓" : ""}
-              </strong>
+              <span style={{ display: "flex", alignItems: "center", gap: "0.75rem" }}>
+                <strong>{d.amount_usdc} USDC</strong>
+                {d.status === "paid" ? (
+                  <span style={{ color: "#16a34a" }}>✓ paid</span>
+                ) : (
+                  <button type="button" onClick={() => pay(d.id)} disabled={payingId === d.id} style={primaryBtn}>
+                    {payingId === d.id ? "Paying…" : "Pay"}
+                  </button>
+                )}
+              </span>
             </div>
           ))
         )}
