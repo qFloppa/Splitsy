@@ -38,6 +38,7 @@ import { getWalletClient } from "wagmi/actions";
 import { ConnectButton } from "@rainbow-me/rainbowkit";
 import XAuthControl from "./XAuthControl";
 import XDebtsPanel from "./XDebtsPanel";
+import XHistoryPanel from "./XHistoryPanel";
 import {
   bridgeSourceChains,
   bridgeUsdcToArc,
@@ -1798,6 +1799,7 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
             key="history"
             transition={{ duration: 0.22, ease: "easeOut" }}
           >
+            <XHistoryPanel />
             <HistoryWorkspace debts={debts} splitterBills={splitterBills} hasWallet={Boolean(billWallet)} />
           </motion.div>
         )}
