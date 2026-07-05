@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { signSession, verifySession, SESSION_COOKIE_NAME } from "./session.ts";
+import { signSession, verifySession, SESSION_COOKIE_NAME } from "./session-core.ts";
 
 const SECRET = "test-secret-that-is-at-least-32-chars-long!!";
 

@@ -1,31 +1,28 @@
-import { createHmac, timingSafeEqual } from "crypto";
+import { cookies } from "next/headers";
+import { getUserById } from "@/lib/users-repo";
+import type { AppUser } from "@/lib/types";
+import { SESSION_COOKIE_NAME, verifySession } from "@/lib/session-core";
 
-export const SESSION_COOKIE_NAME = "splitsy_session";
-export const SESSION_MAX_AGE = 2592000; // 30 days in seconds
+// Re-export the pure session primitives so server code has a single import
+// surface. They live in session-core.ts (no next/headers import) so they stay
+// unit-testable under `node --test`.
+export {
+  SESSION_COOKIE_NAME,
+  SESSION_MAX_AGE,
+  signSession,
+  verifySession,
+} from "@/lib/session-core";
 
-function sign(value: string, secret: string): string {
-  return createHmac("sha256", secret).update(value).digest("base64url");
-}
+export async function getSessionUser(): Promise<AppUser | null> {
+  const secret = process.env.SESSION_SECRET;
+  if (!secret || secret.length < 32) return null;
 
-// Token format: "<userId>.<base64url-hmac-of-userId>". The userId is opaque
-// (a Supabase uuid) and contains no ".", so we split on the last ".".
-export function signSession(userId: string, secret: string): string {
-  return `${userId}.${sign(userId, secret)}`;
-}
+  const store = await cookies();
+  const raw = store.get(SESSION_COOKIE_NAME)?.value;
+  if (!raw) return null;
 
-export function verifySession(token: string, secret: string): string | null {
-  if (!token) return null;
-  const dot = token.lastIndexOf(".");
-  if (dot <= 0) return null;
+  const userId = verifySession(raw, secret);
+  if (!userId) return null;
 
-  const userId = token.slice(0, dot);
-  const providedSig = token.slice(dot + 1);
-  const expectedSig = sign(userId, secret);
-
-  const provided = Buffer.from(providedSig);
-  const expected = Buffer.from(expectedSig);
-  if (provided.length !== expected.length) return null;
-  if (!timingSafeEqual(provided, expected)) return null;
-
-  return userId;
+  return getUserById(userId);
 }
