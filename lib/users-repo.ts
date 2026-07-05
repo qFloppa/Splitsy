@@ -40,6 +40,17 @@ export async function upsertUserFromX(profile: XProfileInput): Promise<AppUser> 
   return data as AppUser;
 }
 
+export async function setUserWallet(id: string, walletAddress: string, circleWalletId: string): Promise<void> {
+  const client = requireClient();
+  const { error } = await client
+    .from("users")
+    .update({ wallet_address: walletAddress, circle_wallet_id: circleWalletId })
+    .eq("id", id);
+  if (error) {
+    throw new Error(`Failed to set wallet: ${error.message}`);
+  }
+}
+
 export async function getUserById(id: string): Promise<AppUser | null> {
   const client = requireClient();
   const { data, error } = await client.from("users").select().eq("id", id).maybeSingle();

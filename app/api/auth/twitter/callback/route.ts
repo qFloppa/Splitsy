@@ -9,7 +9,8 @@ import {
   TwitterTokenError,
   type TwitterUser,
 } from "@/lib/twitter-oauth";
-import { upsertUserFromX } from "@/lib/users-repo";
+import { upsertUserFromX, setUserWallet } from "@/lib/users-repo";
+import { getOrCreateArcWallet } from "@/lib/circle-dcw";
 import { signSession, SESSION_COOKIE_NAME, SESSION_MAX_AGE } from "@/lib/session";
 
 export const runtime = "nodejs";
@@ -123,6 +124,17 @@ export async function GET(request: NextRequest) {
         email: user.confirmed_email ?? null,
       });
       appUserId = appUser.id;
+
+      // Provision a Circle DCW on first login (idempotent). Never block login
+      // if Circle is down/unconfigured — wallet_address stays null and retries.
+      if (!appUser.wallet_address) {
+        try {
+          const wallet = await getOrCreateArcWallet(user.id);
+          if (wallet) await setUserWallet(appUser.id, wallet.address, wallet.walletId);
+        } catch (walletErr) {
+          console.error("DCW provisioning failed (login continues):", walletErr);
+        }
+      }
     } catch (dbCaught) {
       return clearOauthCookies(
         resultPage({
