@@ -1,0 +1,214 @@
+"use client";
+
+import Link from "next/link";
+import { useEffect, useState } from "react";
+
+// Shapes returned by GET /api/bills (Supabase nested selects).
+type IOwe = {
+  id: string;
+  amount_usdc: string;
+  status: string;
+  bill: { merchant: string | null; creator: { x_handle: string } | null } | null;
+};
+type OwedToMe = {
+  id: string;
+  merchant: string | null;
+  total_usdc: string;
+  debts: { id: string; debtor_handle: string; amount_usdc: string; status: string }[];
+};
+type Row = { handle: string; amount: string };
+
+export default function BillsPage() {
+  const [iOwe, setIOwe] = useState<IOwe[]>([]);
+  const [owedToMe, setOwedToMe] = useState<OwedToMe[]>([]);
+  const [authed, setAuthed] = useState<boolean | null>(null);
+  const [merchant, setMerchant] = useState("");
+  const [rows, setRows] = useState<Row[]>([{ handle: "", amount: "" }]);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  function apply(data: { iOwe?: IOwe[]; owedToMe?: OwedToMe[] }) {
+    setAuthed(true);
+    setIOwe(data.iOwe ?? []);
+    setOwedToMe(data.owedToMe ?? []);
+  }
+
+  // Used by submit() to refresh after creating a bill (not an effect).
+  async function load() {
+    const res = await fetch("/api/bills");
+    if (res.status === 401) {
+      setAuthed(false);
+      return;
+    }
+    apply(await res.json());
+  }
+
+  useEffect(() => {
+    let active = true;
+    fetch("/api/bills")
+      .then((res) => (res.status === 401 ? Promise.reject(new Error("401")) : res.json()))
+      .then((data) => {
+        if (active) apply(data);
+      })
+      .catch(() => {
+        if (active) setAuthed(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  async function submit() {
+    setBusy(true);
+    setError(null);
+    try {
+      const debts = rows
+        .filter((r) => r.handle.trim() && r.amount.trim())
+        .map((r) => ({ handle: r.handle, amount: Number(r.amount) }));
+      const res = await fetch("/api/bills", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ merchant, debts }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setError(data.error ?? "Could not create the bill.");
+        return;
+      }
+      setMerchant("");
+      setRows([{ handle: "", amount: "" }]);
+      await load();
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (authed === false) {
+    return (
+      <main style={{ maxWidth: 640, margin: "4rem auto", padding: "0 1rem", textAlign: "center" }}>
+        <p>Sign in with X to split and view bills.</p>
+        <a href="/api/auth/twitter" style={{ color: "#1d9bf0", fontWeight: 600 }}>
+          Sign in with X
+        </a>
+      </main>
+    );
+  }
+
+  return (
+    <main style={{ maxWidth: 720, margin: "2rem auto", padding: "0 1rem", display: "grid", gap: "2rem" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <h1 style={{ fontSize: "1.5rem", fontWeight: 700 }}>Bills</h1>
+        <Link href="/" style={{ color: "#5aa9ff" }}>
+          ← App
+        </Link>
+      </div>
+
+      <section style={{ border: "1px solid var(--border)", borderRadius: 12, padding: "1.25rem" }}>
+        <h2 style={{ fontWeight: 600, marginBottom: "0.75rem" }}>Split a new bill</h2>
+        <input
+          placeholder="Merchant (optional)"
+          value={merchant}
+          onChange={(e) => setMerchant(e.target.value)}
+          style={inputStyle}
+        />
+        {rows.map((row, i) => (
+          <div key={i} style={{ display: "flex", gap: "0.5rem", marginTop: "0.5rem" }}>
+            <input
+              placeholder="@handle"
+              value={row.handle}
+              onChange={(e) => setRows((rs) => rs.map((r, j) => (j === i ? { ...r, handle: e.target.value } : r)))}
+              style={{ ...inputStyle, flex: 2 }}
+            />
+            <input
+              placeholder="USDC"
+              inputMode="decimal"
+              value={row.amount}
+              onChange={(e) => setRows((rs) => rs.map((r, j) => (j === i ? { ...r, amount: e.target.value } : r)))}
+              style={{ ...inputStyle, flex: 1 }}
+            />
+          </div>
+        ))}
+        <div style={{ display: "flex", gap: "0.75rem", marginTop: "0.75rem", alignItems: "center" }}>
+          <button type="button" onClick={() => setRows((rs) => [...rs, { handle: "", amount: "" }])} style={linkBtn}>
+            + person
+          </button>
+          <button type="button" onClick={submit} disabled={busy} style={primaryBtn}>
+            {busy ? "Saving…" : "Create bill"}
+          </button>
+          {error ? <span style={{ color: "#dc2626", fontSize: "0.85rem" }}>{error}</span> : null}
+        </div>
+      </section>
+
+      <section>
+        <h2 style={{ fontWeight: 600, marginBottom: "0.75rem" }}>You owe</h2>
+        {iOwe.length === 0 ? (
+          <p style={{ opacity: 0.6 }}>Nothing owed.</p>
+        ) : (
+          iOwe.map((d) => (
+            <div key={d.id} style={cardStyle}>
+              <span>
+                {d.bill?.merchant ?? "Bill"} — to @{d.bill?.creator?.x_handle ?? "?"}
+              </span>
+              <strong>
+                {d.amount_usdc} USDC {d.status === "paid" ? "✓" : ""}
+              </strong>
+            </div>
+          ))
+        )}
+      </section>
+
+      <section>
+        <h2 style={{ fontWeight: 600, marginBottom: "0.75rem" }}>Owed to you</h2>
+        {owedToMe.length === 0 ? (
+          <p style={{ opacity: 0.6 }}>No bills created yet.</p>
+        ) : (
+          owedToMe.map((b) => (
+            <div key={b.id} style={{ ...cardStyle, flexDirection: "column", alignItems: "stretch", gap: "0.35rem" }}>
+              <strong>
+                {b.merchant ?? "Bill"} — {b.total_usdc} USDC
+              </strong>
+              {b.debts.map((debt) => (
+                <span key={debt.id} style={{ fontSize: "0.85rem", opacity: 0.8 }}>
+                  @{debt.debtor_handle}: {debt.amount_usdc} {debt.status === "paid" ? "✓ paid" : "· pending"}
+                </span>
+              ))}
+            </div>
+          ))
+        )}
+      </section>
+    </main>
+  );
+}
+
+const inputStyle: React.CSSProperties = {
+  width: "100%",
+  padding: "0.5rem 0.75rem",
+  borderRadius: 8,
+  border: "1px solid var(--border)",
+  background: "transparent",
+  color: "inherit",
+};
+const cardStyle: React.CSSProperties = {
+  display: "flex",
+  justifyContent: "space-between",
+  padding: "0.75rem 1rem",
+  border: "1px solid var(--border)",
+  borderRadius: 10,
+  marginBottom: "0.5rem",
+};
+const primaryBtn: React.CSSProperties = {
+  background: "#1d9bf0",
+  color: "#fff",
+  fontWeight: 600,
+  padding: "0.5rem 1rem",
+  borderRadius: 9999,
+  border: "none",
+  cursor: "pointer",
+};
+const linkBtn: React.CSSProperties = {
+  background: "transparent",
+  color: "#5aa9ff",
+  border: "none",
+  cursor: "pointer",
+  fontSize: "0.9rem",
+};

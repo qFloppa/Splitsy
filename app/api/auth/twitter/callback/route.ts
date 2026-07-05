@@ -10,6 +10,7 @@ import {
   type TwitterUser,
 } from "@/lib/twitter-oauth";
 import { upsertUserFromX, setUserWallet } from "@/lib/users-repo";
+import { resolveDebtsForHandle } from "@/lib/bills-repo";
 import { getOrCreateArcWallet } from "@/lib/circle-dcw";
 import { signSession, SESSION_COOKIE_NAME, SESSION_MAX_AGE } from "@/lib/session";
 
@@ -124,6 +125,14 @@ export async function GET(request: NextRequest) {
         email: user.confirmed_email ?? null,
       });
       appUserId = appUser.id;
+
+      // Link any pending debts tagged with this @handle to the user now that we
+      // know who they are. Best-effort — don't block login if it fails.
+      try {
+        await resolveDebtsForHandle(appUser.id, appUser.x_handle);
+      } catch (resolveErr) {
+        console.error("Debt resolution failed (login continues):", resolveErr);
+      }
 
       // Provision a Circle DCW on first login (idempotent). Never block login
       // if Circle is down/unconfigured — wallet_address stays null and retries.

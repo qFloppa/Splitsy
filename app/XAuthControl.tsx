@@ -43,6 +43,9 @@ export default function XAuthControl() {
 
   return (
     <div className="flex items-center gap-2">
+      <a href="/bills" className="text-sm font-semibold text-[#1d9bf0]">
+        Bills
+      </a>
       {me.avatarUrl ? (
         // eslint-disable-next-line @next/next/no-img-element
         <img src={me.avatarUrl} alt="" width={24} height={24} className="rounded-full" />

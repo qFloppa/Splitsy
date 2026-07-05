@@ -39,6 +39,28 @@ export type AppUser = {
   created_at: string;
 };
 
+export type Bill = {
+  id: string;
+  creator_user_id: string;
+  merchant: string | null;
+  currency: string;
+  total_usdc: string;
+  metadata: unknown;
+  created_at: string;
+};
+
+export type BillDebt = {
+  id: string;
+  bill_id: string;
+  debtor_handle: string;
+  debtor_user_id: string | null;
+  amount_usdc: string;
+  status: "pending" | "paid";
+  paid_tx_hash: string | null;
+  paid_at: string | null;
+  created_at: string;
+};
+
 export type NetPosition = {
   memberId: string;
   amountMicros: bigint;
