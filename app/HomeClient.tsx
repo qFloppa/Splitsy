@@ -37,6 +37,7 @@ import { useAccount, useConnect, useDisconnect, useSwitchChain } from "wagmi";
 import { getWalletClient } from "wagmi/actions";
 import { ConnectButton } from "@rainbow-me/rainbowkit";
 import XAuthControl from "./XAuthControl";
+import XDebtsPanel from "./XDebtsPanel";
 import {
   bridgeSourceChains,
   bridgeUsdcToArc,
@@ -698,7 +699,10 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
         return;
       }
       setBillState("success");
-      setBillMessage("Bill created. Tagged people will see it when they sign in with X — track it on the Bills page.");
+      setBillMessage("Bill created. Tagged people will see it under their unpaid bills when they sign in with X.");
+      // Clear the form so the same split can't be submitted again on re-click.
+      setParticipants([{ id: `payer-${Date.now()}`, label: "Payer 1", walletAddress: "", amountUsd: 0, status: "unpaid" }]);
+      setParticipantShareInputs({});
     } catch (caught) {
       setBillState("error");
       setBillMessage(errorMessage(caught));
@@ -1460,6 +1464,7 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
             key="bills"
             transition={{ duration: 0.22, ease: "easeOut" }}
           >
+            <XDebtsPanel />
             {billWallet ? (
               <DebtWorkspace
                 arcUsdcBalance={arcUsdcBalance}
