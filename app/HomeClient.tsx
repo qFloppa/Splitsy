@@ -36,6 +36,7 @@ import { arcTestnet } from "viem/chains";
 import { useAccount, useConnect, useDisconnect, useSwitchChain } from "wagmi";
 import { getWalletClient } from "wagmi/actions";
 import { ConnectButton } from "@rainbow-me/rainbowkit";
+import XAuthControl from "./XAuthControl";
 import {
   bridgeSourceChains,
   bridgeUsdcToArc,
@@ -1386,6 +1387,7 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
                   Docs
                 </Link>
               </div>
+              <XAuthControl />
               <ConnectButton accountStatus="address" chainStatus="icon" showBalance={false} />
               <button
                 aria-label={`Switch to ${theme === "light" ? "dark" : "light"} mode`}
