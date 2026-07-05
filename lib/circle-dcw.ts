@@ -32,17 +32,25 @@ export async function transferUsdcOnArc(
   const config = getConfig();
   if (!config) throw new Error("Circle is not configured");
 
-  // ponytail: cast the whole input — SDK 9.2.0's transfer union types lag the API
-  // (ARC-TESTNET missing) and mis-discriminate the walletId+tokenAddress branch.
-  // Shape verified against Circle's createTransaction docs.
-  const res = await config.client.createTransaction({
-    walletId: fromWalletId,
-    blockchain: "ARC-TESTNET",
-    tokenAddress: ARC_USDC_ADDRESS,
-    amount: [amountUsdc],
-    destinationAddress: toAddress,
-    fee: { type: "level", config: { feeLevel: "MEDIUM" } },
-  } as unknown as Parameters<typeof config.client.createTransaction>[0]);
+  let res;
+  try {
+    // ponytail: cast the whole input — SDK 9.2.0's transfer union types lag the API
+    // (ARC-TESTNET missing) and mis-discriminate the walletId+tokenAddress branch.
+    // Shape verified against Circle's createTransaction docs.
+    res = await config.client.createTransaction({
+      walletId: fromWalletId,
+      blockchain: "ARC-TESTNET",
+      tokenAddress: ARC_USDC_ADDRESS,
+      amount: [String(amountUsdc)], // Supabase returns numeric as a JS number; Circle wants a string
+      destinationAddress: toAddress,
+      fee: { type: "level", config: { feeLevel: "MEDIUM" } },
+    } as unknown as Parameters<typeof config.client.createTransaction>[0]);
+  } catch (e) {
+    // The SDK (axios) hides Circle's real message behind "Request failed with
+    // status code 400". Surface the response body so the cause is visible.
+    const body = (e as { response?: { data?: unknown } })?.response?.data;
+    throw new Error(`Circle transfer failed: ${body ? JSON.stringify(body) : (e as Error).message}`);
+  }
   if (!res.data?.id) throw new Error("Circle transfer returned no transaction id");
   return { id: res.data.id, state: res.data.state };
 }
