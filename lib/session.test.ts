@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { signSession, verifySession, SESSION_COOKIE_NAME } from "./session-core.ts";
+import { signSession, verifySession, SESSION_COOKIE_NAME, signWalletUnlock, verifyWalletUnlock } from "./session-core.ts";
 
 const SECRET = "test-secret-that-is-at-least-32-chars-long!!";
 
@@ -28,4 +28,22 @@ test("verifySession rejects malformed tokens", () => {
 
 test("cookie name constant is stable", () => {
   assert.equal(SESSION_COOKIE_NAME, "splitsy_session");
+});
+
+test("verifyWalletUnlock accepts an unexpired token", () => {
+  const now = 1_000_000;
+  const token = signWalletUnlock("user-1", now + 300_000, SECRET);
+  assert.equal(verifyWalletUnlock(token, SECRET, now), "user-1");
+});
+
+test("verifyWalletUnlock rejects an expired token", () => {
+  const token = signWalletUnlock("user-1", 500, SECRET);
+  assert.equal(verifyWalletUnlock(token, SECRET, 1000), null);
+});
+
+test("verifyWalletUnlock rejects a tampered expiry", () => {
+  const now = 1_000_000;
+  const token = signWalletUnlock("user-1", now + 1000, SECRET);
+  const tampered = token.replace(String(now + 1000), String(now + 9_000_000));
+  assert.equal(verifyWalletUnlock(tampered, SECRET, now), null);
 });

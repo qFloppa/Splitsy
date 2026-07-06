@@ -29,3 +29,31 @@ export function verifySession(token: string, secret: string): string | null {
 
   return userId;
 }
+
+export const WALLET_UNLOCK_COOKIE = "splitsy_wallet_unlock";
+export const WALLET_UNLOCK_TTL = 300; // seconds — re-auth every 5 minutes
+
+// Short-lived wallet-unlock token: "<userId>.<expiresAtMs>.<hmac>". Signing the
+// expiry means the client can't extend it. Verification takes `now` so it's pure
+// and testable.
+export function signWalletUnlock(userId: string, expiresAtMs: number, secret: string): string {
+  const payload = `${userId}.${expiresAtMs}`;
+  return `${payload}.${sign(payload, secret)}`;
+}
+
+export function verifyWalletUnlock(token: string, secret: string, now: number): string | null {
+  if (!token) return null;
+  const parts = token.split(".");
+  if (parts.length !== 3) return null;
+  const [userId, expiresAtStr, providedSig] = parts;
+  const expiresAt = Number(expiresAtStr);
+  if (!Number.isFinite(expiresAt) || expiresAt < now) return null;
+
+  const expectedSig = sign(`${userId}.${expiresAtStr}`, secret);
+  const provided = Buffer.from(providedSig);
+  const expected = Buffer.from(expectedSig);
+  if (provided.length !== expected.length) return null;
+  if (!timingSafeEqual(provided, expected)) return null;
+
+  return userId;
+}

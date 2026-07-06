@@ -55,6 +55,39 @@ export async function transferUsdcOnArc(
   return { id: res.data.id, state: res.data.state };
 }
 
+export type WalletTx = {
+  id: string;
+  direction: "in" | "out";
+  amount: string;
+  address: string; // counterparty
+  state: string;
+  txHash: string | null;
+  date: string;
+};
+
+// Recent USDC transactions for a wallet, normalised for the history UI.
+export async function listWalletTransactions(walletId: string, ownAddress: string): Promise<WalletTx[]> {
+  const config = getConfig();
+  if (!config) return [];
+
+  const res = await config.client.listTransactions({ walletIds: [walletId], blockchain: "ARC-TESTNET" });
+  const own = ownAddress.toLowerCase();
+
+  return (res.data?.transactions ?? []).map((t) => {
+    const to = (t.destinationAddress ?? "").toLowerCase();
+    const outgoing = to !== own; // if we're not the destination, we sent it
+    return {
+      id: t.id,
+      direction: outgoing ? "out" : "in",
+      amount: Array.isArray(t.amounts) ? (t.amounts[0] ?? "0") : "0",
+      address: outgoing ? (t.destinationAddress ?? "") : (t.sourceAddress ?? ""),
+      state: t.state ?? "",
+      txHash: t.txHash ?? null,
+      date: t.createDate ?? "",
+    };
+  });
+}
+
 // Get the user's Arc developer-controlled wallet, creating it (SCA) on first
 // call. refId = X user id makes it idempotent — a repeat call returns the same
 // wallet instead of minting a new one. Returns null if Circle isn't configured.
