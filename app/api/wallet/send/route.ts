@@ -1,7 +1,7 @@
 import { cookies } from "next/headers";
 import { getSessionUser } from "@/lib/session";
 import { verifyWalletUnlock, WALLET_UNLOCK_COOKIE } from "@/lib/session-core";
-import { transferUsdcOnArc } from "@/lib/circle-dcw";
+import { transferUsdcOnArc, InsufficientFundsError } from "@/lib/circle-dcw";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -42,6 +42,9 @@ export async function POST(request: Request) {
     }
     return Response.json({ ok: true, txId: tx.id, state: tx.state });
   } catch (err) {
+    if (err instanceof InsufficientFundsError) {
+      return Response.json({ error: "insufficient_funds" }, { status: 402 });
+    }
     return Response.json({ error: err instanceof Error ? err.message : "Transfer failed" }, { status: 502 });
   }
 }

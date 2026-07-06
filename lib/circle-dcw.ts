@@ -49,10 +49,23 @@ export async function transferUsdcOnArc(
     // The SDK (axios) hides Circle's real message behind "Request failed with
     // status code 400". Surface the response body so the cause is visible.
     const body = (e as { response?: { data?: unknown } })?.response?.data;
-    throw new Error(`Circle transfer failed: ${body ? JSON.stringify(body) : (e as Error).message}`);
+    const raw = body ? JSON.stringify(body) : (e as Error).message;
+    // Detect the common "not enough USDC (for the amount or for gas)" case so
+    // callers can show a friendly funding prompt instead of a raw dump.
+    if (/insufficient|not enough|balance|exceeds/i.test(raw)) {
+      throw new InsufficientFundsError();
+    }
+    throw new Error(`Circle transfer failed: ${raw}`);
   }
   if (!res.data?.id) throw new Error("Circle transfer returned no transaction id");
   return { id: res.data.id, state: res.data.state };
+}
+
+export class InsufficientFundsError extends Error {
+  constructor() {
+    super("insufficient_funds");
+    this.name = "InsufficientFundsError";
+  }
 }
 
 export type WalletTx = {

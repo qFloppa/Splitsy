@@ -18,7 +18,10 @@ export const TWITTER_USERS_ME_URL = "https://api.twitter.com/2/users/me";
 // Read-only scopes. `users.email` additionally requires the "Request email from
 // users" permission to be enabled in the X app settings, otherwise authorize
 // returns an error.
-export const TWITTER_SCOPES = ["tweet.read", "users.read", "users.email", "offline.access"];
+// Read-only scopes. We no longer request `users.email` — Splitsy doesn't need
+// the user's email (wallets are keyed to the X user id), and not asking for it
+// reduces the consent surface. `offline.access` keeps the session refreshable.
+export const TWITTER_SCOPES = ["tweet.read", "users.read", "offline.access"];
 
 export const OAUTH_STATE_COOKIE = "x_oauth_state";
 export const OAUTH_VERIFIER_COOKIE = "x_oauth_verifier";
@@ -152,7 +155,7 @@ export class TwitterApiError extends Error {
 // AND the field to be explicitly requested.
 export async function fetchTwitterUser(accessToken: string): Promise<TwitterUser> {
   const url = new URL(TWITTER_USERS_ME_URL);
-  url.searchParams.set("user.fields", "confirmed_email,profile_image_url");
+  url.searchParams.set("user.fields", "profile_image_url");
 
   const response = await fetch(url, {
     headers: { Authorization: `Bearer ${accessToken}` },

@@ -30,11 +30,15 @@ export async function POST(request: Request) {
 
   const debtsInput = Array.isArray(body.debts) ? body.debts : [];
   const debts: NewDebt[] = [];
+  const ownHandle = user.x_handle.toLowerCase();
   for (const raw of debtsInput) {
     const handle = String((raw as { handle?: unknown }).handle ?? "").trim().replace(/^@/, "");
     const amount = Number((raw as { amount?: unknown }).amount);
     if (!handle || !Number.isFinite(amount) || amount <= 0) {
       return Response.json({ error: "Each debt needs a @handle and a positive amount." }, { status: 400 });
+    }
+    if (handle.toLowerCase() === ownHandle) {
+      return Response.json({ error: "You can't split a bill with yourself." }, { status: 400 });
     }
     debts.push({ handle, amountUsdc: amount.toFixed(6) });
   }

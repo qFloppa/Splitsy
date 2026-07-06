@@ -1,6 +1,6 @@
 import { getSessionUser } from "@/lib/session";
 import { getDebtForSettlement, markDebtPaid } from "@/lib/bills-repo";
-import { transferUsdcOnArc } from "@/lib/circle-dcw";
+import { transferUsdcOnArc, InsufficientFundsError } from "@/lib/circle-dcw";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -35,6 +35,9 @@ export async function POST(_request: Request, { params }: { params: Promise<{ id
   try {
     tx = await transferUsdcOnArc(user.circle_wallet_id, creatorWallet, debt.amount_usdc);
   } catch (err) {
+    if (err instanceof InsufficientFundsError) {
+      return Response.json({ error: "insufficient_funds" }, { status: 402 });
+    }
     return Response.json(
       { error: err instanceof Error ? err.message : "Transfer failed" },
       { status: 502 },

@@ -1,7 +1,7 @@
 "use client";
 
 import { AnimatePresence, motion } from "framer-motion";
-import { CheckCircle2, Loader2, Wallet, XCircle } from "lucide-react";
+import { CheckCircle2, ExternalLink, Loader2, Wallet, XCircle } from "lucide-react";
 import confetti from "canvas-confetti";
 import { useEffect, useState } from "react";
 
@@ -11,10 +11,15 @@ type IOwe = {
   id: string;
   amount_usdc: string;
   status: string;
-  bill: { merchant: string | null; creator: { x_handle: string } | null } | null;
+  bill: { merchant: string | null; creator: { x_handle: string; x_avatar_url: string | null } | null } | null;
 };
 
-type Flow = { debt: IOwe; phase: "confirm" | "paying" | "success" | "error"; message?: string };
+type Flow = {
+  debt: IOwe;
+  phase: "confirm" | "paying" | "success" | "error";
+  message?: string;
+  insufficient?: boolean;
+};
 
 function celebrate() {
   if (typeof window === "undefined") return;
@@ -60,7 +65,11 @@ export default function XDebtsPanel() {
     setFlow({ debt, phase: "paying" });
     try {
       const res = await fetch(`/api/debts/${debt.id}/pay`, { method: "POST" });
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
+      if (res.status === 402 || data.error === "insufficient_funds") {
+        setFlow({ debt, phase: "error", insufficient: true });
+        return;
+      }
       if (!res.ok) {
         setFlow({ debt, phase: "error", message: data.error ?? "Payment failed." });
         return;
@@ -85,7 +94,7 @@ export default function XDebtsPanel() {
             You have {debts.length} unpaid bill{debts.length === 1 ? "" : "s"}
           </h3>
           <p className="mt-2 text-sm text-[var(--text-muted)]">
-            Tagged to your @handle. Pay from your Splitsy wallet, created when you signed in with X.
+            Tagged to your X handle. Pay from your wallet, created when you signed in with X.
           </p>
 
           <div className="mt-4 space-y-3">
@@ -96,8 +105,8 @@ export default function XDebtsPanel() {
                 exit={{ opacity: 0, x: 24, transition: { duration: 0.25 } }}
                 className="flex items-center justify-between rounded-[var(--radius)] border border-[var(--border)] bg-[var(--surface-muted)] p-3"
               >
-                <span className="text-sm">
-                  {d.bill?.merchant ?? "Bill"} — to @{d.bill?.creator?.x_handle ?? "?"}
+                <span className="flex items-center gap-1.5 text-sm">
+                  {d.bill?.merchant ?? "Bill"} — to <CreatorTag creator={d.bill?.creator} />
                 </span>
                 <span className="flex items-center gap-3">
                   <strong className="amount-text">{d.amount_usdc} USDC</strong>
@@ -138,7 +147,8 @@ export default function XDebtsPanel() {
 }
 
 function PaymentDialog({ flow, onConfirm, onClose }: { flow: Flow; onConfirm: () => void; onClose: () => void }) {
-  const to = `@${flow.debt.bill?.creator?.x_handle ?? "?"}`;
+  const creator = flow.debt.bill?.creator;
+  const to = <CreatorTag creator={creator} />;
   const amount = `${flow.debt.amount_usdc} USDC`;
 
   if (flow.phase === "confirm") {
@@ -147,10 +157,9 @@ function PaymentDialog({ flow, onConfirm, onClose }: { flow: Flow; onConfirm: ()
         <IconCircle tone="brand">
           <Wallet size={26} />
         </IconCircle>
-        <h3 className="mt-4 text-lg font-semibold">Pay {to}</h3>
+        <h3 className="mt-4 flex items-center justify-center gap-1.5 text-lg font-semibold">Pay {to}</h3>
         <p className="mt-1 text-sm text-[var(--text-muted)]">
-          Send <strong className="amount-text text-[var(--text)]">{amount}</strong> from your Splitsy wallet on Arc
-          Testnet?
+          Send <strong className="amount-text text-[var(--text)]">{amount}</strong> from your wallet on Arc Testnet?
         </p>
         <div className="mt-5 flex gap-2">
           <button type="button" className="secondary-button flex-1 justify-center" onClick={onClose}>
@@ -171,8 +180,8 @@ function PaymentDialog({ flow, onConfirm, onClose }: { flow: Flow; onConfirm: ()
           <Loader2 size={26} className="animate-spin" />
         </IconCircle>
         <h3 className="mt-4 text-lg font-semibold">Sending USDC on Arc…</h3>
-        <p className="mt-1 text-sm text-[var(--text-muted)]">
-          Paying {amount} to {to}. This takes a few seconds.
+        <p className="mt-1 flex items-center justify-center gap-1 text-sm text-[var(--text-muted)]">
+          Paying {amount} to {to}.
         </p>
       </>
     );
@@ -187,9 +196,36 @@ function PaymentDialog({ flow, onConfirm, onClose }: { flow: Flow; onConfirm: ()
           </IconCircle>
         </motion.div>
         <h3 className="mt-4 text-lg font-semibold">Paid!</h3>
-        <p className="mt-1 text-sm text-[var(--text-muted)]">
+        <p className="mt-1 flex items-center justify-center gap-1 text-sm text-[var(--text-muted)]">
           {amount} sent to {to}. It&apos;ll show in your History.
         </p>
+      </>
+    );
+  }
+
+  // Insufficient funds gets its own friendly prompt with a faucet link.
+  if (flow.insufficient) {
+    return (
+      <>
+        <IconCircle tone="error">
+          <XCircle size={28} />
+        </IconCircle>
+        <h3 className="mt-4 text-lg font-semibold">Not enough USDC</h3>
+        <p className="mt-1 text-sm text-[var(--text-muted)]">
+          Your wallet needs at least <strong className="text-[var(--text)]">{amount}</strong> (plus a little for gas) on
+          Arc Testnet. Top it up with free test USDC.
+        </p>
+        <a
+          href="https://faucet.circle.com"
+          target="_blank"
+          rel="noreferrer"
+          className="mt-4 inline-flex items-center gap-1.5 rounded-full bg-[#2775ca] px-4 py-2 text-sm font-semibold text-white"
+        >
+          <ExternalLink size={14} /> Get test USDC · faucet.circle.com
+        </a>
+        <button type="button" className="secondary-button mt-3 w-full justify-center" onClick={onClose}>
+          Close
+        </button>
       </>
     );
   }
@@ -210,6 +246,19 @@ function PaymentDialog({ flow, onConfirm, onClose }: { flow: Flow; onConfirm: ()
         </button>
       </div>
     </>
+  );
+}
+
+// Creditor's X avatar + @handle, shown inline wherever we reference them.
+function CreatorTag({ creator }: { creator?: { x_handle: string; x_avatar_url: string | null } | null }) {
+  return (
+    <span className="inline-flex items-center gap-1 font-semibold">
+      {creator?.x_avatar_url ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img src={creator.x_avatar_url} alt="" width={18} height={18} className="h-[18px] w-[18px] rounded-full" />
+      ) : null}
+      @{creator?.x_handle ?? "?"}
+    </span>
   );
 }
 

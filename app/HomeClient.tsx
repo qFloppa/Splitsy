@@ -178,6 +178,17 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
   const [claimAmounts, setClaimAmounts] = useState<Record<string, string>>({});
   const [participantShareInputs, setParticipantShareInputs] = useState<Record<string, string>>({});
   const [splitBy, setSplitBy] = useState<"address" | "handle">("address");
+
+  // Switching to @handle mode clears any prefilled 0x… demo addresses so the
+  // identifier field starts empty (a wallet address is not a valid handle).
+  function chooseSplitBy(next: "address" | "handle") {
+    if (next === "handle") {
+      setParticipants((current) =>
+        current.map((p) => (/^0x[a-fA-F0-9]{40}$/.test(p.walletAddress) ? { ...p, walletAddress: "" } : p)),
+      );
+    }
+    setSplitBy(next);
+  }
   const [recurringWallet, setRecurringWallet] = useState<RecurringWallet | null>(null);
   const [recurringState, setRecurringState] = useState<RecurringRunState>("idle");
   const [recurringMessage, setRecurringMessage] = useState("");
@@ -1625,11 +1636,14 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
                       action={
                         <div className="flex flex-wrap gap-2">
                           <div className="segmented-control">
-                            <ModeButton active={splitBy === "address"} onClick={() => setSplitBy("address")}>
+                            <ModeButton active={splitBy === "address"} onClick={() => chooseSplitBy("address")}>
                               Wallet
                             </ModeButton>
-                            <ModeButton active={splitBy === "handle"} onClick={() => setSplitBy("handle")}>
-                              @handle
+                            <ModeButton active={splitBy === "handle"} onClick={() => chooseSplitBy("handle")}>
+                              <span className="inline-flex items-center gap-1">
+                                <Image src="/x.png" alt="" width={12} height={12} />
+                                handle
+                              </span>
                             </ModeButton>
                           </div>
                           <div className="segmented-control">
@@ -1682,7 +1696,7 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
                               splitBy === "handle" ? (
                                 <span className="inline-flex items-center gap-1">
                                   <Image src="/x.png" alt="" width={12} height={12} />
-                                  handle
+                                  X handle
                                 </span>
                               ) : (
                                 "Wallet"
