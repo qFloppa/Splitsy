@@ -1678,7 +1678,16 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
                             onChange={(value) => updateParticipant(participant.id, "label", value)}
                           />
                           <Field
-                            label={splitBy === "handle" ? "@handle" : "Wallet"}
+                            label={
+                              splitBy === "handle" ? (
+                                <span className="inline-flex items-center gap-1">
+                                  <Image src="/x.png" alt="" width={12} height={12} />
+                                  handle
+                                </span>
+                              ) : (
+                                "Wallet"
+                              )
+                            }
                             value={participant.walletAddress}
                             onChange={(value) => updateParticipant(participant.id, "walletAddress", value)}
                           />
@@ -3083,7 +3092,7 @@ function Field({
   type = "text",
   disabled = false,
 }: {
-  label: string;
+  label: React.ReactNode;
   value: string;
   onChange: (value: string) => void;
   type?: string;

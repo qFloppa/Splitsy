@@ -72,16 +72,10 @@ export default function XAuthControl() {
     setTimeout(() => setCopied(false), 1500);
   }
 
+  // Signed out (or still loading): render nothing. The header's XSignInButton
+  // provides the sign-in entry point; this widget is only for signed-in users.
   if (loading || !me) {
-    if (loading) return null;
-    return (
-      <a
-        href="/api/auth/twitter"
-        className="inline-flex items-center gap-2 rounded-full bg-[#1d9bf0] px-3 py-1.5 text-sm font-semibold text-white"
-      >
-        Sign in with X
-      </a>
-    );
+    return null;
   }
 
   const short = me.walletAddress ? `${me.walletAddress.slice(0, 6)}…${me.walletAddress.slice(-4)}` : null;
