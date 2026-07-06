@@ -36,6 +36,7 @@ export type AppUser = {
   email: string | null;
   wallet_address: string | null;
   circle_wallet_id: string | null;
+  pin_hash: string | null;
   created_at: string;
 };
 

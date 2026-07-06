@@ -51,6 +51,14 @@ export async function setUserWallet(id: string, walletAddress: string, circleWal
   }
 }
 
+export async function setUserPin(id: string, pinHash: string): Promise<void> {
+  const client = requireClient();
+  const { error } = await client.from("users").update({ pin_hash: pinHash }).eq("id", id);
+  if (error) {
+    throw new Error(`Failed to set PIN: ${error.message}`);
+  }
+}
+
 export async function getUserById(id: string): Promise<AppUser | null> {
   const client = requireClient();
   const { data, error } = await client.from("users").select().eq("id", id).maybeSingle();
