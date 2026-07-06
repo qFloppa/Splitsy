@@ -132,17 +132,29 @@ export default function DisclaimerPage() {
           </section>
 
           <section className="docs-section">
-            <Heading icon={<LockKeyhole size={20} />} title="Privacy" />
+            <Heading icon={<LockKeyhole size={20} />} title="Privacy &amp; wallets" />
             <ul className="docs-list">
               <li>
-                Receipt images you upload are sent to the server only to perform optical character recognition (OCR) and
-                are not persisted by the app after processing.
+                <strong>Sign in with X</strong> is used only to identify you. Splitsy reads just your public profile — X user
+                id, handle, display name, and avatar — and does not read your timeline, post on your behalf, or collect your
+                email.
               </li>
               <li>
-                Wallet addresses, amounts, and bill metadata you submit are written to a public test blockchain and are
-                inherently visible to anyone — do not include sensitive personal information.
+                If you connect a <strong>browser wallet</strong> instead, that wallet signs every action and Splitsy never
+                holds its keys. If you sign in with X, a <strong>Circle test-USDC wallet</strong> is created for your handle
+                and operated on your behalf on Arc Testnet — appropriate here because all funds are valueless test USDC.
               </li>
-              <li>Splitsy does not custody funds or hold your private keys; your browser wallet signs every action.</li>
+              <li>
+                Receipt images you upload are sent to the server only to perform optical character recognition (OCR) and are
+                not persisted after processing.
+              </li>
+              <li>
+                Wallet addresses, amounts, and bill metadata submitted on-chain are written to a public test blockchain and
+                are inherently visible to anyone — do not include sensitive personal information.
+              </li>
+              <li>
+                Full details are in our <Link href="/legal">Terms &amp; Privacy</Link>.
+              </li>
             </ul>
           </section>
 

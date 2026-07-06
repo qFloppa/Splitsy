@@ -1060,6 +1060,11 @@ input[type="number"],
   font-weight: 760;
 }
 
+.docs-subheading {
+  margin-top: 2rem;
+  font-size: 1.12rem !important;
+}
+
 .docs-section p,
 .docs-section li {
   color: var(--docs-muted);

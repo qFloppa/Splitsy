@@ -3,25 +3,31 @@ import Image from "next/image";
 import DocsShell from "./DocsShell";
 import {
   ArrowRight,
+  AtSign,
   BadgeDollarSign,
   BookOpen,
   CalendarClock,
   CheckCircle2,
   CircleDollarSign,
   Code2,
+  Eye,
   FileText,
+  KeyRound,
   Landmark,
   LockKeyhole,
   ReceiptText,
   RefreshCw,
   Route,
+  Send,
   ShieldCheck,
+  UserCheck,
   WalletCards,
 } from "lucide-react";
 
 const sections = [
   "Overview",
   "Using Splitsy",
+  "X Sign-In and Wallets",
   "Bill Splits",
   "Recurring Tabs",
   "Circle and Arc",
@@ -180,6 +186,139 @@ export default function DocsPage() {
                 paid balance.
               </Step>
             </div>
+          </section>
+
+          <section id="x-sign-in-and-wallets" className="docs-section">
+            <SectionHeading icon={<AtSign size={20} />} title="X Sign-In and Wallets" />
+            <p>
+              Splitsy lets you split a bill with anyone by their <strong>X (Twitter) handle</strong> — even before they have
+              ever opened the app. Signing in with X gives each person a ready-to-use USDC wallet on Arc Testnet, so a debtor
+              never has to install a browser wallet, hold a seed phrase, or understand gas to pay what they owe. This section
+              explains exactly what data is used, how the wallet is created, and why Splitsy makes the choices it does.
+            </p>
+
+            <div className="docs-card-grid">
+              <InfoCard icon={<UserCheck />} title="What Sign in with X reads">
+                Splitsy uses X&apos;s OAuth 2.0 <strong>only to identify you</strong>. It receives your numeric user id, your
+                username (handle), your display name, and your avatar URL — nothing more. It does <strong>not</strong> read your
+                timeline, followers, or direct messages, cannot post on your behalf, and no longer requests your email at all.
+              </InfoCard>
+              <InfoCard icon={<Eye />} title="Read-only, minimal scope">
+                The only scopes requested are <code>tweet.read</code>, <code>users.read</code>, and <code>offline.access</code>
+                (to keep your session alive). There is no write access. You can revoke Splitsy from your X settings under
+                Connected apps at any time.
+              </InfoCard>
+              <InfoCard icon={<WalletCards />} title="A real wallet, made for your handle">
+                On first sign-in, Splitsy creates a <strong>Circle developer-controlled wallet</strong> on Arc Testnet keyed to
+                your X user id. It is a genuine on-chain account with its own address — you can receive USDC to it, send from it,
+                and view it on the block explorer.
+              </InfoCard>
+              <InfoCard icon={<KeyRound />} title="A PIN before money moves">
+                Sending USDC requires a wallet PIN you set yourself. Entering it unlocks sends for five minutes, then re-locks.
+                The PIN is stored only as a salted <code>scrypt</code> hash; the raw PIN never leaves your device in readable form
+                and is never stored.
+              </InfoCard>
+            </div>
+
+            <h3 className="docs-subheading">How the identity flow works</h3>
+            <div className="docs-steps">
+              <Step number="1" title="Authorize with X">
+                You&apos;re redirected to X&apos;s consent screen using OAuth 2.0 with PKCE. Splitsy&apos;s server holds the client
+                secret; a signed <code>state</code> value and PKCE code verifier prevent request forgery and code interception.
+              </Step>
+              <Step number="2" title="Read the public profile once">
+                After you approve, Splitsy makes a single call to <code>GET /2/users/me</code> to read your id, handle, name, and
+                avatar. This is the only X data request in the entire app.
+              </Step>
+              <Step number="3" title="Create or reuse your wallet">
+                Splitsy provisions a Circle wallet keyed to your X user id (idempotently — the same handle always maps to the same
+                wallet), then stores your handle, avatar, and wallet address so friends can tag you.
+              </Step>
+              <Step number="4" title="Set a session">
+                A signed, http-only session cookie keeps you logged in. It stores only your Splitsy user id — no tokens or profile
+                data are exposed to the browser.
+              </Step>
+              <Step number="5" title="Discover what you owe">
+                Any bill already tagged to your handle is linked to you on sign-in and appears under your unpaid bills, ready to
+                pay from your wallet.
+              </Step>
+            </div>
+
+            <h3 className="docs-subheading">Why a developer-controlled wallet (and not a user-controlled one)</h3>
+            <p>
+              Circle offers two wallet models. A <strong>user-controlled wallet</strong> is non-custodial but requires the user to
+              authenticate to Circle directly — via Google, Apple, Facebook, email OTP, or a PIN — because the user holds a key
+              share. Circle does <strong>not</strong> support X as one of those login methods, so an X handle cannot, by itself,
+              unlock a user-controlled wallet. Bridging the two would force every debtor through a second, unrelated login (and a
+              recovery-phrase burden) just to pay a dinner split — the exact friction Splitsy exists to remove.
+            </p>
+            <p>
+              A <strong>developer-controlled wallet</strong> is created and operated server-side, keyed to a reference id (here,
+              your X user id). That lets Splitsy give <em>anyone with an X account</em> a working USDC wallet the instant they sign
+              in — no extra login, no seed phrase, no app to install. Because Splitsy runs on <strong>Arc Testnet with test USDC
+              that has no monetary value</strong>, the custodial trade-off carries no financial risk while delivering the smoothest
+              possible onboarding. A future mainnet deployment would revisit this and offer genuine self-custody for real funds.
+            </p>
+            <div className="docs-table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Property</th>
+                    <th>Developer-controlled (Splitsy today)</th>
+                    <th>User-controlled</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td>Works from an X handle alone</td>
+                    <td>Yes — created server-side on sign-in</td>
+                    <td>No — X is not a supported Circle login</td>
+                  </tr>
+                  <tr>
+                    <td>Onboarding steps for a newcomer</td>
+                    <td>None beyond Sign in with X</td>
+                    <td>Second login plus recovery-phrase setup</td>
+                  </tr>
+                  <tr>
+                    <td>Custody</td>
+                    <td>Server-operated (testnet, valueless USDC)</td>
+                    <td>User holds a key share</td>
+                  </tr>
+                  <tr>
+                    <td>Network</td>
+                    <td>Arc Testnet (EOA/SCA), USDC transfers</td>
+                    <td>Arc Testnet</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+
+            <h3 className="docs-subheading">Off-chain ledger for handle-tagged bills</h3>
+            <p>
+              The <code>BillSplitRegistry</code> contract records debts by wallet address and needs every participant&apos;s address
+              at creation time. A handle you tag may belong to someone who has not signed in yet and therefore has no address, so
+              handle-tagged bills are not written to the registry. Instead they live in an <strong>off-chain ledger</strong>: the
+              bill and each debtor&apos;s share are stored keyed by handle, and are linked to a real wallet the moment that person
+              signs in. This is a deliberate second mode alongside the on-chain registry, chosen so you can split with anyone
+              without knowing their address.
+            </p>
+            <div className="docs-card-grid two">
+              <InfoCard icon={<Send />} title="Direct settlement">
+                To pay, your wallet sends USDC <strong>directly to the creditor&apos;s wallet</strong> on Arc — no escrow contract in
+                the middle. Splitsy initiates the transfer, confirms it, and marks the debt paid. Paid bills move to your History
+                with an explorer link.
+              </InfoCard>
+              <InfoCard icon={<WalletCards />} title="Send, receive, and history">
+                Your wallet widget shows your live USDC balance, a copyable receive address, a PIN-gated send form, and a
+                transaction history read from Circle — each with a link to the Arc block explorer.
+              </InfoCard>
+            </div>
+
+            <Callout title="What Splitsy stores about you">
+              Only your X user id, handle, display name, avatar URL, wallet address, and a salted hash of your wallet PIN. No
+              email, no tokens in the browser, and no X content beyond your public profile. Everything you can pay or be paid is
+              test USDC on Arc Testnet.
+            </Callout>
           </section>
 
           <section id="bill-splits" className="docs-section">

@@ -33,6 +33,14 @@ const nextConfig: NextConfig = {
       },
     ];
   },
+  // Terms and Privacy were merged into a single /legal page. Redirect the old
+  // paths (still registered as the X app's Terms/Privacy URLs) so they resolve.
+  async redirects() {
+    return [
+      { source: "/privacy", destination: "/legal", permanent: true },
+      { source: "/terms", destination: "/legal", permanent: true },
+    ];
+  },
 };
 
 export default nextConfig;
