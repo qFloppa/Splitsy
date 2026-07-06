@@ -1439,7 +1439,6 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
                   Docs
                 </Link>
               </div>
-              <XAuthControl />
               <ConnectButton accountStatus="address" chainStatus="icon" showBalance={false} />
               <button
                 aria-label={`Switch to ${theme === "light" ? "dark" : "light"} mode`}
@@ -1807,6 +1806,7 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
       </section>
 
       {progressFlow ? <ProgressModal flow={progressFlow} onClose={closeFlow} /> : null}
+      <XAuthControl />
     </main>
   );
 }
