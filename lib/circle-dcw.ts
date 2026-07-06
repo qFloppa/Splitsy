@@ -66,16 +66,16 @@ export type WalletTx = {
 };
 
 // Recent USDC transactions for a wallet, normalised for the history UI.
-export async function listWalletTransactions(walletId: string, ownAddress: string): Promise<WalletTx[]> {
+export async function listWalletTransactions(walletId: string): Promise<WalletTx[]> {
   const config = getConfig();
   if (!config) return [];
 
-  const res = await config.client.listTransactions({ walletIds: [walletId], blockchain: "ARC-TESTNET" });
-  const own = ownAddress.toLowerCase();
+  // Note: the `blockchain` filter is rejected (400) by listTransactions, so we
+  // filter by wallet only and rely on that wallet being Arc-only.
+  const res = await config.client.listTransactions({ walletIds: [walletId] });
 
   return (res.data?.transactions ?? []).map((t) => {
-    const to = (t.destinationAddress ?? "").toLowerCase();
-    const outgoing = to !== own; // if we're not the destination, we sent it
+    const outgoing = t.transactionType === "OUTBOUND";
     return {
       id: t.id,
       direction: outgoing ? "out" : "in",

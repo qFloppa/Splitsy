@@ -261,6 +261,7 @@ function SendTab({ balance, onSent }: { balance: string | null; onSent: () => vo
   const [newPin, setNewPin] = useState("");
   const [phase, setPhase] = useState<SendPhase>("form");
   const [message, setMessage] = useState<string | null>(null);
+  const [sentTxUrl, setSentTxUrl] = useState<string | null>(null);
 
   useEffect(() => {
     fetch("/api/wallet/pin")
@@ -323,6 +324,23 @@ function SendTab({ balance, onSent }: { balance: string | null; onSent: () => vo
       setTo("");
       setAmount("");
       onSent();
+      // The on-chain hash lands a few seconds after Circle accepts the tx; poll
+      // the history endpoint to surface an explorer link once it's available.
+      if (data.txId) {
+        for (let i = 0; i < 6; i++) {
+          await new Promise((r) => setTimeout(r, 2500));
+          try {
+            const h = await fetch("/api/wallet/transactions").then((r) => r.json());
+            const match = (h.transactions as WalletTx[] | undefined)?.find((t) => t.id === data.txId);
+            if (match?.txHash) {
+              setSentTxUrl(`${h.explorer ?? "https://testnet.arcscan.app"}/tx/${match.txHash}`);
+              break;
+            }
+          } catch {
+            break;
+          }
+        }
+      }
     } catch {
       setMessage("Network error — please try again.");
       setPhase("error");
@@ -381,7 +399,28 @@ function SendTab({ balance, onSent }: { balance: string | null; onSent: () => vo
           <Check size={24} />
         </span>
         <p className="mt-2 text-sm font-semibold">Sent!</p>
-        <button type="button" onClick={() => setPhase("form")} className="secondary-button mt-3 w-full justify-center">
+        {sentTxUrl ? (
+          <a
+            href={sentTxUrl}
+            target="_blank"
+            rel="noreferrer"
+            className="mt-2 inline-flex items-center gap-1 text-xs font-semibold text-[#1d9bf0]"
+          >
+            <ExternalLink size={12} /> View transaction
+          </a>
+        ) : (
+          <p className="mt-2 flex items-center justify-center gap-1 text-xs text-[var(--text-muted)]">
+            <Loader2 size={11} className="animate-spin" /> confirming on Arc…
+          </p>
+        )}
+        <button
+          type="button"
+          onClick={() => {
+            setSentTxUrl(null);
+            setPhase("form");
+          }}
+          className="secondary-button mt-3 w-full justify-center"
+        >
           Done
         </button>
       </div>

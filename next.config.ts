@@ -21,6 +21,10 @@ const securityHeaders = [
 
 const nextConfig: NextConfig = {
   poweredByHeader: false,
+  // The Circle DCW SDK uses Node-native crypto (node-forge) that the dev
+  // bundler's worker can't process — bundling it crashes route compilation
+  // ("Jest worker child process exceptions"). Opt it out so it's require()'d.
+  serverExternalPackages: ["@circle-fin/developer-controlled-wallets"],
   async headers() {
     return [
       {

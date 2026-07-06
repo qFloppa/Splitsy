@@ -37,6 +37,7 @@ import { useAccount, useConnect, useDisconnect, useSwitchChain } from "wagmi";
 import { getWalletClient } from "wagmi/actions";
 import { ConnectButton } from "@rainbow-me/rainbowkit";
 import XAuthControl from "./XAuthControl";
+import XSignInButton from "./XSignInButton";
 import XDebtsPanel from "./XDebtsPanel";
 import XHistoryPanel from "./XHistoryPanel";
 import {
@@ -1439,6 +1440,7 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
                   Docs
                 </Link>
               </div>
+              <XSignInButton />
               <ConnectButton accountStatus="address" chainStatus="icon" showBalance={false} />
               <button
                 aria-label={`Switch to ${theme === "light" ? "dark" : "light"} mode`}

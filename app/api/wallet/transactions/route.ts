@@ -16,7 +16,7 @@ export async function GET() {
   }
 
   try {
-    const txs = await listWalletTransactions(user.circle_wallet_id, user.wallet_address);
+    const txs = await listWalletTransactions(user.circle_wallet_id);
     return Response.json({ transactions: txs, explorer: EXPLORER });
   } catch {
     return Response.json({ transactions: [] });
