@@ -1690,20 +1690,18 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
                             value={participant.label}
                             onChange={(value) => updateParticipant(participant.id, "label", value)}
                           />
-                          <Field
-                            label={
-                              splitBy === "handle" ? (
-                                <span className="inline-flex items-center gap-1">
-                                  <Image src="/x.png" alt="" width={12} height={12} />
-                                  X handle
-                                </span>
-                              ) : (
-                                "Wallet"
-                              )
-                            }
-                            value={participant.walletAddress}
-                            onChange={(value) => updateParticipant(participant.id, "walletAddress", value)}
-                          />
+                          {splitBy === "handle" ? (
+                            <XHandleField
+                              value={participant.walletAddress}
+                              onChange={(value) => updateParticipant(participant.id, "walletAddress", value)}
+                            />
+                          ) : (
+                            <Field
+                              label="Wallet"
+                              value={participant.walletAddress}
+                              onChange={(value) => updateParticipant(participant.id, "walletAddress", value)}
+                            />
+                          )}
                           <Field
                             disabled={splitMode === "equal"}
                             label="Share"
@@ -3123,6 +3121,62 @@ function Field({
         type={type}
         value={value}
       />
+    </label>
+  );
+}
+
+// @handle field with a live X avatar. As a valid handle is typed we hit
+// unavatar.io (a free avatar CDN) with fallback=false, so the <img> only shows
+// once it resolves to a real account — a typo 404s and the avatar stays hidden,
+// which is the "your handle became real" confirmation. Debounced so we don't
+// fetch on every keystroke. The bare handle is stored (leading @ stripped); the
+// server lowercases it before matching, so this doesn't affect debt linking.
+function XHandleField({ value, onChange }: { value: string; onChange: (value: string) => void }) {
+  const handle = value.replace(/^@+/, "").trim();
+  const valid = /^[a-zA-Z0-9_]{1,15}$/.test(handle);
+  const [debounced, setDebounced] = useState(handle);
+  const [avatarOk, setAvatarOk] = useState(false);
+
+  useEffect(() => {
+    const timer = setTimeout(() => setDebounced(handle), 400);
+    return () => clearTimeout(timer);
+  }, [handle]);
+
+  const src = valid && debounced ? `https://unavatar.io/x/${debounced.toLowerCase()}?fallback=false` : "";
+  // A new handle hasn't resolved yet — fade the old avatar out until onLoad fires.
+  useEffect(() => setAvatarOk(false), [src]);
+
+  return (
+    <label className="block text-sm font-medium text-[var(--text-soft)]">
+      <span className="inline-flex items-center gap-1">
+        <Image src="/x.png" alt="" width={12} height={12} />
+        X handle
+      </span>
+      <span className="handle-field">
+        <span aria-hidden="true" className="handle-at">@</span>
+        <input
+          autoCapitalize="none"
+          autoComplete="off"
+          autoCorrect="off"
+          className="field-control handle-input"
+          onChange={(event) => onChange(event.target.value.replace(/^@+/, ""))}
+          placeholder="username"
+          spellCheck={false}
+          value={handle}
+        />
+        {src ? (
+          // eslint-disable-next-line @next/next/no-img-element -- remote unavatar URL, not a bundled asset
+          <img
+            alt={`@${debounced} on X`}
+            className={`handle-avatar${avatarOk ? " is-visible" : ""}`}
+            height={24}
+            onError={() => setAvatarOk(false)}
+            onLoad={() => setAvatarOk(true)}
+            src={src}
+            width={24}
+          />
+        ) : null}
+      </span>
     </label>
   );
 }
