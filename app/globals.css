@@ -24,7 +24,7 @@
   --receipt-line: rgba(7, 20, 33, 0.08);
   --receipt-dash: rgba(7, 20, 33, 0.22);
   --receipt-overlay: rgba(255, 255, 255, 0.48);
-  --header-bg: rgba(238, 243, 246, 0.82);
+  --header-bg: rgba(238, 243, 246, 0.62);
   --border: rgba(7, 20, 33, 0.12);
   --border-strong: rgba(7, 20, 33, 0.24);
   --accent: var(--usdc-blue);
@@ -59,7 +59,7 @@
   --receipt-line: rgba(231, 237, 242, 0.09);
   --receipt-dash: rgba(231, 237, 242, 0.2);
   --receipt-overlay: rgba(255, 255, 255, 0.045);
-  --header-bg: rgba(8, 17, 27, 0.84);
+  --header-bg: rgba(8, 17, 27, 0.64);
   --border: rgba(231, 237, 242, 0.13);
   --border-strong: rgba(231, 237, 242, 0.28);
   --accent: #62a8f1;
@@ -93,20 +93,13 @@ html {
 
 body {
   min-height: 100vh;
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.56), transparent 28rem),
-    radial-gradient(circle at 20% 0%, rgba(62, 230, 214, 0.13), transparent 24rem),
-    var(--background);
+  /* Flat canvas only. All brand glow lives in the single fixed <HeroBackground />
+     below — a top-anchored gradient here would band at its own `transparent Nrem`
+     stop and double up the seams the backdrop already had to solve. */
+  background: var(--background);
   color: var(--foreground);
   font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   font-feature-settings: "cv02", "cv03", "cv04", "cv11";
-}
-
-:root[data-theme="dark"] body {
-  background:
-    linear-gradient(180deg, rgba(39, 117, 202, 0.1), transparent 30rem),
-    radial-gradient(circle at 20% 0%, rgba(62, 230, 214, 0.08), transparent 24rem),
-    var(--background);
 }
 
 button,
@@ -135,6 +128,44 @@ a {
 
 .app-shell {
   background: transparent;
+}
+
+/* Shared page backdrop: soft brand glow behind every page. Mounted once in the
+   root layout as <HeroBackground />. Sizes are viewport-relative (%) and centered
+   just off each corner, and every glow fades to `transparent` at its ending shape
+   (100%) rather than a tight 58–62% — so the zero-alpha ring lands past the
+   viewport edge and never shows the horizontal "cut" it used to mid-screen. */
+.app-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: -10;
+  pointer-events: none;
+  overflow: hidden;
+  background:
+    radial-gradient(85% 115% at 12% -8%, rgba(62, 230, 214, 0.2), transparent),
+    radial-gradient(80% 110% at 104% 16%, rgba(39, 117, 202, 0.16), transparent),
+    radial-gradient(75% 105% at 82% 114%, rgba(62, 230, 214, 0.14), transparent);
+}
+
+:root[data-theme="dark"] .app-backdrop {
+  background:
+    radial-gradient(85% 115% at 12% -8%, rgba(62, 230, 214, 0.14), transparent),
+    radial-gradient(80% 110% at 104% 16%, rgba(39, 117, 202, 0.2), transparent),
+    radial-gradient(75% 105% at 82% 114%, rgba(62, 230, 214, 0.1), transparent);
+}
+
+/* Faint tiled noise dithers the gradients so 8-bit color banding (the stepped
+   "cuts", worst on large gradients in dark mode) is broken up. Knobs: baseFrequency
+   sets grain size — it must be coarse enough (~1–2px grains) to straddle band
+   edges; 0.85 was sub-pixel and just averaged to gray. opacity sets dither
+   strength. Nudge these two if banding still shows / grain gets visible. */
+.app-backdrop::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.06;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.6' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
 }
 
 .brand-lockup {
@@ -783,7 +814,10 @@ input[type="number"],
 }
 
 .docs-shell {
-  background: #f6f8fb;
+  /* Transparent so the shared HeroBackground blobs (mounted in the root layout)
+     show through, matching the main app. DocsShell drives the root data-theme so
+     the body canvas underneath tracks the docs light/dark toggle. */
+  background: transparent;
   color: #17212b;
   --docs-bg: #f6f8fb;
   --docs-text: #17212b;
@@ -799,7 +833,7 @@ input[type="number"],
 }
 
 .docs-shell[data-docs-theme="dark"] {
-  background: #08111b;
+  background: transparent;
   color: #edf6fb;
   --docs-bg: #08111b;
   --docs-text: #edf6fb;

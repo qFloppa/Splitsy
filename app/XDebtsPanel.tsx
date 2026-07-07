@@ -157,7 +157,7 @@ function PaymentDialog({ flow, onConfirm, onClose }: { flow: Flow; onConfirm: ()
         <IconCircle tone="brand">
           <Wallet size={26} />
         </IconCircle>
-        <h3 className="mt-4 flex items-center justify-center gap-1.5 text-lg font-semibold">Pay {to}</h3>
+        <h3 className="mt-4 text-lg font-semibold">Pay {to}</h3>
         <p className="mt-1 text-sm text-[var(--text-muted)]">
           Send <strong className="amount-text text-[var(--text)]">{amount}</strong> from your wallet on Arc Testnet?
         </p>
@@ -180,7 +180,7 @@ function PaymentDialog({ flow, onConfirm, onClose }: { flow: Flow; onConfirm: ()
           <Loader2 size={26} className="animate-spin" />
         </IconCircle>
         <h3 className="mt-4 text-lg font-semibold">Sending USDC on Arc…</h3>
-        <p className="mt-1 flex items-center justify-center gap-1 text-sm text-[var(--text-muted)]">
+        <p className="mt-1 text-sm text-[var(--text-muted)]">
           Paying {amount} to {to}.
         </p>
       </>
@@ -196,7 +196,7 @@ function PaymentDialog({ flow, onConfirm, onClose }: { flow: Flow; onConfirm: ()
           </IconCircle>
         </motion.div>
         <h3 className="mt-4 text-lg font-semibold">Paid!</h3>
-        <p className="mt-1 flex items-center justify-center gap-1 text-sm text-[var(--text-muted)]">
+        <p className="mt-1 text-sm text-[var(--text-muted)]">
           {amount} sent to {to}. It&apos;ll show in your History.
         </p>
       </>
@@ -250,15 +250,32 @@ function PaymentDialog({ flow, onConfirm, onClose }: { flow: Flow; onConfirm: ()
 }
 
 // Creditor's X avatar + @handle, shown inline wherever we reference them.
+// Links to the person's X profile when we know their handle.
 function CreatorTag({ creator }: { creator?: { x_handle: string; x_avatar_url: string | null } | null }) {
-  return (
-    <span className="inline-flex items-center gap-1 font-semibold">
+  const inner = (
+    <>
       {creator?.x_avatar_url ? (
         // eslint-disable-next-line @next/next/no-img-element
         <img src={creator.x_avatar_url} alt="" width={18} height={18} className="h-[18px] w-[18px] rounded-full" />
       ) : null}
       @{creator?.x_handle ?? "?"}
-    </span>
+    </>
+  );
+
+  if (!creator?.x_handle) {
+    return <span className="inline-flex items-center gap-1 align-middle font-semibold">{inner}</span>;
+  }
+
+  return (
+    <a
+      href={`https://x.com/${creator.x_handle}`}
+      target="_blank"
+      rel="noreferrer"
+      onClick={(e) => e.stopPropagation()}
+      className="inline-flex items-center gap-1 align-middle font-semibold text-[#1d9bf0] hover:underline"
+    >
+      {inner}
+    </a>
   );
 }
 

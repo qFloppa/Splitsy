@@ -12,6 +12,7 @@ import {
   GripVertical,
   Loader2,
   LogOut,
+  RefreshCw,
   Wallet,
   X,
 } from "lucide-react";
@@ -31,6 +32,7 @@ export default function XAuthControl() {
   const [loading, setLoading] = useState(true);
   const [open, setOpen] = useState(false);
   const [balance, setBalance] = useState<string | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
   const [copied, setCopied] = useState(false);
   const [tab, setTab] = useState<Tab>("info");
   const ref = useRef<HTMLDivElement>(null);
@@ -53,11 +55,43 @@ export default function XAuthControl() {
     };
   }, []);
 
-  function refreshBalance() {
+  async function refreshBalance() {
     if (!me?.walletAddress) return;
-    readArcUsdcBalance(me.walletAddress as `0x${string}`)
-      .then((b) => setBalance(billUnitsToUsdc(b)))
-      .catch(() => setBalance(null));
+    setRefreshing(true);
+    try {
+      setBalance(billUnitsToUsdc(await readArcUsdcBalance(me.walletAddress as `0x${string}`)));
+    } catch {
+      setBalance(null);
+    } finally {
+      setRefreshing(false);
+    }
+  }
+
+  // After a send the on-chain balance lags a block or two behind the tx, so a
+  // single read returns the old total. Poll until it moves (or we run out of
+  // tries) so the panel reflects the deducted amount on its own.
+  async function refreshBalanceAfterSend() {
+    if (!me?.walletAddress) return;
+    const addr = me.walletAddress as `0x${string}`;
+    setRefreshing(true);
+    let prev: bigint | null = null;
+    try {
+      prev = await readArcUsdcBalance(addr);
+      setBalance(billUnitsToUsdc(prev));
+    } catch {
+      /* ignore; keep polling */
+    }
+    for (let i = 0; i < 8; i++) {
+      await new Promise((r) => setTimeout(r, 2000));
+      try {
+        const next = await readArcUsdcBalance(addr);
+        setBalance(billUnitsToUsdc(next));
+        if (prev !== null && next !== prev) break;
+      } catch {
+        /* transient RPC error; try again */
+      }
+    }
+    setRefreshing(false);
   }
 
   useEffect(() => {
@@ -145,6 +179,15 @@ export default function XAuthControl() {
                   <p className="truncate text-sm font-semibold">@{me.handle}</p>
                   <p className="flex items-center gap-1 text-xs text-[var(--text-muted)]">
                     <Usdc size={12} /> {balance ?? "…"} USDC
+                    <button
+                      type="button"
+                      onClick={refreshBalance}
+                      disabled={refreshing}
+                      aria-label="Refresh balance"
+                      className="ml-0.5 text-[var(--text-muted)] transition hover:text-[var(--text)] disabled:opacity-60"
+                    >
+                      <RefreshCw size={12} className={refreshing ? "animate-spin" : ""} />
+                    </button>
                   </p>
                 </div>
               </div>
@@ -205,7 +248,7 @@ export default function XAuthControl() {
                     )}
                   </>
                 ) : tab === "send" ? (
-                  <SendTab balance={balance} onSent={refreshBalance} />
+                  <SendTab balance={balance} onSent={refreshBalanceAfterSend} />
                 ) : tab === "receive" ? (
                   <ReceiveTab address={me.walletAddress} short={short} copied={copied} onCopy={copyAddress} />
                 ) : (

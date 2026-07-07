@@ -16,6 +16,9 @@ export default function DocsShell({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     document.documentElement.dataset.docsTheme = theme;
+    // Also drive the global theme so the body background + HeroBackground blobs
+    // (rendered behind the now-transparent docs shell) track the docs toggle.
+    document.documentElement.dataset.theme = theme;
     sessionStorage.setItem("splitsy-docs-theme", theme);
   }, [theme]);
 

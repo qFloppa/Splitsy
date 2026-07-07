@@ -1416,10 +1416,10 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
 
   return (
     <main className="app-shell min-h-screen text-[var(--text)]">
-      <header className="static md:sticky md:top-0 z-30 border-b border-[var(--border)] bg-[color:var(--header-bg)] backdrop-blur-xl">
-        <div className="mx-auto max-w-7xl px-4 py-3 sm:px-6 lg:px-8">
+      <header className="static z-30 border-b border-[var(--border)] bg-[color:var(--header-bg)] backdrop-blur-xl">
+        <div className="mx-auto max-w-[88rem] px-4 py-3 sm:px-6 lg:px-8">
           <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-            <div className="min-w-0">
+            <div className="min-w-0 shrink">
               <div aria-label="Splitsy" className="brand-lockup">
                 <span className="logo-crop logo-crop-app">
                   <Image alt="Splitsy" className="logo-crop-image" height={1024} priority src="/splitsy.png" width={1536} />
@@ -1431,11 +1431,8 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
                 </h1>
                 <span className="network-stamp">Arc Testnet</span>
               </div>
-              <p className="mt-1 max-w-2xl text-sm text-[var(--text-muted)]">
-                Scan a receipt, choose who owes what, and keep every payment organized in one place.
-              </p>
             </div>
-            <div className="flex flex-wrap items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2 md:justify-end lg:flex-nowrap">
               <div className="segmented-control">
                 <TabButton active={activeTab === "bills"} onClick={() => switchAppTab("bills")}>
                   Bills
@@ -1451,16 +1448,18 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
                   Docs
                 </Link>
               </div>
-              <XSignInButton />
-              <ConnectButton accountStatus="address" chainStatus="icon" showBalance={false} />
-              <button
-                aria-label={`Switch to ${theme === "light" ? "dark" : "light"} mode`}
-                className="icon-button"
-                onClick={() => setTheme((current) => (current === "light" ? "dark" : "light"))}
-                type="button"
-              >
-                {theme === "light" ? <Moon size={17} /> : <Sun size={17} />}
-              </button>
+              <div className="flex flex-nowrap items-center gap-2">
+                <XSignInButton />
+                <ConnectButton accountStatus="address" chainStatus="icon" showBalance={false} />
+                <button
+                  aria-label={`Switch to ${theme === "light" ? "dark" : "light"} mode`}
+                  className="icon-button shrink-0"
+                  onClick={() => setTheme((current) => (current === "light" ? "dark" : "light"))}
+                  type="button"
+                >
+                  {theme === "light" ? <Moon size={17} /> : <Sun size={17} />}
+                </button>
+              </div>
             </div>
           </div>
         </div>

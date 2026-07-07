@@ -47,6 +47,21 @@ export default function XHistoryPanel() {
 
   if (paid.length === 0) return null;
 
+  // @handle → link to the person's X profile (falls back to plain text if unknown).
+  function HandleLink({ handle }: { handle?: string | null }) {
+    if (!handle) return <span className="font-semibold">@?</span>;
+    return (
+      <a
+        href={`https://x.com/${handle}`}
+        target="_blank"
+        rel="noreferrer"
+        className="font-semibold text-[#1d9bf0] hover:underline"
+      >
+        @{handle}
+      </a>
+    );
+  }
+
   return (
     <div className="rounded-[var(--radius)] border border-[var(--border)] bg-[var(--surface)] p-5">
       <div className="flex items-center gap-2">
@@ -63,7 +78,7 @@ export default function XHistoryPanel() {
             >
               <span className="flex items-center gap-2 text-sm">
                 <Image src="/paid.png" alt="" width={22} height={22} className="opacity-90" />
-                {d.bill?.merchant ?? "Bill"} — to @{d.bill?.creator?.x_handle ?? "?"}
+                {d.bill?.merchant ?? "Bill"} — to <HandleLink handle={d.bill?.creator?.x_handle} />
               </span>
               <span className="flex items-center gap-3">
                 <strong className="amount-text">{d.amount_usdc} USDC</strong>

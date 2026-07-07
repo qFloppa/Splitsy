@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import Link from "next/link";
 import "./globals.css";
 import WagmiProviders from "./WagmiProviders";
+import { HeroBackground } from "@/components/ui/hero-background";
 
 const siteUrl = "https://splitsy.xyz";
 const siteDescription =
@@ -78,6 +79,7 @@ export default function RootLayout({
   return (
     <html lang="en" className="h-full antialiased">
       <body className="min-h-full flex flex-col">
+        <HeroBackground />
         <WagmiProviders>{children}</WagmiProviders>
         <footer className="site-footer">
           <p className="site-footer-disclaimer">
