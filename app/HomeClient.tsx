@@ -3153,12 +3153,11 @@ function XHandleField({ value, onChange }: { value: string; onChange: (value: st
         X handle
       </span>
       <span className="handle-field">
-        <span aria-hidden="true" className="handle-at">@</span>
         <input
           autoCapitalize="none"
           autoComplete="off"
           autoCorrect="off"
-          className="field-control handle-input"
+          className={`field-control handle-input${avatarOk ? " is-resolved" : ""}`}
           onChange={(event) => onChange(event.target.value.replace(/^@+/, ""))}
           placeholder="username"
           spellCheck={false}
