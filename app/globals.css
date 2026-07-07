@@ -294,6 +294,50 @@ a {
   color: var(--text-muted);
 }
 
+/* @handle input with an inline X avatar (see XHandleField). The wrapper carries
+   the field's top margin so the absolutely-positioned @ prefix and avatar center
+   on the input box itself. */
+.handle-field {
+  position: relative;
+  display: block;
+  margin-top: 0.38rem;
+}
+
+.handle-field .handle-at {
+  position: absolute;
+  left: 0.78rem;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--text-muted);
+  font-weight: 600;
+  pointer-events: none;
+}
+
+.handle-input {
+  margin-top: 0;
+  padding-left: 1.7rem;
+  padding-right: 2.6rem;
+}
+
+.handle-avatar {
+  position: absolute;
+  right: 0.5rem;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 24px;
+  height: 24px;
+  border-radius: 999px;
+  object-fit: cover;
+  border: 1px solid var(--border);
+  background: var(--surface-muted);
+  opacity: 0;
+  transition: opacity 180ms ease;
+}
+
+.handle-avatar.is-visible {
+  opacity: 1;
+}
+
 input[type="number"],
 .metric p:last-child,
 .amount-text,
