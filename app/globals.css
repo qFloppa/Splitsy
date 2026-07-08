@@ -295,28 +295,23 @@ a {
 }
 
 /* @handle input with an inline X avatar (see XHandleField). The wrapper carries
-   the field's top margin so the absolutely-positioned @ prefix and avatar center
-   on the input box itself. */
+   the field's top margin so the absolutely-positioned avatar centers on the
+   input box itself. */
 .handle-field {
   position: relative;
   display: block;
   margin-top: 0.38rem;
 }
 
-.handle-field .handle-at {
-  position: absolute;
-  left: 0.78rem;
-  top: 50%;
-  transform: translateY(-50%);
-  color: var(--text-muted);
-  font-weight: 600;
-  pointer-events: none;
-}
-
 .handle-input {
   margin-top: 0;
-  padding-left: 1.7rem;
-  padding-right: 2.6rem;
+  padding-right: 2.6rem; /* room for the avatar on the right */
+}
+
+/* Once the handle resolves to a real X account, colour it like a live mention. */
+.handle-input.is-resolved {
+  color: var(--accent);
+  font-weight: 600;
 }
 
 .handle-avatar {
