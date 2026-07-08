@@ -59,6 +59,24 @@ export async function setUserPin(id: string, pinHash: string): Promise<void> {
   }
 }
 
+// The stored X avatar for a handle, if that handle belongs to a Splitsy user.
+// Case-insensitive; escapes LIKE metacharacters (_ and % are legal-ish in the
+// ilike pattern but not in real handles) so we never match the wrong row.
+export async function getUserAvatarByHandle(handle: string): Promise<string | null> {
+  const client = createSupabaseServerClient();
+  if (!client) return null;
+  const pattern = handle.replace(/^@/, "").replace(/[\\%_]/g, "\\$&");
+  const { data, error } = await client
+    .from("users")
+    .select("x_avatar_url")
+    .ilike("x_handle", pattern)
+    .not("x_avatar_url", "is", null)
+    .limit(1)
+    .maybeSingle();
+  if (error) return null;
+  return (data as { x_avatar_url: string | null } | null)?.x_avatar_url ?? null;
+}
+
 export async function getUserById(id: string): Promise<AppUser | null> {
   const client = requireClient();
   const { data, error } = await client.from("users").select().eq("id", id).maybeSingle();
