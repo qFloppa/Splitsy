@@ -1,9 +1,9 @@
 "use client";
 
 import { AnimatePresence, motion } from "framer-motion";
-import { CheckCircle2, ExternalLink, Loader2, Wallet, XCircle } from "lucide-react";
-import confetti from "canvas-confetti";
+import { CheckCircle2, ExternalLink, KeyRound, Loader2, Wallet, XCircle } from "lucide-react";
 import { useEffect, useState } from "react";
+import confetti from "canvas-confetti";
 
 // Unpaid debts owed by the signed-in X user (off-chain @handle bills). Renders
 // nothing when not signed in with X or nothing is owed.
@@ -16,7 +16,7 @@ type IOwe = {
 
 type Flow = {
   debt: IOwe;
-  phase: "confirm" | "paying" | "success" | "error";
+  phase: "confirm" | "unlock" | "paying" | "success" | "error";
   message?: string;
   insufficient?: boolean;
 };
@@ -61,11 +61,32 @@ export default function XDebtsPanel() {
     };
   }, []);
 
+  // Begin payment: if the wallet is already unlocked, pay straight away;
+  // otherwise ask for the PIN first (the unlock step gates the transfer).
+  async function beginPayment(debt: IOwe) {
+    try {
+      const res = await fetch("/api/wallet/pin");
+      const data = await res.json().catch(() => ({}));
+      if (data.unlocked) {
+        void runPayment(debt);
+      } else {
+        setFlow({ debt, phase: "unlock" });
+      }
+    } catch {
+      setFlow({ debt, phase: "unlock" });
+    }
+  }
+
   async function runPayment(debt: IOwe) {
     setFlow({ debt, phase: "paying" });
     try {
       const res = await fetch(`/api/debts/${debt.id}/pay`, { method: "POST" });
       const data = await res.json().catch(() => ({}));
+      if (res.status === 403 || data.error === "locked") {
+        // Unlock expired between confirm and pay — re-prompt for the PIN.
+        setFlow({ debt, phase: "unlock", message: "Your wallet locked. Enter your PIN to continue." });
+        return;
+      }
       if (res.status === 402 || data.error === "insufficient_funds") {
         setFlow({ debt, phase: "error", insufficient: true });
         return;
@@ -137,7 +158,12 @@ export default function XDebtsPanel() {
               transition={{ type: "spring", stiffness: 320, damping: 26 }}
               onClick={(e) => e.stopPropagation()}
             >
-              <PaymentDialog flow={flow} onConfirm={() => runPayment(flow.debt)} onClose={() => setFlow(null)} />
+              <PaymentDialog
+                flow={flow}
+                onConfirm={() => beginPayment(flow.debt)}
+                onUnlocked={() => runPayment(flow.debt)}
+                onClose={() => setFlow(null)}
+              />
             </motion.div>
           </motion.div>
         ) : null}
@@ -146,7 +172,17 @@ export default function XDebtsPanel() {
   );
 }
 
-function PaymentDialog({ flow, onConfirm, onClose }: { flow: Flow; onConfirm: () => void; onClose: () => void }) {
+function PaymentDialog({
+  flow,
+  onConfirm,
+  onUnlocked,
+  onClose,
+}: {
+  flow: Flow;
+  onConfirm: () => void;
+  onUnlocked: () => void;
+  onClose: () => void;
+}) {
   const creator = flow.debt.bill?.creator;
   const to = <CreatorTag creator={creator} />;
   const amount = `${flow.debt.amount_usdc} USDC`;
@@ -171,6 +207,10 @@ function PaymentDialog({ flow, onConfirm, onClose }: { flow: Flow; onConfirm: ()
         </div>
       </>
     );
+  }
+
+  if (flow.phase === "unlock") {
+    return <UnlockStep message={flow.message} onUnlocked={onUnlocked} onClose={onClose} />;
   }
 
   if (flow.phase === "paying") {
@@ -277,6 +317,82 @@ function CreatorTag({ creator }: { creator?: { x_handle: string; x_avatar_url: s
     >
       {inner}
     </a>
+  );
+}
+
+// PIN entry before a payment. Verifies via /api/wallet/unlock (which sets the
+// 5-minute unlock cookie), then proceeds to the actual transfer.
+function UnlockStep({
+  message,
+  onUnlocked,
+  onClose,
+}: {
+  message?: string;
+  onUnlocked: () => void;
+  onClose: () => void;
+}) {
+  const [pin, setPin] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(message ?? null);
+
+  async function unlock() {
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/wallet/unlock", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pin }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setError(data.error === "No PIN set" ? "Set a wallet PIN from the wallet panel first." : data.error ?? "Incorrect PIN.");
+        setBusy(false);
+        return;
+      }
+      onUnlocked();
+    } catch {
+      setError("Network error — please try again.");
+      setBusy(false);
+    }
+  }
+
+  return (
+    <>
+      <IconCircle tone="brand">
+        <KeyRound size={26} />
+      </IconCircle>
+      <h3 className="mt-4 text-lg font-semibold">Enter your wallet PIN</h3>
+      <p className="mt-1 text-sm text-[var(--text-muted)]">
+        Paying requires your PIN. It stays unlocked for 5 minutes.
+      </p>
+      <input
+        value={pin}
+        onChange={(e) => setPin(e.target.value.replace(/\D/g, ""))}
+        type="password"
+        inputMode="numeric"
+        maxLength={8}
+        autoFocus
+        placeholder="Wallet PIN"
+        onKeyDown={(e) => e.key === "Enter" && pin && !busy && unlock()}
+        className="mt-3 w-full rounded-md border border-[var(--border)] bg-[var(--surface)] px-2 py-2 text-center text-lg tracking-[0.4em]"
+      />
+      {error ? <p className="mt-2 text-xs text-[var(--warning-text)]">{error}</p> : null}
+      <div className="mt-4 flex gap-2">
+        <button type="button" className="secondary-button flex-1 justify-center" onClick={onClose}>
+          Cancel
+        </button>
+        <button
+          type="button"
+          className="primary-button flex-1 justify-center disabled:opacity-50"
+          disabled={busy || !pin}
+          onClick={unlock}
+        >
+          {busy ? <Loader2 size={15} className="animate-spin" /> : null}
+          Unlock &amp; pay
+        </button>
+      </div>
+    </>
   );
 }
 

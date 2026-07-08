@@ -1,6 +1,8 @@
+import { cookies } from "next/headers";
 import { getSessionUser } from "@/lib/session";
 import { getDebtForSettlement, markDebtPaid } from "@/lib/bills-repo";
 import { transferUsdcOnArc, InsufficientFundsError } from "@/lib/circle-dcw";
+import { verifyWalletUnlock, WALLET_UNLOCK_COOKIE } from "@/lib/session-core";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -9,6 +11,14 @@ export async function POST(_request: Request, { params }: { params: Promise<{ id
   const user = await getSessionUser();
   if (!user) {
     return Response.json({ error: "Not signed in" }, { status: 401 });
+  }
+
+  // Spending requires an active wallet unlock (PIN entered within the last 5
+  // minutes). This is the second factor a hijacked X login alone can't satisfy.
+  const secret = process.env.SESSION_SECRET ?? "";
+  const unlockToken = (await cookies()).get(WALLET_UNLOCK_COOKIE)?.value ?? "";
+  if (verifyWalletUnlock(unlockToken, secret, Date.now()) !== user.id) {
+    return Response.json({ error: "locked" }, { status: 403 });
   }
 
   const { id } = await params;
