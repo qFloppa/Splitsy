@@ -30,11 +30,15 @@ type OwedToMe = {
 
 type WalletTx = { id: string; txHash: string | null };
 
-function Avatar({ url, size = 18 }: { url: string | null | undefined; size?: number }) {
-  if (!url) return null;
+// Avatar for an X user. Uses their stored avatar when signed in; otherwise
+// falls back to unavatar.io, which resolves an avatar from the handle alone —
+// so people tagged before they sign in still get a face.
+function Avatar({ url, handle, size = 18 }: { url?: string | null; handle?: string | null; size?: number }) {
+  const src = url || (handle ? `https://unavatar.io/x/${handle.replace(/^@/, "")}` : null);
+  if (!src) return null;
   return (
     // eslint-disable-next-line @next/next/no-img-element
-    <img src={url} alt="" width={size} height={size} className="rounded-full" style={{ width: size, height: size }} />
+    <img src={src} alt="" width={size} height={size} className="rounded-full" style={{ width: size, height: size }} />
   );
 }
 
@@ -89,7 +93,8 @@ export default function XHistoryPanel() {
                 >
                   <span className="flex items-center gap-2 text-sm">
                     <Image src="/paid.png" alt="" width={22} height={22} className="opacity-90" />
-                    {d.bill?.merchant ?? "Bill"} — to <Avatar url={d.bill?.creator?.x_avatar_url} />@
+                    {d.bill?.merchant ?? "Bill"} — to{" "}
+                    <Avatar url={d.bill?.creator?.x_avatar_url} handle={d.bill?.creator?.x_handle} />@
                     {d.bill?.creator?.x_handle ?? "?"}
                   </span>
                   <span className="flex items-center gap-3">
@@ -137,7 +142,8 @@ export default function XHistoryPanel() {
                     {b.debts.map((d) => (
                       <div key={d.id} className="flex items-center justify-between text-xs">
                         <span className="flex items-center gap-1.5">
-                          <Avatar url={d.debtor?.x_avatar_url} size={16} />@{d.debtor?.x_handle ?? d.debtor_handle}
+                          <Avatar url={d.debtor?.x_avatar_url} handle={d.debtor?.x_handle ?? d.debtor_handle} size={16} />@
+                          {d.debtor?.x_handle ?? d.debtor_handle}
                         </span>
                         <span className="flex items-center gap-2">
                           <span className="text-[var(--text-muted)]">{d.amount_usdc} USDC</span>
