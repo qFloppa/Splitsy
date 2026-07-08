@@ -69,7 +69,7 @@ export async function listBillsICreated(userId: string) {
   const client = requireClient();
   const { data, error } = await client
     .from("bills")
-    .select("*, debts:bill_debts(*)")
+    .select("*, debts:bill_debts(*, debtor:users!debtor_user_id(x_handle, x_avatar_url))")
     .eq("creator_user_id", userId)
     .order("created_at", { ascending: false });
   if (error) {
