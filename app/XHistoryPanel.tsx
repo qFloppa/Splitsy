@@ -3,6 +3,9 @@
 import Image from "next/image";
 import { ExternalLink } from "lucide-react";
 import { useEffect, useState } from "react";
+import { providerDisplay, type ProviderPerson } from "@/lib/provider-display";
+
+type Person = { provider?: ProviderPerson["provider"]; handle: string; avatar_url: string | null } | null;
 
 // Debts the signed-in user owes (paid ones shown in history).
 type IOwe = {
@@ -10,7 +13,7 @@ type IOwe = {
   amount_usdc: string;
   status: string;
   paid_tx_hash: string | null;
-  bill: { merchant: string | null; creator: { x_handle: string; x_avatar_url: string | null } | null } | null;
+  bill: { merchant: string | null; creator: Person } | null;
 };
 
 // Bills the signed-in user created, each with its debtors.
@@ -21,24 +24,30 @@ type OwedToMe = {
   created_at: string;
   debts: {
     id: string;
+    debtor_provider?: ProviderPerson["provider"];
     debtor_handle: string;
     amount_usdc: string;
     status: string;
-    debtor: { x_handle: string; x_avatar_url: string | null } | null;
+    debtor: Person;
   }[];
 };
 
 type WalletTx = { id: string; txHash: string | null };
 
-// Avatar for an X user. Uses their stored avatar when signed in; otherwise
-// falls back to unavatar.io, which resolves an avatar from the handle alone —
-// so people tagged before they sign in still get a face.
-function Avatar({ url, handle, size = 18 }: { url?: string | null; handle?: string | null; size?: number }) {
-  const src = url || (handle ? `https://unavatar.io/x/${handle.replace(/^@/, "")}` : null);
-  if (!src) return null;
+// Avatar + handle for a tagged person, provider-aware. For X we can fall back to
+// unavatar.io (resolves from the handle alone, so a person tagged before signing
+// in still gets a face); Discord has no such CDN, so only a stored avatar shows.
+function PersonTag({ person, size = 18 }: { person: ProviderPerson; size?: number }) {
+  const d = providerDisplay(person);
   return (
-    // eslint-disable-next-line @next/next/no-img-element
-    <img src={src} alt="" width={size} height={size} className="rounded-full" style={{ width: size, height: size }} />
+    <>
+      {d.avatarSrc ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img src={d.avatarSrc} alt="" width={size} height={size} className="rounded-full" style={{ width: size, height: size }} />
+      ) : null}
+      {d.prefix}
+      {d.label}
+    </>
   );
 }
 
@@ -81,7 +90,7 @@ export default function XHistoryPanel() {
         <div className="rounded-[var(--radius)] border border-[var(--border)] bg-[var(--surface)] p-5">
           <div className="flex items-center gap-2">
             <Image src="/paid.png" alt="Paid" width={18} height={18} />
-            <h3 className="text-base font-semibold">Paid via X</h3>
+            <h3 className="text-base font-semibold">Paid</h3>
           </div>
           <div className="mt-4 space-y-2">
             {paid.map((d) => {
@@ -94,8 +103,13 @@ export default function XHistoryPanel() {
                   <span className="flex items-center gap-2 text-sm">
                     <Image src="/paid.png" alt="" width={22} height={22} className="opacity-90" />
                     {d.bill?.merchant ?? "Bill"} — to{" "}
-                    <Avatar url={d.bill?.creator?.x_avatar_url} handle={d.bill?.creator?.x_handle} />@
-                    {d.bill?.creator?.x_handle ?? "?"}
+                    <PersonTag
+                      person={{
+                        provider: d.bill?.creator?.provider,
+                        handle: d.bill?.creator?.handle,
+                        avatarUrl: d.bill?.creator?.avatar_url,
+                      }}
+                    />
                   </span>
                   <span className="flex items-center gap-3">
                     <strong className="amount-text">{d.amount_usdc} USDC</strong>
@@ -142,8 +156,14 @@ export default function XHistoryPanel() {
                     {b.debts.map((d) => (
                       <div key={d.id} className="flex items-center justify-between text-xs">
                         <span className="flex items-center gap-1.5">
-                          <Avatar url={d.debtor?.x_avatar_url} handle={d.debtor?.x_handle ?? d.debtor_handle} size={16} />@
-                          {d.debtor?.x_handle ?? d.debtor_handle}
+                          <PersonTag
+                            person={{
+                              provider: d.debtor?.provider ?? d.debtor_provider,
+                              handle: d.debtor?.handle ?? d.debtor_handle,
+                              avatarUrl: d.debtor?.avatar_url,
+                            }}
+                            size={16}
+                          />
                         </span>
                         <span className="flex items-center gap-2">
                           <span className="text-[var(--text-muted)]">{d.amount_usdc} USDC</span>

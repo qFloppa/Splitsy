@@ -1,5 +1,5 @@
 import { createSupabaseServerClient } from "@/lib/supabase";
-import type { Bill, BillDebt } from "@/lib/types";
+import type { Bill, BillDebt, IdentityProvider } from "@/lib/types";
 
 function requireClient() {
   const client = createSupabaseServerClient();
@@ -9,7 +9,7 @@ function requireClient() {
   return client;
 }
 
-export type NewDebt = { handle: string; amountUsdc: string };
+export type NewDebt = { provider: IdentityProvider; handle: string; amountUsdc: string };
 
 export async function createBill(input: {
   creatorUserId: string;
@@ -38,6 +38,7 @@ export async function createBill(input: {
 
   const rows = input.debts.map((d) => ({
     bill_id: (bill as Bill).id,
+    debtor_provider: d.provider,
     debtor_handle: d.handle.replace(/^@/, "").toLowerCase(),
     amount_usdc: d.amountUsdc,
   }));
@@ -55,7 +56,7 @@ export async function listDebtsIOwe(userId: string) {
   const client = requireClient();
   const { data, error } = await client
     .from("bill_debts")
-    .select("*, bill:bills(*, creator:users!creator_user_id(x_handle, x_avatar_url))")
+    .select("*, bill:bills(*, creator:users!creator_user_id(provider, handle, avatar_url))")
     .eq("debtor_user_id", userId)
     .order("created_at", { ascending: false });
   if (error) {
@@ -69,7 +70,7 @@ export async function listBillsICreated(userId: string) {
   const client = requireClient();
   const { data, error } = await client
     .from("bills")
-    .select("*, debts:bill_debts(*, debtor:users!debtor_user_id(x_handle, x_avatar_url))")
+    .select("*, debts:bill_debts(*, debtor:users!debtor_user_id(provider, handle, avatar_url))")
     .eq("creator_user_id", userId)
     .order("created_at", { ascending: false });
   if (error) {
@@ -78,12 +79,18 @@ export async function listBillsICreated(userId: string) {
   return data ?? [];
 }
 
-// On login, link any pending debts tagged with this handle to the user.
-export async function resolveDebtsForHandle(userId: string, handle: string): Promise<void> {
+// On login, link any pending debts tagged with this (provider, handle) to the
+// user. Scoped by provider so an X @alice and a Discord "alice" never collide.
+export async function resolveDebtsForHandle(
+  userId: string,
+  provider: IdentityProvider,
+  handle: string,
+): Promise<void> {
   const client = requireClient();
   const { error } = await client
     .from("bill_debts")
     .update({ debtor_user_id: userId })
+    .eq("debtor_provider", provider)
     .eq("debtor_handle", handle.replace(/^@/, "").toLowerCase())
     .is("debtor_user_id", null);
   if (error) {

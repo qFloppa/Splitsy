@@ -27,13 +27,15 @@ export type Charge = {
   created_at: string;
 };
 
+export type IdentityProvider = "x" | "discord";
+
 export type AppUser = {
   id: string;
-  x_user_id: string;
-  x_handle: string;
-  x_name: string | null;
-  x_avatar_url: string | null;
-  email: string | null;
+  provider: IdentityProvider;
+  provider_user_id: string;
+  handle: string;
+  name: string | null;
+  avatar_url: string | null;
   wallet_address: string | null;
   circle_wallet_id: string | null;
   pin_hash: string | null;
@@ -53,6 +55,7 @@ export type Bill = {
 export type BillDebt = {
   id: string;
   bill_id: string;
+  debtor_provider: IdentityProvider;
   debtor_handle: string;
   debtor_user_id: string | null;
   amount_usdc: string;

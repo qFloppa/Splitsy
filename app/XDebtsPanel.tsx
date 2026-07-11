@@ -4,14 +4,16 @@ import { AnimatePresence, motion } from "framer-motion";
 import { CheckCircle2, ExternalLink, KeyRound, Loader2, Wallet, XCircle } from "lucide-react";
 import { useEffect, useState } from "react";
 import confetti from "canvas-confetti";
+import { providerDisplay, type ProviderPerson } from "@/lib/provider-display";
 
-// Unpaid debts owed by the signed-in X user (off-chain @handle bills). Renders
-// nothing when not signed in with X or nothing is owed.
+// Unpaid debts owed by the signed-in user (off-chain handle bills). Renders
+// nothing when not signed in or nothing is owed.
+type Creator = { provider?: ProviderPerson["provider"]; handle: string; avatar_url: string | null } | null;
 type IOwe = {
   id: string;
   amount_usdc: string;
   status: string;
-  bill: { merchant: string | null; creator: { x_handle: string; x_avatar_url: string | null } | null } | null;
+  bill: { merchant: string | null; creator: Creator } | null;
 };
 
 type Flow = {
@@ -115,7 +117,7 @@ export default function XDebtsPanel() {
             You have {debts.length} unpaid bill{debts.length === 1 ? "" : "s"}
           </h3>
           <p className="mt-2 text-sm text-[var(--text-muted)]">
-            Tagged to your X handle. Pay from your wallet, created when you signed in with X.
+            Tagged to your handle. Pay from your wallet, created when you signed in.
           </p>
 
           <div className="mt-4 space-y-3">
@@ -289,27 +291,28 @@ function PaymentDialog({
   );
 }
 
-// Creditor's X avatar + @handle, shown inline wherever we reference them.
-// Links to the person's X profile when we know their handle.
-function CreatorTag({ creator }: { creator?: { x_handle: string; x_avatar_url: string | null } | null }) {
-  const src = creator?.x_avatar_url || (creator?.x_handle ? `https://unavatar.io/x/${creator.x_handle}` : null);
+// Creditor's avatar + handle, shown inline wherever we reference them. Links to
+// the person's public profile when the provider has one (X does, Discord doesn't).
+function CreatorTag({ creator }: { creator?: Creator }) {
+  const d = providerDisplay({ provider: creator?.provider, handle: creator?.handle, avatarUrl: creator?.avatar_url });
   const inner = (
     <>
-      {src ? (
+      {d.avatarSrc ? (
         // eslint-disable-next-line @next/next/no-img-element
-        <img src={src} alt="" width={18} height={18} className="h-[18px] w-[18px] rounded-full" />
+        <img src={d.avatarSrc} alt="" width={18} height={18} className="h-[18px] w-[18px] rounded-full" />
       ) : null}
-      @{creator?.x_handle ?? "?"}
+      {d.prefix}
+      {d.label}
     </>
   );
 
-  if (!creator?.x_handle) {
+  if (!d.profileUrl) {
     return <span className="inline-flex items-center gap-1 align-middle font-semibold">{inner}</span>;
   }
 
   return (
     <a
-      href={`https://x.com/${creator.x_handle}`}
+      href={d.profileUrl}
       target="_blank"
       rel="noreferrer"
       onClick={(e) => e.stopPropagation()}

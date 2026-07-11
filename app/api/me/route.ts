@@ -11,9 +11,10 @@ export async function GET() {
   return Response.json({
     user: {
       id: user.id,
-      handle: user.x_handle,
-      name: user.x_name,
-      avatarUrl: user.x_avatar_url,
+      provider: user.provider,
+      handle: user.handle,
+      name: user.name,
+      avatarUrl: user.avatar_url,
       walletAddress: user.wallet_address,
     },
   });

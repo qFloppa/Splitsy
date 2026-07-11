@@ -2,28 +2,30 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import type { IdentityProvider } from "@/lib/types";
+import { providerDisplay } from "@/lib/provider-display";
 
 // Shapes returned by GET /api/bills (Supabase nested selects).
 type IOwe = {
   id: string;
   amount_usdc: string;
   status: string;
-  bill: { merchant: string | null; creator: { x_handle: string } | null } | null;
+  bill: { merchant: string | null; creator: { provider?: IdentityProvider; handle: string } | null } | null;
 };
 type OwedToMe = {
   id: string;
   merchant: string | null;
   total_usdc: string;
-  debts: { id: string; debtor_handle: string; amount_usdc: string; status: string }[];
+  debts: { id: string; debtor_provider?: IdentityProvider; debtor_handle: string; amount_usdc: string; status: string }[];
 };
-type Row = { handle: string; amount: string };
+type Row = { provider: IdentityProvider; handle: string; amount: string };
 
 export default function BillsPage() {
   const [iOwe, setIOwe] = useState<IOwe[]>([]);
   const [owedToMe, setOwedToMe] = useState<OwedToMe[]>([]);
   const [authed, setAuthed] = useState<boolean | null>(null);
   const [merchant, setMerchant] = useState("");
-  const [rows, setRows] = useState<Row[]>([{ handle: "", amount: "" }]);
+  const [rows, setRows] = useState<Row[]>([{ provider: "x", handle: "", amount: "" }]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [payingId, setPayingId] = useState<string | null>(null);
@@ -65,7 +67,7 @@ export default function BillsPage() {
     try {
       const debts = rows
         .filter((r) => r.handle.trim() && r.amount.trim())
-        .map((r) => ({ handle: r.handle, amount: Number(r.amount) }));
+        .map((r) => ({ provider: r.provider, handle: r.handle, amount: Number(r.amount) }));
       const res = await fetch("/api/bills", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -77,7 +79,7 @@ export default function BillsPage() {
         return;
       }
       setMerchant("");
-      setRows([{ handle: "", amount: "" }]);
+      setRows([{ provider: "x", handle: "", amount: "" }]);
       await load();
     } finally {
       setBusy(false);
@@ -103,10 +105,15 @@ export default function BillsPage() {
   if (authed === false) {
     return (
       <main style={{ maxWidth: 640, margin: "4rem auto", padding: "0 1rem", textAlign: "center" }}>
-        <p>Sign in with X to split and view bills.</p>
-        <a href="/api/auth/twitter" style={{ color: "#1d9bf0", fontWeight: 600 }}>
-          Sign in with X
-        </a>
+        <p>Sign in to split and view bills.</p>
+        <div style={{ display: "flex", gap: "1rem", justifyContent: "center", marginTop: "0.5rem" }}>
+          <a href="/api/auth/twitter" style={{ color: "#1d9bf0", fontWeight: 600 }}>
+            Sign in with X
+          </a>
+          <a href="/api/auth/discord" style={{ color: "#5865f2", fontWeight: 600 }}>
+            Sign in with Discord
+          </a>
+        </div>
       </main>
     );
   }
@@ -130,8 +137,19 @@ export default function BillsPage() {
         />
         {rows.map((row, i) => (
           <div key={i} style={{ display: "flex", gap: "0.5rem", marginTop: "0.5rem" }}>
+            <select
+              value={row.provider}
+              onChange={(e) =>
+                setRows((rs) => rs.map((r, j) => (j === i ? { ...r, provider: e.target.value as IdentityProvider } : r)))
+              }
+              style={{ ...inputStyle, flex: "0 0 auto", width: "auto" }}
+              aria-label="Provider"
+            >
+              <option value="x">X</option>
+              <option value="discord">Discord</option>
+            </select>
             <input
-              placeholder="@handle"
+              placeholder={row.provider === "discord" ? "username" : "@handle"}
               value={row.handle}
               onChange={(e) => setRows((rs) => rs.map((r, j) => (j === i ? { ...r, handle: e.target.value } : r)))}
               style={{ ...inputStyle, flex: 2 }}
@@ -146,7 +164,7 @@ export default function BillsPage() {
           </div>
         ))}
         <div style={{ display: "flex", gap: "0.75rem", marginTop: "0.75rem", alignItems: "center" }}>
-          <button type="button" onClick={() => setRows((rs) => [...rs, { handle: "", amount: "" }])} style={linkBtn}>
+          <button type="button" onClick={() => setRows((rs) => [...rs, { provider: "x", handle: "", amount: "" }])} style={linkBtn}>
             + person
           </button>
           <button type="button" onClick={submit} disabled={busy} style={primaryBtn}>
@@ -164,7 +182,11 @@ export default function BillsPage() {
           iOwe.map((d) => (
             <div key={d.id} style={cardStyle}>
               <span>
-                {d.bill?.merchant ?? "Bill"} — to @{d.bill?.creator?.x_handle ?? "?"}
+                {d.bill?.merchant ?? "Bill"} — to{" "}
+                {(() => {
+                  const c = providerDisplay({ provider: d.bill?.creator?.provider, handle: d.bill?.creator?.handle });
+                  return `${c.prefix}${c.label}`;
+                })()}
               </span>
               <span style={{ display: "flex", alignItems: "center", gap: "0.75rem" }}>
                 <strong>{d.amount_usdc} USDC</strong>
@@ -191,11 +213,15 @@ export default function BillsPage() {
               <strong>
                 {b.merchant ?? "Bill"} — {b.total_usdc} USDC
               </strong>
-              {b.debts.map((debt) => (
-                <span key={debt.id} style={{ fontSize: "0.85rem", opacity: 0.8 }}>
-                  @{debt.debtor_handle}: {debt.amount_usdc} {debt.status === "paid" ? "✓ paid" : "· pending"}
-                </span>
-              ))}
+              {b.debts.map((debt) => {
+                const p = providerDisplay({ provider: debt.debtor_provider, handle: debt.debtor_handle });
+                return (
+                  <span key={debt.id} style={{ fontSize: "0.85rem", opacity: 0.8 }}>
+                    {p.prefix}
+                    {p.label}: {debt.amount_usdc} {debt.status === "paid" ? "✓ paid" : "· pending"}
+                  </span>
+                );
+              })}
             </div>
           ))
         )}

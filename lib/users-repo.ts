@@ -1,12 +1,12 @@
 import { createSupabaseServerClient } from "@/lib/supabase";
-import type { AppUser } from "@/lib/types";
+import type { AppUser, IdentityProvider } from "@/lib/types";
 
-export type XProfileInput = {
-  xUserId: string;
+export type ProviderProfileInput = {
+  provider: IdentityProvider;
+  providerUserId: string;
   handle: string;
   name: string | null;
   avatarUrl: string | null;
-  email: string | null;
 };
 
 function requireClient() {
@@ -17,19 +17,21 @@ function requireClient() {
   return client;
 }
 
-export async function upsertUserFromX(profile: XProfileInput): Promise<AppUser> {
+// Insert or update a user by (provider, provider_user_id). Works for any
+// sign-in provider (X, Discord, …).
+export async function upsertUserFromProvider(profile: ProviderProfileInput): Promise<AppUser> {
   const client = requireClient();
   const { data, error } = await client
     .from("users")
     .upsert(
       {
-        x_user_id: profile.xUserId,
-        x_handle: profile.handle,
-        x_name: profile.name,
-        x_avatar_url: profile.avatarUrl,
-        email: profile.email,
+        provider: profile.provider,
+        provider_user_id: profile.providerUserId,
+        handle: profile.handle,
+        name: profile.name,
+        avatar_url: profile.avatarUrl,
       },
-      { onConflict: "x_user_id" },
+      { onConflict: "provider,provider_user_id" },
     )
     .select()
     .single();
@@ -57,24 +59,6 @@ export async function setUserPin(id: string, pinHash: string): Promise<void> {
   if (error) {
     throw new Error(`Failed to set PIN: ${error.message}`);
   }
-}
-
-// The stored X avatar for a handle, if that handle belongs to a Splitsy user.
-// Case-insensitive; escapes LIKE metacharacters (_ and % are legal-ish in the
-// ilike pattern but not in real handles) so we never match the wrong row.
-export async function getUserAvatarByHandle(handle: string): Promise<string | null> {
-  const client = createSupabaseServerClient();
-  if (!client) return null;
-  const pattern = handle.replace(/^@/, "").replace(/[\\%_]/g, "\\$&");
-  const { data, error } = await client
-    .from("users")
-    .select("x_avatar_url")
-    .ilike("x_handle", pattern)
-    .not("x_avatar_url", "is", null)
-    .limit(1)
-    .maybeSingle();
-  if (error) return null;
-  return (data as { x_avatar_url: string | null } | null)?.x_avatar_url ?? null;
 }
 
 export async function getUserById(id: string): Promise<AppUser | null> {

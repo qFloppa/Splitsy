@@ -102,14 +102,22 @@ export async function listWalletTransactions(walletId: string): Promise<WalletTx
 }
 
 // Get the user's Arc developer-controlled wallet, creating it (SCA) on first
-// call. refId = X user id makes it idempotent — a repeat call returns the same
-// wallet instead of minting a new one. Returns null if Circle isn't configured.
-export async function getOrCreateArcWallet(xUserId: string): Promise<ArcWallet | null> {
+// call. refId = "<provider>:<provider_user_id>" makes it idempotent AND keeps
+// providers in separate namespaces — an X and a Discord user whose numeric
+// snowflakes happen to collide never share a wallet. A repeat call returns the
+// same wallet instead of minting a new one. Returns null if Circle isn't
+// configured. (Existing pre-namespacing X users already have a stored
+// wallet_address, so the callback skips re-provisioning them.)
+export async function getOrCreateArcWallet(
+  provider: string,
+  providerUserId: string,
+): Promise<ArcWallet | null> {
   const config = getConfig();
   if (!config) return null;
   const { client, walletSetId } = config;
 
-  const existing = await client.listWallets({ refId: xUserId, blockchain: "ARC-TESTNET" });
+  const refId = `${provider}:${providerUserId}`;
+  const existing = await client.listWallets({ refId, blockchain: "ARC-TESTNET" });
   const found = existing.data?.wallets?.[0];
   if (found) return { address: found.address, walletId: found.id };
 
@@ -118,7 +126,7 @@ export async function getOrCreateArcWallet(xUserId: string): Promise<ArcWallet |
     accountType: "SCA",
     count: 1,
     walletSetId,
-    metadata: [{ refId: xUserId, name: `splitsy:${xUserId}` }],
+    metadata: [{ refId, name: `splitsy:${refId}` }],
   });
   const wallet = created.data?.wallets?.[0];
   if (!wallet) throw new Error("Circle createWallets returned no wallet");
