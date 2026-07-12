@@ -584,26 +584,9 @@ export async function readBillActivity(billId: bigint): Promise<BillActivity> {
   }
 }
 
-export function billMetadataHash({
-  merchant,
-  currency,
-  total,
-  participantLabels,
-}: {
-  merchant: string;
-  currency: string;
-  total: number;
-  participantLabels: string[];
-}) {
-  return keccak256(
-    encodeAbiParameters(parseAbiParameters("string merchant, string currency, uint256 cents, string labels"), [
-      merchant,
-      currency,
-      BigInt(Math.round(total * 100)),
-      participantLabels.join("|"),
-    ]),
-  );
-}
+// Re-exported from the isomorphic module so server routes can hash without
+// pulling in this "use client" file. See lib/bill-metadata.ts.
+export { billMetadataHash, verifyBillPreimage, type BillPreimage } from "@/lib/bill-metadata";
 
 export function billPaymentMemoId({ billId, payer }: { billId: bigint; payer: `0x${string}` }) {
   return keccak256(
