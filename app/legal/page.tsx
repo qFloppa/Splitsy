@@ -28,7 +28,7 @@ export const dynamic = "force-dynamic";
 export const metadata = {
   title: "Terms & Privacy",
   description:
-    "The combined Terms of Service and Privacy Policy for Splitsy — an experimental bill-splitting demo on Arc Testnet that uses test USDC only and collects only your public X profile.",
+    "The combined Terms of Service and Privacy Policy for Splitsy — an experimental bill-splitting demo on Arc Testnet that uses test USDC only and collects only the profile from the sign-in provider you choose (X, Discord, Google, or email).",
   alternates: { canonical: "/legal" },
   robots: { index: true, follow: true },
 };
@@ -57,8 +57,8 @@ export default function LegalPage() {
             <p className="docs-lede">
               Splitsy is an independent, experimental demo on <strong>Arc Testnet</strong> using test USDC with no monetary
               value. These combined terms and privacy policy explain the rules of using the app and exactly what data it
-              handles — in short: it collects only your <strong>public X profile</strong> (id, handle, name, avatar), never
-              your email, and never posts on your behalf.
+              handles — in short: it collects only the basic profile from the sign-in method you choose (<strong>X, Discord,
+              Google, or email</strong>), and never posts on your behalf.
             </p>
           </div>
 
@@ -68,12 +68,12 @@ export default function LegalPage() {
               <strong>Never</strong>
             </div>
             <div>
-              <span>X data used for</span>
+              <span>Sign-in data used for</span>
               <strong>Sign-in &amp; matching only</strong>
             </div>
             <div>
               <span>Email collected?</span>
-              <strong>No</strong>
+              <strong>Only if you sign in with Google or email</strong>
             </div>
             <div>
               <span>Funds</span>
@@ -99,27 +99,42 @@ export default function LegalPage() {
           </section>
 
           <section className="docs-section">
-            <Heading icon={<AtSign size={20} />} title="Sign in with X" />
+            <Heading icon={<AtSign size={20} />} title="How you sign in" />
             <p>
-              If you choose to sign in with X, we use X&apos;s OAuth 2.0 authentication <strong>solely to identify you</strong>.
-              We <strong>do not</strong> read your timeline, post on your behalf, send direct messages, or collect any tweet,
-              like, follow, or engagement data. On sign-in we make a single request to X&apos;s{" "}
-              <code>GET&nbsp;/2/users/me</code> endpoint and receive only:
+              Splitsy offers four sign-in methods; you choose one. In every case we use the sign-in{" "}
+              <strong>solely to identify you</strong> — we never post on your behalf, read your messages, or collect any
+              content beyond the basic profile described here.
             </p>
             <ul className="docs-list">
-              <li>Your X user ID and username (handle)</li>
-              <li>Your display name and profile image (avatar) URL</li>
+              <li>
+                <strong>X</strong> — OAuth 2.0 with the read-only scopes <code>tweet.read</code>, <code>users.read</code>, and{" "}
+                <code>offline.access</code> (to keep your session alive). A single call to <code>GET&nbsp;/2/users/me</code>{" "}
+                returns your user ID, username (handle), display name, and avatar URL. We <strong>do not</strong> request your
+                email and <strong>do not</strong> read your timeline, follows, likes, or direct messages.
+              </li>
+              <li>
+                <strong>Discord</strong> — OAuth 2.0 with the <code>identify</code> scope. We receive your user ID, username,
+                display name, and avatar. We do <strong>not</strong> request the <code>email</code> scope or read your servers,
+                messages, or connections.
+              </li>
+              <li>
+                <strong>Google</strong> — OAuth 2.0 (OpenID Connect). We receive your <strong>verified email address</strong>,
+                name, and profile picture. We require a verified email because it is your identity key.
+              </li>
+              <li>
+                <strong>Email</strong> — you enter an email address and we send a one-time 6-digit code (via our email provider,
+                Resend). Verifying it signs you in. We store your email address and a short-lived salted hash of the code.
+              </li>
             </ul>
             <p>
-              We request only the read-only scopes <code>tweet.read</code>, <code>users.read</code>, and{" "}
-              <code>offline.access</code> (to keep your session alive). We <strong>no longer request your email</strong>. We
-              use this data only to (1) authenticate you, (2) show your handle and avatar in the app, and (3) match you to
-              shared bills that others split with you by tagging your <strong>@handle</strong>, so you can view and settle what
-              you owe.
+              We use this data only to (1) authenticate you, (2) show your handle, name, or email and avatar in the app, and
+              (3) match you to shared bills that others tag you in, so you can view and settle what you owe. Google and email
+              sign-in resolve to the <strong>same</strong> email-keyed identity — signing in either way with the same address
+              is the same Splitsy account and wallet.
             </p>
             <Callout title="Revoking access">
-              You can revoke Splitsy&apos;s access to your X account at any time from your X settings under{" "}
-              <em>Settings → Security and account access → Apps and sessions → Connected apps</em>.
+              For X, Discord, and Google you can revoke Splitsy&apos;s access at any time from that provider&apos;s connected-apps
+              settings. For email sign-in there is nothing persistent to revoke — one-time codes expire in minutes.
             </Callout>
           </section>
 
@@ -127,8 +142,9 @@ export default function LegalPage() {
             <Heading icon={<Database size={20} />} title="Information we collect" />
             <ul className="docs-list">
               <li>
-                <strong>Account &amp; identity data</strong> — the X sign-in data above (id, handle, name, avatar), used to
-                create and identify your Splitsy account.
+                <strong>Account &amp; identity data</strong> — the sign-in data above for your chosen provider (an id/handle or
+                email, plus name and avatar), used to create and identify your Splitsy account. If you use Google or email
+                sign-in, this includes your <strong>email address</strong>.
               </li>
               <li>
                 <strong>Wallet data</strong> — the address and identifier of the Circle wallet created for your account, so we
@@ -164,15 +180,16 @@ export default function LegalPage() {
             </ul>
             <p>
               We do <strong>not</strong> use your data for advertising, profiling, or automated decision-making, and we do not
-              build marketing profiles from X data.
+              build marketing profiles from your sign-in data.
             </p>
           </section>
 
           <section className="docs-section">
             <Heading icon={<Wallet size={20} />} title="Your wallet" />
             <p>
-              On first sign-in we create a <strong>Circle developer-controlled wallet</strong> on Arc Testnet keyed to your X
-              user id, so you can pay and get paid in USDC with no crypto setup. Because this is a testnet demo using{" "}
+              On first sign-in we create a <strong>Circle developer-controlled wallet</strong> on Arc Testnet keyed to your
+              provider identity (your X or Discord id, or your email address for Google/email sign-in), so you can pay and get
+              paid in USDC with no crypto setup. Because this is a testnet demo using{" "}
               <strong>test USDC with no monetary value</strong>, the wallet is operated server-side on your behalf. Sending
               USDC is protected by a wallet PIN that you set. A future mainnet version would offer genuine self-custody for
               real funds.
@@ -182,11 +199,11 @@ export default function LegalPage() {
           <section className="docs-section">
             <Heading icon={<Share2 size={20} />} title="How we share information" />
             <p>
-              We <strong>do not sell, rent, or trade</strong> your personal data, and we do not transfer X data to any third
-              party for their independent use. We share data only with the service providers that run the app — our hosting
-              provider, our database provider, the OCR service that processes receipts, and Circle&apos;s wallet
-              infrastructure — and only to the extent needed to provide those functions. Data written to the public blockchain
-              is, by nature, publicly visible.
+              We <strong>do not sell, rent, or trade</strong> your personal data, and we do not transfer your sign-in data to
+              any third party for their independent use. We share data only with the service providers that run the app — our
+              hosting provider, our database provider, the OCR service that processes receipts, our email provider (Resend, for
+              email one-time codes), and Circle&apos;s wallet infrastructure — and only to the extent needed to provide those
+              functions. Data written to the public blockchain is, by nature, publicly visible.
             </p>
           </section>
 
@@ -194,7 +211,7 @@ export default function LegalPage() {
             <Heading icon={<Trash2 size={20} />} title="Data retention &amp; deletion" />
             <p>
               We retain account and bill data for as long as your account is active. You may request deletion of your account
-              and associated X data at any time by emailing{" "}
+              and associated sign-in data at any time by emailing{" "}
               <a href="mailto:privacy@splitsy.xyz">privacy@splitsy.xyz</a>. We will delete the data we control, though
               information already written to a public blockchain cannot be removed.
             </p>
@@ -284,10 +301,11 @@ export default function LegalPage() {
           <section className="docs-section">
             <Heading icon={<Scale size={20} />} title="Third-party services &amp; no affiliation" />
             <p>
-              The Service interoperates with third-party providers (for example, X for sign-in, Circle wallet and blockchain
-              infrastructure, and an OCR provider). Your use of those services is governed by their respective terms. Splitsy
-              is an independent project and is <strong>not affiliated with, endorsed by, or sponsored by</strong> X/Twitter,
-              Circle, Arc, USDC, or any other referenced brand. All trademarks belong to their respective owners.
+              The Service interoperates with third-party providers (for example, X, Discord, and Google for sign-in, Resend
+              for email one-time codes, Circle wallet and blockchain infrastructure, and an OCR provider). Your use of those
+              services is governed by their respective terms. Splitsy is an independent project and is{" "}
+              <strong>not affiliated with, endorsed by, or sponsored by</strong> X/Twitter, Discord, Google, Circle, Arc, USDC,
+              or any other referenced brand. All trademarks belong to their respective owners.
             </p>
           </section>
 
@@ -321,7 +339,7 @@ export default function LegalPage() {
               <a href="mailto:support@splitsy.xyz">support@splitsy.xyz</a>. See also our{" "}
               <Link href="/disclaimer">Disclaimer &amp; acknowledgments</Link>.
             </p>
-            <p style={{ marginTop: "1.25rem", fontSize: "0.85rem", opacity: 0.7 }}>Last updated: 2026-07-06</p>
+            <p style={{ marginTop: "1.25rem", fontSize: "0.85rem", opacity: 0.7 }}>Last updated: 2026-07-12</p>
           </section>
         </article>
       </div>

@@ -28,8 +28,13 @@ export async function finishProviderLogin(params: {
   profile: NormalizedProfile;
   request: NextRequest;
   sessionSecret: string;
+  // OAuth callbacks are top-level browser navigations, so they want a redirect
+  // back into the app ("redirect", default). Email-OTP verify is a fetch from an
+  // inline panel, so it wants a JSON body it can read ("json"); the session
+  // cookie is set the same way on either response.
+  mode?: "redirect" | "json";
 }): Promise<NextResponse> {
-  const { provider, profile, request, sessionSecret } = params;
+  const { provider, profile, request, sessionSecret, mode = "redirect" } = params;
 
   let appUser;
   try {
@@ -68,7 +73,10 @@ export async function finishProviderLogin(params: {
     }
   }
 
-  const response = NextResponse.redirect(new URL("/", request.nextUrl.origin));
+  const response =
+    mode === "json"
+      ? NextResponse.json({ ok: true })
+      : NextResponse.redirect(new URL("/", request.nextUrl.origin));
   response.cookies.set(SESSION_COOKIE_NAME, signSession(appUser.id, sessionSecret), {
     httpOnly: true,
     secure: request.nextUrl.protocol === "https:",

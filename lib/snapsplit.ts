@@ -1,3 +1,5 @@
+import type { IdentityProvider } from "@/lib/types";
+
 export type BillLineItem = {
   description: string;
   quantity: number;
@@ -22,6 +24,11 @@ export type SplitParticipant = {
   walletAddress: string;
   amountUsd: number;
   status: "draft" | "unpaid" | "bridging" | "confirmed";
+  // Off-chain (handle) mode only: which identity provider this row's tag belongs
+  // to. Per-row so one bill can mix X / Discord / Email debtors. Undefined in
+  // on-chain (address) mode; the API defaults an absent value to the creator's
+  // own provider.
+  provider?: IdentityProvider;
 };
 
 export const emptyParsedBill: ParsedBill = {

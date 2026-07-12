@@ -100,8 +100,8 @@ export default function DisclaimerPage() {
             <Heading icon={<Landmark size={20} />} title="No affiliation & trademark acknowledgment" />
             <p>
               Splitsy is an <strong>independent project</strong>. It is <strong>not affiliated with, endorsed by, or
-              sponsored by</strong> Circle Internet Financial, Arc, USDC, MetaMask, Google, or any other company,
-              protocol, or product referenced in this application or its documentation.
+              sponsored by</strong> Circle Internet Financial, Arc, USDC, MetaMask, X/Twitter, Discord, Google, or any other
+              company, protocol, or product referenced in this application or its documentation.
             </p>
             <p>
               All product names, logos, and trademarks are the property of their respective owners. They are referenced
@@ -135,14 +135,16 @@ export default function DisclaimerPage() {
             <Heading icon={<LockKeyhole size={20} />} title="Privacy &amp; wallets" />
             <ul className="docs-list">
               <li>
-                <strong>Sign in with X</strong> is used only to identify you. Splitsy reads just your public profile — X user
-                id, handle, display name, and avatar — and does not read your timeline, post on your behalf, or collect your
-                email.
+                <strong>Sign-in</strong> (via X, Discord, Google, or a one-time email code) is used only to identify you.
+                Splitsy reads just the basic profile from your chosen provider — an id/handle or email address, plus display
+                name and avatar — and never posts on your behalf. X and Discord sign-in do not share your email; Google and
+                email sign-in identify you <strong>by</strong> your email address.
               </li>
               <li>
                 If you connect a <strong>browser wallet</strong> instead, that wallet signs every action and Splitsy never
-                holds its keys. If you sign in with X, a <strong>Circle test-USDC wallet</strong> is created for your handle
-                and operated on your behalf on Arc Testnet — appropriate here because all funds are valueless test USDC.
+                holds its keys. If you sign in with a provider above, a <strong>Circle test-USDC wallet</strong> is created for
+                your identity and operated on your behalf on Arc Testnet — appropriate here because all funds are valueless
+                test USDC.
               </li>
               <li>
                 Receipt images you upload are sent to the server only to perform optical character recognition (OCR) and are
@@ -166,7 +168,7 @@ export default function DisclaimerPage() {
               <a href="/.well-known/security.txt">/.well-known/security.txt</a>. For general questions, contact{" "}
               <a href="mailto:support@splitsy.xyz">support@splitsy.xyz</a>.
             </p>
-            <p style={{ marginTop: "1.25rem", fontSize: "0.85rem", opacity: 0.7 }}>Last updated: 2026-06-25</p>
+            <p style={{ marginTop: "1.25rem", fontSize: "0.85rem", opacity: 0.7 }}>Last updated: 2026-07-12</p>
           </section>
         </article>
       </div>

@@ -106,7 +106,7 @@ export default function XAuthControl() {
     setTimeout(() => setCopied(false), 1500);
   }
 
-  // Signed out (or still loading): render nothing. The header's XSignInButton
+  // Signed out (or still loading): render nothing. The header's SignInMenu
   // provides the sign-in entry point; this widget is only for signed-in users.
   if (loading || !me) {
     return null;

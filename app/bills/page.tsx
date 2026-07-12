@@ -147,9 +147,10 @@ export default function BillsPage() {
             >
               <option value="x">X</option>
               <option value="discord">Discord</option>
+              <option value="email">Email</option>
             </select>
             <input
-              placeholder={row.provider === "discord" ? "username" : "@handle"}
+              placeholder={row.provider === "discord" ? "username" : row.provider === "email" ? "name@email.com" : "@handle"}
               value={row.handle}
               onChange={(e) => setRows((rs) => rs.map((r, j) => (j === i ? { ...r, handle: e.target.value } : r)))}
               style={{ ...inputStyle, flex: 2 }}

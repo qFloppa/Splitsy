@@ -12,6 +12,7 @@ import {
   FileJson,
   Landmark,
   Loader2,
+  Mail,
   Moon,
   Plus,
   ReceiptText,
@@ -37,8 +38,7 @@ import { useAccount, useConnect, useDisconnect, useSwitchChain } from "wagmi";
 import { getWalletClient } from "wagmi/actions";
 import { ConnectButton } from "@rainbow-me/rainbowkit";
 import XAuthControl from "./XAuthControl";
-import XSignInButton from "./XSignInButton";
-import DiscordSignInButton from "./DiscordSignInButton";
+import SignInMenu from "./SignInMenu";
 import XDebtsPanel from "./XDebtsPanel";
 import XHistoryPanel from "./XHistoryPanel";
 import {
@@ -92,6 +92,7 @@ import {
   ParsedBill,
   SplitParticipant,
 } from "@/lib/snapsplit";
+import type { IdentityProvider } from "@/lib/types";
 import { wagmiConfig } from "@/lib/wagmi";
 
 type FxQuote = {
@@ -179,23 +180,23 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
   const [claimAmounts, setClaimAmounts] = useState<Record<string, string>>({});
   const [participantShareInputs, setParticipantShareInputs] = useState<Record<string, string>>({});
   const [splitBy, setSplitBy] = useState<"address" | "handle">("address");
-  // In handle mode, which identity provider the tagged handles belong to. It's a
-  // bill-level choice (the whole bill is X or Discord), surfaced as separate
-  // buttons in the "Review your split" mode selector.
-  const [handleProvider, setHandleProvider] = useState<"x" | "discord">("x");
 
-  // Pick how payers are identified: an on-chain wallet address, or an off-chain
-  // handle on a given provider. Switching into handle mode clears any prefilled
-  // 0x… demo addresses so the identifier field starts empty (a wallet address is
-  // not a valid handle).
-  function chooseSplitTarget(next: "address" | { provider: "x" | "discord" }) {
-    if (next !== "address") {
-      setHandleProvider(next.provider);
+  // Pick how payers are identified: an on-chain wallet address, or off-chain by
+  // handle. In handle mode each participant row carries its OWN provider (X /
+  // Discord / Email), so one bill can mix debtors across platforms. Switching
+  // into handle mode clears any prefilled 0x… demo addresses (a wallet address
+  // is not a valid handle) and seeds each row's provider to "x".
+  function chooseSplitTarget(next: "address" | "handle") {
+    if (next === "handle") {
       setParticipants((current) =>
-        current.map((p) => (/^0x[a-fA-F0-9]{40}$/.test(p.walletAddress) ? { ...p, walletAddress: "" } : p)),
+        current.map((p) => ({
+          ...p,
+          provider: p.provider ?? "x",
+          walletAddress: /^0x[a-fA-F0-9]{40}$/.test(p.walletAddress) ? "" : p.walletAddress,
+        })),
       );
     }
-    setSplitBy(next === "address" ? "address" : "handle");
+    setSplitBy(next);
   }
   const [recurringWallet, setRecurringWallet] = useState<RecurringWallet | null>(null);
   const [recurringState, setRecurringState] = useState<RecurringRunState>("idle");
@@ -693,7 +694,7 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
     const debts = displayParticipants
       .filter((participant) => participant.amountUsd > 0 && participant.walletAddress.trim())
       .map((participant) => ({
-        provider: handleProvider,
+        provider: participant.provider ?? "x",
         handle: participant.walletAddress.trim(),
         amount: participant.amountUsd,
       }));
@@ -1461,8 +1462,7 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
                 </Link>
               </div>
               <div className="flex flex-nowrap items-center gap-2">
-                <XSignInButton />
-                <DiscordSignInButton />
+                <SignInMenu />
                 <ConnectButton accountStatus="address" chainStatus="icon" showBalance={false} />
                 <button
                   aria-label={`Switch to ${theme === "light" ? "dark" : "light"} mode`}
@@ -1651,25 +1651,8 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
                             <ModeButton active={splitBy === "address"} onClick={() => chooseSplitTarget("address")}>
                               Wallet
                             </ModeButton>
-                            <ModeButton
-                              active={splitBy === "handle" && handleProvider === "x"}
-                              onClick={() => chooseSplitTarget({ provider: "x" })}
-                            >
-                              <span className="inline-flex items-center gap-1">
-                                <Image src="/x.png" alt="" width={12} height={12} />
-                                X
-                              </span>
-                            </ModeButton>
-                            <ModeButton
-                              active={splitBy === "handle" && handleProvider === "discord"}
-                              onClick={() => chooseSplitTarget({ provider: "discord" })}
-                            >
-                              <span className="inline-flex items-center gap-1">
-                                <svg width="12" height="12" viewBox="0 0 127.14 96.36" fill="currentColor" aria-hidden="true">
-                                  <path d="M107.7 8.07A105.15 105.15 0 0 0 81.47 0a72.06 72.06 0 0 0-3.36 6.83 97.68 97.68 0 0 0-29.11 0A72.37 72.37 0 0 0 45.64 0a105.89 105.89 0 0 0-26.25 8.09C2.79 32.65-1.71 56.6.54 80.21a105.73 105.73 0 0 0 32.17 16.15 77.7 77.7 0 0 0 6.89-11.11 68.42 68.42 0 0 1-10.85-5.18c.91-.66 1.8-1.34 2.66-2a75.57 75.57 0 0 0 64.32 0c.87.71 1.76 1.39 2.66 2a68.68 68.68 0 0 1-10.87 5.19 77 77 0 0 0 6.89 11.1 105.25 105.25 0 0 0 32.19-16.14c2.64-27.38-4.51-51.11-18.9-72.15ZM42.45 65.69C36.18 65.69 31 60 31 53s5-12.74 11.43-12.74S54 46 53.89 53s-5.05 12.69-11.44 12.69Zm42.24 0C78.41 65.69 73.25 60 73.25 53s5-12.74 11.44-12.74S96.23 46 96.12 53s-5.04 12.69-11.43 12.69Z" />
-                                </svg>
-                                Discord
-                              </span>
+                            <ModeButton active={splitBy === "handle"} onClick={() => chooseSplitTarget("handle")}>
+                              Tag people
                             </ModeButton>
                           </div>
                           <div className="segmented-control">
@@ -1690,9 +1673,7 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
                     </p>
                     <p className="mt-1 text-[var(--text-muted)]">
                       {splitBy === "handle"
-                        ? handleProvider === "discord"
-                          ? "Tag payers by Discord username; they settle after signing in with Discord."
-                          : "Tag payers by @handle; they settle after signing in with X."
+                        ? "Tag each payer by X, Discord, or email — mix providers freely. They settle after signing in the matching way."
                         : "Debt is discovered by wallet address."}
                     </p>
                   </div>
@@ -1721,7 +1702,8 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
                           />
                           {splitBy === "handle" ? (
                             <HandleField
-                              provider={handleProvider}
+                              provider={participant.provider ?? "x"}
+                              onProviderChange={(value) => updateParticipant(participant.id, "provider", value)}
                               value={participant.walletAddress}
                               onChange={(value) => updateParticipant(participant.id, "walletAddress", value)}
                             />
@@ -3155,27 +3137,38 @@ function Field({
   );
 }
 
-// Handle field for off-chain tagging. The provider (X or Discord) is chosen at
-// the bill level via the "Review your split" mode selector, so this field just
-// adapts its label + preview to it. For X, a valid handle triggers a live
-// unavatar.io lookup (fallback=false) so the avatar only shows once it resolves
-// to a real account — a typo 404s and it stays hidden, the "your handle became
-// real" confirmation. Discord has no public username→avatar CDN, so no preview
-// is shown there. The bare handle is stored (leading @ stripped); the server
-// lowercases it before matching, so this doesn't affect debt linking.
+// Handle field for off-chain tagging. Each row picks its OWN provider (X /
+// Discord / Email) from an inline dropdown, so one bill can mix debtors across
+// platforms. The field adapts its label, validation and preview to the chosen
+// provider:
+//  - X: a valid handle triggers a live unavatar.io lookup (fallback=false) so
+//    the avatar only shows once it resolves to a real account — a typo 404s and
+//    stays hidden, the "your handle became real" confirmation.
+//  - Discord: no public username→avatar CDN, so no preview.
+//  - Email: tagged (and matched) by address; both Google sign-in and Email-OTP
+//    resolve to it. unavatar.io resolves a Gravatar once the address looks valid.
+// The trimmed value is stored (leading @ stripped for X); the server lowercases
+// it before matching, so casing here doesn't affect debt linking.
 function HandleField({
   provider,
+  onProviderChange,
   value,
   onChange,
 }: {
-  provider: "x" | "discord";
+  provider: IdentityProvider;
+  onProviderChange: (value: IdentityProvider) => void;
   value: string;
   onChange: (value: string) => void;
 }) {
   const handle = value.replace(/^@+/, "").trim();
-  // X handles are ≤15 word chars. We only use this to gate the (X-only) avatar
-  // preview; Discord shows no preview.
-  const valid = provider === "x" ? /^[a-zA-Z0-9_]{1,15}$/.test(handle) : false;
+  // Per-provider validity gates the avatar preview: X handles are ≤15 word
+  // chars; email must look like an address; Discord shows no preview.
+  const valid =
+    provider === "x"
+      ? /^[a-zA-Z0-9_]{1,15}$/.test(handle)
+      : provider === "email"
+        ? /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(handle)
+        : false;
   const [debounced, setDebounced] = useState(handle);
   const [avatarOk, setAvatarOk] = useState(false);
 
@@ -3184,42 +3177,64 @@ function HandleField({
     return () => clearTimeout(timer);
   }, [handle]);
 
-  const src = valid && debounced ? `https://unavatar.io/x/${debounced.toLowerCase()}?fallback=false` : "";
+  // X keys unavatar by handle; email keys it by the address (Gravatar).
+  const src =
+    valid && debounced
+      ? provider === "x"
+        ? `https://unavatar.io/x/${debounced.toLowerCase()}?fallback=false`
+        : provider === "email"
+          ? `https://unavatar.io/${encodeURIComponent(debounced.toLowerCase())}?fallback=false`
+          : ""
+      : "";
   // A new handle hasn't resolved yet — fade the old avatar out until onLoad fires.
   useEffect(() => setAvatarOk(false), [src]);
 
+  const label =
+    provider === "discord" ? "Discord username" : provider === "email" ? "Email address" : "X handle";
+  const placeholder = provider === "email" ? "name@email.com" : "username";
+
   return (
     <label className="block text-sm font-medium text-[var(--text-soft)]">
-      <span className="inline-flex items-center gap-1">
-        {provider === "discord" ? (
-          <>
+      <span className="flex items-center justify-between gap-2">
+        <span className="inline-flex items-center gap-1">
+          {provider === "discord" ? (
             <svg width="12" height="12" viewBox="0 0 127.14 96.36" fill="currentColor" aria-hidden="true">
               <path d="M107.7 8.07A105.15 105.15 0 0 0 81.47 0a72.06 72.06 0 0 0-3.36 6.83 97.68 97.68 0 0 0-29.11 0A72.37 72.37 0 0 0 45.64 0a105.89 105.89 0 0 0-26.25 8.09C2.79 32.65-1.71 56.6.54 80.21a105.73 105.73 0 0 0 32.17 16.15 77.7 77.7 0 0 0 6.89-11.11 68.42 68.42 0 0 1-10.85-5.18c.91-.66 1.8-1.34 2.66-2a75.57 75.57 0 0 0 64.32 0c.87.71 1.76 1.39 2.66 2a68.68 68.68 0 0 1-10.87 5.19 77 77 0 0 0 6.89 11.1 105.25 105.25 0 0 0 32.19-16.14c2.64-27.38-4.51-51.11-18.9-72.15ZM42.45 65.69C36.18 65.69 31 60 31 53s5-12.74 11.43-12.74S54 46 53.89 53s-5.05 12.69-11.44 12.69Zm42.24 0C78.41 65.69 73.25 60 73.25 53s5-12.74 11.44-12.74S96.23 46 96.12 53s-5.04 12.69-11.43 12.69Z" />
             </svg>
-            Discord username
-          </>
-        ) : (
-          <>
+          ) : provider === "email" ? (
+            <Mail size={12} />
+          ) : (
             <Image src="/x.png" alt="" width={12} height={12} />
-            X handle
-          </>
-        )}
+          )}
+          {label}
+        </span>
+        <select
+          aria-label="Tag by"
+          value={provider}
+          onChange={(event) => onProviderChange(event.target.value as IdentityProvider)}
+          className="rounded-md border border-[var(--border)] bg-[var(--surface)] px-1.5 py-0.5 text-xs font-medium text-[var(--text)]"
+        >
+          <option value="x">X</option>
+          <option value="discord">Discord</option>
+          <option value="email">Email</option>
+        </select>
       </span>
       <span className="handle-field">
         <input
           autoCapitalize="none"
           autoComplete="off"
           autoCorrect="off"
+          inputMode={provider === "email" ? "email" : "text"}
           className={`field-control handle-input${avatarOk ? " is-resolved" : ""}`}
-          onChange={(event) => onChange(event.target.value.replace(/^@+/, ""))}
-          placeholder="username"
+          onChange={(event) => onChange(provider === "email" ? event.target.value.trim() : event.target.value.replace(/^@+/, ""))}
+          placeholder={placeholder}
           spellCheck={false}
           value={handle}
         />
         {src ? (
           // eslint-disable-next-line @next/next/no-img-element -- remote unavatar URL, not a bundled asset
           <img
-            alt={`@${debounced} on X`}
+            alt={`${debounced} avatar`}
             className={`handle-avatar${avatarOk ? " is-visible" : ""}`}
             height={24}
             onError={() => setAvatarOk(false)}

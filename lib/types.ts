@@ -27,7 +27,11 @@ export type Charge = {
   created_at: string;
 };
 
-export type IdentityProvider = "x" | "discord";
+// "email" is a single merged namespace for both Google sign-in and Email-OTP:
+// both verify the same email address, so a person who uses either resolves to
+// one account + one wallet (refId "email:<addr>"). Deliberately unlike the
+// X/Discord rule where separate providers never link.
+export type IdentityProvider = "x" | "discord" | "email";
 
 export type AppUser = {
   id: string;

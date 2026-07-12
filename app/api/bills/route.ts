@@ -2,7 +2,12 @@ import { getSessionUser } from "@/lib/session";
 import { createBill, listDebtsIOwe, listBillsICreated, type NewDebt } from "@/lib/bills-repo";
 import type { IdentityProvider } from "@/lib/types";
 
-const PROVIDERS: readonly IdentityProvider[] = ["x", "discord"];
+const PROVIDERS: readonly IdentityProvider[] = ["x", "discord", "email"];
+
+// Basic email shape check for provider="email" debts (Google + OTP identities
+// are both keyed by email). Not RFC-perfect — just enough to reject obvious junk
+// before it becomes an unresolvable debt.
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -46,6 +51,11 @@ export async function POST(request: Request) {
     }
     if (!handle || !Number.isFinite(amount) || amount <= 0) {
       return Response.json({ error: "Each debt needs a handle and a positive amount." }, { status: 400 });
+    }
+    // Email-tagged debts must look like an email — the handle IS the address the
+    // Google/OTP user will later sign in with, so a malformed one never resolves.
+    if (provider === "email" && !EMAIL_RE.test(handle)) {
+      return Response.json({ error: `"${handle}" is not a valid email address.` }, { status: 400 });
     }
     // You can only "tag yourself" when it's the same identity on the same
     // provider — an X @alice and a Discord alice are different people.

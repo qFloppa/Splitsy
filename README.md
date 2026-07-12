@@ -3,6 +3,7 @@
 Splitsy is a Next.js prototype for scanning receipts, splitting shared costs, and collecting payments on Arc Testnet. It combines:
 
 - Receipt scanning for structured bill extraction.
+- Social sign-in via X, Discord, Google, or a one-time email code — each provisions a Circle test-USDC wallet.
 - FX conversion into USD.
 - Equal or manual bill splitting.
 - Onchain bill submission and wallet-based debt discovery.
@@ -48,7 +49,30 @@ DEPLOYER_PRIVATE_KEY=0x... # only needed for factory deployment
 RECURRING_SETTLER_PRIVATE_KEY=0x... # server wallet that pays gas for recurring settlement
 RECURRING_SETTLER_SECRET=... # bearer token for /api/recurring/settle
 CRON_SECRET=... # optional host-provided cron bearer token
+
+SESSION_SECRET=...            # min 32 chars — signs the login session cookie
+X_CLIENT_ID=... / X_CLIENT_SECRET=...             # Sign in with X
+DISCORD_CLIENT_ID=... / DISCORD_CLIENT_SECRET=...  # Sign in with Discord
+GOOGLE_CLIENT_ID=... / GOOGLE_CLIENT_SECRET=...    # Sign in with Google
+RESEND_API_KEY=... / EMAIL_FROM=...                # Email-OTP delivery (Resend)
 ```
+
+### Sign-in providers
+
+Splitsy identifies a person by one of four providers, each giving them a Circle
+test-USDC wallet on first sign-in (no seed phrase, no browser wallet needed):
+
+- **X**, **Discord**, **Google** — OAuth 2.0 (PKCE). Configure the matching
+  `*_CLIENT_ID` / `*_CLIENT_SECRET` and register the callback
+  `<origin>/api/auth/<provider>/callback`.
+- **Email-OTP** — a 6-digit code emailed via [Resend](https://resend.com). Set
+  `RESEND_API_KEY` and `EMAIL_FROM` (a verified sender), and create the
+  `email_otps` table by running `schema-otp.sql` once in the Supabase SQL editor.
+
+Google and Email-OTP both resolve to the **same** email-keyed identity, so a
+person who signs in either way shares one account and one wallet. X and Discord
+are separate namespaces (an X `@alice` and a Discord `alice` are different
+people). Each provider is independent — enable only the ones you configure.
 
 Supabase and Circle API keys are included in `.env.example` for future persistence and server-side Circle flows. The current browser demo primarily uses receipt scanning, public FX data, browser wallets, and Arc Testnet contract calls.
 

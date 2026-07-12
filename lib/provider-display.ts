@@ -34,6 +34,20 @@ export function providerDisplay(person: ProviderPerson): ProviderDisplay {
     };
   }
 
+  if (provider === "email") {
+    const email = person.handle ?? null;
+    return {
+      provider,
+      // unavatar.io resolves a Gravatar (or provider-specific avatar) from an
+      // email, so a tagged email shows a face even before they've signed in.
+      // A stored avatar_url (Google picture) takes precedence once we have one.
+      avatarSrc: person.avatarUrl || (email ? `https://unavatar.io/${encodeURIComponent(email)}` : null),
+      profileUrl: null, // No public profile page for an email identity.
+      label: email ?? "?",
+      prefix: "",
+    };
+  }
+
   // X (default): unavatar.io resolves an avatar from the handle alone, so tagged
   // users show a picture even before they've signed in.
   return {
