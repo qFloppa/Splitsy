@@ -4,7 +4,8 @@ import { AnimatePresence, motion } from "framer-motion";
 import { CheckCircle2, ExternalLink, KeyRound, Loader2, Wallet, XCircle } from "lucide-react";
 import { useEffect, useState } from "react";
 import confetti from "canvas-confetti";
-import { providerDisplay, type ProviderPerson } from "@/lib/provider-display";
+import { type ProviderPerson } from "@/lib/provider-display";
+import { ProviderTag } from "./ProviderTag";
 
 // Unpaid debts owed by the signed-in user (off-chain handle bills). Renders
 // nothing when not signed in or nothing is owed.
@@ -291,36 +292,11 @@ function PaymentDialog({
   );
 }
 
-// Creditor's avatar + handle, shown inline wherever we reference them. Links to
-// the person's public profile when the provider has one (X does, Discord doesn't).
+// Creditor's avatar + platform badge + handle, shown inline wherever we
+// reference them. ProviderTag links to the public profile when the provider has
+// one (X does; Discord/Email don't).
 function CreatorTag({ creator }: { creator?: Creator }) {
-  const d = providerDisplay({ provider: creator?.provider, handle: creator?.handle, avatarUrl: creator?.avatar_url });
-  const inner = (
-    <>
-      {d.avatarSrc ? (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img src={d.avatarSrc} alt="" width={18} height={18} className="h-[18px] w-[18px] rounded-full" />
-      ) : null}
-      {d.prefix}
-      {d.label}
-    </>
-  );
-
-  if (!d.profileUrl) {
-    return <span className="inline-flex items-center gap-1 align-middle font-semibold">{inner}</span>;
-  }
-
-  return (
-    <a
-      href={d.profileUrl}
-      target="_blank"
-      rel="noreferrer"
-      onClick={(e) => e.stopPropagation()}
-      className="inline-flex items-center gap-1 align-middle font-semibold text-[#1d9bf0] hover:underline"
-    >
-      {inner}
-    </a>
-  );
+  return <ProviderTag person={{ provider: creator?.provider, handle: creator?.handle, avatarUrl: creator?.avatar_url }} />;
 }
 
 // PIN entry before a payment. Verifies via /api/wallet/unlock (which sets the

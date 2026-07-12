@@ -10,6 +10,7 @@ import {
   Copy,
   ExternalLink,
   GripVertical,
+  KeyRound,
   Loader2,
   LogOut,
   RefreshCw,
@@ -19,12 +20,39 @@ import {
 import Image from "next/image";
 import { useEffect, useRef, useState } from "react";
 import { readArcUsdcBalance, billUnitsToUsdc } from "@/lib/bill-split-contracts";
+import { providerDisplay } from "@/lib/provider-display";
+import type { IdentityProvider } from "@/lib/types";
+import { ProviderIcon } from "./ProviderTag";
 
-type Me = { id: string; handle: string; name: string | null; avatarUrl: string | null; walletAddress: string | null };
+type Me = { id: string; provider?: IdentityProvider | null; handle: string; name: string | null; avatarUrl: string | null; walletAddress: string | null };
 type Tab = "info" | "send" | "receive" | "history";
 
 function Usdc({ size = 14 }: { size?: number }) {
   return <Image src="/usd-coin-usdc-seeklogo.png" alt="USDC" width={size} height={size} className="inline-block align-text-bottom" />;
+}
+
+// The signed-in user's own handle with its platform badge and correct prefix
+// (X carries "@", Discord/Email don't), linking to the X profile when there is
+// one. Mirrors how tagged people render elsewhere via ProviderTag.
+function OwnHandle({ me, badge = 13 }: { me: Me; badge?: number }) {
+  const d = providerDisplay({ provider: me.provider, handle: me.handle, avatarUrl: me.avatarUrl });
+  const inner = (
+    <>
+      <ProviderIcon provider={d.provider} size={badge} />
+      <strong className="text-[var(--text)]">
+        {d.prefix}
+        {d.label}
+      </strong>
+    </>
+  );
+  if (d.profileUrl) {
+    return (
+      <a href={d.profileUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 align-middle hover:underline">
+        {inner}
+      </a>
+    );
+  }
+  return <span className="inline-flex items-center gap-1 align-middle">{inner}</span>;
 }
 
 export default function XAuthControl() {
@@ -35,6 +63,7 @@ export default function XAuthControl() {
   const [refreshing, setRefreshing] = useState(false);
   const [copied, setCopied] = useState(false);
   const [tab, setTab] = useState<Tab>("info");
+  const [hasPin, setHasPin] = useState<boolean | null>(null);
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -54,6 +83,25 @@ export default function XAuthControl() {
       active = false;
     };
   }, []);
+
+  // Whether the user has chosen a wallet PIN yet. Until they have, the panel
+  // shows nothing but the "choose a PIN" gate — a PIN is required before any
+  // wallet action (and before sending, as always).
+  useEffect(() => {
+    if (!me) return;
+    let active = true;
+    fetch("/api/wallet/pin")
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error("auth"))))
+      .then((d: { hasPin: boolean }) => {
+        if (active) setHasPin(d.hasPin);
+      })
+      .catch(() => {
+        if (active) setHasPin(null);
+      });
+    return () => {
+      active = false;
+    };
+  }, [me]);
 
   async function refreshBalance() {
     if (!me?.walletAddress) return;
@@ -176,7 +224,9 @@ export default function XAuthControl() {
                   <img src={me.avatarUrl} alt="" width={36} height={36} className="h-9 w-9 rounded-full" />
                 ) : null}
                 <div className="min-w-0">
-                  <p className="truncate text-sm font-semibold">@{me.handle}</p>
+                  <p className="flex items-center gap-1 truncate text-sm font-semibold">
+                    <OwnHandle me={me} />
+                  </p>
                   <p className="flex items-center gap-1 text-xs text-[var(--text-muted)]">
                     <Usdc size={12} /> {balance ?? "…"} USDC
                     <button
@@ -192,6 +242,10 @@ export default function XAuthControl() {
                 </div>
               </div>
 
+              {hasPin === false ? (
+                <SetPinGate onDone={() => setHasPin(true)} />
+              ) : (
+                <>
               <div className="mt-3 grid grid-cols-4 gap-1 rounded-full bg-[var(--surface)] p-1 text-xs font-semibold">
                 {(["info", "send", "receive", "history"] as const).map((t) => (
                   <button
@@ -218,8 +272,7 @@ export default function XAuthControl() {
                     </div>
                     <p className="mt-2 text-sm text-[var(--text-muted)]">
                       A Circle wallet on <strong className="text-[var(--text)]">Arc Testnet</strong>, tied to{" "}
-                      <strong className="text-[var(--text)]">@{me.handle}</strong>. Pay and get paid in USDC — no crypto
-                      setup needed.
+                      <OwnHandle me={me} />. Pay and get paid in USDC — no crypto setup needed.
                     </p>
                     {me.walletAddress ? (
                       <>
@@ -255,10 +308,95 @@ export default function XAuthControl() {
                   <HistoryTab ownShort={short} />
                 )}
               </div>
+                </>
+              )}
             </div>
           </motion.div>
         ) : null}
       </AnimatePresence>
+    </div>
+  );
+}
+
+// First-run gate: the user must choose a wallet PIN before doing anything else.
+// Entered twice so a typo can't lock them out of a PIN they didn't mean to set.
+function SetPinGate({ onDone }: { onDone: () => void }) {
+  const [pin, setPin] = useState("");
+  const [confirm, setConfirm] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+
+  const valid = /^\d{4,8}$/.test(pin);
+  const match = pin === confirm;
+
+  async function create() {
+    setMessage(null);
+    if (!valid) return setMessage("PIN must be 4–8 digits.");
+    if (!match) return setMessage("The PINs don't match — try again.");
+    setBusy(true);
+    try {
+      const res = await fetch("/api/wallet/pin", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pin }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setMessage(data.error ?? "Could not set PIN.");
+        setBusy(false);
+        return;
+      }
+      onDone();
+    } catch {
+      setMessage("Network error — please try again.");
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="mt-3 border-t border-[var(--border)] pt-3">
+      <div className="flex items-center gap-2">
+        <span className="flex h-8 w-8 items-center justify-center rounded-full bg-[#2775ca]/15 text-[#2775ca]">
+          <KeyRound size={16} />
+        </span>
+        <p className="text-sm font-semibold">Choose a wallet PIN</p>
+      </div>
+      <p className="mt-2 text-xs text-[var(--text-muted)]">
+        Set a 4–8 digit PIN before using your wallet. You&apos;ll need it to send USDC. Enter it twice to confirm.
+      </p>
+      <input
+        value={pin}
+        onChange={(e) => setPin(e.target.value.replace(/\D/g, ""))}
+        type="password"
+        inputMode="numeric"
+        maxLength={8}
+        autoFocus
+        placeholder="Choose a PIN"
+        className="mt-3 w-full rounded-md border border-[var(--border)] bg-[var(--surface)] px-2 py-1.5 text-sm tracking-[0.3em]"
+      />
+      <input
+        value={confirm}
+        onChange={(e) => setConfirm(e.target.value.replace(/\D/g, ""))}
+        type="password"
+        inputMode="numeric"
+        maxLength={8}
+        placeholder="Confirm PIN"
+        onKeyDown={(e) => e.key === "Enter" && valid && match && !busy && create()}
+        className="mt-2 w-full rounded-md border border-[var(--border)] bg-[var(--surface)] px-2 py-1.5 text-sm tracking-[0.3em]"
+      />
+      {confirm.length > 0 && !match ? (
+        <p className="mt-2 text-xs text-[var(--warning-text)]">The PINs don&apos;t match yet.</p>
+      ) : null}
+      <button
+        type="button"
+        onClick={create}
+        disabled={busy || !valid || !match}
+        className="primary-button mt-3 w-full justify-center disabled:opacity-50"
+      >
+        {busy ? <Loader2 size={15} className="animate-spin" /> : <KeyRound size={15} />}
+        Set PIN
+      </button>
+      {message ? <p className="mt-2 text-xs text-[var(--warning-text)]">{message}</p> : null}
     </div>
   );
 }
@@ -290,38 +428,22 @@ function ReceiveTab({ address, short, copied, onCopy }: { address: string | null
 type SendPhase = "form" | "sending" | "done" | "error";
 
 function SendTab({ balance, onSent }: { balance: string | null; onSent: () => void }) {
-  const [hasPin, setHasPin] = useState<boolean | null>(null);
   const [unlocked, setUnlocked] = useState(false);
   const [to, setTo] = useState("");
   const [amount, setAmount] = useState("");
   const [pin, setPin] = useState("");
-  const [newPin, setNewPin] = useState("");
   const [phase, setPhase] = useState<SendPhase>("form");
   const [message, setMessage] = useState<string | null>(null);
   const [sentTxUrl, setSentTxUrl] = useState<string | null>(null);
 
+  // A PIN always exists by the time this tab renders (the panel gates on it), so
+  // we only need the current unlock state — sending still requires unlocking.
   useEffect(() => {
     fetch("/api/wallet/pin")
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error("auth"))))
-      .then((d: { hasPin: boolean; unlocked: boolean }) => {
-        setHasPin(d.hasPin);
-        setUnlocked(d.unlocked);
-      })
-      .catch(() => setHasPin(null));
+      .then((d: { unlocked: boolean }) => setUnlocked(d.unlocked))
+      .catch(() => {});
   }, []);
-
-  async function createPin() {
-    setMessage(null);
-    const res = await fetch("/api/wallet/pin", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ pin: newPin }),
-    });
-    const data = await res.json();
-    if (!res.ok) return setMessage(data.error ?? "Could not set PIN.");
-    setNewPin("");
-    setHasPin(true);
-  }
 
   async function unlock() {
     setMessage(null);
@@ -382,28 +504,6 @@ function SendTab({ balance, onSent }: { balance: string | null; onSent: () => vo
       setMessage("Network error — please try again.");
       setPhase("error");
     }
-  }
-
-  if (hasPin === false) {
-    return (
-      <div>
-        <p className="text-sm font-semibold">Set a wallet PIN</p>
-        <p className="mt-1 text-xs text-[var(--text-muted)]">A 4–8 digit PIN confirms your transfers.</p>
-        <input
-          value={newPin}
-          onChange={(e) => setNewPin(e.target.value.replace(/\D/g, ""))}
-          type="password"
-          inputMode="numeric"
-          maxLength={8}
-          placeholder="Choose a PIN"
-          className="mt-2 w-full rounded-md border border-[var(--border)] bg-[var(--surface)] px-2 py-1.5 text-sm tracking-[0.3em]"
-        />
-        <button type="button" onClick={createPin} className="primary-button mt-2 w-full justify-center">
-          Set PIN
-        </button>
-        {message ? <p className="mt-2 text-xs text-[var(--warning-text)]">{message}</p> : null}
-      </div>
-    );
   }
 
   if (!unlocked) {

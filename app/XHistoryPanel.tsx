@@ -3,7 +3,8 @@
 import Image from "next/image";
 import { ExternalLink } from "lucide-react";
 import { useEffect, useState } from "react";
-import { providerDisplay, type ProviderPerson } from "@/lib/provider-display";
+import { type ProviderPerson } from "@/lib/provider-display";
+import { ProviderIcon, ProviderTag } from "./ProviderTag";
 
 type Person = { provider?: ProviderPerson["provider"]; handle: string; avatar_url: string | null } | null;
 
@@ -33,23 +34,6 @@ type OwedToMe = {
 };
 
 type WalletTx = { id: string; txHash: string | null };
-
-// Avatar + handle for a tagged person, provider-aware. For X we can fall back to
-// unavatar.io (resolves from the handle alone, so a person tagged before signing
-// in still gets a face); Discord has no such CDN, so only a stored avatar shows.
-function PersonTag({ person, size = 18 }: { person: ProviderPerson; size?: number }) {
-  const d = providerDisplay(person);
-  return (
-    <>
-      {d.avatarSrc ? (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img src={d.avatarSrc} alt="" width={size} height={size} className="rounded-full" style={{ width: size, height: size }} />
-      ) : null}
-      {d.prefix}
-      {d.label}
-    </>
-  );
-}
 
 export default function XHistoryPanel() {
   const [paid, setPaid] = useState<IOwe[]>([]);
@@ -103,7 +87,7 @@ export default function XHistoryPanel() {
                   <span className="flex items-center gap-2 text-sm">
                     <Image src="/paid.png" alt="" width={22} height={22} className="opacity-90" />
                     {d.bill?.merchant ?? "Bill"} — to{" "}
-                    <PersonTag
+                    <ProviderTag
                       person={{
                         provider: d.bill?.creator?.provider,
                         handle: d.bill?.creator?.handle,
@@ -135,7 +119,11 @@ export default function XHistoryPanel() {
       {created.length > 0 ? (
         <div className="rounded-[var(--radius)] border border-[var(--border)] bg-[var(--surface)] p-5">
           <div className="flex items-center gap-2">
-            <Image src="/x.png" alt="" width={16} height={16} />
+            <span className="flex items-center gap-1">
+              <ProviderIcon provider="x" size={15} />
+              <ProviderIcon provider="discord" size={15} />
+              <ProviderIcon provider="email" size={15} />
+            </span>
             <h3 className="text-base font-semibold">Bills you created</h3>
           </div>
           <div className="mt-4 space-y-3">
@@ -156,7 +144,7 @@ export default function XHistoryPanel() {
                     {b.debts.map((d) => (
                       <div key={d.id} className="flex items-center justify-between text-xs">
                         <span className="flex items-center gap-1.5">
-                          <PersonTag
+                          <ProviderTag
                             person={{
                               provider: d.debtor?.provider ?? d.debtor_provider,
                               handle: d.debtor?.handle ?? d.debtor_handle,
