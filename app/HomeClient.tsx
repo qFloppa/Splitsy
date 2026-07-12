@@ -53,6 +53,7 @@ import {
 import {
   approveBillRegistry,
   billMetadataHash,
+  BILL_SPLIT_REGISTRY_ADDRESS,
   BillActivity,
   BillSplitDebt,
   BillSplitWallet,
@@ -67,6 +68,8 @@ import {
   readBillsForSplitter,
   readDebtsForWallet,
   usdcToBillUnits,
+  verifyBillPreimage,
+  type BillPreimage,
   claimBillFunds,
 } from "@/lib/bill-split-contracts";
 import {
@@ -675,6 +678,23 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
       setSubmittedBillId(result.billId);
       setBillState("success");
       setBillMessage(`Bill #${result.billId.toString()} is live on Arc. Payers will see it when they connect.`);
+
+      // Publish the bill's plaintext details so payers can verify them against
+      // the on-chain hash. Fire-and-forget: verification is a nicety, not a
+      // prerequisite to pay, so a failed publish must not fail bill creation.
+      void fetch("/api/onchain-bills/preimage", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          registryAddress: BILL_SPLIT_REGISTRY_ADDRESS,
+          billId: result.billId.toString(),
+          merchant: bill.merchant,
+          currency: bill.currency,
+          total: confirmedUsd,
+          participantLabels: payableParticipants.map((participant) => participant.label),
+        }),
+      }).catch(() => {});
+
       await refreshBillRegistry(wallet.account);
     } catch (caught) {
       setBillState("error");
@@ -1950,6 +1970,8 @@ function DebtWorkspace({
                     <Metric label="Remaining" value={`$${billUnitsToUsdc(debt.remaining)}`} />
                   </div>
 
+                  <BillVerification billId={debt.billId} metadataHash={debt.metadataHash} />
+
                   <div className="mt-3">
                     <Field
                       label="Payment amount"
@@ -2257,6 +2279,7 @@ function HistoryRecordCard({
 
       {open ? (
         <div className="history-detail">
+          <BillVerification billId={debt.billId} metadataHash={debt.metadataHash} />
           {activity.status === "loading" ? (
             <p className="text-sm text-[var(--text-muted)]">Loading on-chain activity…</p>
           ) : activity.status === "error" ? (
@@ -3262,6 +3285,114 @@ function Message({ tone, children }: { tone: "error" | "neutral"; children: Reac
     <div className={`message ${tone === "error" ? "message-error" : "message-neutral"}`}>
       {tone === "error" ? <AlertTriangle className="mt-0.5 shrink-0" size={17} /> : <CheckCircle2 className="mt-0.5 shrink-0" size={17} />}
       {children}
+    </div>
+  );
+}
+
+// Recomputes an on-chain bill's hash from its published plaintext details and
+// shows whether they match the fingerprint locked on Arc. "Verified" means the
+// merchant/total/split shown here are exactly what the creator committed
+// on-chain; "Couldn't verify" means the details don't match — a red flag. The
+// comparison runs in the payer's own browser, so it trusts only the chain.
+function BillVerification({ billId, metadataHash }: { billId: bigint; metadataHash: `0x${string}` }) {
+  const [status, setStatus] = useState<"loading" | "verified" | "mismatch" | "unpublished" | "error">("loading");
+  const [merchant, setMerchant] = useState<string>("");
+  const [showDetail, setShowDetail] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setStatus("loading");
+      try {
+        const res = await fetch(
+          `/api/onchain-bills/preimage?registry=${BILL_SPLIT_REGISTRY_ADDRESS}&billId=${billId.toString()}`,
+        );
+        if (res.status === 404) {
+          if (!cancelled) setStatus("unpublished");
+          return;
+        }
+        if (!res.ok) {
+          if (!cancelled) setStatus("error");
+          return;
+        }
+        const { preimage } = (await res.json()) as { preimage: BillPreimage };
+        const ok = verifyBillPreimage(preimage, metadataHash);
+        if (!cancelled) {
+          setMerchant(preimage.merchant);
+          setStatus(ok ? "verified" : "mismatch");
+        }
+      } catch {
+        if (!cancelled) setStatus("error");
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [billId, metadataHash]);
+
+  if (status === "loading") {
+    return (
+      <p className="mt-2 flex items-center gap-1.5 text-xs text-[var(--text-muted)]">
+        <Loader2 className="animate-spin" size={13} /> Checking this bill against Arc…
+      </p>
+    );
+  }
+
+  if (status === "unpublished" || status === "error") {
+    return (
+      <p className="mt-2 text-xs text-[var(--text-muted)]">
+        {status === "unpublished"
+          ? "On-chain verification isn’t available for this bill."
+          : "Couldn’t reach the verifier — refresh to retry."}
+      </p>
+    );
+  }
+
+  const verified = status === "verified";
+  return (
+    <div
+      className={`mt-2 rounded-[var(--radius)] border p-2.5 text-xs ${
+        verified
+          ? "border-[color-mix(in_srgb,var(--accent)_40%,transparent)] bg-[color-mix(in_srgb,var(--accent)_10%,transparent)]"
+          : "border-[color-mix(in_srgb,#dc2626_45%,transparent)] bg-[color-mix(in_srgb,#dc2626_10%,transparent)]"
+      }`}
+    >
+      <div className="flex items-start gap-1.5 font-semibold">
+        {verified ? (
+          <ShieldCheck className="mt-0.5 shrink-0 text-[var(--accent)]" size={15} />
+        ) : (
+          <AlertTriangle className="mt-0.5 shrink-0 text-[#dc2626]" size={15} />
+        )}
+        <span>
+          {verified
+            ? `Verified on Arc${merchant ? ` — ${merchant}` : ""}`
+            : "Couldn’t verify — details don’t match Arc"}
+        </span>
+      </div>
+      <p className="mt-1 text-[var(--text-muted)]">
+        {verified
+          ? "The merchant, total, and split shown here match the record locked on Arc when this bill was created."
+          : "These details don’t match the record locked on Arc. Don’t pay until the bill creator re-checks it."}
+      </p>
+      <button
+        className="mt-1.5 inline-flex items-center gap-1 text-[var(--text-muted)] underline underline-offset-2"
+        onClick={() => setShowDetail((open) => !open)}
+        type="button"
+      >
+        <ChevronDown className={`transition-transform ${showDetail ? "rotate-180" : ""}`} size={12} />
+        What does this mean?
+      </button>
+      {showDetail ? (
+        <div className="mt-1.5 space-y-1.5 text-[var(--text-muted)]">
+          <p>
+            When this bill was created, Splitsy wrote a one-way fingerprint (a keccak256 hash) of its
+            details onto the Arc blockchain, where it can’t be edited. Your browser just recomputed that
+            fingerprint from the bill’s details and compared it to the on-chain one
+            {verified ? " — they match, so nothing has been altered since." : " — they don’t match."}
+          </p>
+          <p className="break-all font-mono text-[10px]">On-chain hash: {metadataHash}</p>
+        </div>
+      ) : null}
     </div>
   );
 }
