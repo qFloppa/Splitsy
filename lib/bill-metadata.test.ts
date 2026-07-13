@@ -7,6 +7,7 @@ const preimage: BillPreimage = {
   currency: "USD",
   total: 24.5,
   participantLabels: ["Alice", "Bob"],
+  receiptHash: "0xabc123",
 };
 
 test("verifyBillPreimage accepts the exact preimage", () => {
@@ -26,6 +27,8 @@ test("any altered field flips verification to false", () => {
   assert.equal(verifyBillPreimage({ ...preimage, currency: "EUR" }, hash), false);
   assert.equal(verifyBillPreimage({ ...preimage, participantLabels: ["Alice", "Bob", "Carol"] }, hash), false);
   assert.equal(verifyBillPreimage({ ...preimage, participantLabels: ["Bob", "Alice"] }, hash), false);
+  assert.equal(verifyBillPreimage({ ...preimage, receiptHash: "0xdifferent" }, hash), false);
+  assert.equal(verifyBillPreimage({ ...preimage, receiptHash: "" }, hash), false);
 });
 
 test("hash is stable/deterministic across calls", () => {

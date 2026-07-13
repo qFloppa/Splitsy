@@ -15,6 +15,19 @@ create table if not exists onchain_bill_preimages (
   currency            text not null default 'USD',
   total_usd           numeric(20,2) not null,   -- exact dollars used in the hash
   participant_labels  text[] not null,          -- ordered, as hashed (join '|')
+  receipt_hash        text not null default '', -- keccak256 of the receipt image bytes ('' = no photo)
   created_at          timestamptz not null default now(),
   primary key (registry_address, bill_id)
 );
+
+-- Additive for existing deployments (no-op if the column already exists).
+alter table onchain_bill_preimages
+  add column if not exists receipt_hash text not null default '';
+
+-- Receipt images live in Supabase Storage, not on-chain — only their keccak256
+-- goes into the commitment. Bucket is public-read so a payer's browser can fetch
+-- and eyeball the image; writes go through the service role in the publish route.
+-- Objects are keyed `<registry_address>/<bill_id>` (see onchain-bill-preimage-repo).
+insert into storage.buckets (id, name, public)
+values ('onchain-bill-receipts', 'onchain-bill-receipts', true)
+on conflict (id) do nothing;

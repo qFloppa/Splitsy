@@ -21,13 +21,24 @@ export function proxy(request: NextRequest) {
   const nonce = Buffer.from(crypto.randomUUID()).toString("base64");
   const isDev = process.env.NODE_ENV === "development";
 
+  // Allow the Supabase Storage origin (receipt images) to load inline. Derived
+  // from the configured URL so it tracks the project without hardcoding a host.
+  let supabaseOrigin = "";
+  try {
+    if (process.env.NEXT_PUBLIC_SUPABASE_URL) {
+      supabaseOrigin = new URL(process.env.NEXT_PUBLIC_SUPABASE_URL).origin;
+    }
+  } catch {
+    supabaseOrigin = "";
+  }
+
   const csp = [
     "default-src 'self'",
     "base-uri 'self'",
     "object-src 'none'",
     "frame-ancestors 'none'",
     "form-action 'self'",
-    "img-src 'self' data: blob: https://pbs.twimg.com https://abs.twimg.com https://unavatar.io https://cdn.discordapp.com https://lh3.googleusercontent.com",
+    `img-src 'self' data: blob: https://pbs.twimg.com https://abs.twimg.com https://unavatar.io https://cdn.discordapp.com https://lh3.googleusercontent.com${supabaseOrigin ? ` ${supabaseOrigin}` : ""}`,
     "font-src 'self' data:",
     "style-src 'self' 'unsafe-inline'",
     `script-src 'self' 'nonce-${nonce}' 'strict-dynamic'${isDev ? " 'unsafe-eval'" : ""}`,
