@@ -3512,6 +3512,12 @@ function BillVerification({ billId, metadataHash }: { billId: bigint; metadataHa
     };
   }, [billId, metadataHash]);
 
+  // Altered total: the receipt IS the evidence, so open it by default — but leave
+  // the user free to hide it via the toggle.
+  useEffect(() => {
+    if (audit.state === "altered") setShowReceipt(true);
+  }, [audit.state]);
+
   if (status === "loading") {
     return (
       <p className="mt-2 flex items-center gap-1.5 text-xs text-[var(--text-muted)]">
@@ -3535,9 +3541,7 @@ function BillVerification({ billId, metadataHash }: { billId: bigint; metadataHa
   // Green reassurance is only honest when the commitment matches AND the receipt
   // total agrees. An altered total is treated as a red warning, like a mismatch.
   const safe = verified && !altered;
-  // When the total is altered the receipt IS the evidence — force it open rather
-  // than hiding it behind the toggle.
-  const receiptOpen = showReceipt || altered;
+  const receiptOpen = showReceipt;
   const title = altered
     ? `Warning — the total was changed${merchant ? ` — ${merchant}` : ""}`
     : verified
@@ -3616,7 +3620,7 @@ function BillVerification({ billId, metadataHash }: { billId: bigint; metadataHa
       {verified && receiptUrl ? (
         <div className="mt-2">
           <button
-            className={`inline-flex items-center gap-1 text-[var(--text-muted)] underline underline-offset-2 ${altered ? "hidden" : ""}`}
+            className="inline-flex items-center gap-1 text-[var(--text-muted)] underline underline-offset-2"
             onClick={() => setShowReceipt((open) => !open)}
             type="button"
           >
