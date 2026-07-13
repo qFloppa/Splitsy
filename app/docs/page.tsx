@@ -29,6 +29,7 @@ const sections = [
   "Using Splitsy",
   "Sign-In and Wallets",
   "Bill Splits",
+  "Bill Verification",
   "Recurring Tabs",
   "Circle and Arc",
   "Architecture",
@@ -376,6 +377,151 @@ export default function DocsPage() {
               Amounts are represented with 6 decimals to match USDC. User-entered dollar values are converted into USDC base
               units before they are submitted to the contract.
             </p>
+          </section>
+
+          <section id="bill-verification" className="docs-section">
+            <SectionHeading icon={<ShieldCheck size={20} />} title="Bill Verification" />
+            <p>
+              Every on-chain bill carries a verification badge in the payer&apos;s view. It answers{" "}
+              <strong>two different questions</strong>, and the whole design hinges on keeping them separate:
+            </p>
+            <div className="docs-card-grid two">
+              <InfoCard icon={<ShieldCheck />} title="1. Is this a genuine bill?">
+                Are the merchant, total, and split shown to you <em>exactly</em> what the creator committed to
+                Arc — with nothing changed since? This is about <strong>authenticity</strong>, and it is proven
+                by cryptography.
+              </InfoCard>
+              <InfoCard icon={<ReceiptText />} title="2. Is the total correct?">
+                Does the amount you&apos;re being charged actually match the receipt? This is about{" "}
+                <strong>honesty</strong>, and it is checked by re-reading the receipt image itself.
+              </InfoCard>
+            </div>
+            <Callout title="Why “Genuine bill on Arc” and “Total was changed” can both be true">
+              A genuine bill is not the same as a correct one. The blockchain faithfully records whatever the
+              creator committed — so if a creator scans a $3.96 receipt but edits the total to $3.00{" "}
+              <em>before</em> submitting, the chain honestly stores that $3.00 bill. Check 1 confirms the bill is
+              really the creator&apos;s committed record (not tampered with afterward); check 2 catches that the
+              committed total disagrees with the receipt. The alteration happened <strong>at creation</strong>,
+              not after — which is exactly why both statements are true at once.
+            </Callout>
+
+            <h3 className="docs-subheading">What actually goes on-chain</h3>
+            <p>
+              Storing a full receipt on a blockchain would be expensive and public. Instead, only a{" "}
+              <strong>32-byte fingerprint</strong> is committed. When a bill is created, Splitsy computes a{" "}
+              <code>keccak256</code> hash over the bill&apos;s canonical fields and passes it to{" "}
+              <code>createBill(bytes32 metadataHash, address[] participants, uint256[] amounts)</code>. The
+              contract emits <code>BillCreated</code> with that hash; it can never be edited afterward.
+            </p>
+            <pre className="docs-code">{`metadataHash = keccak256(
+  abi.encode(
+    merchant,           // string,   e.g. "ROYAL HANDI HUT"
+    currency,           // string,   e.g. "USD"
+    cents,              // uint256,  total in cents (e.g. 300 = $3.00)
+    labels.join("|"),   // string,   participant labels in order
+    receiptHash         // string,   keccak256 of the receipt image ("" if none)
+  )
+)`}</pre>
+            <p>
+              The human-readable values behind that hash — the <strong>preimage</strong> — are published
+              off-chain to Supabase so a payer&apos;s browser can recompute the hash and compare. The preimage is
+              only a convenience transport: it is <strong>never trusted</strong>. The server that stores it first
+              reads the real <code>metadataHash</code> back from Arc and refuses to save any preimage that
+              doesn&apos;t hash to it, so a stored record is always genuine.
+            </p>
+
+            <h3 className="docs-subheading">The receipt image is committed too</h3>
+            <p>
+              To make check 2 possible, the receipt itself is bound to the bill. In the creator&apos;s browser the
+              photo is downscaled and re-encoded to a compact JPEG (~80&nbsp;KB), then hashed with{" "}
+              <code>keccak256</code>. That <code>receiptHash</code> is one of the fields inside{" "}
+              <code>metadataHash</code> above, so the exact image is anchored on-chain. The image bytes themselves
+              are uploaded to a public Supabase Storage bucket keyed by <code>registry/billId</code>. The publish
+              route re-hashes the uploaded bytes and rejects anything that doesn&apos;t match the committed{" "}
+              <code>receiptHash</code>, so the stored image is provably the committed one. Bills typed in by hand
+              have no image and commit <code>receiptHash = &quot;&quot;</code>.
+            </p>
+
+            <h3 className="docs-subheading">What the payer&apos;s browser does</h3>
+            <p>
+              Verification runs entirely in the payer&apos;s browser and trusts only the chain — Supabase is just
+              a delivery pipe. The two checks map directly to the two badge lines:
+            </p>
+            <div className="docs-steps">
+              <Step number="1" title="Recompute the fingerprint (authenticity)">
+                Fetch the preimage, recompute <code>keccak256</code> over its fields, and compare to the{" "}
+                <code>metadataHash</code> read from Arc. A single altered character — merchant, a cent, a label,
+                or the receipt hash — makes the fingerprints differ. Match ⇒ <em>&quot;Genuine bill on Arc.&quot;</em>{" "}
+                Mismatch ⇒ <em>&quot;Details don&apos;t match Arc — don&apos;t pay.&quot;</em>
+              </Step>
+              <Step number="2" title="Re-hash the committed receipt (provenance)">
+                Download the receipt image and re-hash its bytes. If the hash doesn&apos;t equal the committed{" "}
+                <code>receiptHash</code>, the image is not the committed one and is neither shown nor trusted. If
+                it matches, the payer is looking at the exact photo anchored on-chain.
+              </Step>
+              <Step number="3" title="Re-read the receipt and compare (honesty)">
+                The browser independently OCRs that verified image, converting a non-USD total to USD with the
+                same FX endpoint the creator used. It compares the receipt&apos;s own total to the committed
+                total. Because the payer extracts the number themselves from a hash-locked image, a creator who
+                committed a different figure is caught — no trust in the creator required.
+              </Step>
+            </div>
+
+            <h3 className="docs-subheading">What each badge state means</h3>
+            <div className="docs-table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Badge</th>
+                    <th>Check 1 — genuine?</th>
+                    <th>Check 2 — total vs receipt</th>
+                    <th>What it means for you</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td>Verified on Arc</td>
+                    <td>Match</td>
+                    <td>Receipt total matches</td>
+                    <td>Safe to pay: authentic bill and the amount matches the receipt.</td>
+                  </tr>
+                  <tr>
+                    <td>Warning — the total was changed</td>
+                    <td>Match</td>
+                    <td>Receipt reads a different amount</td>
+                    <td>Real bill, but the charged total disagrees with the receipt. Ask the creator first.</td>
+                  </tr>
+                  <tr>
+                    <td>Genuine, no receipt</td>
+                    <td>Match</td>
+                    <td>No receipt to check</td>
+                    <td>Creator typed the total by hand; there is no bill image to cross-check against.</td>
+                  </tr>
+                  <tr>
+                    <td>Genuine, couldn&apos;t re-read</td>
+                    <td>Match</td>
+                    <td>OCR/FX unavailable</td>
+                    <td>Authentic bill; open the receipt and compare the total by eye.</td>
+                  </tr>
+                  <tr>
+                    <td>This bill doesn&apos;t match Arc</td>
+                    <td>Mismatch</td>
+                    <td>Not evaluated</td>
+                    <td>What you&apos;re shown is not what was committed. Do not pay.</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+
+            <Callout title="Honest limits of the check">
+              Check 2 is a strong signal, not a proof of truth. OCR can misread and exchange rates drift, so a
+              small tolerance (a few cents or ~2%) absorbs noise and only a real gap is flagged — a tiny
+              alteration within tolerance can pass. And nothing stops a creator from committing a fake receipt
+              that matches a fake total; the system proves a bill is authentic and cross-checks it against its own
+              receipt, but it cannot know the receipt is real. To keep the (paid, slow) OCR from re-running on
+              every page load, each result is cached in the browser keyed by the receipt&apos;s content hash, so a
+              reload reuses the same verdict.
+            </Callout>
           </section>
 
           <section id="recurring-tabs" className="docs-section">

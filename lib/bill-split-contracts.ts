@@ -586,7 +586,7 @@ export async function readBillActivity(billId: bigint): Promise<BillActivity> {
 
 // Re-exported from the isomorphic module so server routes can hash without
 // pulling in this "use client" file. See lib/bill-metadata.ts.
-export { billMetadataHash, verifyBillPreimage, type BillPreimage } from "@/lib/bill-metadata";
+export { billMetadataHash, hashReceiptBytes, verifyBillPreimage, type BillPreimage } from "@/lib/bill-metadata";
 
 export function billPaymentMemoId({ billId, payer }: { billId: bigint; payer: `0x${string}` }) {
   return keccak256(

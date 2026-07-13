@@ -1157,6 +1157,19 @@ input[type="number"],
   font-size: 0.88em;
 }
 
+.docs-code {
+  margin-top: 1rem;
+  padding: 0.9rem 1rem;
+  border: 1px solid var(--docs-border);
+  border-radius: 10px;
+  background: var(--docs-code-bg);
+  color: var(--docs-code-text);
+  font-size: 0.8rem;
+  line-height: 1.65;
+  overflow-x: auto;
+  white-space: pre;
+}
+
 .docs-card-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));

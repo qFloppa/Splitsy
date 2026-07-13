@@ -66,12 +66,15 @@ export async function POST(request: Request) {
     currency?: unknown;
     total?: unknown;
     participantLabels?: unknown;
+    receiptHash?: unknown;
+    receiptImageBase64?: unknown;
   } | null;
   if (!body) {
     return Response.json({ error: "Invalid JSON body" }, { status: 400 });
   }
 
-  const { registryAddress, billId, merchant, currency, total, participantLabels } = body;
+  const { registryAddress, billId, merchant, currency, total, participantLabels, receiptHash, receiptImageBase64 } =
+    body;
   if (!isAddress(registryAddress) || !isBillId(billId)) {
     return Response.json({ error: "registryAddress and billId are required" }, { status: 400 });
   }
@@ -81,10 +84,17 @@ export async function POST(request: Request) {
     typeof total !== "number" ||
     !Number.isFinite(total) ||
     !Array.isArray(participantLabels) ||
-    !participantLabels.every((label) => typeof label === "string")
+    !participantLabels.every((label) => typeof label === "string") ||
+    typeof receiptHash !== "string" ||
+    (receiptImageBase64 !== undefined && typeof receiptImageBase64 !== "string")
   ) {
     return Response.json({ error: "Invalid bill fields" }, { status: 400 });
   }
+  // A committed receiptHash requires the image bytes to store; "" requires none.
+  if (Boolean(receiptHash) !== Boolean(receiptImageBase64)) {
+    return Response.json({ error: "receiptHash and receiptImageBase64 must be provided together" }, { status: 400 });
+  }
+  const receiptBytes = receiptImageBase64 ? new Uint8Array(Buffer.from(receiptImageBase64, "base64")) : null;
 
   // Read the committed hash straight from Arc — never trust a client-sent hash.
   let onchainHash: `0x${string}`;
@@ -102,8 +112,9 @@ export async function POST(request: Request) {
 
   try {
     await publishOnchainBillPreimage(
-      { registryAddress, billId, merchant, currency, total, participantLabels },
+      { registryAddress, billId, merchant, currency, total, participantLabels, receiptHash },
       onchainHash,
+      receiptBytes,
     );
   } catch (err) {
     // A mismatch is a client error (wrong details), not a server fault.
