@@ -36,9 +36,15 @@ function celebrate() {
   });
 }
 
-export default function XDebtsPanel() {
+export default function XDebtsPanel({ onCount }: { onCount?: (n: number) => void }) {
   const [debts, setDebts] = useState<IOwe[]>([]);
   const [flow, setFlow] = useState<Flow | null>(null);
+
+  // Report the unpaid count up so the parent can render one merged pending
+  // window whose heading sums social + wallet debts.
+  useEffect(() => {
+    onCount?.(debts.length);
+  }, [debts.length, onCount]);
 
   function apply(list: IOwe[]) {
     setDebts(list.filter((d) => d.status !== "paid"));
@@ -111,38 +117,24 @@ export default function XDebtsPanel() {
 
   return (
     <>
-      {debts.length > 0 ? (
-        <div className="debt-alert p-4">
-          <p className="text-sm font-semibold text-[var(--accent)]">Action needed</p>
-          <h3 className="mt-1 text-[clamp(1.35rem,3vw,2.2rem)] font-semibold leading-tight">
-            You have {debts.length} unpaid bill{debts.length === 1 ? "" : "s"}
-          </h3>
-          <p className="mt-2 text-sm text-[var(--text-muted)]">
-            Tagged to your handle. Pay from your wallet, created when you signed in.
-          </p>
-
-          <div className="mt-4 space-y-3">
-            {debts.map((d) => (
-              <motion.div
-                key={d.id}
-                layout
-                exit={{ opacity: 0, x: 24, transition: { duration: 0.25 } }}
-                className="flex items-center justify-between rounded-[var(--radius)] border border-[var(--border)] bg-[var(--surface-muted)] p-3"
-              >
-                <span className="flex items-center gap-1.5 text-sm">
-                  {d.bill?.merchant ?? "Bill"} — to <CreatorTag creator={d.bill?.creator} />
-                </span>
-                <span className="flex items-center gap-3">
-                  <strong className="amount-text">{d.amount_usdc} USDC</strong>
-                  <button className="primary-button" onClick={() => setFlow({ debt: d, phase: "confirm" })} type="button">
-                    Pay
-                  </button>
-                </span>
-              </motion.div>
-            ))}
-          </div>
-        </div>
-      ) : null}
+      {debts.map((d) => (
+        <motion.div
+          key={d.id}
+          layout
+          exit={{ opacity: 0, x: 24, transition: { duration: 0.25 } }}
+          className="flex items-center justify-between rounded-[var(--radius)] border border-[var(--border)] bg-[var(--surface-muted)] p-3"
+        >
+          <span className="flex items-center gap-1.5 text-sm">
+            {d.bill?.merchant ?? "Bill"} — to <CreatorTag creator={d.bill?.creator} />
+          </span>
+          <span className="flex items-center gap-3">
+            <strong className="amount-text">{d.amount_usdc} USDC</strong>
+            <button className="primary-button" onClick={() => setFlow({ debt: d, phase: "confirm" })} type="button">
+              Pay
+            </button>
+          </span>
+        </motion.div>
+      ))}
 
       <AnimatePresence>
         {flow ? (
