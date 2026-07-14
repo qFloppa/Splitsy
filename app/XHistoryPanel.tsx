@@ -1,10 +1,10 @@
 "use client";
 
-import Image from "next/image";
 import { ExternalLink } from "lucide-react";
 import { useEffect, useState } from "react";
 import { type ProviderPerson } from "@/lib/provider-display";
-import { ProviderIcon, ProviderTag } from "./ProviderTag";
+import { ProviderTag } from "./ProviderTag";
+import { HistoryCard, PaidBillStamp } from "./HistoryCard";
 
 type Person = { provider?: ProviderPerson["provider"]; handle: string; avatar_url: string | null } | null;
 
@@ -35,7 +35,11 @@ type OwedToMe = {
 
 type WalletTx = { id: string; txHash: string | null };
 
-export default function XHistoryPanel() {
+// Off-chain (handle) history, rendered headerless with the same HistoryCard
+// shell + PaidBillStamp as the on-chain records so both look identical inside
+// the shared History panel. `onCount` reports total records up so the panel can
+// show one empty state across social + wallet.
+export default function XHistoryPanel({ onCount }: { onCount?: (n: number) => void }) {
   const [paid, setPaid] = useState<IOwe[]>([]);
   const [created, setCreated] = useState<OwedToMe[]>([]);
   const [hashById, setHashById] = useState<Record<string, string>>({});
@@ -66,50 +70,50 @@ export default function XHistoryPanel() {
     };
   }, []);
 
-  if (paid.length === 0 && created.length === 0) return null;
+  useEffect(() => {
+    onCount?.(paid.length + created.length);
+  }, [paid.length, created.length, onCount]);
 
   return (
-    <div className="space-y-5">
+    <>
       {paid.length > 0 ? (
-        <div className="rounded-[var(--radius)] border border-[var(--border)] bg-[var(--surface)] p-5">
-          <div className="flex items-center gap-2">
-            <Image src="/paid.png" alt="Paid" width={18} height={18} />
-            <h3 className="text-base font-semibold">Paid</h3>
-          </div>
-          <div className="mt-4 space-y-2">
+        <div className="space-y-2">
+          <p className="text-sm font-semibold text-[var(--text-muted)]">
+            Paid bill{paid.length === 1 ? "" : "s"} — settled from your wallet
+          </p>
+          <div className="space-y-2">
             {paid.map((d) => {
               const hash = d.paid_tx_hash ? hashById[d.paid_tx_hash] : undefined;
               return (
-                <div
+                <HistoryCard
                   key={d.id}
-                  className="flex items-center justify-between rounded-[var(--radius)] border border-[var(--border)] bg-[var(--surface-muted)] p-3"
-                >
-                  <span className="flex items-center gap-2 text-sm">
-                    <Image src="/paid.png" alt="" width={22} height={22} className="opacity-90" />
-                    {d.bill?.merchant ?? "Bill"} — to{" "}
-                    <ProviderTag
-                      person={{
-                        provider: d.bill?.creator?.provider,
-                        handle: d.bill?.creator?.handle,
-                        avatarUrl: d.bill?.creator?.avatar_url,
-                      }}
-                    />
-                  </span>
-                  <span className="flex items-center gap-3">
-                    <strong className="amount-text">{d.amount_usdc} USDC</strong>
-                    {hash ? (
+                  title={
+                    <span className="flex items-center gap-1.5">
+                      {d.bill?.merchant ?? "Bill"} — to{" "}
+                      <ProviderTag
+                        person={{
+                          provider: d.bill?.creator?.provider,
+                          handle: d.bill?.creator?.handle,
+                          avatarUrl: d.bill?.creator?.avatar_url,
+                        }}
+                      />
+                    </span>
+                  }
+                  summary={<span className="amount-text">{d.amount_usdc} USDC</span>}
+                  badge={<PaidBillStamp compact />}
+                  detail={
+                    hash ? (
                       <a
                         href={`${explorer}/tx/${hash}`}
                         target="_blank"
                         rel="noreferrer"
-                        aria-label="View transaction"
-                        className="inline-flex items-center gap-1 text-xs font-semibold text-[#1d9bf0]"
+                        className="history-tx-link inline-flex items-center gap-1"
                       >
-                        <ExternalLink size={12} /> TX
+                        <ExternalLink size={12} /> View transaction
                       </a>
-                    ) : null}
-                  </span>
-                </div>
+                    ) : undefined
+                  }
+                />
               );
             })}
           </div>
@@ -117,33 +121,31 @@ export default function XHistoryPanel() {
       ) : null}
 
       {created.length > 0 ? (
-        <div className="rounded-[var(--radius)] border border-[var(--border)] bg-[var(--surface)] p-5">
-          <div className="flex items-center gap-2">
-            <span className="flex items-center gap-1">
-              <ProviderIcon provider="x" size={15} />
-              <ProviderIcon provider="discord" size={15} />
-              <ProviderIcon provider="email" size={15} />
-            </span>
-            <h3 className="text-base font-semibold">Bills you created</h3>
-          </div>
-          <div className="mt-4 space-y-3">
+        <div className="space-y-2">
+          <p className="text-sm font-semibold text-[var(--text-muted)]">
+            Bill{created.length === 1 ? "" : "s"} you created — tagged by handle
+          </p>
+          <div className="space-y-2">
             {created.map((b) => {
               const paidCount = b.debts.filter((d) => d.status === "paid").length;
+              const allPaid = b.debts.length > 0 && paidCount === b.debts.length;
               return (
-                <div key={b.id} className="rounded-[var(--radius)] border border-[var(--border)] bg-[var(--surface-muted)] p-3">
-                  <div className="flex items-center justify-between">
-                    <strong className="text-sm">{b.merchant ?? "Bill"}</strong>
-                    <span className="flex items-center gap-2">
-                      <span className="text-xs text-[var(--text-muted)]">
-                        {paidCount}/{b.debts.length} paid
-                      </span>
-                      <strong className="amount-text">{b.total_usdc} USDC</strong>
-                    </span>
-                  </div>
-                  <div className="mt-2 space-y-1">
-                    {b.debts.map((d) => (
-                      <div key={d.id} className="flex items-center justify-between text-xs">
-                        <span className="flex items-center gap-1.5">
+                <HistoryCard
+                  key={b.id}
+                  title={b.merchant ?? "Bill"}
+                  summary={
+                    <>
+                      {paidCount}/{b.debts.length} paid ·{" "}
+                      <span className="amount-text">{b.total_usdc} USDC</span>
+                    </>
+                  }
+                  badge={
+                    allPaid ? <PaidBillStamp compact /> : <span className="status-dot status-warn">Pending</span>
+                  }
+                  detail={
+                    <div className="space-y-1">
+                      {b.debts.map((d) => (
+                        <div key={d.id} className="flex items-center justify-between text-xs">
                           <ProviderTag
                             person={{
                               provider: d.debtor?.provider ?? d.debtor_provider,
@@ -152,24 +154,24 @@ export default function XHistoryPanel() {
                             }}
                             size={16}
                           />
-                        </span>
-                        <span className="flex items-center gap-2">
-                          <span className="text-[var(--text-muted)]">{d.amount_usdc} USDC</span>
-                          {d.status === "paid" ? (
-                            <span className="status-dot status-ok">Paid</span>
-                          ) : (
-                            <span className="status-dot status-warn">Pending</span>
-                          )}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
+                          <span className="flex items-center gap-2">
+                            <span className="text-[var(--text-muted)]">{d.amount_usdc} USDC</span>
+                            {d.status === "paid" ? (
+                              <span className="status-dot status-ok">Paid</span>
+                            ) : (
+                              <span className="status-dot status-warn">Pending</span>
+                            )}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  }
+                />
               );
             })}
           </div>
         </div>
       ) : null}
-    </div>
+    </>
   );
 }

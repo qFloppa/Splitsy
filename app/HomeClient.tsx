@@ -42,6 +42,7 @@ import XAuthControl from "./XAuthControl";
 import SignInMenu from "./SignInMenu";
 import XDebtsPanel from "./XDebtsPanel";
 import XHistoryPanel from "./XHistoryPanel";
+import { HistoryCard, PaidBillStamp } from "./HistoryCard";
 import {
   bridgeSourceChains,
   bridgeUsdcToArc,
@@ -267,6 +268,11 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
   const [claimAmounts, setClaimAmounts] = useState<Record<string, string>>({});
   const [participantShareInputs, setParticipantShareInputs] = useState<Record<string, string>>({});
   const [splitBy, setSplitBy] = useState<"address" | "handle">("address");
+  // Off-chain (social) counts reported up by the self-fetching X panels, so the
+  // merged pending window and the shared History panel can sum/gate across both
+  // the social and on-chain debt systems.
+  const [socialPendingCount, setSocialPendingCount] = useState(0);
+  const [socialHistoryCount, setSocialHistoryCount] = useState(0);
 
   // Pick how payers are identified: an on-chain wallet address, or off-chain by
   // handle. In handle mode each participant row carries its OWN provider (X /
@@ -323,6 +329,19 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
   const { connectors, connectAsync } = useConnect();
   const { disconnectAsync } = useDisconnect();
   const { switchChainAsync } = useSwitchChain();
+
+  // On-chain debts still owed, and the merged pending count (social + wallet)
+  // that the single "Action needed" window heading shows.
+  const activeWalletDebts = billWallet ? debts.filter((debt) => debt.remaining > 0n) : [];
+  const pendingTotal = socialPendingCount + activeWalletDebts.length;
+  // Whether the wallet side has any history record (paid / pending-as-creditor /
+  // claimed), so the shared History panel can show one empty state across both
+  // the social and wallet systems.
+  const walletHistoryEmpty =
+    !billWallet ||
+    (debts.every((debt) => debt.remaining > 0n) &&
+      splitterBills.every((debt) => debt.totalPaid >= debt.totalOwed) &&
+      splitterBills.every((debt) => !(debt.claimable <= 0n && debt.claimed > 0n)));
 
   const confirmedUsd = fxQuote?.amountUsd ?? (bill.currency === "USD" ? bill.total : 0);
   const displayParticipants = useMemo(() => {
@@ -1609,26 +1628,55 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
             key="bills"
             transition={{ duration: 0.22, ease: "easeOut" }}
           >
-            <XDebtsPanel />
+            {/* One merged "Action needed" window. The wrapper stays mounted even
+                when nothing is pending (no chrome) so XDebtsPanel keeps fetching
+                and can report its social count up for the summed heading. */}
+            <div className={pendingTotal > 0 ? "debt-alert p-4" : undefined}>
+              {pendingTotal > 0 ? (
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                  <div>
+                    <p className="text-sm font-semibold text-[var(--accent)]">Action needed</p>
+                    <h3 className="mt-1 text-[clamp(1.35rem,3vw,2.2rem)] font-semibold leading-tight">
+                      You have {pendingTotal} unpaid bill{pendingTotal === 1 ? "" : "s"}
+                    </h3>
+                    <p className="mt-2 text-sm text-[var(--text-muted)]">
+                      Tagged to your handle or registered to your wallet. Settle each from the matching account.
+                    </p>
+                  </div>
+                  {billWallet ? (
+                    <button className="secondary-button" onClick={() => refreshBillRegistry()} type="button">
+                      <RefreshCw size={16} />
+                      Refresh
+                    </button>
+                  ) : null}
+                </div>
+              ) : null}
+              <div className={pendingTotal > 0 ? "mt-4 space-y-3" : undefined}>
+                <XDebtsPanel onCount={setSocialPendingCount} />
+                {billWallet ? (
+                  <WalletDebtRows
+                    activeDebts={activeWalletDebts}
+                    arcUsdcBalance={arcUsdcBalance}
+                    arcUsdcBalanceFlash={arcUsdcBalanceFlash}
+                    bridgeForDebt={bridgeForDebt}
+                    bridgeResults={bridgeResults}
+                    billState={billState}
+                    partialPayments={partialPayments}
+                    payDebtOnArc={payDebtOnArc}
+                    debtMessages={debtMessages}
+                    setPartialPayments={setPartialPayments}
+                  />
+                ) : null}
+              </div>
+            </div>
             {billWallet ? (
-              <DebtWorkspace
-                arcUsdcBalance={arcUsdcBalance}
-                arcUsdcBalanceFlash={arcUsdcBalanceFlash}
-                bridgeForDebt={bridgeForDebt}
-                bridgeResults={bridgeResults}
-                billState={billState}
+              <ClaimFundsPanel
+                splitterBills={splitterBills}
                 claimAmounts={claimAmounts}
                 claimMessage={claimMessage}
                 claimMessageTone={claimMessageTone}
                 claimSplitterFunds={claimSplitterFunds}
-                debts={debts}
-                partialPayments={partialPayments}
-                payDebtOnArc={payDebtOnArc}
-                debtMessages={debtMessages}
-                refreshBillRegistry={() => refreshBillRegistry()}
                 setClaimAmounts={setClaimAmounts}
-                setPartialPayments={setPartialPayments}
-                splitterBills={splitterBills}
               />
             ) : null}
 
@@ -1953,8 +2001,17 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
             key="history"
             transition={{ duration: 0.22, ease: "easeOut" }}
           >
-            <XHistoryPanel />
-            <HistoryWorkspace debts={debts} splitterBills={splitterBills} hasWallet={Boolean(billWallet)} />
+            <Panel title="History" icon={<BadgeDollarSign size={19} />}>
+              <div className="space-y-6">
+                <XHistoryPanel onCount={setSocialHistoryCount} />
+                <HistoryWorkspace debts={debts} splitterBills={splitterBills} />
+                {socialHistoryCount === 0 && walletHistoryEmpty ? (
+                  <p className="text-sm text-[var(--text-muted)]">
+                    No bill history yet. Bills you split, settle, or claim — on-chain or tagged by handle — appear here as records.
+                  </p>
+                ) : null}
+              </div>
+            </Panel>
           </motion.div>
         )}
         </AnimatePresence>
@@ -1966,93 +2023,42 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
   );
 }
 
-function DebtWorkspace({
+// The on-chain payable-debt rows, rendered headerless inside the shared
+// "Action needed" window (whose heading/refresh live in the bills tab). The
+// off-chain XDebtsPanel rows render as siblings above these.
+function WalletDebtRows({
   bridgeForDebt,
   bridgeResults,
   billState,
   arcUsdcBalance,
   arcUsdcBalanceFlash,
-  claimAmounts,
-  claimMessage,
-  claimMessageTone,
-  claimSplitterFunds,
-  debts,
+  activeDebts,
   debtMessages,
   partialPayments,
   payDebtOnArc,
-  refreshBillRegistry,
-  setClaimAmounts,
   setPartialPayments,
-  splitterBills,
 }: {
   bridgeForDebt: (debt: BillSplitDebt, debtSourceChain: BridgeSourceChain) => void;
   bridgeResults: Record<string, BridgeSummary>;
   billState: BillRunState;
   arcUsdcBalance: bigint | null;
   arcUsdcBalanceFlash: boolean;
-  claimAmounts: Record<string, string>;
-  claimMessage: string;
-  claimMessageTone: "error" | "neutral";
-  claimSplitterFunds: (debt: BillSplitDebt) => void;
-  debts: BillSplitDebt[];
+  activeDebts: BillSplitDebt[];
   debtMessages: Record<string, { message: string; tone: "error" | "neutral" }>;
   partialPayments: Record<string, string>;
   payDebtOnArc: (debt: BillSplitDebt) => void;
-  refreshBillRegistry: () => void;
-  setClaimAmounts: (value: Record<string, string>) => void;
   setPartialPayments: (value: Record<string, string>) => void;
-  splitterBills: BillSplitDebt[];
 }) {
-  const activeDebts = debts.filter((debt) => debt.remaining > 0n);
-  const claimableBills = splitterBills.filter((debt) => debt.claimable > 0n);
   const [fallbackBridgeChains, setFallbackBridgeChains] = useState<Record<string, BridgeSourceChain>>({});
   // Which debt cards are expanded. A long list of payable bills otherwise makes
   // the page huge; collapsed by default (a lone bill auto-expands below).
   const [expandedDebts, setExpandedDebts] = useState<Record<string, boolean>>({});
-  const debtAlertRef = useRef<HTMLDivElement | null>(null);
-  const claimRef = useRef<HTMLDivElement | null>(null);
-
-  useEffect(() => {
-    if (activeDebts.length === 0) {
-      return;
-    }
-
-    window.requestAnimationFrame(() => {
-      debtAlertRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
-    });
-  }, [activeDebts.length]);
-
-  useEffect(() => {
-    if (claimableBills.length === 0 || activeDebts.length > 0) {
-      return;
-    }
-
-    window.requestAnimationFrame(() => {
-      claimRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
-    });
-  }, [claimableBills.length, activeDebts.length]);
+  // ponytail: dropped the auto-scroll-to-debt effect — the merged window now
+  // owns placement and social rows sit above; re-add a ref on the shared window
+  // if jump-to-pending is wanted again.
 
   return (
-    <div className="space-y-5">
-      {activeDebts.length > 0 ? (
-        <div ref={debtAlertRef} className="debt-alert p-4">
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-            <div>
-              <p className="text-sm font-semibold text-[var(--accent)]">Action needed</p>
-              <h3 className="mt-1 text-[clamp(1.35rem,3vw,2.2rem)] font-semibold leading-tight">
-                You have {activeDebts.length} unpaid bill{activeDebts.length === 1 ? "" : "s"}
-              </h3>
-              <p className="mt-2 text-sm text-[var(--text-muted)]">
-                Settle directly on Arc, or bridge USDC through CCTP V2 and then pay the registered debt.
-              </p>
-            </div>
-            <button className="secondary-button" onClick={refreshBillRegistry} type="button">
-              <RefreshCw size={16} />
-              Refresh
-            </button>
-          </div>
-
-          <div className="mt-4 space-y-3">
+    <>
             {activeDebts.map((debt) => {
               const key = debt.billId.toString();
               const bridgeResult = bridgeResults[key];
@@ -2182,49 +2188,81 @@ function DebtWorkspace({
                 </div>
               );
             })}
-          </div>
-        </div>
-      ) : null}
+    </>
+  );
+}
 
-      {claimableBills.length > 0 ? (
-        <div ref={claimRef}>
-        <Panel title="Claim funds" icon={<BadgeDollarSign size={19} />}>
-          {claimMessage ? (
-            <div className="mb-4">
-              <Message tone={claimMessageTone}>{claimMessage}</Message>
-            </div>
-          ) : null}
-          <div className="space-y-3">
-            {claimableBills.map((debt) => {
-              const key = debt.billId.toString();
-              return (
-                <div className="relative grid gap-3 overflow-hidden rounded-[var(--radius)] border border-[var(--border)] bg-[var(--surface-strong)] p-3 sm:grid-cols-[1fr_0.4fr_auto] sm:items-end" key={key}>
-                  <div>
-                    <p className="font-semibold">Bill #{key}</p>
-                    <p className="mt-1 text-sm text-[var(--text-muted)]">
-                      Paid <span className="amount-text">${billUnitsToUsdc(debt.totalPaid)}</span> · claimed{" "}
-                      <span className="amount-text">${billUnitsToUsdc(debt.claimed)}</span>
-                    </p>
-                    <p className="mt-2 text-xs text-[var(--text-muted)]">
-                      Claim pulls paid USDC from the registry to your Arc wallet.
-                    </p>
-                  </div>
-                  <Field
-                    label="Claim"
-                    type="number"
-                    value={claimAmounts[key] ?? billUnitsToUsdc(debt.claimable)}
-                    onChange={(value) => setClaimAmounts({ ...claimAmounts, [key]: value })}
-                  />
-                  <button className="primary-button h-11" onClick={() => claimSplitterFunds(debt)} type="button">
-                    Claim on Arc
-                  </button>
-                </div>
-              );
-            })}
+// Creditor POV: claim paid USDC out of the registry. Own panel below the shared
+// pending window (was the second half of the old DebtWorkspace).
+function ClaimFundsPanel({
+  splitterBills,
+  claimAmounts,
+  claimMessage,
+  claimMessageTone,
+  claimSplitterFunds,
+  setClaimAmounts,
+}: {
+  splitterBills: BillSplitDebt[];
+  claimAmounts: Record<string, string>;
+  claimMessage: string;
+  claimMessageTone: "error" | "neutral";
+  claimSplitterFunds: (debt: BillSplitDebt) => void;
+  setClaimAmounts: (value: Record<string, string>) => void;
+}) {
+  const claimableBills = splitterBills.filter((debt) => debt.claimable > 0n);
+  const claimRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (claimableBills.length === 0) {
+      return;
+    }
+
+    window.requestAnimationFrame(() => {
+      claimRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+  }, [claimableBills.length]);
+
+  if (claimableBills.length === 0) {
+    return null;
+  }
+
+  return (
+    <div ref={claimRef}>
+      <Panel title="Claim funds" icon={<BadgeDollarSign size={19} />}>
+        {claimMessage ? (
+          <div className="mb-4">
+            <Message tone={claimMessageTone}>{claimMessage}</Message>
           </div>
-        </Panel>
+        ) : null}
+        <div className="space-y-3">
+          {claimableBills.map((debt) => {
+            const key = debt.billId.toString();
+            return (
+              <div className="relative grid gap-3 overflow-hidden rounded-[var(--radius)] border border-[var(--border)] bg-[var(--surface-strong)] p-3 sm:grid-cols-[1fr_0.4fr_auto] sm:items-end" key={key}>
+                <div>
+                  <p className="font-semibold">Bill #{key}</p>
+                  <p className="mt-1 text-sm text-[var(--text-muted)]">
+                    Paid <span className="amount-text">${billUnitsToUsdc(debt.totalPaid)}</span> · claimed{" "}
+                    <span className="amount-text">${billUnitsToUsdc(debt.claimed)}</span>
+                  </p>
+                  <p className="mt-2 text-xs text-[var(--text-muted)]">
+                    Claim pulls paid USDC from the registry to your Arc wallet.
+                  </p>
+                </div>
+                <Field
+                  label="Claim"
+                  type="number"
+                  value={claimAmounts[key] ?? billUnitsToUsdc(debt.claimable)}
+                  onChange={(value) => setClaimAmounts({ ...claimAmounts, [key]: value })}
+                />
+                <button className="primary-button h-11" onClick={() => claimSplitterFunds(debt)} type="button">
+                  Claim on Arc
+                </button>
+              </div>
+            );
+          })}
         </div>
-      ) : null}
+      </Panel>
     </div>
   );
 }
@@ -2232,31 +2270,19 @@ function DebtWorkspace({
 function HistoryWorkspace({
   debts,
   splitterBills,
-  hasWallet,
 }: {
   debts: BillSplitDebt[];
   splitterBills: BillSplitDebt[];
-  hasWallet: boolean;
 }) {
   const paidDebts = debts.filter((debt) => debt.remaining <= 0n);
   // Creditor POV: bills this wallet split that debtors haven't fully paid yet.
   const pendingBills = splitterBills.filter((debt) => debt.totalPaid < debt.totalOwed);
   const claimedBills = splitterBills.filter((debt) => debt.claimable <= 0n && debt.claimed > 0n);
-  const isEmpty = paidDebts.length === 0 && pendingBills.length === 0 && claimedBills.length === 0;
 
+  // Headerless wallet history sections; the shared History Panel + empty state
+  // live in the history tab so social and wallet records sit under one card.
   return (
-    <div className="space-y-5">
-      <Panel title="History" icon={<BadgeDollarSign size={19} />}>
-        {!hasWallet ? (
-          <p className="text-sm text-[var(--text-muted)]">
-            Connect your wallet to see your bill history.
-          </p>
-        ) : isEmpty ? (
-          <p className="text-sm text-[var(--text-muted)]">
-            No bill history yet. Bills you split, settle, or claim will appear here as records.
-          </p>
-        ) : (
-          <div className="space-y-6">
+    <>
             {pendingBills.length > 0 ? (
               <div className="space-y-2">
                 <p className="text-sm font-semibold text-[var(--text-muted)]">
@@ -2330,10 +2356,7 @@ function HistoryWorkspace({
                 </div>
               </div>
             ) : null}
-          </div>
-        )}
-      </Panel>
-    </div>
+    </>
   );
 }
 
@@ -2350,27 +2373,38 @@ function HistoryRecordCard({
   summary: ReactNode;
   badge: ReactNode;
 }) {
-  const key = debt.billId.toString();
-  const [open, setOpen] = useState(false);
+  return (
+    <HistoryCard
+      title={`Bill #${debt.billId.toString()}`}
+      summary={summary}
+      badge={badge}
+      detail={<BillActivityDetail debt={debt} />}
+    />
+  );
+}
+
+// On-chain activity for a wallet history record. Rendered as HistoryCard's
+// `detail`, so it only mounts when the card is expanded — the fetch runs on
+// mount, replacing the old open-toggle-triggered load.
+function BillActivityDetail({ debt }: { debt: BillSplitDebt }) {
   const [activity, setActivity] = useState<{
     status: "idle" | "loading" | "ready" | "error";
     data?: BillActivity;
-  }>({ status: "idle" });
+  }>({ status: "loading" });
 
-  async function toggle() {
-    const next = !open;
-    setOpen(next);
-
-    if (next && activity.status === "idle") {
-      setActivity({ status: "loading" });
-      try {
-        const data = await readBillActivity(debt.billId);
-        setActivity({ status: "ready", data });
-      } catch {
-        setActivity({ status: "error" });
-      }
-    }
-  }
+  useEffect(() => {
+    let active = true;
+    readBillActivity(debt.billId)
+      .then((data) => {
+        if (active) setActivity({ status: "ready", data });
+      })
+      .catch(() => {
+        if (active) setActivity({ status: "error" });
+      });
+    return () => {
+      active = false;
+    };
+  }, [debt.billId]);
 
   // Distinct debtor wallets: prefer the actual payers from chain activity, and
   // fall back to the bill's registered participant list before any payment.
@@ -2382,20 +2416,7 @@ function HistoryRecordCard({
   })();
 
   return (
-    <div className="history-record" data-open={open}>
-      <button className="history-record-toggle" onClick={toggle} type="button" aria-expanded={open}>
-        <span className="min-w-0">
-          <span className="block font-semibold">Bill #{key}</span>
-          <span className="mt-1 block text-sm text-[var(--text-muted)]">{summary}</span>
-        </span>
-        <span className="history-record-badge">
-          {badge}
-          <ChevronDown className="history-chevron" size={18} />
-        </span>
-      </button>
-
-      {open ? (
-        <div className="history-detail">
+    <>
           <BillVerification billId={debt.billId} metadataHash={debt.metadataHash} />
           {activity.status === "loading" ? (
             <p className="text-sm text-[var(--text-muted)]">Loading on-chain activity…</p>
@@ -2500,9 +2521,7 @@ function HistoryRecordCard({
           ) : (
             <p className="text-sm text-[var(--text-muted)]">No on-chain activity found in the recent block window.</p>
           )}
-        </div>
-      ) : null}
-    </div>
+    </>
   );
 }
 
@@ -3225,26 +3244,6 @@ function Panel({
       </div>
       {children}
     </section>
-  );
-}
-
-function PaidBillStamp({
-  compact = false,
-  src = "/paid.png",
-  alt = "Paid",
-  width = 1024,
-  height = 788,
-}: {
-  compact?: boolean;
-  src?: string;
-  alt?: string;
-  width?: number;
-  height?: number;
-}) {
-  return (
-    <div className={`paid-bill-stamp ${compact ? "paid-bill-stamp-compact" : ""}`} aria-hidden="true">
-      <Image alt={alt} height={height} priority src={src} width={width} />
-    </div>
   );
 }
 
