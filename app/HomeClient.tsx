@@ -336,9 +336,18 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
   const { disconnectAsync } = useDisconnect();
   const { switchChainAsync } = useSwitchChain();
 
+  // Which address to read the registry for: the connected browser wallet, or —
+  // for a signed-in social user with no browser wallet — their DCW address, so
+  // their registry debts/claims load without ever connecting a wallet.
+  const registryReadAddress = (billWallet?.account ?? me?.walletAddress ?? null) as `0x${string}` | null;
+  useEffect(() => {
+    if (registryReadAddress) void refreshBillRegistry(registryReadAddress);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [registryReadAddress]);
+
   // On-chain debts still owed, and the merged pending count (social + wallet)
   // that the single "Action needed" window heading shows.
-  const activeWalletDebts = billWallet ? debts.filter((debt) => debt.remaining > 0n) : [];
+  const activeWalletDebts = registryReadAddress ? debts.filter((debt) => debt.remaining > 0n) : [];
   const pendingTotal = socialPendingCount + activeWalletDebts.length;
   // Whether the wallet side has any history record (paid / pending-as-creditor /
   // claimed), so the shared History panel can show one empty state across both
@@ -694,7 +703,7 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
     setRecurringState("idle");
   }
 
-  async function refreshBillRegistry(account = billWallet?.account) {
+  async function refreshBillRegistry(account: `0x${string}` | undefined = registryReadAddress ?? undefined) {
     if (!account) {
       return;
     }
@@ -1113,8 +1122,59 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
   }
 
   async function payDebtOnArc(debt: BillSplitDebt) {
-    const wallet = billWallet ?? (await connectBillWallet());
     const debtKey = debt.billId.toString();
+
+    // Social (DCW) user: no browser wallet — pay from the server, gated by the
+    // same PIN unlock the off-chain pay flow uses. The route reads the owed
+    // amount from chain, so no amount is sent.
+    if (!billWallet && me?.walletAddress) {
+      const pin = await fetch("/api/wallet/pin").then((r) => r.json()).catch(() => ({}));
+      if (!pin.unlocked) {
+        setDebtMessages((current) => ({
+          ...current,
+          [debtKey]: { tone: "neutral", message: "Unlock your wallet (top-right wallet panel), then tap Pay again." },
+        }));
+        return;
+      }
+      try {
+        setBillState("working");
+        setDebtMessages((current) => {
+          const next = { ...current };
+          delete next[debtKey];
+          return next;
+        });
+        const res = await fetch(`/api/onchain-bills/${debtKey}/pay`, { method: "POST" });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          setBillState("error");
+          setDebtMessages((current) => ({
+            ...current,
+            [debtKey]: {
+              tone: "error",
+              message: data.error === "insufficient_funds"
+                ? "Your wallet needs more test USDC."
+                : (data.error ?? "Payment failed."),
+            },
+          }));
+          return;
+        }
+        setBillState("success");
+        setDebtMessages((current) => ({
+          ...current,
+          [debtKey]: { tone: "neutral", message: `Paid bill #${debtKey} from your wallet.` },
+        }));
+        await refreshBillRegistry(me.walletAddress as `0x${string}`);
+      } catch (caught) {
+        setBillState("error");
+        setDebtMessages((current) => ({
+          ...current,
+          [debtKey]: { tone: "error", message: errorMessage(caught) },
+        }));
+      }
+      return;
+    }
+
+    const wallet = billWallet ?? (await connectBillWallet());
 
     if (!wallet) {
       return;
@@ -1337,6 +1397,40 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
   }
 
   async function claimSplitterFunds(debt: BillSplitDebt) {
+    // Social (DCW) creator: no browser wallet — claim from the server, gated by
+    // the same PIN unlock. The route reads the claimable amount from chain, so
+    // no amount is sent.
+    if (!billWallet && me?.walletAddress) {
+      const pin = await fetch("/api/wallet/pin").then((r) => r.json()).catch(() => ({}));
+      if (!pin.unlocked) {
+        setClaimMessageTone("neutral");
+        setClaimMessage("Unlock your wallet (top-right wallet panel), then tap Claim again.");
+        return;
+      }
+      try {
+        setBillState("working");
+        setClaimMessageTone("neutral");
+        setClaimMessage("Claiming paid funds.");
+        const res = await fetch(`/api/onchain-bills/${debt.billId.toString()}/claim`, { method: "POST" });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          setBillState("error");
+          setClaimMessageTone("error");
+          setClaimMessage(data.error ?? "Claim failed.");
+          return;
+        }
+        setBillState("success");
+        setClaimMessageTone("neutral");
+        setClaimMessage(`Claimed funds from bill #${debt.billId.toString()} to your wallet.`);
+        await refreshBillRegistry(me.walletAddress as `0x${string}`);
+      } catch (caught) {
+        setBillState("error");
+        setClaimMessageTone("error");
+        setClaimMessage(errorMessage(caught));
+      }
+      return;
+    }
+
     const wallet = billWallet ?? (await connectBillWallet());
 
     if (!wallet) {
@@ -1798,7 +1892,7 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
                       Tagged to your handle or registered to your wallet. Settle each from the matching account.
                     </p>
                   </div>
-                  {billWallet ? (
+                  {registryReadAddress ? (
                     <button className="secondary-button" onClick={() => refreshBillRegistry()} type="button">
                       <RefreshCw size={16} />
                       Refresh
@@ -1808,7 +1902,7 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
               ) : null}
               <div className={pendingTotal > 0 ? "mt-4 space-y-3" : undefined}>
                 <XDebtsPanel onCount={setSocialPendingCount} />
-                {billWallet ? (
+                {registryReadAddress ? (
                   <WalletDebtRows
                     activeDebts={activeWalletDebts}
                     arcUsdcBalance={arcUsdcBalance}
@@ -1824,7 +1918,7 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
                 ) : null}
               </div>
             </div>
-            {billWallet ? (
+            {registryReadAddress ? (
               <ClaimFundsPanel
                 splitterBills={splitterBills}
                 claimAmounts={claimAmounts}
