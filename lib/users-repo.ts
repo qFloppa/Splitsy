@@ -61,6 +61,23 @@ export async function setUserPin(id: string, pinHash: string): Promise<void> {
   }
 }
 
+// Find a user by (provider, handle) — handle normalized like bills-repo. Used by
+// address resolution to reuse an existing person's wallet before pre-minting.
+export async function getUserByProviderHandle(
+  provider: IdentityProvider,
+  handle: string,
+): Promise<AppUser | null> {
+  const client = requireClient();
+  const { data, error } = await client
+    .from("users")
+    .select()
+    .eq("provider", provider)
+    .eq("handle", handle.replace(/^@/, "").toLowerCase())
+    .maybeSingle();
+  if (error) throw new Error(`Failed to read user by handle: ${error.message}`);
+  return (data as AppUser) ?? null;
+}
+
 export async function getUserById(id: string): Promise<AppUser | null> {
   const client = requireClient();
   const { data, error } = await client.from("users").select().eq("id", id).maybeSingle();
