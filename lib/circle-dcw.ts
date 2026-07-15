@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { initiateDeveloperControlledWalletsClient } from "@circle-fin/developer-controlled-wallets";
 
 type Client = ReturnType<typeof initiateDeveloperControlledWalletsClient>;
@@ -59,6 +60,58 @@ export async function transferUsdcOnArc(
   }
   if (!res.data?.id) throw new Error("Circle transfer returned no transaction id");
   return { id: res.data.id, state: res.data.state };
+}
+
+// Execute an arbitrary contract call from a DCW on Arc (createBill / approve /
+// payDebt / claim). callData is ABI-encoded by the caller (lib/registry-calldata).
+// We poll to a terminal state because callers need the result: bill creation
+// needs the BillCreated billId (read from chain afterward), and pay/claim need
+// to know the tx didn't revert. The wallet pays its own gas in USDC at MEDIUM.
+export async function executeContractOnArc(
+  walletId: string,
+  contractAddress: string,
+  callData: `0x${string}`,
+): Promise<{ id: string; state: string; txHash: string | null }> {
+  const config = getConfig();
+  if (!config) throw new Error("Circle is not configured");
+
+  let created;
+  try {
+    // Cast the input for the same reason transferUsdcOnArc does: SDK 9.2.0's
+    // union types lag the API and omit ARC-TESTNET.
+    created = await config.client.createContractExecutionTransaction({
+      walletId,
+      contractAddress,
+      callData,
+      blockchain: "ARC-TESTNET",
+      fee: { type: "level", config: { feeLevel: "MEDIUM" } },
+      idempotencyKey: randomUUID(),
+    } as unknown as Parameters<typeof config.client.createContractExecutionTransaction>[0]);
+  } catch (e) {
+    const body = (e as { response?: { data?: unknown } })?.response?.data;
+    const raw = body ? JSON.stringify(body) : (e as Error).message;
+    if (/insufficient|not enough|balance|exceeds/i.test(raw)) {
+      throw new InsufficientFundsError();
+    }
+    throw new Error(`Circle contract execution failed: ${raw}`);
+  }
+
+  const id = created.data?.id;
+  if (!id) throw new Error("Circle contract execution returned no transaction id");
+
+  // Poll to a terminal state (~60s cap). Arc settles fast on testnet.
+  const terminalOk = new Set(["COMPLETE", "CONFIRMED"]);
+  const terminalBad = new Set(["FAILED", "DENIED", "CANCELLED"]);
+  for (let i = 0; i < 30; i++) {
+    const tx = await config.client.getTransaction({ id });
+    const state = tx.data?.transaction?.state ?? "";
+    const txHash = tx.data?.transaction?.txHash ?? null;
+    if (terminalOk.has(state)) return { id, state, txHash };
+    if (terminalBad.has(state)) throw new Error(`Contract execution ${state.toLowerCase()}`);
+    await new Promise((r) => setTimeout(r, 2000));
+  }
+  // Still pending after the cap — return what we have; the caller decides.
+  return { id, state: "PENDING", txHash: null };
 }
 
 export class InsufficientFundsError extends Error {
