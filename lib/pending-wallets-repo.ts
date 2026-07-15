@@ -11,7 +11,7 @@ export type PendingWallet = {
 // Same normalization the debt matcher uses (lib/bills-repo.ts), so a handle
 // keys identically whether it is tagged, resolved, or adopted at login.
 export function normalizePendingHandle(handle: string): string {
-  return handle.replace(/^@/, "").toLowerCase();
+  return handle.trim().replace(/^@/, "").toLowerCase();
 }
 
 function requireClient() {

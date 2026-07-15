@@ -7,3 +7,8 @@ test("normalizePendingHandle strips a leading @ and lowercases", () => {
   assert.equal(normalizePendingHandle("BOB"), "bob");
   assert.equal(normalizePendingHandle("a@b.com"), "a@b.com");
 });
+
+test("normalizePendingHandle trims whitespace so padded input keys identically", () => {
+  assert.equal(normalizePendingHandle(" @Alice "), "alice");
+  assert.equal(normalizePendingHandle("alice "), "alice");
+});

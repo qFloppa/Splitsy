@@ -1,6 +1,6 @@
 import { getSessionUser } from "@/lib/session";
 import { resolveParticipants } from "@/lib/wallet-resolve";
-import { billMetadataHash, hashReceiptBytes } from "@/lib/bill-metadata";
+import { billMetadataHash } from "@/lib/bill-metadata";
 import { encodeCreateBill } from "@/lib/registry-calldata";
 import { executeContractOnArc, InsufficientFundsError } from "@/lib/circle-dcw";
 import { REGISTRY_ADDRESS, getBillOnchain, getBillIdsForSplitterOnchain } from "@/lib/arc-read";
@@ -105,9 +105,9 @@ export async function POST(request: Request) {
   // publisher, which re-reads the on-chain hash and hard-gates a mismatch.
   try {
     const receiptBytes = receiptImageBase64 ? new Uint8Array(Buffer.from(receiptImageBase64, "base64")) : null;
-    if (receiptBytes && hashReceiptBytes(receiptBytes).toLowerCase() !== receiptHash.toLowerCase()) {
-      // Non-fatal: skip the receipt image if it doesn't match, still publish text.
-    }
+    // A receipt image that doesn't hash to the committed receiptHash is rejected
+    // inside publishOnchainBillPreimage (hard gate) and swallowed by this catch —
+    // text-only publish is impossible once a receiptHash is committed on-chain.
     await publishOnchainBillPreimage(
       { registryAddress: REGISTRY_ADDRESS, billId: billId.toString(), merchant, currency, total, participantLabels: labels, receiptHash },
       metadataHash,

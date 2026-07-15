@@ -761,85 +761,6 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
     }
   }
 
-
-  async function submitBillOnchain() {
-    if (splitMode === "manual" && splitTotal - confirmedUsd > 0.009) {
-      setBillState("error");
-      setBillMessage("Manual shares cannot be larger than the bill Total USD amount.");
-      return;
-    }
-
-    const wallet = billWallet ?? (await connectBillWallet());
-
-    if (!wallet) {
-      return;
-    }
-
-    if (!isBillRegistryConfigured()) {
-      setBillState("error");
-      setBillMessage("Bill registry is not configured yet.");
-      return;
-    }
-
-    const payableParticipants = displayParticipants.filter(
-      (participant) => participant.amountUsd > 0 && /^0x[a-fA-F0-9]{40}$/.test(participant.walletAddress),
-    );
-
-    if (payableParticipants.length === 0) {
-      setBillState("error");
-      setBillMessage("Add at least one payer wallet with a positive share.");
-      return;
-    }
-
-    try {
-      setBillState("working");
-      setBillMessage("Switching to Arc Testnet…");
-      await ensureBillSplitWalletOnArc(wallet);
-      setBillMessage("Writing the split to Arc.");
-      const receiptHash = receiptCommit?.hash ?? "";
-      const result = await createBillSplit({
-        ...wallet,
-        metadataHash: billMetadataHash({
-          merchant: bill.merchant,
-          currency: bill.currency,
-          total: confirmedUsd,
-          participantLabels: payableParticipants.map((participant) => participant.label),
-          receiptHash,
-        }),
-        participants: payableParticipants.map((participant) => normalizeAddress(participant.walletAddress)),
-        owedAmounts: payableParticipants.map((participant) => usdcToBillUnits(participant.amountUsd.toFixed(2))),
-      });
-
-      setSubmittedBillId(result.billId);
-      setBillState("success");
-      setBillMessage(`Bill #${result.billId.toString()} is live on Arc. Payers will see it when they connect.`);
-
-      // Publish the bill's plaintext details (and the receipt image) so payers
-      // can verify them against the on-chain hash. Fire-and-forget: verification
-      // is a nicety, not a prerequisite to pay, so a failed publish must not fail
-      // bill creation.
-      void fetch("/api/onchain-bills/preimage", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          registryAddress: BILL_SPLIT_REGISTRY_ADDRESS,
-          billId: result.billId.toString(),
-          merchant: bill.merchant,
-          currency: bill.currency,
-          total: confirmedUsd,
-          participantLabels: payableParticipants.map((participant) => participant.label),
-          receiptHash,
-          receiptImageBase64: receiptCommit ? bytesToBase64(receiptCommit.bytes) : undefined,
-        }),
-      }).catch(() => {});
-
-      await refreshBillRegistry(wallet.account);
-    } catch (caught) {
-      setBillState("error");
-      setBillMessage(errorMessage(caught));
-    }
-  }
-
   // On-chain path that ALSO accepts @handle participants. Social rows are resolved
   // to Arc addresses server-side (pre-minting a DCW when needed); then either the
   // connected wallet signs createBill, or — for a signed-in social creator with no
@@ -889,15 +810,16 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
         );
       }
 
-      // Ordered addresses / owed / labels — labels MUST match the server path:
-      // "@<handle>" for social, existing label for address rows.
+      // Ordered addresses / owed / labels — labels MUST match the server path
+      // (app/api/onchain-bills/create): "@<handle>" for social rows, trimmed
+      // label or "Payer N" (1-based among kept rows) for address rows.
       const addresses: string[] = [];
       const owedAmounts: bigint[] = [];
       const labels: string[] = [];
-      for (const p of rows) {
+      for (const [i, p] of rows.entries()) {
         if (isAddr(p.walletAddress)) {
           addresses.push(normalizeAddress(p.walletAddress));
-          labels.push(p.label);
+          labels.push(p.label.trim() || `Payer ${i + 1}`);
         } else {
           const norm = p.walletAddress.trim().replace(/^@/, "").toLowerCase();
           const addr = resolvedByHandle.get(`${p.provider ?? "x"}:${norm}`);
