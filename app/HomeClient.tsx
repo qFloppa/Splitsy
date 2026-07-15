@@ -273,6 +273,12 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
   // the social and on-chain debt systems.
   const [socialPendingCount, setSocialPendingCount] = useState(0);
   const [socialHistoryCount, setSocialHistoryCount] = useState(0);
+  // Whether the create form settles into the on-chain escrow (registry) or the
+  // off-chain direct ledger. Rows can carry addresses or @handles in either mode.
+  const [settleMode, setSettleMode] = useState<"onchain" | "offchain">("onchain");
+  // The signed-in Splitsy user (social creator), if any — lets a DCW user create
+  // an on-chain bill server-side without a browser wallet.
+  const [me, setMe] = useState<{ walletAddress: string | null } | null>(null);
 
   // Pick how payers are identified: an on-chain wallet address, or off-chain by
   // handle. In handle mode each participant row carries its OWN provider (X /
@@ -385,6 +391,10 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
     document.documentElement.dataset.theme = theme;
     sessionStorage.setItem("splitsy-theme", theme);
   }, [theme]);
+
+  useEffect(() => {
+    fetch("/api/me").then((r) => r.json()).then((d) => setMe(d.user ?? null)).catch(() => {});
+  }, []);
 
   useEffect(() => {
     if (!testCycleEnabled && recurringCycle === "test") {
@@ -814,6 +824,151 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
         }),
       }).catch(() => {});
 
+      await refreshBillRegistry(wallet.account);
+    } catch (caught) {
+      setBillState("error");
+      setBillMessage(errorMessage(caught));
+    }
+  }
+
+  // On-chain path that ALSO accepts @handle participants. Social rows are resolved
+  // to Arc addresses server-side (pre-minting a DCW when needed); then either the
+  // connected wallet signs createBill, or — for a signed-in social creator with no
+  // browser wallet — the server signs it from their DCW.
+  async function submitBillOnchainMixed() {
+    if (splitMode === "manual" && splitTotal - confirmedUsd > 0.009) {
+      setBillState("error");
+      setBillMessage("Manual shares cannot be larger than the bill Total USD amount.");
+      return;
+    }
+    const rows = displayParticipants.filter((p) => p.amountUsd > 0 && p.walletAddress.trim());
+    if (rows.length === 0) {
+      setBillState("error");
+      setBillMessage("Add at least one participant with a positive share.");
+      return;
+    }
+
+    // Build ordered slots; social rows are those whose input isn't a 0x address.
+    const isAddr = (v: string) => /^0x[a-fA-F0-9]{40}$/.test(v.trim());
+    const socialRows = rows
+      .filter((p) => !isAddr(p.walletAddress))
+      .map((p) => ({ provider: p.provider ?? "x", handle: p.walletAddress.trim() }));
+
+    try {
+      setBillState("working");
+
+      // Resolve social handles → addresses (pre-mints as needed).
+      let resolvedByHandle = new Map<string, string>();
+      if (socialRows.length > 0) {
+        setBillMessage("Resolving tagged people…");
+        const res = await fetch("/api/onchain-bills/resolve", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ participants: socialRows }),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          setBillState("error");
+          setBillMessage(data.error === "insufficient_funds" || res.status === 503
+            ? "Wallet service isn't configured, so tagged people can't be added on-chain yet."
+            : (data.error ?? "Could not resolve tagged people."));
+          return;
+        }
+        resolvedByHandle = new Map(
+          (data.resolved as { provider: string; handle: string; address: string }[])
+            .map((r) => [`${r.provider}:${r.handle}`, r.address]),
+        );
+      }
+
+      // Ordered addresses / owed / labels — labels MUST match the server path:
+      // "@<handle>" for social, existing label for address rows.
+      const addresses: string[] = [];
+      const owedAmounts: bigint[] = [];
+      const labels: string[] = [];
+      for (const p of rows) {
+        if (isAddr(p.walletAddress)) {
+          addresses.push(normalizeAddress(p.walletAddress));
+          labels.push(p.label);
+        } else {
+          const norm = p.walletAddress.trim().replace(/^@/, "").toLowerCase();
+          const addr = resolvedByHandle.get(`${p.provider ?? "x"}:${norm}`);
+          if (!addr) throw new Error(`Could not resolve @${norm}`);
+          addresses.push(addr);
+          labels.push(`@${norm}`);
+        }
+        owedAmounts.push(usdcToBillUnits(p.amountUsd.toFixed(2)));
+      }
+
+      const receiptHash = receiptCommit?.hash ?? "";
+
+      // Signed-in social creator with NO connected browser wallet → server signs.
+      if (!billWallet && me?.walletAddress) {
+        setBillMessage("Writing the split to Arc from your wallet…");
+        const res = await fetch("/api/onchain-bills/create", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            merchant: bill.merchant,
+            currency: bill.currency,
+            total: confirmedUsd,
+            participants: rows.map((p) => ({
+              provider: isAddr(p.walletAddress) ? undefined : (p.provider ?? "x"),
+              handle: isAddr(p.walletAddress) ? undefined : p.walletAddress.trim(),
+              address: isAddr(p.walletAddress) ? normalizeAddress(p.walletAddress) : undefined,
+              label: p.label,
+              amountUsd: p.amountUsd,
+            })),
+            receiptHash,
+            receiptImageBase64: receiptCommit ? bytesToBase64(receiptCommit.bytes) : undefined,
+          }),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          setBillState("error");
+          setBillMessage(data.error === "insufficient_funds"
+            ? "Your wallet needs more test USDC to cover the gas for creating this bill."
+            : (data.error ?? "Could not create the bill."));
+          return;
+        }
+        setBillState("success");
+        setBillMessage(`Bill #${data.billId} is live on Arc. Tagged people will see it after signing in.`);
+        return;
+      }
+
+      // Otherwise: non-custodial creator signs createBill in their own wallet.
+      const wallet = billWallet ?? (await connectBillWallet());
+      if (!wallet) return;
+      if (!isBillRegistryConfigured()) {
+        setBillState("error");
+        setBillMessage("Bill registry is not configured yet.");
+        return;
+      }
+      setBillMessage("Switching to Arc Testnet…");
+      await ensureBillSplitWalletOnArc(wallet);
+      setBillMessage("Writing the split to Arc.");
+      const result = await createBillSplit({
+        ...wallet,
+        metadataHash: billMetadataHash({
+          merchant: bill.merchant, currency: bill.currency, total: confirmedUsd,
+          participantLabels: labels, receiptHash,
+        }),
+        participants: addresses.map((a) => normalizeAddress(a)),
+        owedAmounts,
+      });
+      setSubmittedBillId(result.billId);
+      setBillState("success");
+      setBillMessage(`Bill #${result.billId.toString()} is live on Arc. Payers will see it when they connect.`);
+      void fetch("/api/onchain-bills/preimage", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          registryAddress: BILL_SPLIT_REGISTRY_ADDRESS,
+          billId: result.billId.toString(),
+          merchant: bill.merchant, currency: bill.currency, total: confirmedUsd,
+          participantLabels: labels, receiptHash,
+          receiptImageBase64: receiptCommit ? bytesToBase64(receiptCommit.bytes) : undefined,
+        }),
+      }).catch(() => {});
       await refreshBillRegistry(wallet.account);
     } catch (caught) {
       setBillState("error");
@@ -1825,6 +1980,14 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
                             </ModeButton>
                           </div>
                           <div className="segmented-control">
+                            <ModeButton active={settleMode === "onchain"} onClick={() => setSettleMode("onchain")}>
+                              On-chain
+                            </ModeButton>
+                            <ModeButton active={settleMode === "offchain"} onClick={() => setSettleMode("offchain")}>
+                              Off-chain
+                            </ModeButton>
+                          </div>
+                          <div className="segmented-control">
                             <ModeButton active={splitMode === "equal"} onClick={() => setSplitMode("equal")}>
                               Equal
                             </ModeButton>
@@ -1838,12 +2001,12 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
                 <div className="route-strip text-sm">
                   <div>
                     <p className="font-semibold text-[var(--text)]">
-                      {splitBy === "handle" ? "Off-chain bill" : "Bill registry"}
+                      {settleMode === "offchain" ? "Off-chain bill" : "Bill registry (escrow)"}
                     </p>
                     <p className="mt-1 text-[var(--text-muted)]">
-                      {splitBy === "handle"
-                        ? "Tag each payer by X, Discord, or email — mix providers freely. They settle after signing in the matching way."
-                        : "Debt is discovered by wallet address."}
+                      {settleMode === "offchain"
+                        ? "Tag each payer by X, Discord, or email — they settle directly after signing in."
+                        : "Written to the on-chain escrow. Tagged people get a wallet and can pay + be claimed on Arc."}
                     </p>
                   </div>
                   <div className="route-line" aria-hidden="true" />
@@ -1921,11 +2084,11 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
                     <button
                       className="primary-button"
                       disabled={billState === "working" || billState === "connecting"}
-                      onClick={splitBy === "handle" ? submitBillOffchain : submitBillOnchain}
+                      onClick={settleMode === "offchain" ? submitBillOffchain : submitBillOnchainMixed}
                       type="button"
                     >
                       {billState === "working" ? <Loader2 className="animate-spin" size={16} /> : <Landmark size={16} />}
-                      {splitBy === "handle" ? "Create bill" : "Write on Arc"}
+                      {settleMode === "offchain" ? "Create bill" : "Write on Arc"}
                     </button>
                   </div>
                   <div className="text-sm text-[var(--text-muted)]">
