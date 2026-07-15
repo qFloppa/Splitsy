@@ -43,6 +43,13 @@ const READ_ABI = [
     inputs: [{ name: "billId", type: "uint256" }],
     outputs: [{ name: "", type: "uint256" }],
   },
+  {
+    type: "function",
+    name: "billIdsForSplitter",
+    stateMutability: "view",
+    inputs: [{ name: "splitter", type: "address" }],
+    outputs: [{ name: "", type: "uint256[]" }],
+  },
 ] as const;
 
 const publicClient = createPublicClient({
@@ -83,5 +90,14 @@ export async function getClaimableOnchain(billId: bigint) {
     abi: READ_ABI,
     functionName: "claimable",
     args: [billId],
+  });
+}
+
+export async function getBillIdsForSplitterOnchain(addr: `0x${string}`): Promise<readonly bigint[]> {
+  return publicClient.readContract({
+    address: REGISTRY_ADDRESS,
+    abi: READ_ABI,
+    functionName: "billIdsForSplitter",
+    args: [addr],
   });
 }
