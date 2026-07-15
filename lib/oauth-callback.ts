@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { upsertUserFromProvider, setUserWallet } from "@/lib/users-repo";
 import { resolveDebtsForHandle } from "@/lib/bills-repo";
 import { getOrCreateArcWallet } from "@/lib/circle-dcw";
+import { getPendingWallet, deletePendingWallet } from "@/lib/pending-wallets-repo";
 import { signSession, SESSION_COOKIE_NAME, SESSION_MAX_AGE } from "@/lib/session";
 import type { IdentityProvider } from "@/lib/types";
 
@@ -62,14 +63,23 @@ export async function finishProviderLogin(params: {
     console.error("Debt resolution failed (login continues):", resolveErr);
   }
 
-  // Provision a Circle DCW on first login (idempotent). Never block login if
-  // Circle is down/unconfigured — wallet_address stays null and retries next time.
+  // Provision a wallet on first login (idempotent). Prefer ADOPTING a wallet that
+  // was pre-minted when this handle was tagged on an on-chain bill — that DCW may
+  // already hold an escrow position, so it must become this user's wallet. Only
+  // if there is no pending wallet do we mint a fresh one. Best-effort: never block
+  // login if Circle/Supabase is down.
   if (!appUser.wallet_address) {
     try {
-      const wallet = await getOrCreateArcWallet(provider, profile.providerUserId);
-      if (wallet) await setUserWallet(appUser.id, wallet.address, wallet.walletId);
+      const pending = await getPendingWallet(provider, appUser.handle);
+      if (pending) {
+        await setUserWallet(appUser.id, pending.wallet_address, pending.circle_wallet_id);
+        await deletePendingWallet(provider, appUser.handle);
+      } else {
+        const wallet = await getOrCreateArcWallet(provider, profile.providerUserId);
+        if (wallet) await setUserWallet(appUser.id, wallet.address, wallet.walletId);
+      }
     } catch (walletErr) {
-      console.error("DCW provisioning failed (login continues):", walletErr);
+      console.error("Wallet provisioning/adoption failed (login continues):", walletErr);
     }
   }
 
