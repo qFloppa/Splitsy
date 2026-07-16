@@ -24,11 +24,11 @@ export type SplitParticipant = {
   walletAddress: string;
   amountUsd: number;
   status: "draft" | "unpaid" | "bridging" | "confirmed";
-  // Off-chain (handle) mode only: which identity provider this row's tag belongs
-  // to. Per-row so one bill can mix X / Discord / Email debtors. Undefined in
-  // on-chain (address) mode; the API defaults an absent value to the creator's
-  // own provider.
-  provider?: IdentityProvider;
+  // What kind of target this row's debtor field holds: a wallet address, or an
+  // identity handle (X / Discord / Email). Per-row so one bill can mix debtors
+  // across platforms. Undefined defaults to "x"; wallet and email are also
+  // auto-detected from the value itself.
+  provider?: IdentityProvider | "wallet";
 };
 
 export const emptyParsedBill: ParsedBill = {

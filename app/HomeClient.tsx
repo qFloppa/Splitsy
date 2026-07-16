@@ -130,12 +130,15 @@ type FlowStep = {
   explorerUrl?: string;
 };
 type ProgressFlow = {
-  kind: "pay" | "bridge";
+  kind: "pay" | "bridge" | "claim";
   open: boolean;
   amountLabel: string;
   contextLabel: string;
   status: "running" | "success" | "error";
   errorMessage: string;
+  // Overrides the footer status while running — server-side (Circle wallet)
+  // flows have no browser-wallet confirmations to point at.
+  runningLabel?: string;
   steps: FlowStep[];
 };
 
@@ -163,6 +166,19 @@ async function compressReceipt(file: File): Promise<Uint8Array> {
   if (!blob) throw new Error("Compression failed");
   return new Uint8Array(await blob.arrayBuffer());
 }
+
+// A debtor field accepts any target: a 0x wallet address, an email address, or
+// an X/Discord handle. Wallet and email are auto-detected from the value; the
+// row's provider picker only disambiguates X vs Discord for bare handles.
+const looksLikeAddress = (v: string) => /^0x[a-fA-F0-9]{40}$/.test(v.trim());
+const looksLikeEmail = (v: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v.trim());
+// Only called for non-address rows, so "wallet" never reaches the API.
+const rowProvider = (p: SplitParticipant): IdentityProvider =>
+  looksLikeEmail(p.walletAddress)
+    ? "email"
+    : p.provider === "discord" || p.provider === "email"
+      ? p.provider
+      : "x";
 
 // base64-encode raw bytes for JSON transport to the publish route.
 function bytesToBase64(bytes: Uint8Array): string {
@@ -267,36 +283,19 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
   const [partialPayments, setPartialPayments] = useState<Record<string, string>>({});
   const [claimAmounts, setClaimAmounts] = useState<Record<string, string>>({});
   const [participantShareInputs, setParticipantShareInputs] = useState<Record<string, string>>({});
-  const [splitBy, setSplitBy] = useState<"address" | "handle">("address");
   // Off-chain (social) counts reported up by the self-fetching X panels, so the
   // merged pending window and the shared History panel can sum/gate across both
   // the social and on-chain debt systems.
   const [socialPendingCount, setSocialPendingCount] = useState(0);
   const [socialHistoryCount, setSocialHistoryCount] = useState(0);
-  // Whether the create form settles into the on-chain escrow (registry) or the
-  // off-chain direct ledger. Rows can carry addresses or @handles in either mode.
-  const [settleMode, setSettleMode] = useState<"onchain" | "offchain">("onchain");
   // The signed-in Splitsy user (social creator), if any — lets a DCW user create
-  // an on-chain bill server-side without a browser wallet.
-  const [me, setMe] = useState<{ walletAddress: string | null } | null>(null);
-
-  // Pick how payers are identified: an on-chain wallet address, or off-chain by
-  // handle. In handle mode each participant row carries its OWN provider (X /
-  // Discord / Email), so one bill can mix debtors across platforms. Switching
-  // into handle mode clears any prefilled 0x… demo addresses (a wallet address
-  // is not a valid handle) and seeds each row's provider to "x".
-  function chooseSplitTarget(next: "address" | "handle") {
-    if (next === "handle") {
-      setParticipants((current) =>
-        current.map((p) => ({
-          ...p,
-          provider: p.provider ?? "x",
-          walletAddress: /^0x[a-fA-F0-9]{40}$/.test(p.walletAddress) ? "" : p.walletAddress,
-        })),
-      );
-    }
-    setSplitBy(next);
-  }
+  // an on-chain bill server-side without a browser wallet. Provider + handle are
+  // kept so the split form can reject the creator tagging themselves.
+  const [me, setMe] = useState<{
+    walletAddress: string | null;
+    provider: IdentityProvider | null;
+    handle: string | null;
+  } | null>(null);
   const [recurringWallet, setRecurringWallet] = useState<RecurringWallet | null>(null);
   const [recurringState, setRecurringState] = useState<RecurringRunState>("idle");
   const [recurringMessage, setRecurringMessage] = useState("");
@@ -319,14 +318,14 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
     {
       id: "payer-1",
       label: "Payer 1",
-      walletAddress: "0x1111111111111111111111111111111111111111",
+      walletAddress: "",
       amountUsd: 0,
       status: "unpaid",
     },
     {
       id: "payer-2",
       label: "Payer 2",
-      walletAddress: "0x2222222222222222222222222222222222222222",
+      walletAddress: "",
       amountUsd: 0,
       status: "unpaid",
     },
@@ -761,6 +760,28 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
     }
   }
 
+  // Clear the whole split form back to its initial state after a successful
+  // submit, so the same bill can't be written to Arc twice by re-clicking.
+  function resetSplitForm() {
+    setBill({ ...emptyParsedBill, merchant: "Upload a bill" });
+    setFxQuote(null);
+    setOcrState("idle");
+    setManualBillEntry(false);
+    setImagePreview("");
+    setReceiptCommit(null);
+    setError("");
+    setSplitMode("equal");
+    setParticipantShareInputs({});
+    setSubmittedBillId(null);
+    setParticipants([
+      { id: "payer-1", label: "Payer 1", walletAddress: "", amountUsd: 0, status: "unpaid" },
+      { id: "payer-2", label: "Payer 2", walletAddress: "", amountUsd: 0, status: "unpaid" },
+    ]);
+    if (imageInputRef.current) {
+      imageInputRef.current.value = "";
+    }
+  }
+
   // On-chain path that ALSO accepts @handle participants. Social rows are resolved
   // to Arc addresses server-side (pre-minting a DCW when needed); then either the
   // connected wallet signs createBill, or — for a signed-in social creator with no
@@ -778,11 +799,51 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
       return;
     }
 
+    // A splitter can't owe themselves. Reject any payer row that is the creator:
+    // their connected wallet address, their DCW address, or (for a signed-in
+    // social user) their own handle/email on the matching provider.
+    const creatorAddresses = new Set(
+      [billWallet?.account, address, me?.walletAddress]
+        .filter((value): value is string => Boolean(value))
+        .map((value) => value.toLowerCase()),
+    );
+    const selfAddressRow = rows.find(
+      (p) => looksLikeAddress(p.walletAddress) && creatorAddresses.has(p.walletAddress.trim().toLowerCase()),
+    );
+    if (selfAddressRow) {
+      setBillState("error");
+      setBillMessage("You can't split a bill with yourself — remove your own wallet address from the payers.");
+      return;
+    }
+    const meHandle = me?.handle?.trim().replace(/^@/, "").toLowerCase() ?? null;
+    const selfSocialRow =
+      me?.provider && meHandle
+        ? rows.find(
+            (p) =>
+              !looksLikeAddress(p.walletAddress) &&
+              rowProvider(p) === me.provider &&
+              p.walletAddress.trim().replace(/^@/, "").toLowerCase() === meHandle,
+          )
+        : undefined;
+    if (selfSocialRow) {
+      setBillState("error");
+      setBillMessage(`You can't split a bill with yourself — "${selfSocialRow.walletAddress.trim()}" is your own signed-in account.`);
+      return;
+    }
+
     // Build ordered slots; social rows are those whose input isn't a 0x address.
-    const isAddr = (v: string) => /^0x[a-fA-F0-9]{40}$/.test(v.trim());
+    const isAddr = looksLikeAddress;
+    // A row explicitly set to "wallet" must hold a full address — don't silently
+    // treat a stray value as an X handle (it could resolve to a real account).
+    const badWalletRow = rows.find((p) => p.provider === "wallet" && !isAddr(p.walletAddress));
+    if (badWalletRow) {
+      setBillState("error");
+      setBillMessage(`"${badWalletRow.label || badWalletRow.walletAddress}" needs a full 0x wallet address.`);
+      return;
+    }
     const socialRows = rows
       .filter((p) => !isAddr(p.walletAddress))
-      .map((p) => ({ provider: p.provider ?? "x", handle: p.walletAddress.trim() }));
+      .map((p) => ({ provider: rowProvider(p), handle: p.walletAddress.trim() }));
 
     try {
       setBillState("working");
@@ -822,12 +883,20 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
           labels.push(p.label.trim() || `Payer ${i + 1}`);
         } else {
           const norm = p.walletAddress.trim().replace(/^@/, "").toLowerCase();
-          const addr = resolvedByHandle.get(`${p.provider ?? "x"}:${norm}`);
+          const addr = resolvedByHandle.get(`${rowProvider(p)}:${norm}`);
           if (!addr) throw new Error(`Could not resolve @${norm}`);
           addresses.push(addr);
           labels.push(`@${norm}`);
         }
         owedAmounts.push(usdcToBillUnits(p.amountUsd.toFixed(2)));
+      }
+
+      // Post-resolution self-check: a tagged handle can resolve to the creator's
+      // own wallet (e.g. tagging your own account on another provider).
+      if (addresses.some((a) => creatorAddresses.has(a.toLowerCase()))) {
+        setBillState("error");
+        setBillMessage("You can't split a bill with yourself — one of the tagged people resolves to your own wallet.");
+        return;
       }
 
       const receiptHash = receiptCommit?.hash ?? "";
@@ -843,7 +912,7 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
             currency: bill.currency,
             total: confirmedUsd,
             participants: rows.map((p) => ({
-              provider: isAddr(p.walletAddress) ? undefined : (p.provider ?? "x"),
+              provider: isAddr(p.walletAddress) ? undefined : rowProvider(p),
               handle: isAddr(p.walletAddress) ? undefined : p.walletAddress.trim(),
               address: isAddr(p.walletAddress) ? normalizeAddress(p.walletAddress) : undefined,
               label: p.label,
@@ -863,6 +932,7 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
         }
         setBillState("success");
         setBillMessage(`Bill #${data.billId} is live on Arc. Tagged people will see it after signing in.`);
+        resetSplitForm();
         return;
       }
 
@@ -889,6 +959,8 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
       setSubmittedBillId(result.billId);
       setBillState("success");
       setBillMessage(`Bill #${result.billId.toString()} is live on Arc. Payers will see it when they connect.`);
+      const publishedReceipt = receiptCommit;
+      resetSplitForm();
       void fetch("/api/onchain-bills/preimage", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -897,63 +969,10 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
           billId: result.billId.toString(),
           merchant: bill.merchant, currency: bill.currency, total: confirmedUsd,
           participantLabels: labels, receiptHash,
-          receiptImageBase64: receiptCommit ? bytesToBase64(receiptCommit.bytes) : undefined,
+          receiptImageBase64: publishedReceipt ? bytesToBase64(publishedReceipt.bytes) : undefined,
         }),
       }).catch(() => {});
       await refreshBillRegistry(wallet.account);
-    } catch (caught) {
-      setBillState("error");
-      setBillMessage(errorMessage(caught));
-    }
-  }
-
-  // Off-chain path: tag payers by @handle and store the bill in Supabase. Tagged
-  // people discover it and settle from their DCW after signing in with X.
-  async function submitBillOffchain() {
-    if (splitMode === "manual" && splitTotal - confirmedUsd > 0.009) {
-      setBillState("error");
-      setBillMessage("Manual shares cannot be larger than the bill Total USD amount.");
-      return;
-    }
-
-    const debts = displayParticipants
-      .filter((participant) => participant.amountUsd > 0 && participant.walletAddress.trim())
-      .map((participant) => ({
-        provider: participant.provider ?? "x",
-        handle: participant.walletAddress.trim(),
-        amount: participant.amountUsd,
-      }));
-
-    if (debts.length === 0) {
-      setBillState("error");
-      setBillMessage("Add at least one @handle with a positive share.");
-      return;
-    }
-
-    try {
-      setBillState("working");
-      setBillMessage("Saving the split…");
-      const res = await fetch("/api/bills", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ merchant: bill.merchant, currency: bill.currency, debts }),
-      });
-      if (res.status === 401) {
-        setBillState("error");
-        setBillMessage("Sign in with X (top right) to split by @handle.");
-        return;
-      }
-      const data = await res.json();
-      if (!res.ok) {
-        setBillState("error");
-        setBillMessage(data.error ?? "Could not create the bill.");
-        return;
-      }
-      setBillState("success");
-      setBillMessage("Bill created. Tagged people will see it under their unpaid bills when they sign in.");
-      // Clear the form so the same split can't be submitted again on re-click.
-      setParticipants([{ id: `payer-${Date.now()}`, label: "Payer 1", walletAddress: "", amountUsd: 0, status: "unpaid" }]);
-      setParticipantShareInputs({});
     } catch (caught) {
       setBillState("error");
       setBillMessage(errorMessage(caught));
@@ -972,6 +991,40 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
         { key: "switch", icon: "switch", label: "Connect to Arc Testnet", hint: "Approve the network switch in your wallet", state: "active" },
         { key: "approve", icon: "approve", label: "Approve USDC", hint: "Let the bill registry move your USDC", state: "pending" },
         { key: "pay", icon: "pay", label: "Send payment", hint: "Settle the debt on Arc with a memo", state: "pending" },
+      ],
+    });
+  }
+
+  // Server-side (Circle DCW) pay: one POST does approve + payDebt from the
+  // user's Circle wallet, so the modal shows both steps but can only observe
+  // the round-trip — completeFlow marks them done when the route returns.
+  function beginSocialPayFlow(billId: string, amountLabel: string) {
+    setProgressFlow({
+      kind: "pay",
+      open: true,
+      amountLabel,
+      contextLabel: `bill #${billId}`,
+      status: "running",
+      errorMessage: "",
+      runningLabel: "Processing from your Circle wallet — this can take a moment",
+      steps: [
+        { key: "approve", icon: "approve", label: "Approve USDC", hint: "Your Circle wallet lets the bill registry move USDC", state: "active" },
+        { key: "pay", icon: "pay", label: "Send payment", hint: "Settle the debt on Arc", state: "pending" },
+      ],
+    });
+  }
+
+  function beginClaimFlow(billId: string, amountLabel: string) {
+    setProgressFlow({
+      kind: "claim",
+      open: true,
+      amountLabel,
+      contextLabel: `bill #${billId}`,
+      status: "running",
+      errorMessage: "",
+      runningLabel: "Processing from your Circle wallet — this can take a moment",
+      steps: [
+        { key: "claim", icon: "claim", label: "Claim funds", hint: "Pull paid USDC from the registry to your wallet", state: "active" },
       ],
     });
   }
@@ -1048,16 +1101,19 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
 
     // Social (DCW) user: no browser wallet — pay from the server, gated by the
     // same PIN unlock the off-chain pay flow uses. The route reads the owed
-    // amount from chain, so no amount is sent.
+    // amount from chain and always settles the full remaining debt, so no
+    // amount is sent (partial payments aren't supported for Circle wallets).
     if (!billWallet && me?.walletAddress) {
       const pin = await fetch("/api/wallet/pin").then((r) => r.json()).catch(() => ({}));
       if (!pin.unlocked) {
         setDebtMessages((current) => ({
           ...current,
-          [debtKey]: { tone: "neutral", message: "Unlock your wallet (top-right wallet panel), then tap Pay again." },
+          [debtKey]: { tone: "neutral", message: "Unlock your wallet (the wallet button in the bottom-right corner), then tap Pay again." },
         }));
         return;
       }
+      const amountLabel = billUnitsToUsdc(debt.remaining);
+      beginSocialPayFlow(debtKey, amountLabel);
       try {
         setBillState("working");
         setDebtMessages((current) => {
@@ -1068,18 +1124,18 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
         const res = await fetch(`/api/onchain-bills/${debtKey}/pay`, { method: "POST" });
         const data = await res.json().catch(() => ({}));
         if (!res.ok) {
+          const message = data.error === "insufficient_funds"
+            ? "Your wallet needs more test USDC."
+            : (data.error ?? "Payment failed.");
           setBillState("error");
+          failFlow(message);
           setDebtMessages((current) => ({
             ...current,
-            [debtKey]: {
-              tone: "error",
-              message: data.error === "insufficient_funds"
-                ? "Your wallet needs more test USDC."
-                : (data.error ?? "Payment failed."),
-            },
+            [debtKey]: { tone: "error", message },
           }));
           return;
         }
+        completeFlow();
         setBillState("success");
         setDebtMessages((current) => ({
           ...current,
@@ -1088,6 +1144,7 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
         await refreshBillRegistry(me.walletAddress as `0x${string}`);
       } catch (caught) {
         setBillState("error");
+        failFlow(errorMessage(caught));
         setDebtMessages((current) => ({
           ...current,
           [debtKey]: { tone: "error", message: errorMessage(caught) },
@@ -1319,34 +1376,41 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
   }
 
   async function claimSplitterFunds(debt: BillSplitDebt) {
+    const debtKey = debt.billId.toString();
+
     // Social (DCW) creator: no browser wallet — claim from the server, gated by
-    // the same PIN unlock. The route reads the claimable amount from chain, so
-    // no amount is sent.
+    // the same PIN unlock. The route reads the claimable amount from chain and
+    // always claims all of it, so no amount is sent (partial claims aren't
+    // supported for Circle wallets).
     if (!billWallet && me?.walletAddress) {
       const pin = await fetch("/api/wallet/pin").then((r) => r.json()).catch(() => ({}));
       if (!pin.unlocked) {
         setClaimMessageTone("neutral");
-        setClaimMessage("Unlock your wallet (top-right wallet panel), then tap Claim again.");
+        setClaimMessage("Unlock your wallet (the wallet button in the bottom-right corner), then tap Claim again.");
         return;
       }
+      beginClaimFlow(debtKey, billUnitsToUsdc(debt.claimable));
       try {
         setBillState("working");
         setClaimMessageTone("neutral");
         setClaimMessage("Claiming paid funds.");
-        const res = await fetch(`/api/onchain-bills/${debt.billId.toString()}/claim`, { method: "POST" });
+        const res = await fetch(`/api/onchain-bills/${debtKey}/claim`, { method: "POST" });
         const data = await res.json().catch(() => ({}));
         if (!res.ok) {
           setBillState("error");
+          failFlow(data.error ?? "Claim failed.");
           setClaimMessageTone("error");
           setClaimMessage(data.error ?? "Claim failed.");
           return;
         }
+        completeFlow();
         setBillState("success");
         setClaimMessageTone("neutral");
-        setClaimMessage(`Claimed funds from bill #${debt.billId.toString()} to your wallet.`);
+        setClaimMessage(`Claimed funds from bill #${debtKey} to your wallet.`);
         await refreshBillRegistry(me.walletAddress as `0x${string}`);
       } catch (caught) {
         setBillState("error");
+        failFlow(errorMessage(caught));
         setClaimMessageTone("error");
         setClaimMessage(errorMessage(caught));
       }
@@ -1395,6 +1459,33 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
 
   function updatePreview(event: ChangeEvent<HTMLInputElement>) {
     showBillPreview(event.target.files?.[0] ?? null);
+  }
+
+  // Testing convenience: load the bundled /bill.jpg sample into the upload box
+  // exactly as if the user picked it, so "Scan receipt" works unchanged.
+  async function useSampleBill() {
+    try {
+      const res = await fetch("/bill.jpg");
+
+      if (!res.ok) {
+        throw new Error("Sample bill missing.");
+      }
+
+      const blob = await res.blob();
+      const file = new File([blob], "bill.jpg", { type: blob.type || "image/jpeg" });
+      const input = imageInputRef.current;
+
+      if (input) {
+        const transfer = new DataTransfer();
+        transfer.items.add(file);
+        input.files = transfer.files;
+      }
+
+      setError("");
+      showBillPreview(file);
+    } catch {
+      setError("Couldn't load the sample bill image.");
+    }
   }
 
   function handleBillDragOver(event: DragEvent<HTMLLabelElement>) {
@@ -1836,6 +1927,7 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
                     payDebtOnArc={payDebtOnArc}
                     debtMessages={debtMessages}
                     setPartialPayments={setPartialPayments}
+                    socialWallet={!billWallet && Boolean(me?.walletAddress)}
                   />
                 ) : null}
               </div>
@@ -1843,15 +1935,23 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
             {registryReadAddress ? (
               <ClaimFundsPanel
                 splitterBills={splitterBills}
+                billState={billState}
                 claimAmounts={claimAmounts}
                 claimMessage={claimMessage}
                 claimMessageTone={claimMessageTone}
                 claimSplitterFunds={claimSplitterFunds}
                 setClaimAmounts={setClaimAmounts}
+                socialWallet={!billWallet && Boolean(me?.walletAddress)}
               />
             ) : null}
 
             <div className="space-y-5">
+              {/* After a successful submit the split form resets (unmounting the
+                  panel that shows billMessage), so surface the "Bill #N is live"
+                  confirmation here until a new bill is started. */}
+              {billState === "success" && billMessage && !billReadyForSplit ? (
+                <Message tone="neutral">{billMessage}</Message>
+              ) : null}
               <Panel title="Upload bill" icon={<Upload size={19} />}>
                 <form className="space-y-4" onSubmit={parseBill}>
                   <label
@@ -1877,6 +1977,32 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
                         <p className="mt-1 text-sm text-[var(--receipt-muted)]">Click to browse or drag &amp; drop an image</p>
                         <p className="mt-2 max-w-md text-sm leading-6 text-[var(--receipt-muted)]">
                           Use a local receipt or bill photo in any language. Splitsy reads totals, tax, tip, and line items so the split starts clean.
+                        </p>
+                        <p className="mt-4 text-sm text-[var(--receipt-muted)]">
+                          Don&apos;t have a receipt image right now?{" "}
+                          {/* A <span>, not a <button>: buttons are labelable, so the
+                              surrounding upload <label> would adopt it as its control
+                              and every click on the box would trigger it. */}
+                          <span
+                            className="cursor-pointer font-semibold text-[var(--accent)] underline underline-offset-2 hover:opacity-80"
+                            onClick={(event) => {
+                              // Inside the upload <label>: stop the click from also
+                              // opening the file picker.
+                              event.preventDefault();
+                              event.stopPropagation();
+                              void useSampleBill();
+                            }}
+                            onKeyDown={(event) => {
+                              if (event.key === "Enter" || event.key === " ") {
+                                event.preventDefault();
+                                void useSampleBill();
+                              }
+                            }}
+                            role="button"
+                            tabIndex={0}
+                          >
+                            Use this
+                          </span>
                         </p>
                       </>
                     )}
@@ -1986,43 +2112,22 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
                       title="Review your split"
                       icon={<WalletCards size={19} />}
                       action={
-                        <div className="flex flex-wrap gap-2">
-                          <div className="segmented-control">
-                            <ModeButton active={splitBy === "address"} onClick={() => chooseSplitTarget("address")}>
-                              Wallet
-                            </ModeButton>
-                            <ModeButton active={splitBy === "handle"} onClick={() => chooseSplitTarget("handle")}>
-                              Tag people
-                            </ModeButton>
-                          </div>
-                          <div className="segmented-control">
-                            <ModeButton active={settleMode === "onchain"} onClick={() => setSettleMode("onchain")}>
-                              On-chain
-                            </ModeButton>
-                            <ModeButton active={settleMode === "offchain"} onClick={() => setSettleMode("offchain")}>
-                              Off-chain
-                            </ModeButton>
-                          </div>
-                          <div className="segmented-control">
-                            <ModeButton active={splitMode === "equal"} onClick={() => setSplitMode("equal")}>
-                              Equal
-                            </ModeButton>
-                            <ModeButton active={splitMode === "manual"} onClick={() => setSplitMode("manual")}>
-                              Manual
-                            </ModeButton>
-                          </div>
+                        <div className="segmented-control">
+                          <ModeButton active={splitMode === "equal"} onClick={() => setSplitMode("equal")}>
+                            Equal
+                          </ModeButton>
+                          <ModeButton active={splitMode === "manual"} onClick={() => setSplitMode("manual")}>
+                            Manual
+                          </ModeButton>
                         </div>
                       }
                     >
                 <div className="route-strip text-sm">
                   <div>
-                    <p className="font-semibold text-[var(--text)]">
-                      {settleMode === "offchain" ? "Off-chain bill" : "Bill registry (escrow)"}
-                    </p>
+                    <p className="font-semibold text-[var(--text)]">Bill registry (escrow)</p>
                     <p className="mt-1 text-[var(--text-muted)]">
-                      {settleMode === "offchain"
-                        ? "Tag each payer by X, Discord, or email — they settle directly after signing in."
-                        : "Written to the on-chain escrow. Tagged people get a wallet and can pay + be claimed on Arc."}
+                      Tag each payer by wallet address, X, Discord, or email. Written to the on-chain escrow — tagged
+                      people get a wallet and can pay + be claimed on Arc.
                     </p>
                   </div>
                   <div className="route-line" aria-hidden="true" />
@@ -2048,20 +2153,12 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
                             value={participant.label}
                             onChange={(value) => updateParticipant(participant.id, "label", value)}
                           />
-                          {splitBy === "handle" ? (
-                            <HandleField
-                              provider={participant.provider ?? "x"}
-                              onProviderChange={(value) => updateParticipant(participant.id, "provider", value)}
-                              value={participant.walletAddress}
-                              onChange={(value) => updateParticipant(participant.id, "walletAddress", value)}
-                            />
-                          ) : (
-                            <Field
-                              label="Wallet"
-                              value={participant.walletAddress}
-                              onChange={(value) => updateParticipant(participant.id, "walletAddress", value)}
-                            />
-                          )}
+                          <HandleField
+                            provider={participant.provider ?? "x"}
+                            onProviderChange={(value) => updateParticipant(participant.id, "provider", value)}
+                            value={participant.walletAddress}
+                            onChange={(value) => updateParticipant(participant.id, "walletAddress", value)}
+                          />
                           <Field
                             disabled={splitMode === "equal"}
                             label="Share"
@@ -2100,11 +2197,11 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
                     <button
                       className="primary-button"
                       disabled={billState === "working" || billState === "connecting"}
-                      onClick={settleMode === "offchain" ? submitBillOffchain : submitBillOnchainMixed}
+                      onClick={submitBillOnchainMixed}
                       type="button"
                     >
                       {billState === "working" ? <Loader2 className="animate-spin" size={16} /> : <Landmark size={16} />}
-                      {settleMode === "offchain" ? "Create bill" : "Write on Arc"}
+                      Write on Arc
                     </button>
                   </div>
                   <div className="text-sm text-[var(--text-muted)]">
@@ -2216,6 +2313,7 @@ function WalletDebtRows({
   partialPayments,
   payDebtOnArc,
   setPartialPayments,
+  socialWallet,
 }: {
   bridgeForDebt: (debt: BillSplitDebt, debtSourceChain: BridgeSourceChain) => void;
   bridgeResults: Record<string, BridgeSummary>;
@@ -2227,6 +2325,10 @@ function WalletDebtRows({
   partialPayments: Record<string, string>;
   payDebtOnArc: (debt: BillSplitDebt) => void;
   setPartialPayments: (value: Record<string, string>) => void;
+  // Social (DCW) payer: their Circle wallet lives only on Arc Testnet, so the
+  // CCTP bridge path is irrelevant, and the server pay route always settles the
+  // full remaining debt — no partial-amount input.
+  socialWallet: boolean;
 }) {
   const [fallbackBridgeChains, setFallbackBridgeChains] = useState<Record<string, BridgeSourceChain>>({});
   // Which debt cards are expanded. A long list of payable bills otherwise makes
@@ -2272,6 +2374,7 @@ function WalletDebtRows({
                   <>
                   <BillVerification billId={debt.billId} metadataHash={debt.metadataHash} />
 
+                  {!socialWallet ? (
                   <div className="mt-3">
                     <Field
                       label="Payment amount"
@@ -2280,6 +2383,7 @@ function WalletDebtRows({
                       onChange={(value) => setPartialPayments({ ...partialPayments, [key]: value })}
                     />
                   </div>
+                  ) : null}
 
                   {debtMessage ? (
                     <div className="mt-3">
@@ -2287,6 +2391,7 @@ function WalletDebtRows({
                     </div>
                   ) : null}
 
+                  {!socialWallet ? (
                   <div className="route-strip mt-3 text-sm">
                     <div>
                       <p className="font-semibold text-[var(--text)]">Pay directly on Arc</p>
@@ -2298,12 +2403,17 @@ function WalletDebtRows({
                       <p className="mt-1 text-[var(--text-muted)]">CCTP V2 brings USDC to Arc, then you pay on Arc.</p>
                     </div>
                   </div>
+                  ) : null}
 
                   <div className="mt-3 rounded-[var(--radius)] border border-[var(--border)] bg-[var(--surface-muted)] p-3 text-sm">
                     <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                       <div>
                         <p className="font-semibold text-[var(--text)]">Pay on Arc</p>
-                        <p className="mt-1 text-[var(--text-muted)]">Use this after your USDC is already on Arc Testnet.</p>
+                        <p className="mt-1 text-[var(--text-muted)]">
+                          {socialWallet
+                            ? "Settles the remaining debt from your Circle wallet on Arc Testnet."
+                            : "Use this after your USDC is already on Arc Testnet."}
+                        </p>
                       </div>
                       <div className="flex flex-col items-stretch gap-1 sm:items-end">
                         <button
@@ -2312,7 +2422,14 @@ function WalletDebtRows({
                           onClick={() => payDebtOnArc(debt)}
                           type="button"
                         >
-                          Pay on Arc Testnet
+                          {billState === "working" ? (
+                            <span className="inline-flex items-center gap-2">
+                              <Loader2 className="animate-spin" size={15} />
+                              Processing…
+                            </span>
+                          ) : (
+                            "Pay on Arc Testnet"
+                          )}
                         </button>
                         <p className="text-xs text-[var(--text-muted)] sm:text-right">
                           Balance:{" "}
@@ -2324,6 +2441,7 @@ function WalletDebtRows({
                       </div>
                     </div>
 
+                    {!socialWallet ? (
                     <div className="mt-4 border-t border-[var(--border)] pt-4">
                       <p className="font-semibold text-[var(--text)]">Bridge USDC to Arc first</p>
                       <p className="mt-1 text-[var(--text-muted)]">
@@ -2347,6 +2465,7 @@ function WalletDebtRows({
                       ))}
                       </div>
                     </div>
+                    ) : null}
                   </div>
 
                   {bridgeResult?.explorerUrls.length ? (
@@ -2375,18 +2494,24 @@ function WalletDebtRows({
 // pending window (was the second half of the old DebtWorkspace).
 function ClaimFundsPanel({
   splitterBills,
+  billState,
   claimAmounts,
   claimMessage,
   claimMessageTone,
   claimSplitterFunds,
   setClaimAmounts,
+  socialWallet,
 }: {
   splitterBills: BillSplitDebt[];
+  billState: BillRunState;
   claimAmounts: Record<string, string>;
   claimMessage: string;
   claimMessageTone: "error" | "neutral";
   claimSplitterFunds: (debt: BillSplitDebt) => void;
   setClaimAmounts: (value: Record<string, string>) => void;
+  // Social (DCW) creator: the server claim route always claims the full
+  // claimable balance, so the partial-amount input is hidden.
+  socialWallet: boolean;
 }) {
   const claimableBills = splitterBills.filter((debt) => debt.claimable > 0n);
   const claimRef = useRef<HTMLDivElement | null>(null);
@@ -2417,7 +2542,7 @@ function ClaimFundsPanel({
           {claimableBills.map((debt) => {
             const key = debt.billId.toString();
             return (
-              <div className="relative grid gap-3 overflow-hidden rounded-[var(--radius)] border border-[var(--border)] bg-[var(--surface-strong)] p-3 sm:grid-cols-[1fr_0.4fr_auto] sm:items-end" key={key}>
+              <div className={`relative grid gap-3 overflow-hidden rounded-[var(--radius)] border border-[var(--border)] bg-[var(--surface-strong)] p-3 sm:items-end ${socialWallet ? "sm:grid-cols-[1fr_auto]" : "sm:grid-cols-[1fr_0.4fr_auto]"}`} key={key}>
                 <div>
                   <p className="font-semibold">Bill #{key}</p>
                   <p className="mt-1 text-sm text-[var(--text-muted)]">
@@ -2425,17 +2550,33 @@ function ClaimFundsPanel({
                     <span className="amount-text">${billUnitsToUsdc(debt.claimed)}</span>
                   </p>
                   <p className="mt-2 text-xs text-[var(--text-muted)]">
-                    Claim pulls paid USDC from the registry to your Arc wallet.
+                    {socialWallet
+                      ? `Claim pulls the full $${billUnitsToUsdc(debt.claimable)} paid USDC from the registry to your wallet.`
+                      : "Claim pulls paid USDC from the registry to your Arc wallet."}
                   </p>
                 </div>
+                {!socialWallet ? (
                 <Field
                   label="Claim"
                   type="number"
                   value={claimAmounts[key] ?? billUnitsToUsdc(debt.claimable)}
                   onChange={(value) => setClaimAmounts({ ...claimAmounts, [key]: value })}
                 />
-                <button className="primary-button h-11" onClick={() => claimSplitterFunds(debt)} type="button">
-                  Claim on Arc
+                ) : null}
+                <button
+                  className="primary-button h-11"
+                  disabled={billState === "working"}
+                  onClick={() => claimSplitterFunds(debt)}
+                  type="button"
+                >
+                  {billState === "working" ? (
+                    <span className="inline-flex items-center gap-2">
+                      <Loader2 className="animate-spin" size={15} />
+                      Processing…
+                    </span>
+                  ) : (
+                    "Claim on Arc"
+                  )}
                 </button>
               </div>
             );
@@ -3239,6 +3380,7 @@ function ProgressModal({ flow, onClose }: { flow: ProgressFlow; onClose: () => v
   const running = flow.status === "running";
   const succeeded = flow.status === "success";
   const isBridge = flow.kind === "bridge";
+  const isClaim = flow.kind === "claim";
 
   const headIcon = succeeded ? (
     <CheckCircle2 size={22} />
@@ -3256,21 +3398,29 @@ function ProgressModal({ flow, onClose }: { flow: ProgressFlow; onClose: () => v
       : flow.status === "error"
         ? "Bridge failed"
         : "Bridging to Arc"
-    : succeeded
-      ? "Payment settled"
-      : flow.status === "error"
-        ? "Payment failed"
-        : "Settling on Arc";
+    : isClaim
+      ? succeeded
+        ? "Funds claimed"
+        : flow.status === "error"
+          ? "Claim failed"
+          : "Claiming funds"
+      : succeeded
+        ? "Payment settled"
+        : flow.status === "error"
+          ? "Payment failed"
+          : "Settling on Arc";
 
-  const verb = isBridge ? "Moving" : "Paying";
-  const destination = isBridge ? "to Arc" : "toward";
+  const verb = isBridge ? "Moving" : isClaim ? "Claiming" : "Paying";
+  const destination = isBridge ? "to Arc" : isClaim ? "from" : "toward";
   const subtitle =
     flow.status === "error"
       ? flow.errorMessage || "Something went wrong."
       : succeeded
         ? isBridge
           ? `$${flow.amountLabel} USDC has arrived on your Arc wallet ${flow.contextLabel}.`
-          : `Paid $${flow.amountLabel} USDC ${flow.contextLabel}.`
+          : isClaim
+            ? `Claimed $${flow.amountLabel} USDC from ${flow.contextLabel}.`
+            : `Paid $${flow.amountLabel} USDC ${flow.contextLabel}.`
         : `${verb} $${flow.amountLabel} USDC ${destination} ${flow.contextLabel}.`;
 
   const explorerLinks = flow.steps
@@ -3358,7 +3508,7 @@ function ProgressModal({ flow, onClose }: { flow: ProgressFlow; onClose: () => v
               {running ? (
                 <>
                   <Loader2 className="animate-spin" size={15} />
-                  {isBridge ? "Keep this open until the bridge finishes" : "Confirm each step in your wallet"}
+                  {flow.runningLabel ?? (isBridge ? "Keep this open until the bridge finishes" : "Confirm each step in your wallet")}
                 </>
               ) : succeeded ? (
                 <>
@@ -3455,32 +3605,41 @@ function Field({
   );
 }
 
-// Handle field for off-chain tagging. Each row picks its OWN provider (X /
-// Discord / Email) from an inline dropdown, so one bill can mix debtors across
-// platforms. The field adapts its label, validation and preview to the chosen
-// provider:
+// The one debtor field: accepts a 0x wallet address, an email address, or an
+// X/Discord handle. Wallet and email are auto-detected from the value; the
+// inline dropdown only disambiguates X vs Discord for bare handles, so one
+// bill can mix debtors across platforms. Per detected kind:
+//  - Wallet: anything starting with 0x — no preview, used as-is on-chain.
 //  - X: a valid handle triggers a live unavatar.io lookup (fallback=false) so
 //    the avatar only shows once it resolves to a real account — a typo 404s and
 //    stays hidden, the "your handle became real" confirmation.
 //  - Discord: no public username→avatar CDN, so no preview.
 //  - Email: tagged (and matched) by address; both Google sign-in and Email-OTP
 //    resolve to it. unavatar.io resolves a Gravatar once the address looks valid.
-// The trimmed value is stored (leading @ stripped for X); the server lowercases
-// it before matching, so casing here doesn't affect debt linking.
+// The trimmed value is stored (leading @ stripped); the server lowercases it
+// before matching, so casing here doesn't affect debt linking.
 function HandleField({
-  provider,
+  provider: pickedProvider,
   onProviderChange,
   value,
   onChange,
 }: {
-  provider: IdentityProvider;
-  onProviderChange: (value: IdentityProvider) => void;
+  provider: IdentityProvider | "wallet";
+  onProviderChange: (value: IdentityProvider | "wallet") => void;
   value: string;
   onChange: (value: string) => void;
 }) {
   const handle = value.replace(/^@+/, "").trim();
-  // Per-provider validity gates the avatar preview: X handles are ≤15 word
-  // chars; email must look like an address; Discord shows no preview.
+  // An explicit "Wallet address" pick is authoritative; otherwise a typed 0x
+  // address or email re-labels the row to match what it actually holds.
+  const provider: IdentityProvider | "wallet" =
+    pickedProvider === "wallet" || /^0x/i.test(handle)
+      ? "wallet"
+      : looksLikeEmail(handle)
+        ? "email"
+        : pickedProvider;
+  // Per-kind validity gates the avatar preview: X handles are ≤15 word chars;
+  // email must look like an address; wallet and Discord show no preview.
   const valid =
     provider === "x"
       ? /^[a-zA-Z0-9_]{1,15}$/.test(handle)
@@ -3508,14 +3667,21 @@ function HandleField({
   useEffect(() => setAvatarOk(false), [src]);
 
   const label =
-    provider === "discord" ? "Discord username" : provider === "email" ? "Email address" : "X handle";
-  const placeholder = provider === "email" ? "name@email.com" : "username";
+    provider === "wallet"
+      ? "Wallet address"
+      : provider === "discord"
+        ? "Discord username"
+        : provider === "email"
+          ? "Email address"
+          : "X handle";
 
   return (
     <label className="block text-sm font-medium text-[var(--text-soft)]">
       <span className="flex items-center justify-between gap-2">
         <span className="inline-flex items-center gap-1">
-          {provider === "discord" ? (
+          {provider === "wallet" ? (
+            <WalletCards size={12} />
+          ) : provider === "discord" ? (
             <svg width="12" height="12" viewBox="0 0 127.14 96.36" fill="currentColor" aria-hidden="true">
               <path d="M107.7 8.07A105.15 105.15 0 0 0 81.47 0a72.06 72.06 0 0 0-3.36 6.83 97.68 97.68 0 0 0-29.11 0A72.37 72.37 0 0 0 45.64 0a105.89 105.89 0 0 0-26.25 8.09C2.79 32.65-1.71 56.6.54 80.21a105.73 105.73 0 0 0 32.17 16.15 77.7 77.7 0 0 0 6.89-11.11 68.42 68.42 0 0 1-10.85-5.18c.91-.66 1.8-1.34 2.66-2a75.57 75.57 0 0 0 64.32 0c.87.71 1.76 1.39 2.66 2a68.68 68.68 0 0 1-10.87 5.19 77 77 0 0 0 6.89 11.1 105.25 105.25 0 0 0 32.19-16.14c2.64-27.38-4.51-51.11-18.9-72.15ZM42.45 65.69C36.18 65.69 31 60 31 53s5-12.74 11.43-12.74S54 46 53.89 53s-5.05 12.69-11.44 12.69Zm42.24 0C78.41 65.69 73.25 60 73.25 53s5-12.74 11.44-12.74S96.23 46 96.12 53s-5.04 12.69-11.43 12.69Z" />
             </svg>
@@ -3529,12 +3695,13 @@ function HandleField({
         <select
           aria-label="Tag by"
           value={provider}
-          onChange={(event) => onProviderChange(event.target.value as IdentityProvider)}
+          onChange={(event) => onProviderChange(event.target.value as IdentityProvider | "wallet")}
           className="rounded-md border border-[var(--border)] bg-[var(--surface)] px-1.5 py-0.5 text-xs font-medium text-[var(--text)]"
         >
+          <option value="wallet">Wallet address</option>
           <option value="x">X</option>
           <option value="discord">Discord</option>
-          <option value="email">Email</option>
+          <option value="email">Email address</option>
         </select>
       </span>
       <span className="handle-field">
@@ -3544,8 +3711,7 @@ function HandleField({
           autoCorrect="off"
           inputMode={provider === "email" ? "email" : "text"}
           className={`field-control handle-input${avatarOk ? " is-resolved" : ""}`}
-          onChange={(event) => onChange(provider === "email" ? event.target.value.trim() : event.target.value.replace(/^@+/, ""))}
-          placeholder={placeholder}
+          onChange={(event) => onChange(event.target.value.replace(/^@+/, "").trim())}
           spellCheck={false}
           value={handle}
         />
