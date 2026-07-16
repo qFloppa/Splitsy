@@ -64,6 +64,10 @@ export default function XAuthControl() {
   const [copied, setCopied] = useState(false);
   const [tab, setTab] = useState<Tab>("info");
   const [hasPin, setHasPin] = useState<boolean | null>(null);
+  // Whether the 5-minute unlock window is currently open. Checked every time
+  // the panel opens so the unlock gate is the first thing a locked user sees —
+  // unlocking here is what lets Pay/Claim buttons elsewhere go through.
+  const [unlocked, setUnlocked] = useState<boolean | null>(null);
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -84,24 +88,32 @@ export default function XAuthControl() {
     };
   }, []);
 
-  // Whether the user has chosen a wallet PIN yet. Until they have, the panel
-  // shows nothing but the "choose a PIN" gate — a PIN is required before any
-  // wallet action (and before sending, as always).
+  // Whether the user has chosen a wallet PIN yet, and whether the wallet is
+  // currently unlocked. Until a PIN exists, the panel shows nothing but the
+  // "choose a PIN" gate; with a PIN but locked, the unlock gate comes first —
+  // a PIN unlock is required before any wallet action. Re-checked every time
+  // the panel opens because the unlock window expires after 5 minutes.
   useEffect(() => {
-    if (!me) return;
+    if (!me || !open) return;
     let active = true;
     fetch("/api/wallet/pin")
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error("auth"))))
-      .then((d: { hasPin: boolean }) => {
-        if (active) setHasPin(d.hasPin);
+      .then((d: { hasPin: boolean; unlocked: boolean }) => {
+        if (active) {
+          setHasPin(d.hasPin);
+          setUnlocked(d.unlocked);
+        }
       })
       .catch(() => {
-        if (active) setHasPin(null);
+        if (active) {
+          setHasPin(null);
+          setUnlocked(null);
+        }
       });
     return () => {
       active = false;
     };
-  }, [me]);
+  }, [me, open]);
 
   async function refreshBalance() {
     if (!me?.walletAddress) return;
@@ -243,7 +255,14 @@ export default function XAuthControl() {
               </div>
 
               {hasPin === false ? (
-                <SetPinGate onDone={() => setHasPin(true)} />
+                <SetPinGate
+                  onDone={() => {
+                    setHasPin(true);
+                    setUnlocked(true);
+                  }}
+                />
+              ) : hasPin === true && unlocked === false ? (
+                <UnlockGate onUnlocked={() => setUnlocked(true)} />
               ) : (
                 <>
               <div className="mt-3 grid grid-cols-4 gap-1 rounded-full bg-[var(--surface)] p-1 text-xs font-semibold">
@@ -346,6 +365,13 @@ function SetPinGate({ onDone }: { onDone: () => void }) {
         setBusy(false);
         return;
       }
+      // Unlock right away with the PIN just chosen so the user isn't asked to
+      // re-enter it on the very next screen.
+      await fetch("/api/wallet/unlock", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pin }),
+      }).catch(() => {});
       onDone();
     } catch {
       setMessage("Network error — please try again.");
@@ -401,8 +427,74 @@ function SetPinGate({ onDone }: { onDone: () => void }) {
   );
 }
 
-function ReceiveTab({ address, short, copied, onCopy }: { address: string | null; short: string | null; copied: boolean; onCopy: () => void }) {
-  if (!address) return <p className="text-sm text-[var(--text-muted)]">Your wallet is being created — refresh in a moment.</p>;
+// Opening-the-panel gate: when a PIN exists but the 5-minute unlock window has
+// lapsed, the wallet unlocks here before anything else — so Pay/Claim buttons
+// elsewhere in the app work right after closing the panel, and the Send tab
+// never needs its own unlock prompt.
+function UnlockGate({ onUnlocked }: { onUnlocked: () => void }) {
+  const [pin, setPin] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+
+  async function unlock() {
+    setBusy(true);
+    setMessage(null);
+    try {
+      const res = await fetch("/api/wallet/unlock", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pin }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setMessage(data.error ?? "Incorrect PIN.");
+        setBusy(false);
+        return;
+      }
+      onUnlocked();
+    } catch {
+      setMessage("Network error — please try again.");
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="mt-3 border-t border-[var(--border)] pt-3">
+      <div className="flex items-center gap-2">
+        <span className="flex h-8 w-8 items-center justify-center rounded-full bg-[#2775ca]/15 text-[#2775ca]">
+          <KeyRound size={16} />
+        </span>
+        <p className="text-sm font-semibold">Unlock your wallet</p>
+      </div>
+      <p className="mt-2 text-xs text-[var(--text-muted)]">
+        Enter your PIN once — stays unlocked for 5 minutes, for paying, claiming, and sending.
+      </p>
+      <input
+        value={pin}
+        onChange={(e) => setPin(e.target.value.replace(/\D/g, ""))}
+        type="password"
+        inputMode="numeric"
+        maxLength={8}
+        autoFocus
+        placeholder="Wallet PIN"
+        onKeyDown={(e) => e.key === "Enter" && pin && !busy && unlock()}
+        className="mt-3 w-full rounded-md border border-[var(--border)] bg-[var(--surface)] px-2 py-1.5 text-sm tracking-[0.3em]"
+      />
+      <button
+        type="button"
+        onClick={unlock}
+        disabled={busy || !pin}
+        className="primary-button mt-3 w-full justify-center disabled:opacity-50"
+      >
+        {busy ? <Loader2 size={15} className="animate-spin" /> : <KeyRound size={15} />}
+        Unlock
+      </button>
+      {message ? <p className="mt-2 text-xs text-[var(--warning-text)]">{message}</p> : null}
+    </div>
+  );
+}
+
+function ReceiveTab({ address, short, copied, onCopy }: { address: string | null; short: string | null; copied: boolean; onCopy: () => void }) {  if (!address) return <p className="text-sm text-[var(--text-muted)]">Your wallet is being created — refresh in a moment.</p>;
   return (
     <div>
       <div className="flex items-center gap-2">

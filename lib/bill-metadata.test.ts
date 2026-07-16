@@ -34,3 +34,17 @@ test("any altered field flips verification to false", () => {
 test("hash is stable/deterministic across calls", () => {
   assert.equal(billMetadataHash(preimage), billMetadataHash({ ...preimage }));
 });
+
+test("handle labels hash and verify like plain labels", () => {
+  const social: BillPreimage = {
+    merchant: "Joe's Diner",
+    currency: "USD",
+    total: 30,
+    participantLabels: ["@alice", "@bob", "carol@example.com"],
+    receiptHash: "",
+  };
+  const hash = billMetadataHash(social);
+  assert.equal(verifyBillPreimage(social, hash), true);
+  // Reordering identities is a different bill (order is part of the commitment).
+  assert.equal(verifyBillPreimage({ ...social, participantLabels: ["@bob", "@alice", "carol@example.com"] }, hash), false);
+});
