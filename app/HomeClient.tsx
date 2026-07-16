@@ -98,6 +98,7 @@ import {
   ParsedBill,
   SplitParticipant,
 } from "@/lib/snapsplit";
+import { providerDisplay } from "@/lib/provider-display";
 import type { IdentityProvider } from "@/lib/types";
 import { useTheme } from "@/lib/use-theme";
 import { wagmiConfig } from "@/lib/wagmi";
@@ -187,6 +188,19 @@ function bytesToBase64(bytes: Uint8Array): string {
   return btoa(binary);
 }
 
+// A dual-identity user (signed in social + connected browser wallet) has TWO
+// Arc wallets that can create/pay/claim bills: their Circle DCW and their own
+// non-custodial wallet. Registry rows are tagged with the wallet they were read
+// for, so pay/claim can route each bill to the right signer — the server (DCW)
+// or the browser wallet — instead of guessing from global connection state.
+type OwnedBillSplitDebt = BillSplitDebt & { account: `0x${string}`; via: "wallet" | "social" };
+
+// Which identity signs createBill (and therefore owns the bill + collects the
+// payments) when both are available. Persisted so the picker remembers the
+// creator's last choice across sessions.
+type CreatorIdentity = "wallet" | "social";
+const CREATOR_IDENTITY_KEY = "splitsy-creator-identity";
+
 // Cache the debtor's re-OCR result keyed by the receipt's content hash, so a
 // page reload doesn't re-run the (paid, slow) OCR. Content-addressed: a cache
 // hit is provably the same image. localStorage may be unavailable (private mode)
@@ -270,9 +284,12 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
   const [claimMessage, setClaimMessage] = useState("");
   const [claimMessageTone, setClaimMessageTone] = useState<"error" | "neutral" | "success">("neutral");
   const [submittedBillId, setSubmittedBillId] = useState<bigint | null>(null);
-  const [debts, setDebts] = useState<BillSplitDebt[]>([]);
-  const [splitterBills, setSplitterBills] = useState<BillSplitDebt[]>([]);
+  const [debts, setDebts] = useState<OwnedBillSplitDebt[]>([]);
+  const [splitterBills, setSplitterBills] = useState<OwnedBillSplitDebt[]>([]);
   const [arcUsdcBalance, setArcUsdcBalance] = useState<bigint | null>(null);
+  // Per-identity-wallet balances (keyed by lowercase address), so a debt row
+  // shows the balance of the wallet that will actually pay it.
+  const [arcUsdcBalances, setArcUsdcBalances] = useState<Record<string, bigint>>({});
   const [arcUsdcBalanceFlash, setArcUsdcBalanceFlash] = useState(false);
   const [partialPayments, setPartialPayments] = useState<Record<string, string>>({});
   const [claimAmounts, setClaimAmounts] = useState<Record<string, string>>({});
@@ -290,6 +307,10 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
     provider: IdentityProvider | null;
     handle: string | null;
   } | null>(null);
+  // Which of the user's two identities creates a bill when BOTH are live (signed
+  // in social + connected browser wallet). Defaults to the browser wallet — the
+  // pre-picker behavior — and remembers the last explicit choice.
+  const [creatorIdentity, setCreatorIdentity] = useState<CreatorIdentity>("wallet");
   const [recurringWallet, setRecurringWallet] = useState<RecurringWallet | null>(null);
   const [recurringState, setRecurringState] = useState<RecurringRunState>("idle");
   const [recurringMessage, setRecurringMessage] = useState("");
@@ -331,12 +352,29 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
 
   // Which address to read the registry for: the connected browser wallet, or —
   // for a signed-in social user with no browser wallet — their DCW address, so
-  // their registry debts/claims load without ever connecting a wallet.
+  // their registry debts/claims load without ever connecting a wallet. This is
+  // the PRIMARY address (balance display, render gating); refreshBillRegistry
+  // itself reads bills/debts for BOTH identity wallets when both are live.
   const registryReadAddress = (billWallet?.account ?? me?.walletAddress ?? null) as `0x${string}` | null;
+  const socialWalletAddress = (me?.walletAddress ?? null) as `0x${string}` | null;
+  // The browser wallet the split form would sign with: the built app wallet, or
+  // the raw wagmi connection while the app wallet is still being (re)built.
+  const connectedWalletAccount = (billWallet?.account ?? address ?? null) as `0x${string}` | null;
+  // Both identities live → the split form shows the "Create as" picker and the
+  // submit honors it. With one (or neither), there is nothing to choose.
+  const canChooseCreator = Boolean(socialWalletAddress && connectedWalletAccount);
+  const createAsSocial = Boolean(socialWalletAddress) && (!connectedWalletAccount || (canChooseCreator && creatorIdentity === "social"));
+  // How the social option reads in the "Create as" picker: "@handle" for X,
+  // bare handle for Discord, the email address for email identities.
+  const socialCreatorLabel = (() => {
+    if (!me?.handle) return "Splitsy wallet";
+    const display = providerDisplay({ provider: me.provider, handle: me.handle });
+    return `${display.prefix}${display.label}`;
+  })();
   useEffect(() => {
     if (registryReadAddress) void refreshBillRegistry(registryReadAddress);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [registryReadAddress]);
+  }, [registryReadAddress, socialWalletAddress]);
 
   // On-chain debts still owed, and the merged pending count (social + wallet)
   // that the single "Action needed" window heading shows.
@@ -392,6 +430,26 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
   useEffect(() => {
     fetch("/api/me").then((r) => r.json()).then((d) => setMe(d.user ?? null)).catch(() => {});
   }, []);
+
+  // Restore the last "Create as" choice. localStorage may be unavailable
+  // (private mode) — the "wallet" default then stands.
+  useEffect(() => {
+    try {
+      const saved = window.localStorage.getItem(CREATOR_IDENTITY_KEY);
+      if (saved === "social" || saved === "wallet") setCreatorIdentity(saved);
+    } catch {
+      // Keep the default.
+    }
+  }, []);
+
+  function chooseCreatorIdentity(next: CreatorIdentity) {
+    setCreatorIdentity(next);
+    try {
+      window.localStorage.setItem(CREATOR_IDENTITY_KEY, next);
+    } catch {
+      // Full/unavailable storage — the choice still applies for this session.
+    }
+  }
 
   useEffect(() => {
     if (!testCycleEnabled && recurringCycle === "test") {
@@ -670,6 +728,7 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
     setRecurringWallet(null);
     setDebts([]);
     setSplitterBills([]);
+    setArcUsdcBalances({});
     setPartialPayments({});
     setClaimAmounts({});
     setDebtMessages({});
@@ -691,21 +750,48 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
     setRecurringState("idle");
   }
 
+  // Reads bills/debts for EVERY live identity wallet (browser wallet and/or the
+  // signed-in user's Circle DCW) and merges them, tagging each row with the
+  // wallet it belongs to. `account` force-includes an address whose state
+  // update hasn't committed yet (e.g. right after connecting); it is also the
+  // primary address whose balance feeds the legacy single-balance display.
   async function refreshBillRegistry(account: `0x${string}` | undefined = registryReadAddress ?? undefined) {
-    if (!account) {
+    const social = socialWalletAddress;
+    const seen = new Set<string>();
+    const targets: { account: `0x${string}`; via: "wallet" | "social" }[] = [];
+    for (const candidate of [account, billWallet?.account, social]) {
+      if (!candidate) continue;
+      const key = candidate.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      targets.push({ account: candidate, via: social && key === social.toLowerCase() ? "social" : "wallet" });
+    }
+    if (targets.length === 0) {
       return;
     }
 
     try {
-      const [nextDebts, nextSplitterBills, nextArcUsdcBalance] = await Promise.all([
-        readDebtsForWallet(account),
-        readBillsForSplitter(account),
-        readArcUsdcBalance(account),
-      ]);
+      const perAccount = await Promise.all(
+        targets.map(async ({ account: target, via }) => {
+          const [targetDebts, targetSplitterBills, balance] = await Promise.all([
+            readDebtsForWallet(target),
+            readBillsForSplitter(target),
+            readArcUsdcBalance(target),
+          ]);
+          return { account: target, via, debts: targetDebts, splitterBills: targetSplitterBills, balance };
+        }),
+      );
+      const nextDebts: OwnedBillSplitDebt[] = perAccount.flatMap(({ account: owner, via, debts: rows }) =>
+        rows.map((debt) => ({ ...debt, account: owner, via })),
+      );
+      const nextSplitterBills: OwnedBillSplitDebt[] = perAccount.flatMap(({ account: owner, via, splitterBills: rows }) =>
+        rows.map((debt) => ({ ...debt, account: owner, via })),
+      );
       // Keep fully-paid debts in state so the debtor retains a shrunk, stamped record of what they paid.
       setDebts(nextDebts);
       setSplitterBills(nextSplitterBills);
-      setArcUsdcBalance(nextArcUsdcBalance);
+      setArcUsdcBalance(perAccount[0].balance);
+      setArcUsdcBalances(Object.fromEntries(perAccount.map(({ account: owner, balance }) => [owner.toLowerCase(), balance])));
       setPartialPayments((current) => ({
         ...Object.fromEntries(
           nextDebts.map((debt) => [debt.billId.toString(), billUnitsToUsdc(debt.remaining)]),
@@ -732,6 +818,7 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
       try {
         const next = await readArcUsdcBalance(account);
         setArcUsdcBalance(next);
+        setArcUsdcBalances((current) => ({ ...current, [account.toLowerCase()]: next }));
         if (previousBalance === null || next !== previousBalance) {
           if (previousBalance !== null) {
             // Re-arm the animation: clear first so the class re-adds and replays.
@@ -772,9 +859,10 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
   }
 
   // On-chain path that ALSO accepts @handle participants. Social rows are resolved
-  // to Arc addresses server-side (pre-minting a DCW when needed); then either the
-  // connected wallet signs createBill, or — for a signed-in social creator with no
-  // browser wallet — the server signs it from their DCW.
+  // to Arc addresses server-side (pre-minting a DCW when needed); then the chosen
+  // creator identity signs createBill: the connected browser wallet, or — for a
+  // social creator (no browser wallet, or "Create as" set to their social
+  // identity) — the server signs it from their Circle DCW.
   async function submitBillOnchainMixed() {
     if (splitMode === "manual" && splitTotal - confirmedUsd > 0.009) {
       setBillState("error");
@@ -788,11 +876,14 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
       return;
     }
 
-    // A splitter can't owe themselves. Reject any payer row that is the creator:
-    // their connected wallet address, their DCW address, or (for a signed-in
-    // social user) their own handle/email on the matching provider.
+    // A splitter can't owe themselves. Reject any payer row that is the CHOSEN
+    // creator identity ("Create as"): its wallet address, or — when creating as
+    // the social identity — the user's own handle/email on the matching
+    // provider. The OTHER identity stays a legitimate payer: a dual-identity
+    // user can split a bill between their two wallets, e.g. create from the
+    // browser wallet and owe a share from their Splitsy (Circle) wallet.
     const creatorAddresses = new Set(
-      [billWallet?.account, address, me?.walletAddress]
+      (createAsSocial ? [me?.walletAddress] : [billWallet?.account, address])
         .filter((value): value is string => Boolean(value))
         .map((value) => value.toLowerCase()),
     );
@@ -804,9 +895,12 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
       setBillMessage("You can't split a bill with yourself — remove your own wallet address from the payers.");
       return;
     }
+    // Tagging your own signed-in handle resolves to your DCW, so it is only a
+    // self-row when the DCW is the chosen creator; created from the browser
+    // wallet, your social identity is just another payer.
     const meHandle = me?.handle?.trim().replace(/^@/, "").toLowerCase() ?? null;
     const selfSocialRow =
-      me?.provider && meHandle
+      createAsSocial && me?.provider && meHandle
         ? rows.find(
             (p) =>
               !looksLikeAddress(p.walletAddress) &&
@@ -880,8 +974,10 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
         owedAmounts.push(usdcToBillUnits(p.amountUsd.toFixed(2)));
       }
 
-      // Post-resolution self-check: a tagged handle can resolve to the creator's
-      // own wallet (e.g. tagging your own account on another provider).
+      // Post-resolution self-check: a tagged handle that resolves to the CHOSEN
+      // creator identity's wallet is still a self-row. Handles resolving to the
+      // user's other identity are fine — that's the split-with-your-other-wallet
+      // case the "Create as" picker enables.
       if (addresses.some((a) => creatorAddresses.has(a.toLowerCase()))) {
         setBillState("error");
         setBillMessage("You can't split a bill with yourself — one of the tagged people resolves to your own wallet.");
@@ -890,8 +986,10 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
 
       const receiptHash = receiptCommit?.hash ?? "";
 
-      // Signed-in social creator with NO connected browser wallet → server signs.
-      if (!billWallet && me?.walletAddress) {
+      // Social creator → server signs from their Circle DCW. Either it's the
+      // only identity they have, or they explicitly picked it over their
+      // connected browser wallet in the "Create as" control.
+      if (createAsSocial && me?.walletAddress) {
         setBillMessage("Writing the split to Arc from your wallet…");
         const res = await fetch("/api/onchain-bills/create", {
           method: "POST",
@@ -920,8 +1018,9 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
           return;
         }
         setBillState("success");
-        setBillMessage(`Bill #${data.billId} is live on Arc. Tagged people will see it after signing in.`);
+        setBillMessage(`Bill #${data.billId} is live on Arc from your Splitsy wallet. Tagged people will see it after signing in.`);
         resetSplitForm();
+        void refreshBillRegistry();
         return;
       }
 
@@ -1085,14 +1184,14 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
     setProgressFlow((current) => (current ? { ...current, open: false } : current));
   }
 
-  async function payDebtOnArc(debt: BillSplitDebt) {
+  async function payDebtOnArc(debt: OwnedBillSplitDebt) {
     const debtKey = debt.billId.toString();
 
-    // Social (DCW) user: no browser wallet — pay from the server, gated by the
-    // same PIN unlock the off-chain pay flow uses. The route reads the owed
-    // amount from chain and always settles the full remaining debt, so no
+    // Debt owed by the user's Circle (DCW) wallet — pay from the server, gated
+    // by the same PIN unlock the off-chain pay flow uses. The route reads the
+    // owed amount from chain and always settles the full remaining debt, so no
     // amount is sent (partial payments aren't supported for Circle wallets).
-    if (!billWallet && me?.walletAddress) {
+    if (debt.via === "social" && me?.walletAddress) {
       const pin = await fetch("/api/wallet/pin").then((r) => r.json()).catch(() => ({}));
       if (!pin.unlocked) {
         setDebtMessages((current) => ({
@@ -1130,7 +1229,7 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
           ...current,
           [debtKey]: { tone: "success", message: `Paid bill #${debtKey} from your wallet.` },
         }));
-        await refreshBillRegistry(me.walletAddress as `0x${string}`);
+        await refreshBillRegistry();
       } catch (caught) {
         setBillState("error");
         failFlow(errorMessage(caught));
@@ -1364,14 +1463,14 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
     }
   }
 
-  async function claimSplitterFunds(debt: BillSplitDebt) {
+  async function claimSplitterFunds(debt: OwnedBillSplitDebt) {
     const debtKey = debt.billId.toString();
 
-    // Social (DCW) creator: no browser wallet — claim from the server, gated by
-    // the same PIN unlock. The route reads the claimable amount from chain and
-    // always claims all of it, so no amount is sent (partial claims aren't
-    // supported for Circle wallets).
-    if (!billWallet && me?.walletAddress) {
+    // Bill split by the user's Circle (DCW) wallet — only that wallet can claim,
+    // so the server claims it, gated by the same PIN unlock. The route reads the
+    // claimable amount from chain and always claims all of it, so no amount is
+    // sent (partial claims aren't supported for Circle wallets).
+    if (debt.via === "social" && me?.walletAddress) {
       const pin = await fetch("/api/wallet/pin").then((r) => r.json()).catch(() => ({}));
       if (!pin.unlocked) {
         setClaimMessageTone("neutral");
@@ -1396,7 +1495,7 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
         setBillState("success");
         setClaimMessageTone("success");
         setClaimMessage(`Claimed funds from bill #${debtKey} to your wallet.`);
-        await refreshBillRegistry(me.walletAddress as `0x${string}`);
+        await refreshBillRegistry();
       } catch (caught) {
         setBillState("error");
         failFlow(errorMessage(caught));
@@ -1907,7 +2006,7 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
                 {registryReadAddress ? (
                   <WalletDebtRows
                     activeDebts={activeWalletDebts}
-                    arcUsdcBalance={arcUsdcBalance}
+                    arcUsdcBalances={arcUsdcBalances}
                     arcUsdcBalanceFlash={arcUsdcBalanceFlash}
                     bridgeForDebt={bridgeForDebt}
                     bridgeResults={bridgeResults}
@@ -1916,7 +2015,6 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
                     payDebtOnArc={payDebtOnArc}
                     debtMessages={debtMessages}
                     setPartialPayments={setPartialPayments}
-                    socialWallet={!billWallet && Boolean(me?.walletAddress)}
                   />
                 ) : null}
               </div>
@@ -1930,7 +2028,6 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
                 claimMessageTone={claimMessageTone}
                 claimSplitterFunds={claimSplitterFunds}
                 setClaimAmounts={setClaimAmounts}
-                socialWallet={!billWallet && Boolean(me?.walletAddress)}
               />
             ) : null}
 
@@ -2177,6 +2274,31 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
                   })}
                 </div>
 
+                {/* Dual identity (signed in social + connected wallet): the
+                    creator picks which wallet writes the bill to Arc and
+                    collects the payments. With one identity there is no
+                    ambiguity and no picker. */}
+                {canChooseCreator && socialWalletAddress && connectedWalletAccount ? (
+                  <div className="mt-4 flex flex-col gap-3 rounded-[var(--radius)] border border-[var(--border)] bg-[var(--surface-muted)] p-3 text-sm sm:flex-row sm:items-center sm:justify-between">
+                    <div>
+                      <p className="font-semibold text-[var(--text)]">Create as</p>
+                      <p className="mt-1 text-[var(--text-muted)]">
+                        {creatorIdentity === "social"
+                          ? `Your Splitsy wallet ${shortAddress(socialWalletAddress)} writes the bill and collects the payments — no signing needed.`
+                          : `Your connected wallet ${shortAddress(connectedWalletAccount)} signs the bill and collects the payments. Payers see this address as the bill's creator.`}
+                      </p>
+                    </div>
+                    <div className="segmented-control shrink-0">
+                      <ModeButton active={creatorIdentity === "social"} onClick={() => chooseCreatorIdentity("social")}>
+                        {socialCreatorLabel}
+                      </ModeButton>
+                      <ModeButton active={creatorIdentity === "wallet"} onClick={() => chooseCreatorIdentity("wallet")}>
+                        {shortAddress(connectedWalletAccount)}
+                      </ModeButton>
+                    </div>
+                  </div>
+                ) : null}
+
                 <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                   <div className="flex flex-wrap gap-2">
                     <button className="secondary-button" onClick={addParticipant} type="button">
@@ -2295,29 +2417,26 @@ function WalletDebtRows({
   bridgeForDebt,
   bridgeResults,
   billState,
-  arcUsdcBalance,
+  arcUsdcBalances,
   arcUsdcBalanceFlash,
   activeDebts,
   debtMessages,
   partialPayments,
   payDebtOnArc,
   setPartialPayments,
-  socialWallet,
 }: {
   bridgeForDebt: (debt: BillSplitDebt, debtSourceChain: BridgeSourceChain) => void;
   bridgeResults: Record<string, BridgeSummary>;
   billState: BillRunState;
-  arcUsdcBalance: bigint | null;
+  // Balance per identity wallet (lowercase address key), so each row shows the
+  // balance of the wallet that will actually pay it.
+  arcUsdcBalances: Record<string, bigint>;
   arcUsdcBalanceFlash: boolean;
-  activeDebts: BillSplitDebt[];
+  activeDebts: OwnedBillSplitDebt[];
   debtMessages: Record<string, { message: string; tone: "error" | "neutral" | "success" }>;
   partialPayments: Record<string, string>;
-  payDebtOnArc: (debt: BillSplitDebt) => void;
+  payDebtOnArc: (debt: OwnedBillSplitDebt) => void;
   setPartialPayments: (value: Record<string, string>) => void;
-  // Social (DCW) payer: their Circle wallet lives only on Arc Testnet, so the
-  // CCTP bridge path is irrelevant, and the server pay route always settles the
-  // full remaining debt — no partial-amount input.
-  socialWallet: boolean;
 }) {
   const [fallbackBridgeChains, setFallbackBridgeChains] = useState<Record<string, BridgeSourceChain>>({});
   // Which debt cards are expanded. A long list of payable bills otherwise makes
@@ -2333,11 +2452,17 @@ function WalletDebtRows({
               const key = debt.billId.toString();
               const bridgeResult = bridgeResults[key];
               const debtMessage = debtMessages[key];
+              // Debt owed by the user's Circle (DCW) wallet: it lives only on
+              // Arc Testnet, so the CCTP bridge path is irrelevant, and the
+              // server pay route always settles the full remaining debt — no
+              // partial-amount input.
+              const socialWallet = debt.via === "social";
+              const rowBalance = arcUsdcBalances[debt.account.toLowerCase()] ?? null;
               // A lone bill is always expanded; otherwise collapsed until opened.
               const expanded = expandedDebts[key] ?? activeDebts.length === 1;
 
               return (
-                <div className="rounded-[var(--radius)] border border-[var(--border)] bg-[var(--surface-strong)] p-3" key={key}>
+                <div className="rounded-[var(--radius)] border border-[var(--border)] bg-[var(--surface-strong)] p-3" key={`${key}:${debt.account}`}>
                   <button
                     className="flex w-full items-start justify-between gap-2 text-left"
                     onClick={() => setExpandedDebts((prev) => ({ ...prev, [key]: !expanded }))}
@@ -2423,7 +2548,7 @@ function WalletDebtRows({
                         <p className="text-xs text-[var(--text-muted)] sm:text-right">
                           Balance:{" "}
                           <span className={`amount-text${arcUsdcBalanceFlash ? " balance-flash" : ""}`}>
-                            ${arcUsdcBalance === null ? "—" : billUnitsToUsdc(arcUsdcBalance)}
+                            ${rowBalance === null ? "—" : billUnitsToUsdc(rowBalance)}
                           </span>{" "}
                           USDC on Arc Testnet
                         </p>
@@ -2489,18 +2614,14 @@ function ClaimFundsPanel({
   claimMessageTone,
   claimSplitterFunds,
   setClaimAmounts,
-  socialWallet,
 }: {
-  splitterBills: BillSplitDebt[];
+  splitterBills: OwnedBillSplitDebt[];
   billState: BillRunState;
   claimAmounts: Record<string, string>;
   claimMessage: string;
   claimMessageTone: "error" | "neutral" | "success";
-  claimSplitterFunds: (debt: BillSplitDebt) => void;
+  claimSplitterFunds: (debt: OwnedBillSplitDebt) => void;
   setClaimAmounts: (value: Record<string, string>) => void;
-  // Social (DCW) creator: the server claim route always claims the full
-  // claimable balance, so the partial-amount input is hidden.
-  socialWallet: boolean;
 }) {
   const claimableBills = splitterBills.filter((debt) => debt.claimable > 0n);
   const claimRef = useRef<HTMLDivElement | null>(null);
@@ -2530,8 +2651,12 @@ function ClaimFundsPanel({
         <div className="space-y-3">
           {claimableBills.map((debt) => {
             const key = debt.billId.toString();
+            // Bill split by the user's Circle (DCW) wallet: the server claim
+            // route always claims the full claimable balance, so the
+            // partial-amount input is hidden.
+            const socialWallet = debt.via === "social";
             return (
-              <div className={`relative grid gap-3 overflow-hidden rounded-[var(--radius)] border border-[var(--border)] bg-[var(--surface-strong)] p-3 sm:items-end ${socialWallet ? "sm:grid-cols-[1fr_auto]" : "sm:grid-cols-[1fr_0.4fr_auto]"}`} key={key}>
+              <div className={`relative grid gap-3 overflow-hidden rounded-[var(--radius)] border border-[var(--border)] bg-[var(--surface-strong)] p-3 sm:items-end ${socialWallet ? "sm:grid-cols-[1fr_auto]" : "sm:grid-cols-[1fr_0.4fr_auto]"}`} key={`${key}:${debt.account}`}>
                 <div>
                   <p className="font-semibold">Bill #{key}</p>
                   <p className="mt-1 text-sm text-[var(--text-muted)]">
@@ -2580,8 +2705,8 @@ function HistoryWorkspace({
   debts,
   splitterBills,
 }: {
-  debts: BillSplitDebt[];
-  splitterBills: BillSplitDebt[];
+  debts: OwnedBillSplitDebt[];
+  splitterBills: OwnedBillSplitDebt[];
 }) {
   const paidDebts = debts.filter((debt) => debt.remaining <= 0n);
   // Creditor POV: bills this wallet split that debtors haven't fully paid yet.
@@ -2604,7 +2729,7 @@ function HistoryWorkspace({
                     return (
                       <HistoryRecordCard
                         debt={debt}
-                        key={debt.billId.toString()}
+                        key={`${debt.billId.toString()}:${debt.account}`}
                         badge={<span className="status-dot status-warn">Pending</span>}
                         summary={
                           <>
@@ -2629,7 +2754,7 @@ function HistoryWorkspace({
                   {paidDebts.map((debt) => (
                     <HistoryRecordCard
                       debt={debt}
-                      key={debt.billId.toString()}
+                      key={`${debt.billId.toString()}:${debt.account}`}
                       badge={<PaidBillStamp compact />}
                       summary={
                         <>
@@ -2652,7 +2777,7 @@ function HistoryWorkspace({
                   {claimedBills.map((debt) => (
                     <HistoryRecordCard
                       debt={debt}
-                      key={debt.billId.toString()}
+                      key={`${debt.billId.toString()}:${debt.account}`}
                       badge={<PaidBillStamp compact alt="Claimed" src="/claimed.png" width={652} height={512} />}
                       summary={
                         <>
