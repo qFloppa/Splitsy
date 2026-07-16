@@ -496,6 +496,48 @@ input[type="number"],
   color: var(--danger-text);
 }
 
+/* Post-operation confirmations ("Bill #N is live on Arc", "Paid…", "Claimed…"):
+   green instead of muted gray, with a pop-in and a one-shot glow ring so the
+   result of the action the user just took is impossible to miss. */
+.message-success {
+  border-color: var(--success);
+  background: var(--success-soft);
+  color: var(--success);
+  font-weight: 600;
+  animation:
+    message-success-pop 0.38s cubic-bezier(0.22, 1.2, 0.36, 1),
+    message-success-glow 1.4s ease-out 0.15s;
+}
+
+@keyframes message-success-pop {
+  0% {
+    opacity: 0;
+    transform: translateY(8px) scale(0.96);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes message-success-glow {
+  0% {
+    box-shadow: 0 0 0 0 var(--success-soft), 0 0 0 0 var(--success);
+  }
+  60% {
+    box-shadow: 0 0 0 12px transparent, 0 0 18px 0 var(--success-soft);
+  }
+  100% {
+    box-shadow: 0 0 0 0 transparent, 0 0 0 0 transparent;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .message-success {
+    animation: none;
+  }
+}
+
 .status-dot {
   display: inline-flex;
   width: fit-content;

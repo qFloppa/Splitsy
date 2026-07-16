@@ -271,10 +271,10 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
   const [billWallet, setBillWallet] = useState<BillSplitWallet | null>(null);
   const [billState, setBillState] = useState<BillRunState>("idle");
   const [billMessage, setBillMessage] = useState("");
-  const [debtMessages, setDebtMessages] = useState<Record<string, { message: string; tone: "error" | "neutral" }>>({});
+  const [debtMessages, setDebtMessages] = useState<Record<string, { message: string; tone: "error" | "neutral" | "success" }>>({});
   const [progressFlow, setProgressFlow] = useState<ProgressFlow | null>(null);
   const [claimMessage, setClaimMessage] = useState("");
-  const [claimMessageTone, setClaimMessageTone] = useState<"error" | "neutral">("neutral");
+  const [claimMessageTone, setClaimMessageTone] = useState<"error" | "neutral" | "success">("neutral");
   const [submittedBillId, setSubmittedBillId] = useState<bigint | null>(null);
   const [debts, setDebts] = useState<BillSplitDebt[]>([]);
   const [splitterBills, setSplitterBills] = useState<BillSplitDebt[]>([]);
@@ -300,7 +300,7 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
   const [recurringState, setRecurringState] = useState<RecurringRunState>("idle");
   const [recurringMessage, setRecurringMessage] = useState("");
   const [recurringCreateMessage, setRecurringCreateMessage] = useState("");
-  const [recurringCreateMessageTone, setRecurringCreateMessageTone] = useState<"error" | "neutral">("neutral");
+  const [recurringCreateMessageTone, setRecurringCreateMessageTone] = useState<"error" | "neutral" | "success">("neutral");
   const [recurringTotalUsd, setRecurringTotalUsd] = useState("200.00");
   const [recurringCycleCount, setRecurringCycleCount] = useState("3");
   const [recurringSplitMode, setRecurringSplitMode] = useState<"equal" | "manual">("equal");
@@ -1139,7 +1139,7 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
         setBillState("success");
         setDebtMessages((current) => ({
           ...current,
-          [debtKey]: { tone: "neutral", message: `Paid bill #${debtKey} from your wallet.` },
+          [debtKey]: { tone: "success", message: `Paid bill #${debtKey} from your wallet.` },
         }));
         await refreshBillRegistry(me.walletAddress as `0x${string}`);
       } catch (caught) {
@@ -1192,7 +1192,7 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
       setBillState("success");
       setDebtMessages((current) => ({
         ...current,
-        [debtKey]: { tone: "neutral", message: `Paid ${amountLabel} USDC toward bill #${debtKey}.` },
+        [debtKey]: { tone: "success", message: `Paid ${amountLabel} USDC toward bill #${debtKey}.` },
       }));
       await refreshBillRegistry(wallet.account);
     } catch (caught) {
@@ -1265,7 +1265,7 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
       setDebtMessages((current) => ({
         ...current,
         [debtKey]: {
-          tone: "neutral",
+          tone: "success",
           message:
             "USDC has been bridged to your Arc wallet. Use Pay on Arc to settle the debt with a memo.",
         },
@@ -1405,7 +1405,7 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
         }
         completeFlow();
         setBillState("success");
-        setClaimMessageTone("neutral");
+        setClaimMessageTone("success");
         setClaimMessage(`Claimed funds from bill #${debtKey} to your wallet.`);
         await refreshBillRegistry(me.walletAddress as `0x${string}`);
       } catch (caught) {
@@ -1438,7 +1438,7 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
       setClaimMessage("Claiming paid funds.");
       await claimBillFunds({ ...wallet, billId: debt.billId, amount });
       setBillState("success");
-      setClaimMessageTone("neutral");
+      setClaimMessageTone("success");
       setClaimMessage(`Claimed ${billUnitsToUsdc(amount)} USDC from bill #${debt.billId.toString()}.`);
       await refreshBillRegistry(wallet.account);
     } catch (caught) {
@@ -1617,7 +1617,7 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
       setTabAddressInput(result.tabAddress);
       setActiveTabAddress(result.tabAddress);
       setRecurringState("success");
-      setRecurringCreateMessageTone("neutral");
+      setRecurringCreateMessageTone("success");
       setRecurringCreateMessage(`Created tab #${result.tabId.toString()} at ${shortAddress(result.tabAddress)}.`);
       await refreshRecurringTab(result.tabAddress);
       await refreshRecurringTabsForWallet(wallet.account);
@@ -1950,7 +1950,7 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
                   panel that shows billMessage), so surface the "Bill #N is live"
                   confirmation here until a new bill is started. */}
               {billState === "success" && billMessage && !billReadyForSplit ? (
-                <Message tone="neutral">{billMessage}</Message>
+                <Message tone="success">{billMessage}</Message>
               ) : null}
               <Panel title="Upload bill" icon={<Upload size={19} />}>
                 <form className="space-y-4" onSubmit={parseBill}>
@@ -2139,7 +2139,7 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
 
                 {billMessage ? (
                   <div className="mt-4">
-                    <Message tone={billState === "error" ? "error" : "neutral"}>{billMessage}</Message>
+                    <Message tone={billState === "error" ? "error" : billState === "success" ? "success" : "neutral"}>{billMessage}</Message>
                   </div>
                 ) : null}
 
@@ -2321,7 +2321,7 @@ function WalletDebtRows({
   arcUsdcBalance: bigint | null;
   arcUsdcBalanceFlash: boolean;
   activeDebts: BillSplitDebt[];
-  debtMessages: Record<string, { message: string; tone: "error" | "neutral" }>;
+  debtMessages: Record<string, { message: string; tone: "error" | "neutral" | "success" }>;
   partialPayments: Record<string, string>;
   payDebtOnArc: (debt: BillSplitDebt) => void;
   setPartialPayments: (value: Record<string, string>) => void;
@@ -2506,7 +2506,7 @@ function ClaimFundsPanel({
   billState: BillRunState;
   claimAmounts: Record<string, string>;
   claimMessage: string;
-  claimMessageTone: "error" | "neutral";
+  claimMessageTone: "error" | "neutral" | "success";
   claimSplitterFunds: (debt: BillSplitDebt) => void;
   setClaimAmounts: (value: Record<string, string>) => void;
   // Social (DCW) creator: the server claim route always claims the full
@@ -2890,7 +2890,7 @@ function RecurringWorkspace({
   customCycleDays: string;
   displayRecurringMembers: RecurringMemberInput[];
   recurringCreateMessage: string;
-  recurringCreateMessageTone: "error" | "neutral";
+  recurringCreateMessageTone: "error" | "neutral" | "success";
   recurringCycleCount: string;
   recurringCycle: RecurringCycle;
   recurringMessage: string;
@@ -3084,7 +3084,7 @@ function RecurringWorkspace({
             </div>
             {recurringMessage ? (
               <div className="mt-4">
-                <Message tone={recurringState === "error" ? "error" : "neutral"}>{recurringMessage}</Message>
+                <Message tone={recurringState === "error" ? "error" : recurringState === "success" ? "success" : "neutral"}>{recurringMessage}</Message>
               </div>
             ) : null}
             <div className="mt-4 space-y-2">
@@ -3741,10 +3741,20 @@ function Metric({ label, value }: { label: string; value: string }) {
   );
 }
 
-function Message({ tone, children }: { tone: "error" | "neutral"; children: ReactNode }) {
+function Message({ tone, children }: { tone: "error" | "neutral" | "success"; children: ReactNode }) {
   return (
-    <div className={`message ${tone === "error" ? "message-error" : "message-neutral"}`}>
-      {tone === "error" ? <AlertTriangle className="mt-0.5 shrink-0" size={17} /> : <CheckCircle2 className="mt-0.5 shrink-0" size={17} />}
+    <div
+      className={`message ${
+        tone === "error" ? "message-error" : tone === "success" ? "message-success" : "message-neutral"
+      }`}
+    >
+      {tone === "error" ? (
+        <AlertTriangle className="mt-0.5 shrink-0" size={17} />
+      ) : tone === "success" ? (
+        <CheckCircle2 className="mt-0.5 shrink-0" size={17} />
+      ) : (
+        <Info className="mt-0.5 shrink-0" size={17} />
+      )}
       {children}
     </div>
   );
