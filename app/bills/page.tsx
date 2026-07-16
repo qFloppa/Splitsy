@@ -122,7 +122,7 @@ export default function BillsPage() {
     <main style={{ maxWidth: 720, margin: "2rem auto", padding: "0 1rem", display: "grid", gap: "2rem" }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
         <h1 style={{ fontSize: "1.5rem", fontWeight: 700 }}>Bills</h1>
-        <Link href="/" style={{ color: "#5aa9ff" }}>
+        <Link href="/app" style={{ color: "#5aa9ff" }}>
           ← App
         </Link>
       </div>

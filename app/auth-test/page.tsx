@@ -44,7 +44,7 @@ export default function AuthTestPage() {
           Sign in with X
         </a>
         <p style={{ marginTop: "2rem", fontSize: "0.85rem" }}>
-          <Link href="/" style={{ color: "#5aa9ff" }}>
+          <Link href="/app" style={{ color: "#5aa9ff" }}>
             ← Back to Splitsy
           </Link>
         </p>

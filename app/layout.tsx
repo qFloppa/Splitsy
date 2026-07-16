@@ -1,8 +1,16 @@
 import type { Metadata, Viewport } from "next";
+import { Inter, Roboto_Mono } from "next/font/google";
+import { headers } from "next/headers";
 import Link from "next/link";
 import "./globals.css";
 import WagmiProviders from "./WagmiProviders";
 import { HeroBackground } from "@/components/ui/hero-background";
+
+// Self-hosted via next/font: no external requests, no layout shift. The CSS
+// font stacks in globals.css lead with these variables and keep the old
+// system fallbacks.
+const inter = Inter({ subsets: ["latin"], variable: "--font-inter", display: "swap" });
+const robotoMono = Roboto_Mono({ subsets: ["latin"], variable: "--font-roboto-mono", display: "swap" });
 
 const siteUrl = "https://splitsy.xyz";
 const siteDescription =
@@ -71,13 +79,29 @@ export const viewport: Viewport = {
   ],
 };
 
-export default function RootLayout({
+export default async function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  // proxy.ts issues a per-request CSP nonce (x-nonce); without it the inline
+  // theme script below is blocked by script-src.
+  const nonce = (await headers()).get("x-nonce") ?? undefined;
+
   return (
-    <html lang="en" className="h-full antialiased">
+    <html lang="en" className={`${inter.variable} ${robotoMono.variable} h-full antialiased`} suppressHydrationWarning>
+      <head>
+        {/* Resolve the theme before first paint (stored choice → OS preference)
+            so neither the landing page nor the app flashes the wrong theme.
+            Must stay inline: any async load reintroduces the flash. */}
+        <script
+          nonce={nonce}
+          dangerouslySetInnerHTML={{
+            __html:
+              '(function(){try{var t=sessionStorage.getItem("splitsy-theme");if(t!=="dark"&&t!=="light"){t=window.matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light";}document.documentElement.dataset.theme=t;}catch(e){}})();',
+          }}
+        />
+      </head>
       <body className="min-h-full flex flex-col">
         <HeroBackground />
         <WagmiProviders>{children}</WagmiProviders>

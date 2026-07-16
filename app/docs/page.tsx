@@ -71,7 +71,7 @@ export default function DocsPage() {
             <a href="#configuration">Configuration</a>
             <a href="#contracts">Contracts</a>
             <a href="#operations">Operations</a>
-            <Link href="/">Open app</Link>
+            <Link href="/app">Open app</Link>
           </div>
         </nav>
 
@@ -85,7 +85,7 @@ export default function DocsPage() {
               becomes due.
             </p>
             <div className="docs-hero-actions">
-              <Link href="/" className="docs-primary-link">
+              <Link href="/app" className="docs-primary-link">
                 Launch Splitsy <ArrowRight size={16} />
               </Link>
               <a href="#circle-and-arc" className="docs-secondary-link">

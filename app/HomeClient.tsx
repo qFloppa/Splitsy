@@ -99,6 +99,7 @@ import {
   SplitParticipant,
 } from "@/lib/snapsplit";
 import type { IdentityProvider } from "@/lib/types";
+import { useTheme } from "@/lib/use-theme";
 import { wagmiConfig } from "@/lib/wagmi";
 
 type FxQuote = {
@@ -112,7 +113,6 @@ type OcrState = "idle" | "reading" | "ready" | "error";
 type BillRunState = "idle" | "connecting" | "working" | "success" | "error";
 type RecurringRunState = "idle" | "connecting" | "working" | "error" | "success";
 type AppTab = "bills" | "recurring" | "history";
-type AppTheme = "light" | "dark";
 type RecurringCycle = "test" | "weekly" | "monthly" | "custom";
 type RecurringMemberInput = {
   id: string;
@@ -242,13 +242,7 @@ async function scanReceiptTotalUsd(bytes: Uint8Array): Promise<number | null> {
 }
 
 export default function HomeClient({ testCycleEnabled = false }: { testCycleEnabled?: boolean }) {  const [activeTab, setActiveTab] = useState<AppTab>("bills");
-  const [theme, setTheme] = useState<AppTheme>(() => {
-    if (typeof window === "undefined") {
-      return "light";
-    }
-    const storedTheme = window.sessionStorage.getItem("splitsy-theme");
-    return storedTheme === "dark" ? "dark" : "light";
-  });
+  const { theme, setTheme } = useTheme();
   const [ocrState, setOcrState] = useState<OcrState>("idle");
   const [error, setError] = useState("");
   const [imagePreview, setImagePreview] = useState("");
@@ -394,11 +388,6 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
   const reviewSplitRef = useRef<HTMLDivElement | null>(null);
   const settlementStampRef = useRef<HTMLDivElement | null>(null);
   const totalUsdScrollTimerRef = useRef<ReturnType<Window["setTimeout"]> | null>(null);
-
-  useEffect(() => {
-    document.documentElement.dataset.theme = theme;
-    sessionStorage.setItem("splitsy-theme", theme);
-  }, [theme]);
 
   useEffect(() => {
     fetch("/api/me").then((r) => r.json()).then((d) => setMe(d.user ?? null)).catch(() => {});
@@ -1834,11 +1823,11 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
         <div className="mx-auto max-w-[88rem] px-4 py-3 sm:px-6 lg:px-8">
           <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
             <div className="min-w-0 shrink">
-              <div aria-label="Splitsy" className="brand-lockup">
+              <Link aria-label="Splitsy home" className="brand-lockup" href="/">
                 <span className="logo-crop logo-crop-app">
                   <Image alt="Splitsy" className="logo-crop-image" height={1024} priority src="/splitsy.png" width={1536} />
                 </span>
-              </div>
+              </Link>
               <div className="header-title-row mt-1">
                 <h1 className="app-title">
                   Split bills, Settle cleanly

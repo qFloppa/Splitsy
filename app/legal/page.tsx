@@ -46,7 +46,7 @@ export default function LegalPage() {
           <div className="docs-toplinks">
             <a href="#privacy">Privacy</a>
             <a href="#terms">Terms</a>
-            <Link href="/">Open app</Link>
+            <Link href="/app">Open app</Link>
           </div>
         </nav>
 

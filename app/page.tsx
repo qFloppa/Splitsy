@@ -1,16 +1,13 @@
-import HomeClient from "./HomeClient";
+import type { Metadata } from "next";
+import LandingPage from "@/components/landing/LandingPage";
 
-type HomePageProps = {
-  searchParams: Promise<{ recurringTestCycle?: string | string[] }>;
+export const metadata: Metadata = {
+  title: "Splitsy · split any receipt with anyone, settled on Arc",
+  description:
+    "Scan a receipt, tag friends by X, Discord, email, or wallet address, and settle the split in USDC on Arc Testnet. One click. No real funds, just a testnet demo.",
+  alternates: { canonical: "/" },
 };
 
-export default async function Home({ searchParams }: HomePageProps) {
-  const params = await searchParams;
-  const querySecret = Array.isArray(params.recurringTestCycle)
-    ? params.recurringTestCycle[0]
-    : params.recurringTestCycle;
-  const expectedSecret = process.env.RECURRING_TEST_CYCLE_SECRET;
-  const testCycleEnabled = Boolean(expectedSecret && querySecret === expectedSecret);
-
-  return <HomeClient testCycleEnabled={testCycleEnabled} />;
+export default function Home() {
+  return <LandingPage />;
 }

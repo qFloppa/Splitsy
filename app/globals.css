@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@import "tw-animate-css";
 
 :root {
   --ink-950: #071421;
@@ -40,6 +41,40 @@
   --shadow: 0 24px 80px rgba(7, 20, 33, 0.14);
   --shadow-soft: 0 1px 2px rgba(7, 20, 33, 0.05), 0 18px 42px rgba(7, 20, 33, 0.08);
   --radius: 8px;
+
+  /* shadcn/ui semantic tokens, mapped onto the existing Splitsy palette so
+     shadcn components are brand-native in both themes. Splitsy's --accent
+     (USDC blue) keeps its meaning; shadcn's "accent" (subtle hover wash) is
+     carried by --accent-soft via the @theme mapping below. */
+  --card: var(--surface);
+  --card-foreground: var(--text);
+  --popover: var(--surface-strong);
+  --popover-foreground: var(--text);
+  --primary: var(--ink-950);
+  --primary-foreground: #ffffff;
+  --secondary: var(--surface-muted);
+  --secondary-foreground: var(--text);
+  --muted: var(--surface-muted);
+  --muted-foreground: var(--text-muted);
+  --accent-foreground: var(--text);
+  --destructive: var(--danger-text);
+  --input: var(--border-strong);
+  --ring: var(--accent);
+
+  /* Landing-page design tokens. Type ramp is display-first (hero counts down
+     from ~9rem); motion tokens are the only durations/eases the landing uses,
+     so timing stays consistent across GSAP, Motion, and CSS transitions. */
+  --lp-display-xl: clamp(3.4rem, 1.2rem + 9.2vw, 8.75rem);
+  --lp-display-lg: clamp(2.4rem, 1rem + 5vw, 5rem);
+  --lp-display-md: clamp(1.8rem, 1.1rem + 2.4vw, 3rem);
+  --lp-lede: clamp(1.05rem, 0.95rem + 0.5vw, 1.3rem);
+  --lp-section-y: clamp(5rem, 3rem + 9vw, 11rem);
+  --dur-1: 150ms;
+  --dur-2: 260ms;
+  --dur-3: 420ms;
+  --dur-4: 700ms;
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1); /* ~expo.out */
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1); /* soft overshoot */
 }
 
 :root[data-theme="dark"] {
@@ -74,13 +109,40 @@
   --danger-text: #ffb7ad;
   --shadow: 0 28px 90px rgba(0, 0, 0, 0.4);
   --shadow-soft: 0 1px 2px rgba(0, 0, 0, 0.2), 0 18px 44px rgba(0, 0, 0, 0.26);
+
+  /* shadcn semantic tokens — dark. Primary mirrors .primary-button's dark
+     treatment (bright accent surface, ink text) instead of inverting light. */
+  --primary: var(--accent-strong);
+  --primary-foreground: var(--ink-950);
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  --font-mono: "Roboto Mono", "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  /* shadcn "accent" = subtle hover wash. Splitsy's --accent stays the brand
+     blue for direct var() use; Tailwind's bg-accent resolves to the wash. */
+  --color-accent: var(--accent-soft);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --font-sans: var(--font-inter), Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-mono: var(--font-roboto-mono), "Roboto Mono", "SFMono-Regular", Consolas, "Liberation Mono", monospace;
 }
 
 * {
@@ -98,7 +160,7 @@ body {
      stop and double up the seams the backdrop already had to solve. */
   background: var(--background);
   color: var(--foreground);
-  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-family: var(--font-inter), Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   font-feature-settings: "cv02", "cv03", "cv04", "cv11";
 }
 
@@ -337,7 +399,7 @@ input[type="number"],
 .metric p:last-child,
 .amount-text,
 .mono {
-  font-family: "Roboto Mono", "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-family: var(--font-roboto-mono), "Roboto Mono", "SFMono-Regular", Consolas, "Liberation Mono", monospace;
   font-variant-numeric: tabular-nums;
 }
 
@@ -1842,4 +1904,196 @@ input[type="number"],
   margin: 0;
   font-size: 0.75rem;
   color: var(--text-muted);
+}
+
+/* ============================================================================
+   Landing page (marketing site at /)
+   ========================================================================== */
+
+/* Cross-fade for explicit theme toggles only (added/removed by useTheme).
+   Forcing transitions globally is expensive, so the class lives ~420ms. */
+.theme-fade,
+.theme-fade *,
+.theme-fade *::before,
+.theme-fade *::after {
+  transition:
+    background-color var(--dur-3) var(--ease-out),
+    border-color var(--dur-3) var(--ease-out),
+    color var(--dur-3) var(--ease-out),
+    fill var(--dur-3) var(--ease-out),
+    stroke var(--dur-3) var(--ease-out),
+    box-shadow var(--dur-3) var(--ease-out) !important;
+}
+
+.lp-display {
+  font-size: var(--lp-display-xl);
+  font-weight: 820;
+  letter-spacing: -0.035em;
+  line-height: 0.98;
+  color: var(--text);
+  text-wrap: balance;
+}
+
+.lp-display-lg {
+  font-size: var(--lp-display-lg);
+  font-weight: 820;
+  letter-spacing: -0.03em;
+  line-height: 1.02;
+  color: var(--text);
+  text-wrap: balance;
+}
+
+.lp-lede {
+  font-size: var(--lp-lede);
+  line-height: 1.55;
+  color: var(--text-soft);
+  text-wrap: pretty;
+}
+
+/* SplitType wraps hero lines in .line > .word. Each line gets its own clip
+   mask so words can slide up "out of nothing" — the reveal reads as printing,
+   not fading. GSAP owns the word transforms (set below the mask pre-reveal);
+   the headline stays invisible until fonts are ready and the split has run,
+   so the raw text never flashes. */
+.lp-hero-headline {
+  visibility: hidden;
+}
+
+.lp-hero-headline[data-ready] {
+  visibility: visible;
+}
+
+.lp-hero-headline .line {
+  overflow: hidden;
+  padding-block: 0.08em; /* keep descenders/ascenders inside the clip */
+  margin-block: -0.08em;
+}
+
+.lp-hero-headline .word {
+  display: inline-block;
+  transform-origin: 0% 100%;
+}
+
+/* Reduced motion (or SplitType unavailable): plain visible text. */
+@media (prefers-reduced-motion: reduce) {
+  .lp-hero-headline {
+    visibility: visible;
+  }
+}
+
+/* Accent line of the headline picks up the settlement gradient. */
+.lp-headline-accent {
+  background: linear-gradient(92deg, var(--usdc-blue) 8%, var(--arc-cyan) 92%);
+  background-clip: text;
+  -webkit-background-clip: text;
+  color: transparent;
+}
+
+:root[data-theme="dark"] .lp-headline-accent {
+  background: linear-gradient(92deg, #7db8f5 8%, var(--arc-cyan) 92%);
+  background-clip: text;
+  -webkit-background-clip: text;
+}
+
+/* Chrome won't paint background-clip: text through transformed inline-block
+   descendants (the SplitType words), leaving the accent line invisible.
+   Re-clip the gradient on each word so both engines paint it. */
+.lp-headline-accent .word {
+  background: inherit;
+  background-clip: text;
+  -webkit-background-clip: text;
+}
+
+/* The brand S stands in for the letter S of "Split" — sized to the caps'
+   optical height, sitting on the baseline. */
+.lp-hero-s {
+  display: inline-block;
+  height: 1em;
+  width: auto;
+  vertical-align: -0.11em;
+  margin-right: 0.02em;
+}
+
+/* Realistic browser chrome around the live demo. */
+.lp-browser {
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+  backdrop-filter: blur(18px);
+  overflow: hidden;
+}
+
+.lp-browser-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.65rem 0.9rem;
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--surface-strong) 72%, transparent);
+}
+
+.lp-browser-dots {
+  display: inline-flex;
+  gap: 0.42rem;
+}
+
+.lp-browser-dots span {
+  width: 0.72rem;
+  height: 0.72rem;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--text-muted) 26%, transparent);
+}
+
+.lp-browser:hover .lp-browser-dots span:nth-child(1) { background: #ff5f57; }
+.lp-browser:hover .lp-browser-dots span:nth-child(2) { background: #febc2e; }
+.lp-browser:hover .lp-browser-dots span:nth-child(3) { background: #28c840; }
+
+.lp-browser-url {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  min-width: 0;
+  flex: 0 1 24rem;
+  margin-inline: auto;
+  padding: 0.32rem 0.9rem;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface-muted);
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+
+.lp-browser-url svg {
+  flex: none;
+  color: var(--success);
+}
+
+/* Demo typing caret — blinks while the timeline "types", hidden otherwise. */
+.lp-caret {
+  display: inline-block;
+  flex: none;
+  width: 1.5px;
+  height: 1em;
+  background: currentColor;
+  animation: lp-caret-blink 1.05s steps(1) infinite;
+}
+
+@keyframes lp-caret-blink {
+  50% {
+    opacity: 0;
+  }
+}
+
+/* Reduced motion: no pins, no autoplay, no character choreography. Sections
+   simply exist; the demo renders labeled static frames instead. */
+@media (prefers-reduced-motion: reduce) {
+  .lp-hero-headline .word {
+    transform: none;
+  }
+
+  html {
+    scroll-behavior: auto;
+  }
 }

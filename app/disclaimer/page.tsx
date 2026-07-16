@@ -35,7 +35,7 @@ export default function DisclaimerPage() {
           </Link>
           <div className="docs-toplinks">
             <Link href="/docs">Docs</Link>
-            <Link href="/">Open app</Link>
+            <Link href="/app">Open app</Link>
           </div>
         </nav>
 

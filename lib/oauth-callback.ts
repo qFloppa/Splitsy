@@ -86,7 +86,7 @@ export async function finishProviderLogin(params: {
   const response =
     mode === "json"
       ? NextResponse.json({ ok: true })
-      : NextResponse.redirect(new URL("/", request.nextUrl.origin));
+      : NextResponse.redirect(new URL("/app", request.nextUrl.origin));
   response.cookies.set(SESSION_COOKIE_NAME, signSession(appUser.id, sessionSecret), {
     httpOnly: true,
     secure: request.nextUrl.protocol === "https:",
@@ -116,7 +116,7 @@ export function resultPage({
   status,
   title,
   lines,
-  backHref = "/",
+  backHref = "/app",
   backLabel = "← Back to Splitsy",
 }: {
   ok: boolean;

@@ -58,7 +58,7 @@ export default function EmailSignInForm() {
         return;
       }
       // Session cookie is set — hard-navigate so the app re-reads it.
-      window.location.href = "/";
+      window.location.href = "/app";
     } catch {
       setError("Network error — please try again.");
     } finally {
@@ -68,7 +68,7 @@ export default function EmailSignInForm() {
 
   return (
     <main className="mx-auto flex min-h-[70vh] w-full max-w-md flex-col justify-center px-6 py-16">
-      <Link href="/" className="mb-8 inline-flex items-center gap-2 text-sm font-semibold text-[var(--text-muted)] no-underline transition hover:text-[var(--text)]">
+      <Link href="/app" className="mb-8 inline-flex items-center gap-2 text-sm font-semibold text-[var(--text-muted)] no-underline transition hover:text-[var(--text)]">
         <ArrowLeft size={16} />
         Back to Splitsy
       </Link>
