@@ -1,7 +1,7 @@
 // Server-side (Node runtime) reads of BillSplitRegistry. Mirrors the publicClient
 // pattern in app/api/onchain-bills/preimage/route.ts. Kept separate from the
 // "use client" lib/bill-split-contracts.ts so server routes never pull client code.
-import { createPublicClient, http } from "viem";
+import { createPublicClient, decodeEventLog, http, parseAbiItem } from "viem";
 import { arcTestnet } from "viem/chains";
 
 export const REGISTRY_ADDRESS = (process.env.NEXT_PUBLIC_BILL_SPLIT_REGISTRY_ADDRESS ??
@@ -100,4 +100,34 @@ export async function getBillIdsForSplitterOnchain(addr: `0x${string}`): Promise
     functionName: "billIdsForSplitter",
     args: [addr],
   });
+}
+
+const ARC_USDC_ADDRESS = (process.env.ARC_TESTNET_USDC_ADDRESS ??
+  "0x3600000000000000000000000000000000000000") as `0x${string}`;
+
+const TRANSFER_EVENT = parseAbiItem("event Transfer(address indexed from, address indexed to, uint256 value)");
+
+// How much USDC `wallet` sent/received in a mined tx, from the receipt's
+// Transfer logs. Circle's listTransactions reports contract executions
+// (approve/payDebt/claim) with no `amounts`, so the wallet history would show
+// $0 for them — this recovers the real figure from chain. Base units (6 dp).
+export async function readUsdcMovedInTx(
+  txHash: `0x${string}`,
+  wallet: `0x${string}`,
+): Promise<{ sent: bigint; received: bigint }> {
+  const receipt = await publicClient.getTransactionReceipt({ hash: txHash });
+  const me = wallet.toLowerCase();
+  let sent = 0n;
+  let received = 0n;
+  for (const log of receipt.logs) {
+    if (log.address.toLowerCase() !== ARC_USDC_ADDRESS.toLowerCase()) continue;
+    try {
+      const ev = decodeEventLog({ abi: [TRANSFER_EVENT], data: log.data, topics: log.topics });
+      if (ev.args.from.toLowerCase() === me) sent += ev.args.value;
+      if (ev.args.to.toLowerCase() === me) received += ev.args.value;
+    } catch {
+      // Non-Transfer USDC log (e.g. Approval) — not a movement.
+    }
+  }
+  return { sent, received };
 }
