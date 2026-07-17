@@ -125,4 +125,75 @@ export async function markDebtPaid(id: string, txRef: string): Promise<void> {
   }
 }
 
+// Transfer accepted by Circle but not yet COMPLETE — the webhook flips it.
+// paid_tx_hash holds the Circle transaction id (not the on-chain hash) so the
+// webhook can find the debt by the tx id in the notification.
+export async function markDebtSettling(id: string, circleTxId: string): Promise<void> {
+  const client = requireClient();
+  const { error } = await client
+    .from("bill_debts")
+    .update({ status: "settling", paid_tx_hash: circleTxId, paid_at: null })
+    .eq("id", id);
+  if (error) {
+    throw new Error(`Failed to mark debt settling: ${error.message}`);
+  }
+}
+
+// Webhook: the transfer reached COMPLETE/CONFIRMED on chain. Keyed by Circle
+// tx id; idempotent (a retry re-sets the same terminal state).
+export async function confirmDebtPaidByTxId(circleTxId: string): Promise<void> {
+  const client = requireClient();
+  const { error } = await client
+    .from("bill_debts")
+    .update({ status: "paid", paid_at: new Date().toISOString() })
+    .eq("paid_tx_hash", circleTxId)
+    .neq("status", "paid"); // don't touch paid_at on webhook retries
+  if (error) {
+    throw new Error(`Failed to confirm debt paid: ${error.message}`);
+  }
+}
+
+// Webhook: the transfer FAILED/DENIED/CANCELLED after we accepted it. Put the
+// debt back so the debtor can retry. Clears the tx ref so a stale notification
+// for the dead tx can't match again after a successful retry.
+export async function revertDebtByTxId(circleTxId: string): Promise<void> {
+  const client = requireClient();
+  const { error } = await client
+    .from("bill_debts")
+    .update({ status: "pending", paid_tx_hash: null, paid_at: null })
+    .eq("paid_tx_hash", circleTxId)
+    .neq("status", "paid"); // COMPLETE and FAILED are exclusive; never un-pay on a stray event
+  if (error) {
+    throw new Error(`Failed to revert debt: ${error.message}`);
+  }
+}
+
+// At-least-once delivery guard: true if this notificationId is new, false if
+// we've already processed it (Circle retry). Insert-first so two concurrent
+// deliveries can't both pass.
+export async function recordWebhookEvent(input: {
+  notificationId: string;
+  notificationType: string;
+  txId: string | null;
+  txState: string | null;
+}): Promise<boolean> {
+  const client = requireClient();
+  const { data, error } = await client
+    .from("circle_webhook_events")
+    .upsert(
+      {
+        notification_id: input.notificationId,
+        notification_type: input.notificationType,
+        tx_id: input.txId,
+        tx_state: input.txState,
+      },
+      { onConflict: "notification_id", ignoreDuplicates: true },
+    )
+    .select("notification_id");
+  if (error) {
+    throw new Error(`Failed to record webhook event: ${error.message}`);
+  }
+  return (data ?? []).length > 0; // empty result = duplicate was ignored
+}
+
 export type { Bill, BillDebt };

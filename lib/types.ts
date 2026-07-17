@@ -63,7 +63,7 @@ export type BillDebt = {
   debtor_handle: string;
   debtor_user_id: string | null;
   amount_usdc: string;
-  status: "pending" | "paid";
+  status: "pending" | "settling" | "paid";
   paid_tx_hash: string | null;
   paid_at: string | null;
   created_at: string;

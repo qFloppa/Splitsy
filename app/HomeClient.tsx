@@ -694,8 +694,12 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
       setRecurringWallet(recurring);
       setBillState("idle");
       setRecurringState("idle");
-      setBillMessage(`Connected ${shortAddress(bill.account)} on Arc Testnet.`);
-      setRecurringMessage(`Connected ${shortAddress(recurring.account)} on Arc Testnet.`);
+      // Connecting is always a precursor to an action (split, pay, claim) that
+      // sets its own status message, so don't leave a stray "Connected …" note
+      // behind — it surfaces in the post-claim success area and the "Review your
+      // split" panel where it's just noise.
+      setBillMessage("");
+      setRecurringMessage("");
       await Promise.all([
         refreshBillRegistry(bill.account),
         refreshRecurringTabsForWallet(recurring.account),
@@ -1049,6 +1053,12 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
       setBillMessage(`Bill #${result.billId.toString()} is live on Arc. Payers will see it when they connect.`);
       const publishedReceipt = receiptCommit;
       resetSplitForm();
+      // resetSplitForm() unmounts the review panel and surfaces the "Bill #N is
+      // live" confirmation at the top of the bills view — scroll up so the user
+      // lands on it instead of the now-empty middle of the page.
+      window.requestAnimationFrame(() => {
+        window.scrollTo({ top: 0, behavior: "smooth" });
+      });
       void fetch("/api/onchain-bills/preimage", {
         method: "POST",
         headers: { "Content-Type": "application/json" },

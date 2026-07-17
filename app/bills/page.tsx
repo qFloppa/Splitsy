@@ -193,6 +193,8 @@ export default function BillsPage() {
                 <strong>{d.amount_usdc} USDC</strong>
                 {d.status === "paid" ? (
                   <span style={{ color: "#16a34a" }}>✓ paid</span>
+                ) : d.status === "settling" ? (
+                  <span style={{ color: "#ca8a04" }}>⏳ settling…</span>
                 ) : (
                   <button type="button" onClick={() => pay(d.id)} disabled={payingId === d.id} style={primaryBtn}>
                     {payingId === d.id ? "Paying…" : "Pay"}
@@ -219,7 +221,7 @@ export default function BillsPage() {
                 return (
                   <span key={debt.id} style={{ fontSize: "0.85rem", opacity: 0.8 }}>
                     {p.prefix}
-                    {p.label}: {debt.amount_usdc} {debt.status === "paid" ? "✓ paid" : "· pending"}
+                    {p.label}: {debt.amount_usdc} {debt.status === "paid" ? "✓ paid" : debt.status === "settling" ? "⏳ settling" : "· pending"}
                   </span>
                 );
               })}

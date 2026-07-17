@@ -1,6 +1,6 @@
 import { cookies } from "next/headers";
 import { getSessionUser } from "@/lib/session";
-import { getDebtForSettlement, markDebtPaid } from "@/lib/bills-repo";
+import { getDebtForSettlement, markDebtPaid, markDebtSettling } from "@/lib/bills-repo";
 import { transferUsdcOnArc, InsufficientFundsError } from "@/lib/circle-dcw";
 import { verifyWalletUnlock, WALLET_UNLOCK_COOKIE } from "@/lib/session-core";
 
@@ -32,6 +32,9 @@ export async function POST(_request: Request, { params }: { params: Promise<{ id
   if (debt.status === "paid") {
     return Response.json({ error: "Already paid" }, { status: 409 });
   }
+  if (debt.status === "settling") {
+    return Response.json({ error: "Payment already in flight — waiting for confirmation." }, { status: 409 });
+  }
 
   const creatorWallet = debt.bill?.creator?.wallet_address;
   if (!creatorWallet) {
@@ -54,10 +57,17 @@ export async function POST(_request: Request, { params }: { params: Promise<{ id
     );
   }
 
-  // ponytail: optimistic — mark paid once the transfer is accepted (not FAILED).
-  // Arc settles fast on testnet; wire a Circle webhook to confirm COMPLETE if it matters.
   if (tx.state === "FAILED" || tx.state === "DENIED" || tx.state === "CANCELLED") {
     return Response.json({ error: `Transfer ${tx.state.toLowerCase()}` }, { status: 502 });
+  }
+
+  // With webhooks: mark "settling" now and let /api/webhooks/circle flip it to
+  // paid on COMPLETE (or back to pending on FAILED). Without them (local dev,
+  // no public URL for Circle to call): the old optimistic mark, since nothing
+  // would ever deliver the confirmation.
+  if (process.env.CIRCLE_WEBHOOKS_ENABLED === "true") {
+    await markDebtSettling(id, tx.id);
+    return Response.json({ ok: true, txId: tx.id, state: tx.state, settling: true });
   }
   await markDebtPaid(id, tx.id);
   return Response.json({ ok: true, txId: tx.id, state: tx.state });
