@@ -391,13 +391,15 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [registryReadAddress, socialWalletAddress]);
 
-  // Load recurring tabs for a social (DCW) user with no browser wallet, so they
-  // see the tabs they created or were tagged into without connecting anything.
-  // When a browser wallet is present, connectWallets() already loads its tabs.
+  // Load recurring tabs when the social (DCW) identity becomes available — even
+  // if a browser wallet is already connected, since its earlier sweep ran before
+  // the social address existed and so misses the DCW-side tabs (e.g. settler on
+  // one tab via wallet, payer on another via social). Wallet connections sweep
+  // from connectWallets(), which unions in the social address when present.
   useEffect(() => {
-    if (!recurringWallet && socialWalletAddress) void refreshRecurringTabsForWallet(socialWalletAddress);
+    if (socialWalletAddress) void refreshRecurringTabsForWallet();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [socialWalletAddress, recurringWallet]);
+  }, [socialWalletAddress]);
 
   // On-chain debts still owed, and the merged pending count (social + wallet)
   // that the single "Action needed" window heading shows.
@@ -1903,8 +1905,13 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
 
   async function refreshRecurringTabsForWallet(account = recurringActingAccount ?? undefined, quiet = false) {
     // Read tabs for BOTH identity wallets (connected browser wallet + social
-    // DCW) so a dual-identity user sees all their recurring debts at once.
-    const accounts = [...new Set([account, socialWalletAddress].filter((value): value is `0x${string}` => Boolean(value)))];
+    // DCW) so a dual-identity user sees all their recurring tabs at once —
+    // including being settler on one tab and payer on another.
+    const accounts = [
+      ...new Set(
+        [account, recurringWallet?.account, socialWalletAddress].filter((value): value is `0x${string}` => Boolean(value)),
+      ),
+    ];
     if (accounts.length === 0) {
       return;
     }
@@ -1981,6 +1988,24 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
     return true;
   }
 
+  // Whether an action on the selected tab must run through the server-signed
+  // Circle wallet: true when the social DCW — not the connected browser wallet —
+  // is the acting party (member for approve/revoke, recipient for claim) on that
+  // tab. A dual-identity user can be payer via social on one tab and settler via
+  // wallet on another, so this is decided per tab, not per session.
+  function recurringViaServerForTab(role: "member" | "recipient"): boolean {
+    if (!tabState) return recurringViaServer;
+    const matches = (address: string | null | undefined) => {
+      if (!address) return false;
+      const lower = address.toLowerCase();
+      return role === "recipient"
+        ? tabState.recipient.toLowerCase() === lower
+        : tabState.members.some((member) => member.address.toLowerCase() === lower);
+    };
+    if (matches(recurringWallet?.account)) return false;
+    return matches(socialWalletAddress);
+  }
+
   async function authorizeActiveTab() {
     const tabAddress = activeTabAddress ?? normalizeOptionalAddress(tabAddressInput);
     if (!tabAddress) {
@@ -1991,7 +2016,7 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
 
     // Social (DCW) member → approve from the server, capped to their remaining
     // debt. The custom approval field only applies to browser-wallet members.
-    if (recurringViaServer) {
+    if (recurringViaServerForTab("member")) {
       try {
         if (!(await ensureWalletUnlocked())) return;
         setRecurringState("working");
@@ -2044,7 +2069,7 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
       return;
     }
 
-    if (recurringViaServer) {
+    if (recurringViaServerForTab("member")) {
       try {
         if (!(await ensureWalletUnlocked())) return;
         setRecurringState("working");
@@ -2093,7 +2118,7 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
     }
 
     // Social (DCW) recipient → claim from the server.
-    if (recurringViaServer) {
+    if (recurringViaServerForTab("recipient")) {
       try {
         if (!(await ensureWalletUnlocked())) return;
         setRecurringState("working");
@@ -3360,6 +3385,12 @@ function RecurringWorkspace({
       ? tabState?.members ?? []
       : tabState.members.filter((member) => isViewer(member.address));
   const viewerMember = tabState?.members.find((member) => isViewer(member.address));
+  // Approve/revoke on this tab signs with the browser wallet only when that
+  // wallet is the member; a social (DCW) membership is approved server-side.
+  const walletIsTabMember = Boolean(
+    recurringWallet &&
+      tabState?.members.some((member) => member.address.toLowerCase() === recurringWallet.account.toLowerCase()),
+  );
   const debtorShare = viewerMember?.fixedShare;
   const approvalPlaceholder = debtorShare
     ? unitsToUsdc(viewerMember?.dueNow ?? debtorShare * (tabState ? tabState.remainingCycles : 1n))
@@ -3658,9 +3689,10 @@ function RecurringWorkspace({
                                 : "Funds stay in your wallet unless this tab is approved for the due amount and the cycle time has arrived."
                               : "No recurring debt is currently due for this wallet."}
                         </p>
-                        {/* Bridging needs a browser-wallet session; Splitsy (DCW)
-                            members top up their wallet from the wallet dock instead. */}
-                        {!debtorPaidOff && recurringWallet ? (
+                        {/* Bridging needs a browser-wallet session AND the debtor
+                            to be that wallet; Splitsy (DCW) members top up their
+                            wallet from the wallet dock instead. */}
+                        {!debtorPaidOff && recurringWallet && debtor.address.toLowerCase() === recurringWallet.account.toLowerCase() ? (
                           (() => {
                             const bridgeAmount = balanceNeeded > 0n ? balanceNeeded : debtor.fixedShare;
                             return (
@@ -3787,7 +3819,7 @@ function RecurringWorkspace({
             <Panel title="Actions" icon={<BadgeDollarSign size={19} />}>
               {/* A Splitsy (DCW) member's approval is set server-side to exactly
                   their remaining debt, so there is no limit to pick. */}
-              {recurringWallet ? (
+              {recurringWallet && (!viewerMember || walletIsTabMember) ? (
                 <>
                   <Field
                     label="Approval limit"
