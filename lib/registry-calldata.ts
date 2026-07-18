@@ -1,4 +1,5 @@
-// Isomorphic calldata builders for BillSplitRegistry + ERC20 approve. No
+// Isomorphic calldata builders for BillSplitRegistry, RecurringTabFactory /
+// RecurringTab, and ERC20 approve. No
 // "use client" and no browser globals, so server routes can import this to
 // build the callData for a Circle DCW contract-execution. The ABI fragments
 // below are byte-identical copies of the ones in lib/bill-split-contracts.ts
@@ -40,6 +41,29 @@ export const REGISTRY_CALL_ABI = [
   },
 ] as const;
 
+export const RECURRING_FACTORY_CALL_ABI = [
+  {
+    type: "function",
+    name: "createTab",
+    stateMutability: "nonpayable",
+    inputs: [
+      { internalType: "address", name: "recipient", type: "address" },
+      { internalType: "uint256", name: "settlementInterval", type: "uint256" },
+      { internalType: "uint256", name: "maxSettlements", type: "uint256" },
+      { internalType: "address[]", name: "members", type: "address[]" },
+      { internalType: "uint256[]", name: "fixedShares", type: "uint256[]" },
+    ],
+    outputs: [
+      { internalType: "uint256", name: "tabId", type: "uint256" },
+      { internalType: "address", name: "tab", type: "address" },
+    ],
+  },
+] as const;
+
+export const RECURRING_TAB_CALL_ABI = [
+  { type: "function", name: "claim", stateMutability: "nonpayable", inputs: [], outputs: [] },
+] as const;
+
 export const ERC20_APPROVE_ABI = [
   {
     type: "function",
@@ -75,4 +99,23 @@ export function encodeClaim(billId: bigint, amount: bigint): `0x${string}` {
 
 export function encodeApprove(spender: `0x${string}`, amount: bigint): `0x${string}` {
   return encodeFunctionData({ abi: ERC20_APPROVE_ABI, functionName: "approve", args: [spender, amount] });
+}
+
+export function encodeCreateTab(
+  recipient: `0x${string}`,
+  settlementInterval: bigint,
+  maxSettlements: bigint,
+  members: `0x${string}`[],
+  fixedShares: bigint[],
+): `0x${string}` {
+  return encodeFunctionData({
+    abi: RECURRING_FACTORY_CALL_ABI,
+    functionName: "createTab",
+    args: [recipient, settlementInterval, maxSettlements, members, fixedShares],
+  });
+}
+
+// RecurringTab.claim() takes no arguments — unlike the registry's claim(billId, amount).
+export function encodeTabClaim(): `0x${string}` {
+  return encodeFunctionData({ abi: RECURRING_TAB_CALL_ABI, functionName: "claim", args: [] });
 }

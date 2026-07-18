@@ -117,8 +117,14 @@ type AppTab = "bills" | "recurring" | "history";
 type RecurringCycle = "test" | "weekly" | "monthly" | "custom";
 type RecurringMemberInput = {
   id: string;
+  // Holds a 0x wallet address OR an identity handle/email — same dual meaning as
+  // SplitParticipant.walletAddress, so a recurring tab can mix members across
+  // wallets and platforms just like a one-off bill.
   address: string;
   share: string;
+  // How to interpret `address` when it isn't a 0x value. Undefined defaults to
+  // "x"; email is auto-detected. Mirrors SplitParticipant.provider.
+  provider?: IdentityProvider | "wallet";
 };
 type FlowStepState = "pending" | "active" | "done" | "error";
 type FlowStepIcon = "switch" | "approve" | "pay" | "bridge" | "claim";
@@ -173,13 +179,16 @@ async function compressReceipt(file: File): Promise<Uint8Array> {
 // row's provider picker only disambiguates X vs Discord for bare handles.
 const looksLikeAddress = (v: string) => /^0x[a-fA-F0-9]{40}$/.test(v.trim());
 const looksLikeEmail = (v: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v.trim());
-// Only called for non-address rows, so "wallet" never reaches the API.
-const rowProvider = (p: SplitParticipant): IdentityProvider =>
-  looksLikeEmail(p.walletAddress)
+// Only called for non-address rows, so "wallet" never reaches the API. Email is
+// auto-detected from the value; a bare handle falls back to the picked provider
+// (X/Discord), defaulting to X.
+const detectRowProvider = (value: string, provider?: IdentityProvider | "wallet"): IdentityProvider =>
+  looksLikeEmail(value)
     ? "email"
-    : p.provider === "discord" || p.provider === "email"
-      ? p.provider
+    : provider === "discord" || provider === "email"
+      ? provider
       : "x";
+const rowProvider = (p: SplitParticipant): IdentityProvider => detectRowProvider(p.walletAddress, p.provider);
 
 // base64-encode raw bytes for JSON transport to the publish route.
 function bytesToBase64(bytes: Uint8Array): string {
@@ -320,8 +329,8 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
   const [recurringCycleCount, setRecurringCycleCount] = useState("3");
   const [recurringSplitMode, setRecurringSplitMode] = useState<"equal" | "manual">("equal");
   const [recurringMembers, setRecurringMembers] = useState<RecurringMemberInput[]>([
-    { id: "rec-member-1", address: "0x1111111111111111111111111111111111111111", share: "0.00" },
-    { id: "rec-member-2", address: "0x2222222222222222222222222222222222222222", share: "0.00" },
+    { id: "rec-member-1", address: "", share: "0.00", provider: "wallet" },
+    { id: "rec-member-2", address: "", share: "0.00", provider: "wallet" },
   ]);
   const [tabAddressInput, setTabAddressInput] = useState("");
   const [activeTabAddress, setActiveTabAddress] = useState<`0x${string}` | null>(null);
@@ -356,6 +365,12 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
   // the PRIMARY address (balance display, render gating); refreshBillRegistry
   // itself reads bills/debts for BOTH identity wallets when both are live.
   const registryReadAddress = (billWallet?.account ?? me?.walletAddress ?? null) as `0x${string}` | null;
+  // The wallet the recurring tab UI reads and acts for: the connected browser
+  // wallet, or — for a social user with no browser wallet — their Circle DCW.
+  // When it's the DCW, authorize/revoke/claim route through the server (PIN
+  // gated) instead of a browser signature, mirroring the one-off pay/claim flow.
+  const recurringActingAccount = (recurringWallet?.account ?? me?.walletAddress ?? null) as `0x${string}` | null;
+  const recurringViaServer = !recurringWallet && Boolean(me?.walletAddress);
   const socialWalletAddress = (me?.walletAddress ?? null) as `0x${string}` | null;
   // The browser wallet the split form would sign with: the built app wallet, or
   // the raw wagmi connection while the app wallet is still being (re)built.
@@ -375,6 +390,14 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
     if (registryReadAddress) void refreshBillRegistry(registryReadAddress);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [registryReadAddress, socialWalletAddress]);
+
+  // Load recurring tabs for a social (DCW) user with no browser wallet, so they
+  // see the tabs they created or were tagged into without connecting anything.
+  // When a browser wallet is present, connectWallets() already loads its tabs.
+  useEffect(() => {
+    if (!recurringWallet && socialWalletAddress) void refreshRecurringTabsForWallet(socialWalletAddress);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [socialWalletAddress, recurringWallet]);
 
   // On-chain debts still owed, and the merged pending count (social + wallet)
   // that the single "Action needed" window heading shows.
@@ -1649,60 +1672,185 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
     return connected?.recurring ?? null;
   }
 
-  async function createOnchainTab() {
-    const wallet = recurringWallet ?? (await connectRecurring());
-
-    if (!wallet) {
-      return;
+  // Shared validation for both create paths. Members can be 0x addresses OR
+  // social handles/emails, exactly like a one-off mixed bill. Returns the
+  // schedule + the per-member rows (raw address value, detected provider, and
+  // per-cycle share in USD), or throws with a user-facing message.
+  function buildRecurringPlan() {
+    const totalUsd = Number(recurringTotalUsd);
+    if (!Number.isFinite(totalUsd) || totalUsd <= 0) {
+      throw new Error("Enter a recurring total greater than 0 USDC.");
+    }
+    if (recurringMembers.length === 0) {
+      throw new Error("Add at least one member.");
+    }
+    const cycleCountNum = Math.floor(Number(recurringCycleCount));
+    if (!Number.isFinite(cycleCountNum) || cycleCountNum < 1) {
+      throw new Error("Enter at least 1 cycle.");
+    }
+    const cycleCount = BigInt(cycleCountNum);
+    const sourceMembers = recurringSplitMode === "equal" ? displayRecurringMembers : recurringMembers;
+    // Member shares are per-cycle. Across the whole schedule they should sum to
+    // the Total USD, so per cycle they must sum to Total ÷ cycles.
+    const perCycleTotal = totalUsd / Number(cycleCount);
+    const shareTotal = sourceMembers.reduce((sum, member) => sum + Number(member.share || "0"), 0);
+    if (sourceMembers.some((member) => Number(member.share || "0") <= 0)) {
+      throw new Error("Every recurring member needs a positive share.");
+    }
+    if (Math.abs(shareTotal - perCycleTotal) > 0.009) {
+      throw new Error(
+        `Recurring shares are per cycle and must add up to $${perCycleTotal.toFixed(2)} (Total USD ÷ ${cycleCount.toString()} cycles).`,
+      );
+    }
+    // A row explicitly set to "wallet" must hold a full address.
+    const badWalletRow = sourceMembers.find((member) => member.provider === "wallet" && !looksLikeAddress(member.address));
+    if (badWalletRow) {
+      throw new Error(`"${badWalletRow.address || "A member"}" needs a full 0x wallet address.`);
+    }
+    if (sourceMembers.some((member) => !member.address.trim())) {
+      throw new Error("Every member needs a wallet address or a tagged handle.");
     }
 
+    let intervalSeconds: bigint;
+    if (recurringCycle === "custom") {
+      const customDays = Number(customCycleDays);
+      if (!Number.isInteger(customDays) || customDays < 1) {
+        throw new Error("Custom days must be a whole number of at least 1 day.");
+      }
+      intervalSeconds = BigInt(customDays) * 24n * 60n * 60n;
+    } else {
+      intervalSeconds =
+        availableRecurringCycleOptions.find((option) => option.id === recurringCycle)?.seconds ?? 7n * 24n * 60n * 60n;
+    }
+
+    const rows = sourceMembers.map((member) => ({
+      address: member.address.trim(),
+      shareUsd: Number(member.share || "0"),
+      provider: detectRowProvider(member.address, member.provider),
+      isAddress: looksLikeAddress(member.address),
+    }));
+    return { intervalSeconds, cycleCount, rows };
+  }
+
+  async function createOnchainTab() {
     try {
       setRecurringState("working");
       setRecurringCreateMessageTone("neutral");
+      const { intervalSeconds, cycleCount, rows } = buildRecurringPlan();
+
+      // The creator (recipient) can't also be a member. When creating as the
+      // social identity the recipient is the DCW; otherwise it's the browser
+      // wallet — checked below once we know which wallet signs.
+      const socialRows = rows
+        .filter((row) => !row.isAddress)
+        .map((row) => ({ provider: row.provider, handle: row.address }));
+
+      // Resolve social handles → addresses (pre-mints as needed). Reuses the
+      // one-off bills resolver — it's provider-agnostic.
+      let resolvedByHandle = new Map<string, string>();
+      if (socialRows.length > 0) {
+        setRecurringCreateMessage("Resolving tagged people…");
+        const res = await fetch("/api/onchain-bills/resolve", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ participants: socialRows }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          setRecurringState("error");
+          setRecurringCreateMessageTone("error");
+          setRecurringCreateMessage(
+            res.status === 503
+              ? "Wallet service isn't configured, so tagged people can't be added on-chain yet."
+              : (data.error ?? "Could not resolve tagged people."),
+          );
+          return;
+        }
+        resolvedByHandle = new Map(
+          (data.resolved as { provider: string; handle: string; address: string }[]).map((r) => [
+            `${r.provider}:${r.handle}`,
+            r.address,
+          ]),
+        );
+      }
+
+      // Ordered addresses / shares. Social rows use their resolved address.
+      const members: `0x${string}`[] = [];
+      const shares: bigint[] = [];
+      for (const row of rows) {
+        if (row.isAddress) {
+          members.push(normalizeAddress(row.address));
+        } else {
+          const norm = row.address.replace(/^@/, "").toLowerCase();
+          const addr = resolvedByHandle.get(`${row.provider}:${norm}`);
+          if (!addr) throw new Error(`Could not resolve @${norm}`);
+          members.push(normalizeAddress(addr));
+        }
+        shares.push(usdcToUnits(row.shareUsd.toFixed(6)));
+      }
+      if (new Set(members.map((member) => member.toLowerCase())).size !== members.length) {
+        throw new Error("Each recurring member resolves to a unique wallet — remove the duplicate.");
+      }
+
+      // Social creator → the server signs createTab from the user's Circle DCW,
+      // which becomes the tab's recipient. No browser wallet required.
+      if (createAsSocial && me?.walletAddress) {
+        const recipientLower = me.walletAddress.toLowerCase();
+        if (members.some((member) => member.toLowerCase() === recipientLower)) {
+          throw new Error("You can't add your own wallet as a member of your recurring tab.");
+        }
+        setRecurringCreateMessage("Creating recurring tab from your Splitsy wallet…");
+        const res = await fetch("/api/recurring/create", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            intervalSeconds: Number(intervalSeconds),
+            maxSettlements: Number(cycleCount),
+            members: rows.map((row) => ({
+              provider: row.isAddress ? undefined : row.provider,
+              handle: row.isAddress ? undefined : row.address.trim(),
+              address: row.isAddress ? normalizeAddress(row.address) : undefined,
+              shareUsd: row.shareUsd,
+            })),
+          }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          setRecurringState("error");
+          setRecurringCreateMessageTone("error");
+          setRecurringCreateMessage(
+            data.error === "insufficient_funds"
+              ? "Your wallet needs more test USDC to cover the gas for creating this tab."
+              : (data.error ?? "Could not create the recurring tab."),
+          );
+          return;
+        }
+        setTabAddressInput(data.tabAddress ?? "");
+        if (data.tabAddress) setActiveTabAddress(data.tabAddress);
+        setRecurringState("success");
+        setRecurringCreateMessageTone("success");
+        setRecurringCreateMessage(
+          data.tabId
+            ? `Created tab #${data.tabId} from your Splitsy wallet. Tagged members will see it after signing in.`
+            : "Recurring tab created from your Splitsy wallet.",
+        );
+        if (data.tabAddress) await refreshRecurringTab(data.tabAddress);
+        await refreshRecurringTabsForWallet();
+        return;
+      }
+
+      // Otherwise: the connected browser wallet signs createTab and is recipient.
+      const wallet = recurringWallet ?? (await connectRecurring());
+      if (!wallet) {
+        setRecurringState("idle");
+        return;
+      }
+      if (members.some((member) => member.toLowerCase() === wallet.account.toLowerCase())) {
+        throw new Error("You can't add your own wallet as a member of your recurring tab.");
+      }
       setRecurringCreateMessage("Switching to Arc Testnet…");
       await ensureRecurringWalletOnArc(wallet);
       setRecurringCreateMessage("Creating recurring tab on Arc Testnet.");
-      const totalUsd = Number(recurringTotalUsd);
-      if (!Number.isFinite(totalUsd) || totalUsd <= 0) {
-        throw new Error("Enter a recurring total greater than 0 USDC.");
-      }
-      if (recurringMembers.length === 0) {
-        throw new Error("Add at least one member wallet.");
-      }
-      const cycleCountNum = Math.floor(Number(recurringCycleCount));
-      if (!Number.isFinite(cycleCountNum) || cycleCountNum < 1) {
-        throw new Error("Enter at least 1 cycle.");
-      }
-      const cycleCount = BigInt(cycleCountNum);
-      const members = recurringMembers.map((member) => normalizeAddress(member.address));
-      if (new Set(members.map((member) => member.toLowerCase())).size !== members.length) {
-        throw new Error("Each recurring member wallet must be unique.");
-      }
-      const sourceMembers = recurringSplitMode === "equal" ? displayRecurringMembers : recurringMembers;
-      const shares = sourceMembers.map((member) => usdcToUnits(member.share));
-      // Member shares are per-cycle. Across the whole schedule they should sum to
-      // the Total USD, so per cycle they must sum to Total ÷ cycles.
-      const perCycleTotal = totalUsd / Number(cycleCount);
-      const shareTotal = sourceMembers.reduce((sum, member) => sum + Number(member.share || "0"), 0);
-      if (shares.some((share) => share <= 0n)) {
-        throw new Error("Every recurring member needs a positive share.");
-      }
-      if (Math.abs(shareTotal - perCycleTotal) > 0.009) {
-        throw new Error(
-          `Recurring shares are per cycle and must add up to $${perCycleTotal.toFixed(2)} (Total USD ÷ ${cycleCount.toString()} cycles).`,
-        );
-      }
-      let intervalSeconds: bigint;
-      if (recurringCycle === "custom") {
-        const customDays = Number(customCycleDays);
-        if (!Number.isInteger(customDays) || customDays < 1) {
-          throw new Error("Custom days must be a whole number of at least 1 day.");
-        }
-        intervalSeconds = BigInt(customDays) * 24n * 60n * 60n;
-      } else {
-        intervalSeconds =
-          availableRecurringCycleOptions.find((option) => option.id === recurringCycle)?.seconds ?? 7n * 24n * 60n * 60n;
-      }
       const result = await createRecurringTab({
         ...wallet,
         recipient: wallet.account,
@@ -1750,7 +1898,7 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
     }
   }
 
-  async function refreshRecurringTabsForWallet(account = recurringWallet?.account) {
+  async function refreshRecurringTabsForWallet(account = recurringActingAccount ?? undefined) {
     if (!account) {
       return;
     }
@@ -1781,11 +1929,78 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
     await refreshRecurringTab(address);
   }
 
-  async function authorizeActiveTab() {
-    const wallet = recurringWallet ?? (await connectRecurring());
-    const tabAddress = activeTabAddress ?? normalizeOptionalAddress(tabAddressInput);
+  // Ensures the Circle wallet is unlocked before a server-signed recurring
+  // action. Returns false (and shows a prompt) when the PIN window has lapsed —
+  // same gate as payDebtOnArc.
+  async function ensureWalletUnlocked(): Promise<boolean> {
+    const pin = await fetch("/api/wallet/pin").then((r) => r.json()).catch(() => ({}));
+    if (!pin.unlocked) {
+      setRecurringState("error");
+      setRecurringMessage("Unlock your wallet (the wallet button in the bottom-right corner), then try again.");
+      return false;
+    }
+    return true;
+  }
 
-    if (!wallet || !tabAddress) {
+  // POST to a recurring server route from the user's DCW, then refresh. Shared by
+  // the social (DCW) authorize/revoke/claim paths.
+  async function runRecurringServerAction(
+    path: string,
+    body: Record<string, unknown>,
+    successMessage: string,
+  ): Promise<boolean> {
+    const res = await fetch(path, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      setRecurringState("error");
+      setRecurringMessage(
+        data.error === "insufficient_funds"
+          ? "Your wallet needs more test USDC to cover the gas."
+          : data.error === "locked"
+            ? "Unlock your wallet, then try again."
+            : (data.error ?? "The action failed."),
+      );
+      return false;
+    }
+    setRecurringState("success");
+    setRecurringMessage(successMessage);
+    return true;
+  }
+
+  async function authorizeActiveTab() {
+    const tabAddress = activeTabAddress ?? normalizeOptionalAddress(tabAddressInput);
+    if (!tabAddress) {
+      setRecurringState("error");
+      setRecurringMessage("Select one of your recurring tabs first.");
+      return;
+    }
+
+    // Social (DCW) member → approve from the server, capped to their remaining
+    // debt. The custom approval field only applies to browser-wallet members.
+    if (recurringViaServer) {
+      try {
+        if (!(await ensureWalletUnlocked())) return;
+        setRecurringState("working");
+        setRecurringMessage("Approving the tab to collect your recurring debt…");
+        const ok = await runRecurringServerAction(
+          `/api/recurring/${tabAddress}/authorize`,
+          {},
+          "Approved. Funds stay in your wallet unless this tab has outstanding debt to collect.",
+        );
+        if (ok) await refreshRecurringTab(tabAddress);
+      } catch (caught) {
+        setRecurringState("error");
+        setRecurringMessage(errorMessage(caught));
+      }
+      return;
+    }
+
+    const wallet = recurringWallet ?? (await connectRecurring());
+    if (!wallet) {
       setRecurringState("error");
       setRecurringMessage("Connect a wallet and select one of its recurring tabs first.");
       return;
@@ -1812,10 +2027,33 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
   }
 
   async function revokeActiveTab() {
-    const wallet = recurringWallet ?? (await connectRecurring());
     const tabAddress = activeTabAddress ?? normalizeOptionalAddress(tabAddressInput);
+    if (!tabAddress) {
+      setRecurringState("error");
+      setRecurringMessage("Select one of your recurring tabs first.");
+      return;
+    }
 
-    if (!wallet || !tabAddress) {
+    if (recurringViaServer) {
+      try {
+        if (!(await ensureWalletUnlocked())) return;
+        setRecurringState("working");
+        setRecurringMessage("Revoking recurring collection approval…");
+        const ok = await runRecurringServerAction(
+          `/api/recurring/${tabAddress}/authorize`,
+          { revoke: true },
+          "Recurring collection approval revoked.",
+        );
+        if (ok) await refreshRecurringTab(tabAddress);
+      } catch (caught) {
+        setRecurringState("error");
+        setRecurringMessage(errorMessage(caught));
+      }
+      return;
+    }
+
+    const wallet = recurringWallet ?? (await connectRecurring());
+    if (!wallet) {
       setRecurringState("error");
       setRecurringMessage("Connect a wallet and select one of its recurring tabs first.");
       return;
@@ -1837,10 +2075,37 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
   }
 
   async function claimActiveRecurringFunds() {
-    const wallet = recurringWallet ?? (await connectRecurring());
     const tabAddress = activeTabAddress ?? normalizeOptionalAddress(tabAddressInput);
+    if (!tabAddress) {
+      setRecurringState("error");
+      setRecurringMessage("Select one of your recurring tabs first.");
+      return;
+    }
 
-    if (!wallet || !tabAddress) {
+    // Social (DCW) recipient → claim from the server.
+    if (recurringViaServer) {
+      try {
+        if (!(await ensureWalletUnlocked())) return;
+        setRecurringState("working");
+        setRecurringMessage("Claiming collected recurring funds…");
+        const ok = await runRecurringServerAction(
+          `/api/recurring/${tabAddress}/claim`,
+          {},
+          "Collected recurring funds claimed to your Splitsy wallet.",
+        );
+        if (ok) {
+          await refreshRecurringTab(tabAddress);
+          await refreshRecurringTabsForWallet();
+        }
+      } catch (caught) {
+        setRecurringState("error");
+        setRecurringMessage(errorMessage(caught));
+      }
+      return;
+    }
+
+    const wallet = recurringWallet ?? (await connectRecurring());
+    if (!wallet) {
       setRecurringState("error");
       setRecurringMessage("Connect the splitter wallet and select one of its recurring tabs first.");
       return;
@@ -1862,7 +2127,11 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
     }
   }
 
-  function updateRecurringMember(id: string, field: keyof RecurringMemberInput, value: string) {
+  function updateRecurringMember(
+    id: string,
+    field: keyof RecurringMemberInput,
+    value: string | (IdentityProvider | "wallet"),
+  ) {
     setRecurringMembers((current) =>
       current.map((member) => (member.id === id ? { ...member, [field]: value } : member)),
     );
@@ -1871,7 +2140,7 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
   function addRecurringMember() {
     setRecurringMembers((current) => [
       ...current,
-      { id: `rec-member-${Date.now()}`, address: "", share: "0.00" },
+      { id: `rec-member-${Date.now()}`, address: "", share: "0.00", provider: "wallet" },
     ]);
   }
 
@@ -2374,6 +2643,14 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
             recurringState={recurringState}
             recurringTotalUsd={recurringTotalUsd}
             recurringWallet={recurringWallet}
+            actingAccount={recurringActingAccount}
+            createAsSocial={createAsSocial}
+            canChooseCreator={canChooseCreator}
+            socialCreatorLabel={socialCreatorLabel}
+            creatorIdentity={creatorIdentity}
+            chooseCreatorIdentity={chooseCreatorIdentity}
+            connectedWalletAccount={connectedWalletAccount}
+            socialWalletAddress={socialWalletAddress}
             removeRecurringMember={removeRecurringMember}
             revokeActiveTab={revokeActiveTab}
             refreshRecurringTabsForWallet={() => refreshRecurringTabsForWallet()}
@@ -2989,6 +3266,14 @@ function RecurringWorkspace({
   recurringState,
   recurringTotalUsd,
   recurringWallet,
+  actingAccount,
+  createAsSocial,
+  canChooseCreator,
+  socialCreatorLabel,
+  creatorIdentity,
+  chooseCreatorIdentity,
+  connectedWalletAccount,
+  socialWalletAddress,
   removeRecurringMember,
   revokeActiveTab,
   refreshRecurringTabsForWallet,
@@ -3023,6 +3308,14 @@ function RecurringWorkspace({
   recurringState: RecurringRunState;
   recurringTotalUsd: string;
   recurringWallet: RecurringWallet | null;
+  actingAccount: `0x${string}` | null;
+  createAsSocial: boolean;
+  canChooseCreator: boolean;
+  socialCreatorLabel: string;
+  creatorIdentity: CreatorIdentity;
+  chooseCreatorIdentity: (next: CreatorIdentity) => void;
+  connectedWalletAccount: `0x${string}` | null;
+  socialWalletAddress: `0x${string}` | null;
   removeRecurringMember: (id: string) => void;
   revokeActiveTab: () => void;
   refreshRecurringTabsForWallet: () => void;
@@ -3035,34 +3328,40 @@ function RecurringWorkspace({
   setRecurringTotalUsd: (value: string) => void;
   tabEvents: RecurringEvent[];
   tabState: RecurringTabState | null;
-  updateRecurringMember: (id: string, field: keyof RecurringMemberInput, value: string) => void;
+  updateRecurringMember: (
+    id: string,
+    field: keyof RecurringMemberInput,
+    value: string | (IdentityProvider | "wallet"),
+  ) => void;
   walletTabs: RecurringTabState[];
 }) {
+  // The wallet this workspace reads/acts for — browser wallet or social DCW.
+  const actingLower = actingAccount?.toLowerCase() ?? null;
   const isRecipient =
-    Boolean(recurringWallet && tabState?.recipient.toLowerCase() === recurringWallet.account.toLowerCase());
+    Boolean(actingLower && tabState?.recipient.toLowerCase() === actingLower);
   const visibleMembers =
-    !recurringWallet || !tabState || isRecipient
+    !actingLower || !tabState || isRecipient
       ? tabState?.members ?? []
-      : tabState.members.filter((member) => member.address.toLowerCase() === recurringWallet.account.toLowerCase());
+      : tabState.members.filter((member) => member.address.toLowerCase() === actingLower);
   const debtorShare = tabState?.members.find(
-    (member) => recurringWallet && member.address.toLowerCase() === recurringWallet.account.toLowerCase(),
+    (member) => actingLower && member.address.toLowerCase() === actingLower,
   )?.fixedShare;
   const approvalPlaceholder = debtorShare
     ? unitsToUsdc(
         tabState?.members.find(
-          (member) => recurringWallet && member.address.toLowerCase() === recurringWallet.account.toLowerCase(),
+          (member) => actingLower && member.address.toLowerCase() === actingLower,
         )?.dueNow ?? debtorShare * (tabState ? tabState.remainingCycles : 1n),
       )
     : authorizationAmount;
   const dueAmount = tabState?.members.reduce((sum, member) => sum + member.dueNow, 0n) ?? 0n;
   const activeTabComplete = Boolean(tabState && tabState.settlementCount >= tabState.maxSettlements);
-  const showRecurringDetails = Boolean(recurringWallet && (walletTabs.length > 0 || tabState));
+  const showRecurringDetails = Boolean(actingAccount && (walletTabs.length > 0 || tabState));
   const recurringTabPaidForWallet = (tab: RecurringTabState) => {
-    if (!recurringWallet) {
+    if (!actingLower) {
       return tab.members.every((member) => member.totalSettled >= member.fixedShare * tab.maxSettlements);
     }
 
-    const debtor = tab.members.find((member) => member.address.toLowerCase() === recurringWallet.account.toLowerCase());
+    const debtor = tab.members.find((member) => member.address.toLowerCase() === actingLower);
     if (debtor) {
       return debtor.totalSettled >= debtor.fixedShare * tab.maxSettlements;
     }
@@ -3090,8 +3389,32 @@ function RecurringWorkspace({
         <Panel title="Create recurring tab" icon={<Landmark size={19} />}>
           <div className="space-y-3">
             <div className="rounded-[var(--radius)] border border-[var(--border)] bg-[var(--surface-muted)] p-3 text-sm text-[var(--text-muted)]">
-              The connected creator wallet receives each recurring settlement.
+              {createAsSocial
+                ? "Your Splitsy wallet receives each recurring settlement. Members can be wallet addresses or tagged handles."
+                : "The connected creator wallet receives each recurring settlement. Members can be wallet addresses or tagged handles."}
             </div>
+            {/* Same dual-identity choice as the one-off split form: which wallet
+                creates the tab and receives every settlement. */}
+            {canChooseCreator && socialWalletAddress && connectedWalletAccount ? (
+              <div className="flex flex-col gap-3 rounded-[var(--radius)] border border-[var(--border)] bg-[var(--surface-muted)] p-3 text-sm sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <p className="font-semibold text-[var(--text)]">Create as</p>
+                  <p className="mt-1 text-[var(--text-muted)]">
+                    {creatorIdentity === "social"
+                      ? `Your Splitsy wallet ${shortAddress(socialWalletAddress)} creates the tab and receives the settlements — no signing needed.`
+                      : `Your connected wallet ${shortAddress(connectedWalletAccount)} signs the tab and receives the settlements.`}
+                  </p>
+                </div>
+                <div className="segmented-control shrink-0">
+                  <ModeButton active={creatorIdentity === "social"} onClick={() => chooseCreatorIdentity("social")}>
+                    {socialCreatorLabel}
+                  </ModeButton>
+                  <ModeButton active={creatorIdentity === "wallet"} onClick={() => chooseCreatorIdentity("wallet")}>
+                    {shortAddress(connectedWalletAccount)}
+                  </ModeButton>
+                </div>
+              </div>
+            ) : null}
             <div className="segmented-control">
               <ModeButton active={recurringSplitMode === "equal"} onClick={() => setRecurringSplitMode("equal")}>
                 Equal
@@ -3149,8 +3472,9 @@ function RecurringWorkspace({
             ) : null}
             {displayRecurringMembers.map((member) => (
               <div className="grid gap-2 rounded-[var(--radius)] border border-[var(--border)] bg-[var(--surface-strong)] p-3 sm:grid-cols-[1fr_0.35fr_auto] sm:items-end" key={member.id}>
-                <Field
-                  label="Member wallet"
+                <HandleField
+                  provider={member.provider ?? "wallet"}
+                  onProviderChange={(value) => updateRecurringMember(member.id, "provider", value)}
                   value={member.address}
                   onChange={(value) => updateRecurringMember(member.id, "address", value)}
                 />
@@ -3201,7 +3525,7 @@ function RecurringWorkspace({
         {showRecurringDetails ? (
           <Panel title="Your recurring tabs" icon={<RefreshCw size={19} />}>
             <div className="flex flex-wrap gap-2">
-              <button className="secondary-button" disabled={!recurringWallet} onClick={refreshRecurringTabsForWallet} type="button">
+              <button className="secondary-button" disabled={!actingAccount} onClick={refreshRecurringTabsForWallet} type="button">
                 <RefreshCw size={16} />
                 Refresh tabs
               </button>
@@ -3223,7 +3547,7 @@ function RecurringWorkspace({
                 >
                   <span className="block font-semibold text-[var(--text)]">{shortAddress(tab.address)}</span>
                   <span className="mt-1 block text-[var(--text-muted)]">
-                    {recurringWallet && tab.members.some((member) => member.address.toLowerCase() === recurringWallet.account.toLowerCase())
+                    {actingLower && tab.members.some((member) => member.address.toLowerCase() === actingLower)
                       ? "You are a payer"
                       : "You receive settlement"}{" "}
                     ·{" "}
@@ -3244,7 +3568,7 @@ function RecurringWorkspace({
         <div className="space-y-5">
           <>
             <Panel title="Active cycle" icon={<ReceiptText size={19} />}>
-              {recurringWallet && visibleMembers.length === 1 && !isRecipient ? (
+              {actingAccount && visibleMembers.length === 1 && !isRecipient ? (
                 <div className={`relative overflow-hidden rounded-[var(--radius)] border border-[var(--accent)] bg-[var(--accent-soft)] p-4 ${recurringTabPaidForWallet(tabState) ? "paid-off-window" : ""}`}>
                   {(() => {
                     const debtor = visibleMembers[0];
@@ -3312,7 +3636,9 @@ function RecurringWorkspace({
                                 : "Funds stay in your wallet unless this tab is approved for the due amount and the cycle time has arrived."
                               : "No recurring debt is currently due for this wallet."}
                         </p>
-                        {!debtorPaidOff ? (
+                        {/* Bridging needs a browser-wallet session; Splitsy (DCW)
+                            members top up their wallet from the wallet dock instead. */}
+                        {!debtorPaidOff && recurringWallet ? (
                           (() => {
                             const bridgeAmount = balanceNeeded > 0n ? balanceNeeded : debtor.fixedShare;
                             return (
@@ -3437,15 +3763,25 @@ function RecurringWorkspace({
             </Panel>
 
             <Panel title="Actions" icon={<BadgeDollarSign size={19} />}>
-              <Field
-                label="Approval limit"
-                type="number"
-                value={authorizationAmount || approvalPlaceholder}
-                onChange={setAuthorizationAmount}
-              />
-              <p className="mt-2 text-xs text-[var(--text-muted)]">
-                {approvalPlaceholder ? `Default: ${approvalPlaceholder} USDC` : "Default updates after you load a tab."}
-              </p>
+              {/* A Splitsy (DCW) member's approval is set server-side to exactly
+                  their remaining debt, so there is no limit to pick. */}
+              {recurringWallet ? (
+                <>
+                  <Field
+                    label="Approval limit"
+                    type="number"
+                    value={authorizationAmount || approvalPlaceholder}
+                    onChange={setAuthorizationAmount}
+                  />
+                  <p className="mt-2 text-xs text-[var(--text-muted)]">
+                    {approvalPlaceholder ? `Default: ${approvalPlaceholder} USDC` : "Default updates after you load a tab."}
+                  </p>
+                </>
+              ) : (
+                <p className="text-xs text-[var(--text-muted)]">
+                  Approving from your Splitsy wallet authorizes exactly your remaining recurring debt on this tab.
+                </p>
+              )}
               <p className="mt-3 text-sm text-[var(--text-muted)]">
                 Funds stay in the payer wallet unless this tab is approved for the due amount and the cycle time has arrived.
               </p>
