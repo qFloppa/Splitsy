@@ -3378,8 +3378,19 @@ function RecurringWorkspace({
     [actingLower, socialWalletAddress?.toLowerCase()].filter((value): value is string => Boolean(value)),
   );
   const isViewer = (address: string) => viewerAddresses.has(address.toLowerCase());
-  const isRecipient =
-    Boolean(tabState && isViewer(tabState.recipient));
+  // A dual-identity user can be the recipient via one identity AND a payer via
+  // the other on the SAME tab. That tab is shown as two list rows; viewRole
+  // picks which side this detail view represents (defaults to recipient).
+  const [viewRole, setViewRole] = useState<"recipient" | "payer" | null>(null);
+  const viewerIsRecipient = Boolean(tabState && isViewer(tabState.recipient));
+  const viewerIsMember = Boolean(tabState && tabState.members.some((member) => isViewer(member.address)));
+  const isDualRole = viewerIsRecipient && viewerIsMember;
+  const viewingRole: "recipient" | "payer" = isDualRole
+    ? (viewRole ?? "recipient")
+    : viewerIsRecipient
+      ? "recipient"
+      : "payer";
+  const isRecipient = viewingRole === "recipient";
   const visibleMembers =
     viewerAddresses.size === 0 || !tabState || isRecipient
       ? tabState?.members ?? []
@@ -3589,29 +3600,43 @@ function RecurringWorkspace({
               </div>
             ) : null}
             <div className="mt-4 space-y-2">
-              {walletTabs.map((tab) => (
-                <button
-                  className={`w-full rounded-[var(--radius)] border p-3 text-left text-sm transition hover:bg-[var(--surface-muted)] ${
-                    tabState?.address === tab.address ? "border-[var(--accent)] bg-[var(--accent-soft)]" : "border-[var(--border)] bg-[var(--surface-strong)]"
-                  }`}
-                  key={tab.address}
-                  onClick={() => selectRecurringTab(tab.address)}
-                  type="button"
-                >
-                  <span className="block font-semibold text-[var(--text)]">{shortAddress(tab.address)}</span>
-                  <span className="mt-1 block text-[var(--text-muted)]">
-                    {tab.members.some((member) => isViewer(member.address))
-                      ? "You are a payer"
-                      : "You receive settlement"}{" "}
-                    ·{" "}
-                    {recurringTabPaidForWallet(tab)
-                      ? "paid off"
-                      : tab.dueCycles > 0n
-                        ? `${tab.dueCycles.toString()} due now`
-                        : `next ${formatUnix(tab.nextSettlementAt)}`}
-                  </span>
-                </button>
-              ))}
+              {walletTabs.flatMap((tab) => {
+                // A tab where the viewer is both recipient and a payer becomes
+                // two rows so each role gets its own actions instead of one row
+                // that mixes Approve and Claim.
+                const roles: Array<"recipient" | "payer"> = [];
+                if (isViewer(tab.recipient)) roles.push("recipient");
+                if (tab.members.some((member) => isViewer(member.address))) roles.push("payer");
+                if (roles.length === 0) roles.push("recipient");
+                return roles.map((role) => (
+                  <button
+                    className={`w-full rounded-[var(--radius)] border p-3 text-left text-sm transition hover:bg-[var(--surface-muted)] ${
+                      tabState?.address === tab.address && viewingRole === role
+                        ? "border-[var(--accent)] bg-[var(--accent-soft)]"
+                        : "border-[var(--border)] bg-[var(--surface-strong)]"
+                    }`}
+                    key={`${tab.address}-${role}`}
+                    onClick={() => {
+                      setViewRole(role);
+                      selectRecurringTab(tab.address);
+                    }}
+                    type="button"
+                  >
+                    <span className="block font-semibold text-[var(--text)]">{shortAddress(tab.address)}</span>
+                    <span className="mt-1 block text-[var(--text-muted)]">
+                      {role === "payer" ? "You are a payer" : "You receive settlement"}{" "}
+                      ·{" "}
+                      {role === "payer"
+                        ? recurringTabPaidForWallet(tab)
+                          ? "paid off"
+                          : tab.dueCycles > 0n
+                            ? `${tab.dueCycles.toString()} due now`
+                            : `next ${formatUnix(tab.nextSettlementAt)}`
+                        : `$${unitsToUsdc(tab.claimable)} claimable`}
+                    </span>
+                  </button>
+                ));
+              })}
             </div>
           </Panel>
         ) : null}
@@ -3817,6 +3842,11 @@ function RecurringWorkspace({
             </Panel>
 
             <Panel title="Actions" icon={<BadgeDollarSign size={19} />}>
+              {/* Payer actions (approve/revoke) are hidden when viewing the
+                  recipient side of a tab where you're both roles — that side
+                  only claims. */}
+              {isDualRole && isRecipient ? null : (
+                <>
               {/* A Splitsy (DCW) member's approval is set server-side to exactly
                   their remaining debt, so there is no limit to pick. */}
               {recurringWallet && (!viewerMember || walletIsTabMember) ? (
@@ -3846,7 +3876,11 @@ function RecurringWorkspace({
                 <button className="secondary-button" onClick={revokeActiveTab} type="button">
                   Revoke
                 </button>
-                {isRecipient ? (
+              </div>
+                </>
+              )}
+              {isRecipient ? (
+                <div className="mt-4 flex flex-wrap gap-2">
                   <button
                     className="primary-button"
                     disabled={tabState.claimable <= 0n || recurringState === "working"}
@@ -3855,8 +3889,8 @@ function RecurringWorkspace({
                   >
                     Claim recurring funds (${unitsToUsdc(tabState.claimable)})
                   </button>
-                ) : null}
-              </div>
+                </div>
+              ) : null}
             </Panel>
 
             {visibleEvents.length > 0 ? (
