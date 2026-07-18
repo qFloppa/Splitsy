@@ -3842,10 +3842,9 @@ function RecurringWorkspace({
             </Panel>
 
             <Panel title="Actions" icon={<BadgeDollarSign size={19} />}>
-              {/* Payer actions (approve/revoke) are hidden when viewing the
-                  recipient side of a tab where you're both roles — that side
-                  only claims. */}
-              {isDualRole && isRecipient ? null : (
+              {/* Payer actions (approve/revoke) belong to payers only — hidden
+                  on the recipient/settler side, whether single- or dual-role. */}
+              {isRecipient ? null : (
                 <>
               {/* A Splitsy (DCW) member's approval is set server-side to exactly
                   their remaining debt, so there is no limit to pick. */}
