@@ -418,15 +418,12 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
   }, [confirmedUsd, participants, splitMode]);
   const splitTotal = displayParticipants.reduce((sum, participant) => sum + participant.amountUsd, 0);
   const splitDelta = Number((confirmedUsd - splitTotal).toFixed(2));
-  // "Total USD" is the full amount across the whole schedule, so a $3 tab over 3
-  // cycles is $1 collected per cycle — not $3/cycle (which would total $9). The
-  // contract's fixedShare is per-cycle, so divide the total by both members and
-  // cycle count to get each member's per-cycle share.
-  const recurringCycleCountNum = Math.max(1, Math.floor(Number(recurringCycleCount) || 1));
+  // "Total USD" is the full amount across the whole schedule. Each member's
+  // Share is their overall share of that total (Total ÷ members) — independent
+  // of the cycle count. The contract's per-cycle fixedShare is derived in
+  // buildRecurringPlan by dividing by cycles.
   const recurringShareUsd =
-    recurringMembers.length > 0
-      ? Number(recurringTotalUsd || "0") / recurringMembers.length / recurringCycleCountNum
-      : 0;
+    recurringMembers.length > 0 ? Number(recurringTotalUsd || "0") / recurringMembers.length : 0;
   const availableRecurringCycleOptions = useMemo(
     () => recurringCycleOptions.filter((option) => option.id !== "test" || testCycleEnabled),
     [testCycleEnabled],
@@ -1487,7 +1484,7 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
       // then re-read the tab so the debtor's wallet balance and status update.
       void refreshArcUsdcBalance(recurringWallet.account, balanceBeforeBridge);
       if (activeTabAddress) {
-        void refreshRecurringTab(activeTabAddress);
+        void refreshRecurringTab(activeTabAddress, true);
       }
     } catch (caught) {
       setRecurringState("error");
@@ -1690,17 +1687,15 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
     }
     const cycleCount = BigInt(cycleCountNum);
     const sourceMembers = recurringSplitMode === "equal" ? displayRecurringMembers : recurringMembers;
-    // Member shares are per-cycle. Across the whole schedule they should sum to
-    // the Total USD, so per cycle they must sum to Total ÷ cycles.
-    const perCycleTotal = totalUsd / Number(cycleCount);
+    // Member shares are each member's overall share across the whole schedule,
+    // so they must sum to the Total USD. The contract's fixedShare is per-cycle,
+    // so divide by the cycle count below.
     const shareTotal = sourceMembers.reduce((sum, member) => sum + Number(member.share || "0"), 0);
     if (sourceMembers.some((member) => Number(member.share || "0") <= 0)) {
       throw new Error("Every recurring member needs a positive share.");
     }
-    if (Math.abs(shareTotal - perCycleTotal) > 0.009) {
-      throw new Error(
-        `Recurring shares are per cycle and must add up to $${perCycleTotal.toFixed(2)} (Total USD ÷ ${cycleCount.toString()} cycles).`,
-      );
+    if (Math.abs(shareTotal - totalUsd) > 0.009) {
+      throw new Error(`Member shares must add up to the Total USD of $${totalUsd.toFixed(2)}.`);
     }
     // A row explicitly set to "wallet" must hold a full address.
     const badWalletRow = sourceMembers.find((member) => member.provider === "wallet" && !looksLikeAddress(member.address));
@@ -1725,7 +1720,9 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
 
     const rows = sourceMembers.map((member) => ({
       address: member.address.trim(),
-      shareUsd: Number(member.share || "0"),
+      // The Share field is the member's overall share; the contract pulls
+      // fixedShare every cycle, so per-cycle it's share ÷ cycles.
+      shareUsd: Number(member.share || "0") / cycleCountNum,
       provider: detectRowProvider(member.address, member.provider),
       isAddress: looksLikeAddress(member.address),
     }));
@@ -1874,7 +1871,9 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
     }
   }
 
-  async function refreshRecurringTab(address = activeTabAddress ?? normalizeOptionalAddress(tabAddressInput)) {
+  // A quiet refresh keeps whatever action message is on screen (e.g. "Approved…")
+  // instead of clobbering it with "Loading tab state…" / "Loaded 0x…".
+  async function refreshRecurringTab(address = activeTabAddress ?? normalizeOptionalAddress(tabAddressInput), quiet = false) {
     if (!address) {
       setRecurringState("error");
       setRecurringMessage("Enter a tab contract address.");
@@ -1882,31 +1881,40 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
     }
 
     try {
-      setRecurringState("working");
-      setRecurringMessage("Loading tab state from Arc.");
+      if (!quiet) {
+        setRecurringState("working");
+        setRecurringMessage("Loading tab state from Arc.");
+      }
       const state = await readRecurringTab(address);
       const events = await readRecurringEvents(address).catch(() => []);
       setActiveTabAddress(address);
       setTabAddressInput(address);
       setTabState(state);
       setTabEvents(events);
-      setRecurringState("idle");
-      setRecurringMessage(`Loaded ${shortAddress(address)}.`);
+      if (!quiet) {
+        setRecurringState("idle");
+        setRecurringMessage(`Loaded ${shortAddress(address)}.`);
+      }
     } catch (caught) {
       setRecurringState("error");
       setRecurringMessage(errorMessage(caught));
     }
   }
 
-  async function refreshRecurringTabsForWallet(account = recurringActingAccount ?? undefined) {
-    if (!account) {
+  async function refreshRecurringTabsForWallet(account = recurringActingAccount ?? undefined, quiet = false) {
+    // Read tabs for BOTH identity wallets (connected browser wallet + social
+    // DCW) so a dual-identity user sees all their recurring debts at once.
+    const accounts = [...new Set([account, socialWalletAddress].filter((value): value is `0x${string}` => Boolean(value)))];
+    if (accounts.length === 0) {
       return;
     }
 
     try {
-      setRecurringState("working");
-      setRecurringMessage("Refreshing recurring tabs.");
-      const tabs = await readRecurringTabsForWallet(account);
+      if (!quiet) {
+        setRecurringState("working");
+        setRecurringMessage("Refreshing recurring tabs.");
+      }
+      const tabs = await readRecurringTabsForWallet(accounts);
       setWalletTabs(tabs);
       const selectedAddress = activeTabAddress ?? tabs[0]?.address ?? null;
       if (selectedAddress) {
@@ -1917,8 +1925,10 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
         setTabState(selectedTab);
         setTabEvents(events);
       }
-      setRecurringState("idle");
-      setRecurringMessage(tabs.length > 0 ? "Recurring tabs refreshed." : "No recurring tabs found for this wallet.");
+      if (!quiet) {
+        setRecurringState("idle");
+        setRecurringMessage(tabs.length > 0 ? "Recurring tabs refreshed." : "No recurring tabs found for this wallet.");
+      }
     } catch (caught) {
       setRecurringState("error");
       setRecurringMessage(errorMessage(caught));
@@ -1991,7 +2001,7 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
           {},
           "Approved. Funds stay in your wallet unless this tab has outstanding debt to collect.",
         );
-        if (ok) await refreshRecurringTab(tabAddress);
+        if (ok) await refreshRecurringTab(tabAddress, true);
       } catch (caught) {
         setRecurringState("error");
         setRecurringMessage(errorMessage(caught));
@@ -2019,7 +2029,7 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
       await authorizeRecurringPayment({ ...wallet, tabAddress, amount });
       setRecurringState("success");
       setRecurringMessage(`Authorized ${approvalValue} USDC. Funds stay in your wallet unless this tab has outstanding debt to collect.`);
-      await refreshRecurringTab(tabAddress);
+      await refreshRecurringTab(tabAddress, true);
     } catch (caught) {
       setRecurringState("error");
       setRecurringMessage(errorMessage(caught));
@@ -2044,7 +2054,7 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
           { revoke: true },
           "Recurring collection approval revoked.",
         );
-        if (ok) await refreshRecurringTab(tabAddress);
+        if (ok) await refreshRecurringTab(tabAddress, true);
       } catch (caught) {
         setRecurringState("error");
         setRecurringMessage(errorMessage(caught));
@@ -2067,7 +2077,7 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
       await approveUsdc({ ...wallet, spender: tabAddress, amount: 0n });
       setRecurringState("success");
       setRecurringMessage("Recurring collection approval revoked.");
-      await refreshRecurringTab(tabAddress);
+      await refreshRecurringTab(tabAddress, true);
     } catch (caught) {
       setRecurringState("error");
       setRecurringMessage(errorMessage(caught));
@@ -2094,8 +2104,8 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
           "Collected recurring funds claimed to your Splitsy wallet.",
         );
         if (ok) {
-          await refreshRecurringTab(tabAddress);
-          await refreshRecurringTabsForWallet();
+          await refreshRecurringTab(tabAddress, true);
+          await refreshRecurringTabsForWallet(undefined, true);
         }
       } catch (caught) {
         setRecurringState("error");
@@ -2119,8 +2129,8 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
       await claimRecurringFunds({ ...wallet, tabAddress });
       setRecurringState("success");
       setRecurringMessage("Collected recurring funds claimed.");
-      await refreshRecurringTab(tabAddress);
-      await refreshRecurringTabsForWallet(wallet.account);
+      await refreshRecurringTab(tabAddress, true);
+      await refreshRecurringTabsForWallet(wallet.account, true);
     } catch (caught) {
       setRecurringState("error");
       setRecurringMessage(errorMessage(caught));
@@ -3337,31 +3347,28 @@ function RecurringWorkspace({
 }) {
   // The wallet this workspace reads/acts for — browser wallet or social DCW.
   const actingLower = actingAccount?.toLowerCase() ?? null;
+  // Every address that is "you" — a dual-identity user is recognized whether a
+  // tab references their browser wallet or their Splitsy (DCW) wallet.
+  const viewerAddresses = new Set(
+    [actingLower, socialWalletAddress?.toLowerCase()].filter((value): value is string => Boolean(value)),
+  );
+  const isViewer = (address: string) => viewerAddresses.has(address.toLowerCase());
   const isRecipient =
-    Boolean(actingLower && tabState?.recipient.toLowerCase() === actingLower);
+    Boolean(tabState && isViewer(tabState.recipient));
   const visibleMembers =
-    !actingLower || !tabState || isRecipient
+    viewerAddresses.size === 0 || !tabState || isRecipient
       ? tabState?.members ?? []
-      : tabState.members.filter((member) => member.address.toLowerCase() === actingLower);
-  const debtorShare = tabState?.members.find(
-    (member) => actingLower && member.address.toLowerCase() === actingLower,
-  )?.fixedShare;
+      : tabState.members.filter((member) => isViewer(member.address));
+  const viewerMember = tabState?.members.find((member) => isViewer(member.address));
+  const debtorShare = viewerMember?.fixedShare;
   const approvalPlaceholder = debtorShare
-    ? unitsToUsdc(
-        tabState?.members.find(
-          (member) => actingLower && member.address.toLowerCase() === actingLower,
-        )?.dueNow ?? debtorShare * (tabState ? tabState.remainingCycles : 1n),
-      )
+    ? unitsToUsdc(viewerMember?.dueNow ?? debtorShare * (tabState ? tabState.remainingCycles : 1n))
     : authorizationAmount;
   const dueAmount = tabState?.members.reduce((sum, member) => sum + member.dueNow, 0n) ?? 0n;
   const activeTabComplete = Boolean(tabState && tabState.settlementCount >= tabState.maxSettlements);
   const showRecurringDetails = Boolean(actingAccount && (walletTabs.length > 0 || tabState));
   const recurringTabPaidForWallet = (tab: RecurringTabState) => {
-    if (!actingLower) {
-      return tab.members.every((member) => member.totalSettled >= member.fixedShare * tab.maxSettlements);
-    }
-
-    const debtor = tab.members.find((member) => member.address.toLowerCase() === actingLower);
+    const debtor = tab.members.find((member) => isViewer(member.address));
     if (debtor) {
       return debtor.totalSettled >= debtor.fixedShare * tab.maxSettlements;
     }
@@ -3372,16 +3379,31 @@ function RecurringWorkspace({
   const [selectedBridgeChain, setSelectedBridgeChain] = useState<BridgeSourceChain | null>(null);
   const [showBridge, setShowBridge] = useState(false);
 
-  // Each member's share is per cycle, so the whole schedule collects
-  // share x members x cycles. Surface the per-cycle total so the Total USD field
-  // reads as the full amount across every cycle, not the per-cycle charge.
+  // A payer only sees on-chain activity about themselves; the recipient sees
+  // everything. Either way, one settlement tx emits several events — collapse
+  // to one row per tx so the same hash never shows twice.
+  const visibleEvents = (() => {
+    const scoped =
+      isRecipient || viewerAddresses.size === 0
+        ? tabEvents
+        : tabEvents.filter((event) => event.member && isViewer(event.member));
+    const byTx = new Map<string, RecurringEvent>();
+    for (const event of scoped) {
+      if (!byTx.has(event.txHash)) byTx.set(event.txHash, event);
+    }
+    return [...byTx.values()];
+  })();
+
+  // Each member's Share is their overall share, so the whole schedule collects
+  // share x members. Surface the per-cycle charge (Total ÷ cycles) so the Total
+  // USD field reads as the full amount across every cycle.
   const parsedCycleCount = Math.floor(Number(recurringCycleCount));
   const cyclesValid = Number.isFinite(parsedCycleCount) && parsedCycleCount >= 1;
   const createCycleCount = cyclesValid ? parsedCycleCount : 1;
   const customDaysNum = Number(customCycleDays);
   const customDaysValid = recurringCycle !== "custom" || (Number.isInteger(customDaysNum) && customDaysNum >= 1);
   const scheduleValid = cyclesValid && customDaysValid;
-  const perCycleTotalUsd = recurringShareUsd * displayRecurringMembers.length;
+  const perCycleTotalUsd = (recurringShareUsd * displayRecurringMembers.length) / createCycleCount;
 
   return (
     <div className={`grid gap-5 ${showRecurringDetails ? "lg:grid-cols-[0.9fr_1.1fr]" : "lg:grid-cols-1"}`}>
@@ -3547,7 +3569,7 @@ function RecurringWorkspace({
                 >
                   <span className="block font-semibold text-[var(--text)]">{shortAddress(tab.address)}</span>
                   <span className="mt-1 block text-[var(--text-muted)]">
-                    {actingLower && tab.members.some((member) => member.address.toLowerCase() === actingLower)
+                    {tab.members.some((member) => isViewer(member.address))
                       ? "You are a payer"
                       : "You receive settlement"}{" "}
                     ·{" "}
@@ -3805,10 +3827,10 @@ function RecurringWorkspace({
               </div>
             </Panel>
 
-            {tabEvents.length > 0 ? (
+            {visibleEvents.length > 0 ? (
               <Panel title="Events" icon={<CheckCircle2 size={19} />}>
                 <div className="space-y-2">
-                  {tabEvents.slice(0, 5).map((event, index) => (
+                  {visibleEvents.slice(0, 5).map((event, index) => (
                     <a
                       className="flex items-center justify-between gap-3 rounded-[var(--radius)] border border-[var(--border)] p-3 text-sm hover:bg-[var(--surface-muted)]"
                       href={`https://testnet.arcscan.app/tx/${event.txHash}`}

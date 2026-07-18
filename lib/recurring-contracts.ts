@@ -197,6 +197,9 @@ export type RecurringEvent = {
   blockNumber: bigint;
   txHash: `0x${string}`;
   summary: string;
+  // The member a MemberSettled/SettlementShortfall event is about, so the UI
+  // can show a payer only their own activity. Tab-level events leave it unset.
+  member?: `0x${string}`;
 };
 
 export type RecurringWallet = {
@@ -427,7 +430,8 @@ export async function readRecurringEvents(address: `0x${string}`): Promise<Recur
     .reverse();
 }
 
-export async function readRecurringTabsForWallet(account: `0x${string}`): Promise<RecurringTabState[]> {
+export async function readRecurringTabsForWallet(account: `0x${string}` | `0x${string}`[]): Promise<RecurringTabState[]> {
+  const accounts = (Array.isArray(account) ? account : [account]).map((value) => value.toLowerCase());
   const nextTabId = await publicClient.readContract({
     address: RECURRING_TAB_FACTORY_ADDRESS,
     abi: recurringTabFactoryAbi,
@@ -462,13 +466,12 @@ export async function readRecurringTabsForWallet(account: `0x${string}`): Promis
       }),
   );
 
-  const normalizedAccount = account.toLowerCase();
   return states
     .filter((state): state is RecurringTabState => Boolean(state))
     .filter(
       (state) =>
-        state.recipient.toLowerCase() === normalizedAccount ||
-        state.members.some((member) => member.address.toLowerCase() === normalizedAccount),
+        accounts.includes(state.recipient.toLowerCase()) ||
+        state.members.some((member) => accounts.includes(member.address.toLowerCase())),
     );
 }
 
@@ -488,11 +491,13 @@ function decodeRecurringEvent(log: Log): RecurringEvent | null {
       topics: log.topics,
     });
 
+    const args = decoded.args as Record<string, unknown>;
     return {
       name: decoded.eventName,
       blockNumber: log.blockNumber ?? 0n,
       txHash: log.transactionHash ?? "0x",
-      summary: eventSummary(decoded.eventName, decoded.args as Record<string, unknown>),
+      summary: eventSummary(decoded.eventName, args),
+      member: typeof args.member === "string" ? (args.member as `0x${string}`) : undefined,
     };
   } catch {
     return null;
