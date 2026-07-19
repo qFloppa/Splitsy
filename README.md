@@ -139,6 +139,29 @@ USDC: 0x3600000000000000000000000000000000000000
 
 More details are in `docs/snapsplit-contract.md`.
 
+## Payment Reputation (ERC-8004)
+
+Payers earn verifiable on-chain reputation using Arc's pre-deployed [ERC-8004](https://eips.ethereum.org/EIPS/eip-8004) registries (no Splitsy contract changes). After a wallet pays its full share of an on-chain bill:
+
+1. The payer's wallet gets an identity NFT on the IdentityRegistry (lazily, first payment only).
+2. A dedicated Splitsy validator DCW records `paid_in_full` feedback on the ReputationRegistry, with `feedbackHash = keccak256("splitsy:bill:<billId>:<payTx>")` so any score can be re-verified against the `DebtPaid` event it claims to describe.
+3. The bill-creation UI shows a badge ("Paid N bills in full on Arc") for tagged payers, via `GET /api/reputation`.
+
+Both payment paths earn reputation:
+
+- **Circle DCW payments** go through the server pay route, which records feedback in an `after()` hook once `payDebt` settles. The payer's own DCW signs the identity registration (it just paid, so it holds gas).
+- **Browser / non-custodial payments** settle on-chain directly and never touch the server, so a Circle Smart Contract Platform event monitor on `BillSplitRegistry.DebtPaid` POSTs to the webhook (`app/api/webhooks/circle`). Splitsy can't sign as the payer's wallet, so a dedicated **registrar** DCW mints their identity NFT — a third wallet, distinct from the validator, so ERC-8004's no-self-scoring rule still holds. Only paid-in-full settlements (`paidTotal >= owedTotal`) are scored.
+
+**Consent policy:** feedback is positive-only and recorded only for payments the wallet itself made — a debt someone merely tags you into can never touch your score, so fake bills can't grief anyone. "No history" always displays as neutral.
+
+Setup:
+
+1. Run `schema-reputation.sql` in the Supabase SQL editor.
+2. Fund two auto-created Circle wallets with a little Arc Testnet USDC for gas (https://faucet.circle.com): the validator (refId `splitsy:reputation-validator`) and the registrar (refId `splitsy:reputation-registrar`). Both are created on first use; until funded, payments still succeed and only the reputation side effect is skipped (logged server-side).
+3. To score browser payments, register the `DebtPaid` event monitor once: `node --env-file=.env.local --experimental-strip-types scripts/circle-scp-monitor-setup.ts`. This imports the registry into Circle's Contracts platform and creates the monitor. Make sure your webhook is subscribed to Smart Contract Platform (`contracts.eventLog`) notifications in the Circle console.
+
+**Optional IPFS metadata:** For full ERC-8004 compliance with discoverable agent profiles, set `PINATA_JWT` in `.env.local` with a Pinata API key that has **pinFileToIPFS** permission (create at https://app.pinata.cloud). Without it, registration falls back to `data:` URIs — reputation still works, just without off-chain metadata discovery.
+
 ## Recurring Collection
 
 The recurring tab is designed for subscriptions such as weekly shared bills or monthly services.

@@ -99,6 +99,7 @@ import {
   SplitParticipant,
 } from "@/lib/snapsplit";
 import { providerDisplay } from "@/lib/provider-display";
+import { ReputationBadge } from "./ReputationBadge";
 import type { IdentityProvider } from "@/lib/types";
 import { useTheme } from "@/lib/use-theme";
 import { wagmiConfig } from "@/lib/wagmi";
@@ -2580,7 +2581,8 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
                           </button>
                         </div>
 
-                        <div className="mt-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-end">
+                        <div className="mt-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                          <ReputationBadge provider={rowProvider(participant)} value={participant.walletAddress} />
                           <span className="amount-text font-semibold">${participant.amountUsd.toFixed(2)}</span>
                         </div>
                       </div>
