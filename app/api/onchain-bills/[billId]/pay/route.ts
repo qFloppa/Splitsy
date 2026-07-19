@@ -1,9 +1,11 @@
 import { cookies } from "next/headers";
+import { after } from "next/server";
 import { getSessionUser } from "@/lib/session";
 import { verifyWalletUnlock, WALLET_UNLOCK_COOKIE } from "@/lib/session-core";
 import { encodeApprove, encodePayDebt } from "@/lib/registry-calldata";
 import { executeContractOnArc, InsufficientFundsError } from "@/lib/circle-dcw";
 import { REGISTRY_ADDRESS, getParticipantOnchain } from "@/lib/arc-read";
+import { recordPaidFeedbackSafely } from "@/lib/erc8004";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -40,6 +42,18 @@ export async function POST(_request: Request, { params }: { params: Promise<{ bi
   try {
     await executeContractOnArc(user.circle_wallet_id, ARC_USDC_ADDRESS, encodeApprove(REGISTRY_ADDRESS, remaining));
     const tx = await executeContractOnArc(user.circle_wallet_id, REGISTRY_ADDRESS, encodePayDebt(BigInt(billId), remaining));
+    // ERC-8004 reputation: this wallet just paid its full share, which is the
+    // consent that permits scoring it (lib/erc8004). Runs after the response —
+    // two more txs (register + giveFeedback) must not delay the payment UI —
+    // and never turns a succeeded payment into an error.
+    if (tx.txHash) {
+      const payerWalletId = user.circle_wallet_id;
+      const payerAddress = user.wallet_address;
+      const paymentTxHash = tx.txHash;
+      after(() =>
+        recordPaidFeedbackSafely({ payerAddress, payerWalletId, billId, paymentTxHash }),
+      );
+    }
     return Response.json({ ok: true, txHash: tx.txHash });
   } catch (err) {
     if (err instanceof InsufficientFundsError) return Response.json({ error: "insufficient_funds" }, { status: 402 });
