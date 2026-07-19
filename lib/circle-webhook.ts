@@ -56,10 +56,11 @@ export async function verifyCircleSignature(
 
 // v2 envelope. `notification` is the changed resource; for transactions.* it's
 // a Transaction object (same shape the DCW SDK returns from getTransaction).
+// For contracts.eventLog it's a smart-contract event log (SCP event monitor).
 export type CircleNotification = {
   subscriptionId: string;
   notificationId: string;
-  notificationType: string; // "transactions.outbound" | "transactions.inbound" | "webhooks.test" | ...
+  notificationType: string; // "transactions.outbound" | "transactions.inbound" | "contracts.eventLog" | "webhooks.test" | ...
   notification: {
     id?: string;
     state?: string; // QUEUED | SENT | CONFIRMED | COMPLETE | FAILED | DENIED | CANCELLED
@@ -68,6 +69,12 @@ export type CircleNotification = {
     sourceAddress?: string;
     destinationAddress?: string;
     amounts?: string[];
+    // contracts.eventLog fields
+    contractAddress?: string;
+    blockchain?: string;
+    eventName?: string; // human-readable signature, e.g. "DebtPaid(uint256,address,...)"
+    topics?: string[];
+    data?: string;
     [key: string]: unknown;
   };
   timestamp: string;

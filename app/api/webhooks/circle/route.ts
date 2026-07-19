@@ -1,12 +1,14 @@
+import { after } from "next/server";
 import { verifyCircleSignature, type CircleNotification } from "@/lib/circle-webhook";
 import { confirmDebtPaidByTxId, revertDebtByTxId, recordWebhookEvent } from "@/lib/bills-repo";
+import { parseDebtPaidLog, recordExternalPaidFeedbackSafely } from "@/lib/erc8004";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-// Circle Notification API v2 subscriber (Programmable Wallets events).
-// Public endpoint — Circle calls it, so auth is the ECDSA signature, not a
-// session. Rules from Circle's delivery model:
+// Circle Notification API v2 subscriber (Programmable Wallets + Smart Contract
+// Platform event monitors). Public endpoint — Circle calls it, so auth is the
+// ECDSA signature, not a session. Rules from Circle's delivery model:
 //   - at-least-once: dedup on notificationId before side effects
 //   - unordered: act on the state each notification carries, never on arrival
 // Always 200 after verification so Circle doesn't retry events we simply
@@ -54,6 +56,40 @@ export async function POST(request: Request) {
     if (SETTLED.has(state)) await confirmDebtPaidByTxId(txId);
     else if (DEAD.has(state)) await revertDebtByTxId(txId);
     // QUEUED/SENT/etc: intermediate states, nothing to change.
+  }
+
+  // SCP event monitor on BillSplitRegistry.DebtPaid. This is how browser /
+  // non-custodial payments earn reputation — they settle on-chain directly and
+  // never hit our pay route. Only paid-in-full settlements are scored, and only
+  // the "paid_in_full" tag is positive per the consent policy. DCW payments
+  // also emit DebtPaid and may arrive here too, but recordExternalPaidFeedback
+  // is idempotent per (payer, bill), so whichever path records first wins.
+  // Runs in after() so a slow chain of register + giveFeedback txs never holds
+  // the webhook ack open (Circle would retry on a timeout).
+  if (event.notificationType === "contracts.eventLog") {
+    const log = parseDebtPaidLog(event.notification.topics ?? [], event.notification.data ?? "0x");
+    const paymentTxHash = event.notification.txHash ?? null;
+    // Diagnostic: one line that shows exactly how this event was interpreted.
+    // decode=null → topics/data didn't match DebtPaid; paidInFull=false → a
+    // partial payment (not scored); no txHash → nothing to anchor a score to.
+    console.log(
+      `reputation webhook: contracts.eventLog event=${event.notification.eventName ?? "?"} ` +
+        `txHash=${paymentTxHash ?? "none"} decode=${log ? JSON.stringify(log) : "null"}`,
+    );
+    if (log && log.paidInFull && paymentTxHash) {
+      console.log(`reputation webhook: scheduling score for payer ${log.payer} bill ${log.billId}`);
+      after(() =>
+        recordExternalPaidFeedbackSafely({
+          payerAddress: log.payer,
+          billId: log.billId,
+          paymentTxHash,
+        }),
+      );
+    } else {
+      console.log(
+        `reputation webhook: NOT scoring (paidInFull=${log?.paidInFull ?? "n/a"}, hasTxHash=${Boolean(paymentTxHash)})`,
+      );
+    }
   }
 
   return Response.json({ ok: true });
