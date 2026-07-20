@@ -585,7 +585,8 @@ export default function DocsPage() {
               <Step number="2" title="The payer gets an identity NFT (first payment only)">
                 Registration is lazy: on the wallet&apos;s first scored payment, <code>register()</code> mints its
                 identity NFT. A Circle-wallet payer&apos;s own wallet signs (it just paid, so it holds gas); for
-                browser-wallet payers a dedicated <strong>registrar</strong> wallet mints on their behalf.
+                browser-wallet payers a dedicated <strong>registrar</strong> wallet mints on their behalf, then
+                transfers the NFT to the payer — every payer ends up owning their own identity.
               </Step>
               <Step number="3" title="Timeliness is graded against the committed due date">
                 The score compares the <code>payDebt</code> <em>block timestamp</em> (never a server clock) to the
@@ -659,7 +660,7 @@ export default function DocsPage() {
                   <tr>
                     <td>Registrar</td>
                     <td>Dedicated Splitsy Circle wallet</td>
-                    <td>Mints identity NFTs for browser-wallet payers, who never hand Splitsy a wallet to sign with. Owns those NFTs — which is exactly why it must not also score them.</td>
+                    <td>Mints identity NFTs for browser-wallet payers, who never hand Splitsy a wallet to sign with, then transfers each NFT to its payer. It holds those NFTs at mint time — which is exactly why it must not also score them.</td>
                   </tr>
                   <tr>
                     <td>Validator</td>

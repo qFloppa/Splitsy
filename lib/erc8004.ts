@@ -14,12 +14,17 @@
 //   2. Browser/non-custodial payers — never touch the server, so a Circle SCP
 //      event monitor on BillSplitRegistry.DebtPaid POSTs to the webhook, which
 //      calls recordExternalPaidFeedback. Splitsy can't sign as their wallet, so
-//      a dedicated REGISTRAR DCW mints the identity NFT on their behalf; the
-//      payer→agent binding stays verifiable via the feedbackHash below.
+//      a dedicated REGISTRAR DCW mints the identity NFT on their behalf and
+//      then transfers it to the payer (register() only mints to msg.sender);
+//      the payer→agent binding stays verifiable via the feedbackHash below.
+//
+// DCW payments fire BOTH paths (the webhook sees their DebtPaid too), so
+// registration and scoring are each serialized by a DB claim — without it the
+// two paths each minted an NFT and double-scored the payment on-chain.
 //
 // Per ERC-8004 an agent's owner cannot score its own agent, so feedback comes
 // from a dedicated validator DCW, and the registrar is a THIRD distinct wallet
-// (registrar owns externally-paid agents, so it can't also be the scorer).
+// (it holds externally-paid agents at mint time, so it can't also be the scorer).
 // Each feedback commits feedbackHash = keccak256("splitsy:bill:<id>:<payTx>"),
 // so anyone can re-verify a score against the DebtPaid event it claims to score.
 import { createPublicClient, decodeEventLog, encodeFunctionData, http, keccak256, toHex } from "viem";
@@ -28,10 +33,14 @@ import { getParticipantOnchain, REGISTRY_ADDRESS } from "./arc-read.ts";
 import { executeContractOnArc, getOrCreateArcWallet } from "./circle-dcw.ts";
 import { getOnchainBillPreimage } from "./onchain-bill-preimage-repo.ts";
 import {
+  claimAgentRegistration,
+  claimFeedback,
+  finalizeAgentRegistration,
   getAgentByWallet,
   hasFeedbackForBill,
-  insertAgent,
-  insertFeedback,
+  releaseAgentClaim,
+  releaseFeedbackClaim,
+  setFeedbackTx,
 } from "./reputation-repo.ts";
 import { scorePaymentTiming } from "./reputation-score.ts";
 
@@ -50,6 +59,17 @@ const ERC8004_ABI = [
     stateMutability: "nonpayable",
     inputs: [{ name: "metadataURI", type: "string" }],
     outputs: [{ name: "tokenId", type: "uint256" }],
+  },
+  {
+    type: "function",
+    name: "transferFrom", // the registry is a plain transferable ERC-721
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "from", type: "address" },
+      { name: "to", type: "address" },
+      { name: "tokenId", type: "uint256" },
+    ],
+    outputs: [],
   },
   {
     type: "function",
@@ -127,14 +147,37 @@ const publicClient = createPublicClient({
   transport: http(process.env.NEXT_PUBLIC_ARC_TESTNET_RPC_URL ?? "https://rpc.testnet.arc.network"),
 });
 
+// The identity NFT artwork: a ring split into shares (a bill) closing around
+// a paid check mark. Inline SVG data URI so no image hosting or pinning is
+// needed; set SPLITSY_AGENT_IMAGE_URI to an ipfs:// or https:// file to
+// override. Explorers read the standard ERC-721 `image` key from tokenURI JSON.
+const AGENT_IMAGE_SVG =
+  '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">' +
+  '<defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1">' +
+  '<stop offset="0" stop-color="#34d399"/><stop offset="1" stop-color="#0ea5e9"/>' +
+  "</linearGradient></defs>" +
+  '<rect width="512" height="512" rx="64" fill="#0f172a"/>' +
+  '<g transform="translate(256 234)">' +
+  '<circle r="120" fill="none" stroke="url(#g)" stroke-width="26" stroke-linecap="round" stroke-dasharray="126 24.8" transform="rotate(-14)"/>' +
+  '<path d="M-48 8 L-14 42 L56 -36" fill="none" stroke="#e2e8f0" stroke-width="30" stroke-linecap="round" stroke-linejoin="round"/>' +
+  "</g>" +
+  '<text x="256" y="428" text-anchor="middle" font-family="Helvetica,Arial,sans-serif" font-size="46" font-weight="700" fill="#e2e8f0" letter-spacing="10">SPLITSY</text>' +
+  '<text x="256" y="468" text-anchor="middle" font-family="Helvetica,Arial,sans-serif" font-size="20" font-weight="600" fill="#64748b" letter-spacing="6">PAYER AGENT</text>' +
+  "</svg>";
+
+const AGENT_IMAGE_URI =
+  process.env.SPLITSY_AGENT_IMAGE_URI ?? `data:image/svg+xml,${encodeURIComponent(AGENT_IMAGE_SVG)}`;
+
 // Upload ERC-8004 agent metadata to IPFS via Pinata. Returns ipfs:// URI or
 // falls back to data: URI if Pinata is unconfigured (reputation still works,
-// just without discoverable off-chain metadata).
-async function uploadMetadataToIPFS(walletAddress: string): Promise<string> {
+// just without discoverable off-chain metadata). Exported for the one-off
+// scripts/reputation-backfill.ts, which re-points existing agents at it.
+export async function uploadMetadataToIPFS(walletAddress: string): Promise<string> {
   if (!PINATA_JWT) {
     const fallback = {
       name: "Splitsy payer",
       description: "Payment reputation agent for Splitsy bill-splitting app",
+      image: AGENT_IMAGE_URI,
       agent_type: "splitsy-payer",
       version: "1",
       wallet: walletAddress,
@@ -145,6 +188,7 @@ async function uploadMetadataToIPFS(walletAddress: string): Promise<string> {
   const metadata = {
     name: `Splitsy Payer ${walletAddress.slice(0, 6)}…${walletAddress.slice(-4)}`,
     description: "Payment reputation agent for Splitsy bill-splitting app on Arc Testnet",
+    image: AGENT_IMAGE_URI,
     agent_type: "splitsy-payer",
     version: "1",
     wallet: walletAddress,
@@ -178,6 +222,7 @@ async function uploadMetadataToIPFS(walletAddress: string): Promise<string> {
     const fallback = {
       name: "Splitsy payer",
       description: "Payment reputation agent for Splitsy",
+      image: AGENT_IMAGE_URI,
       agent_type: "splitsy-payer",
       version: "1",
       wallet: walletAddress,
@@ -198,11 +243,13 @@ async function getValidatorWallet() {
 }
 
 // The registrar DCW mints identity NFTs for browser/non-custodial payers, who
-// pay directly on-chain and never hand Splitsy a wallet to sign with. It must
-// be a THIRD wallet, distinct from both payer wallets and the validator: the
-// registrar ends up owning every externally-paid agent, and ERC-8004 forbids an
-// agent's owner from scoring it — so the validator, not the registrar, scores.
-// Faucet-funded once for gas, same as the validator (see README).
+// pay directly on-chain and never hand Splitsy a wallet to sign with, then
+// transfers each NFT on to its payer (ensureAgent). It must be a THIRD wallet,
+// distinct from both payer wallets and the validator: it owns each
+// externally-paid agent at mint time (longer if the transfer fails), and
+// ERC-8004 forbids an agent's owner from scoring it — so the validator, not
+// the registrar, scores. Faucet-funded once for gas, same as the validator
+// (see README).
 async function getRegistrarWallet() {
   const wallet = await getOrCreateArcWallet("splitsy", "reputation-registrar");
   if (!wallet) throw new Error("Circle is not configured — no registrar wallet");
@@ -213,36 +260,93 @@ async function getRegistrarWallet() {
 // purpose: registration is a tx paid by the member's wallet, and the only
 // caller is the post-payment hook — at which point the wallet demonstrably
 // holds USDC for gas.
+//
+// Rival paths race here — a DCW payment fires both the pay route's after()
+// hook and the DebtPaid webhook — so registration is serialized by a DB claim
+// (see claimAgentRegistration): exactly one caller mints, losers wait for its
+// agent id. Before the claim existed, both paths minted and the payer's agent
+// got a duplicate NFT held by the registrar.
+//
+// minterAddress is the wallet circleWalletId signs as. When it isn't the
+// payer (the registrar registering on a browser payer's behalf — register()
+// always mints to msg.sender, the deployed registry has no register-for), the
+// fresh NFT is transferred on to the payer, so every payer ends up owning
+// their own identity NFT. The transfer is best-effort: a failure leaves the
+// NFT with the registrar but never blocks scoring.
 export async function ensureAgent(
   walletAddress: string,
   circleWalletId: string,
+  minterAddress?: string,
 ): Promise<string> {
   const existing = await getAgentByWallet(walletAddress);
-  if (existing) return existing.agent_id;
+  if (existing?.agent_id) return existing.agent_id;
 
-  const metadataURI = await uploadMetadataToIPFS(walletAddress);
-  const callData = encodeFunctionData({
-    abi: ERC8004_ABI,
-    functionName: "register",
-    args: [metadataURI],
-  });
-  const tx = await executeContractOnArc(circleWalletId, IDENTITY_REGISTRY, callData);
-  if (!tx.txHash) throw new Error("agent registration still pending — no tx hash");
+  if ((await claimAgentRegistration(walletAddress)) !== "won") {
+    return waitForAgentRegistration(walletAddress);
+  }
 
-  // Read the minted tokenId from the receipt's Transfer log rather than
-  // eth_getLogs (range-capped on Arc, and the receipt is authoritative).
-  const receipt = await publicClient.getTransactionReceipt({ hash: tx.txHash as `0x${string}` });
-  const mint = receipt.logs.find(
-    (log) =>
-      log.address.toLowerCase() === IDENTITY_REGISTRY.toLowerCase() &&
-      log.topics[0] === TRANSFER_TOPIC &&
-      log.topics.length === 4,
-  );
-  if (!mint) throw new Error("agent registration receipt has no Transfer log");
-  const agentId = BigInt(mint.topics[3]!).toString();
+  let agentId: string;
+  let registerTx: string;
+  try {
+    const metadataURI = await uploadMetadataToIPFS(walletAddress);
+    const callData = encodeFunctionData({
+      abi: ERC8004_ABI,
+      functionName: "register",
+      args: [metadataURI],
+    });
+    const tx = await executeContractOnArc(circleWalletId, IDENTITY_REGISTRY, callData);
+    if (!tx.txHash) throw new Error("agent registration still pending — no tx hash");
 
-  await insertAgent({ wallet_address: walletAddress, agent_id: agentId, register_tx: tx.txHash });
+    // Read the minted tokenId from the receipt's Transfer log rather than
+    // eth_getLogs (range-capped on Arc, and the receipt is authoritative).
+    // Match the mint TO our minter: Circle SCA user-ops share ERC-4337 bundle
+    // txs, so the receipt can also contain another wallet's mint.
+    const mintedTo = (minterAddress ?? walletAddress).toLowerCase();
+    const receipt = await publicClient.getTransactionReceipt({ hash: tx.txHash as `0x${string}` });
+    const mint = receipt.logs.find(
+      (log) =>
+        log.address.toLowerCase() === IDENTITY_REGISTRY.toLowerCase() &&
+        log.topics[0] === TRANSFER_TOPIC &&
+        log.topics.length === 4 &&
+        `0x${log.topics[2]!.slice(-40).toLowerCase()}` === mintedTo,
+    );
+    if (!mint) throw new Error("agent registration receipt has no Transfer log");
+    agentId = BigInt(mint.topics[3]!).toString();
+    registerTx = tx.txHash;
+  } catch (err) {
+    // Failed before finalizing — free the claim so a later event can retry.
+    await releaseAgentClaim(walletAddress).catch(() => undefined);
+    throw err;
+  }
+  await finalizeAgentRegistration(walletAddress, agentId, registerTx);
+
+  if (minterAddress && minterAddress.toLowerCase() !== walletAddress.toLowerCase()) {
+    try {
+      const transferData = encodeFunctionData({
+        abi: ERC8004_ABI,
+        functionName: "transferFrom",
+        args: [minterAddress as `0x${string}`, walletAddress as `0x${string}`, BigInt(agentId)],
+      });
+      await executeContractOnArc(circleWalletId, IDENTITY_REGISTRY, transferData);
+    } catch (err) {
+      console.error(
+        `reputation: agent ${agentId} minted but transfer to ${walletAddress} failed (NFT stays with registrar):`,
+        err instanceof Error ? err.message : err,
+      );
+    }
+  }
   return agentId;
+}
+
+// Another path holds the registration claim; wait for it to finalize. The
+// winner spends up to ~60s polling Circle plus a receipt read, so allow 90s.
+async function waitForAgentRegistration(walletAddress: string): Promise<string> {
+  for (let i = 0; i < 18; i++) {
+    await new Promise((r) => setTimeout(r, 5000));
+    const agent = await getAgentByWallet(walletAddress);
+    if (agent?.agent_id) return agent.agent_id;
+  }
+  throw new Error(`agent registration for ${walletAddress} did not finalize in time`);
 }
 
 export type PaidFeedbackInput = {
@@ -328,40 +432,57 @@ async function commitFeedback(input: {
   paymentTxHash: string;
   ctx: ScoringContext;
 }): Promise<void> {
-  const validator = await getValidatorWallet();
   const { ctx } = input;
   // paidAt === 0 means the block read failed; grade as "no deadline" so a read
   // failure never costs the payer points.
   const timing = scorePaymentTiming(ctx.paidAt > 0 ? ctx.dueDate : 0, ctx.paidAt);
-  const feedbackHash = keccak256(toHex(`splitsy:${input.feedbackTag}:${input.paymentTxHash}`));
-  const callData = encodeFunctionData({
-    abi: ERC8004_ABI,
-    functionName: "giveFeedback",
-    args: [
-      BigInt(input.agentId),
-      BigInt(timing.score),
-      0,
-      timing.tag,
-      input.feedbackTag,
-      `tx:${input.paymentTxHash}`,
-      "",
-      feedbackHash,
-    ],
-  });
-  const tx = await executeContractOnArc(validator.walletId, REPUTATION_REGISTRY, callData);
 
-  await insertFeedback({
+  // Claim (wallet, storageKey) BEFORE the on-chain call. Rival paths race
+  // here too (pay-route after() vs webhook), and the old check-then-insert
+  // let the validator double-score a payment on-chain.
+  const claimed = await claimFeedback({
     wallet_address: input.payerAddress,
     agent_id: input.agentId,
     bill_id: input.storageKey,
     score: timing.score,
     tag: timing.tag,
     payment_tx: input.paymentTxHash,
-    feedback_tx: tx.txHash,
+    feedback_tx: null,
     share_units: ctx.shareUnits,
     due_date: ctx.dueDate,
     paid_at: ctx.paidAt,
   });
+  if (!claimed) {
+    console.log(
+      `reputation: ${input.storageKey} for ${input.payerAddress} already scored or being scored — skip`,
+    );
+    return;
+  }
+
+  try {
+    const validator = await getValidatorWallet();
+    const feedbackHash = keccak256(toHex(`splitsy:${input.feedbackTag}:${input.paymentTxHash}`));
+    const callData = encodeFunctionData({
+      abi: ERC8004_ABI,
+      functionName: "giveFeedback",
+      args: [
+        BigInt(input.agentId),
+        BigInt(timing.score),
+        0,
+        timing.tag,
+        input.feedbackTag,
+        `tx:${input.paymentTxHash}`,
+        "",
+        feedbackHash,
+      ],
+    });
+    const tx = await executeContractOnArc(validator.walletId, REPUTATION_REGISTRY, callData);
+    await setFeedbackTx(input.payerAddress, input.storageKey, tx.txHash);
+  } catch (err) {
+    // Free the claim so a later replay can score this payment.
+    await releaseFeedbackClaim(input.payerAddress, input.storageKey).catch(() => undefined);
+    throw err;
+  }
 }
 
 async function scorePaidInFull(input: {
@@ -403,10 +524,11 @@ export type ExternalPaidFeedbackInput = {
 
 // Record "paid_in_full" for a browser/non-custodial payer seen via the
 // DebtPaid event monitor. Splitsy can't sign as their wallet, so the dedicated
-// REGISTRAR DCW mints their identity NFT — a different wallet than the
-// validator, so the no-self-scoring rule still holds. The registrar's wallet
-// address never enters reputation_feedback; only the real payer's does, keyed
-// to the DebtPaid it settled. Idempotent per (payer, bill).
+// REGISTRAR DCW mints their identity NFT and transfers it to them — a
+// different wallet than the validator, so the no-self-scoring rule still
+// holds. The registrar's wallet address never enters reputation_feedback; only
+// the real payer's does, keyed to the DebtPaid it settled. Idempotent per
+// (payer, bill).
 export async function recordExternalPaidFeedback(input: ExternalPaidFeedbackInput): Promise<void> {
   if (await hasFeedbackForBill(input.payerAddress, input.billId)) {
     console.log(`reputation[external]: bill ${input.billId} payer ${input.payerAddress} already scored — skip`);
@@ -416,7 +538,7 @@ export async function recordExternalPaidFeedback(input: ExternalPaidFeedbackInpu
   console.log(
     `reputation[external]: bill ${input.billId} payer ${input.payerAddress} — registrar ${registrar.address} (${registrar.walletId}) minting identity`,
   );
-  const agentId = await ensureAgent(input.payerAddress, registrar.walletId);
+  const agentId = await ensureAgent(input.payerAddress, registrar.walletId, registrar.address);
   console.log(`reputation[external]: bill ${input.billId} payer ${input.payerAddress} — agentId ${agentId}, scoring`);
   await scorePaidInFull({
     payerAddress: input.payerAddress,
@@ -490,7 +612,7 @@ export async function recordRecurringPaidFeedback(input: RecurringPaidFeedbackIn
   }
 
   const registrar = await getRegistrarWallet();
-  const agentId = await ensureAgent(input.memberAddress, registrar.walletId);
+  const agentId = await ensureAgent(input.memberAddress, registrar.walletId, registrar.address);
   await commitFeedback({
     payerAddress: input.memberAddress,
     agentId,

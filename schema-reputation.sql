@@ -13,9 +13,14 @@
 -- ever recorded for a payment the wallet itself made — paying is the consent.
 -- A debt someone merely tagged you into can never touch your score.
 
+-- Claim-based dedupe: a DCW payment fires both the pay route's after() hook
+-- and the DebtPaid webhook, so registration/scoring must be serialized.
+-- agent_id NULL = an in-flight registration claim (the PK is the mutex);
+-- feedback_tx NULL = an in-flight scoring claim (the unique key is the mutex).
+-- created_at doubles as the claim timestamp for stale-claim takeover.
 create table if not exists reputation_agents (
   wallet_address  text primary key,  -- 0x Arc address that owns the identity NFT
-  agent_id        text not null,     -- IdentityRegistry tokenId (uint256 as text)
+  agent_id        text,              -- IdentityRegistry tokenId (uint256 as text); null = claim
   register_tx     text,              -- registration tx hash
   created_at      timestamptz not null default now()
 );
@@ -52,3 +57,5 @@ alter table reputation_feedback
   add column if not exists due_date bigint not null default 0;
 alter table reputation_feedback
   add column if not exists paid_at bigint not null default 0;
+alter table reputation_agents
+  alter column agent_id drop not null; -- claim rows (see header comment)
