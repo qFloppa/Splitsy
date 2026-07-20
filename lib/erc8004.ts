@@ -147,37 +147,46 @@ const publicClient = createPublicClient({
   transport: http(process.env.NEXT_PUBLIC_ARC_TESTNET_RPC_URL ?? "https://rpc.testnet.arc.network"),
 });
 
-// The identity NFT artwork: a ring split into shares (a bill) closing around
-// a paid check mark. Inline SVG data URI so no image hosting or pinning is
-// needed; set SPLITSY_AGENT_IMAGE_URI to an ipfs:// or https:// file to
-// override. Explorers read the standard ERC-721 `image` key from tokenURI JSON.
-const AGENT_IMAGE_SVG =
-  '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">' +
-  '<defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1">' +
-  '<stop offset="0" stop-color="#34d399"/><stop offset="1" stop-color="#0ea5e9"/>' +
-  "</linearGradient></defs>" +
-  '<rect width="512" height="512" rx="64" fill="#0f172a"/>' +
-  '<g transform="translate(256 234)">' +
-  '<circle r="120" fill="none" stroke="url(#g)" stroke-width="26" stroke-linecap="round" stroke-dasharray="126 24.8" transform="rotate(-14)"/>' +
-  '<path d="M-48 8 L-14 42 L56 -36" fill="none" stroke="#e2e8f0" stroke-width="30" stroke-linecap="round" stroke-linejoin="round"/>' +
-  "</g>" +
-  '<text x="256" y="428" text-anchor="middle" font-family="Helvetica,Arial,sans-serif" font-size="46" font-weight="700" fill="#e2e8f0" letter-spacing="10">SPLITSY</text>' +
-  '<text x="256" y="468" text-anchor="middle" font-family="Helvetica,Arial,sans-serif" font-size="20" font-weight="600" fill="#64748b" letter-spacing="6">PAYER AGENT</text>' +
-  "</svg>";
-
-const AGENT_IMAGE_URI =
-  process.env.SPLITSY_AGENT_IMAGE_URI ?? `data:image/svg+xml,${encodeURIComponent(AGENT_IMAGE_SVG)}`;
+// The identity NFT artwork: the Splitsy medallion template with the agent's
+// wallet + registration date stamped into its lower band (lib/agent-nft-image),
+// pinned to IPFS as a JPEG per agent — explorers won't render data:/SVG image
+// URIs, only pinned raster files. Set SPLITSY_AGENT_IMAGE_URI to an ipfs:// or
+// https:// file to use one shared static image instead. Best-effort: with no
+// Pinata (nowhere to host) or a failed compose, metadata ships without an
+// image rather than failing registration.
+async function uploadAgentImage(walletAddress: string, registeredAt: Date): Promise<string | null> {
+  const override = process.env.SPLITSY_AGENT_IMAGE_URI;
+  if (override) return override;
+  if (!PINATA_JWT) return null;
+  try {
+    const { composeAgentImage } = await import("./agent-nft-image.ts");
+    const jpeg = await composeAgentImage({ walletAddress, registeredAt });
+    const form = new FormData();
+    form.append("file", new Blob([new Uint8Array(jpeg)], { type: "image/jpeg" }), "agent.jpg");
+    form.append("pinataMetadata", JSON.stringify({ name: `splitsy-agent-image-${walletAddress}` }));
+    const res = await fetch("https://api.pinata.cloud/pinning/pinFileToIPFS", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${PINATA_JWT}` },
+      body: form,
+    });
+    if (!res.ok) throw new Error(`Pinata image upload failed (${res.status})`);
+    const { IpfsHash } = (await res.json()) as { IpfsHash: string };
+    return `ipfs://${IpfsHash}`;
+  } catch (err) {
+    console.error("agent image compose/upload failed, metadata will have no image:", err);
+    return null;
+  }
+}
 
 // Upload ERC-8004 agent metadata to IPFS via Pinata. Returns ipfs:// URI or
 // falls back to data: URI if Pinata is unconfigured (reputation still works,
 // just without discoverable off-chain metadata). Exported for the one-off
 // scripts/reputation-backfill.ts, which re-points existing agents at it.
-export async function uploadMetadataToIPFS(walletAddress: string): Promise<string> {
+export async function uploadMetadataToIPFS(walletAddress: string, registeredAt?: Date): Promise<string> {
   if (!PINATA_JWT) {
     const fallback = {
       name: "Splitsy payer",
       description: "Payment reputation agent for Splitsy bill-splitting app",
-      image: AGENT_IMAGE_URI,
       agent_type: "splitsy-payer",
       version: "1",
       wallet: walletAddress,
@@ -185,14 +194,16 @@ export async function uploadMetadataToIPFS(walletAddress: string): Promise<strin
     return `data:application/json,${encodeURIComponent(JSON.stringify(fallback))}`;
   }
 
+  const stampedAt = registeredAt ?? new Date();
+  const imageURI = await uploadAgentImage(walletAddress, stampedAt);
   const metadata = {
     name: `Splitsy Payer ${walletAddress.slice(0, 6)}…${walletAddress.slice(-4)}`,
     description: "Payment reputation agent for Splitsy bill-splitting app on Arc Testnet",
-    image: AGENT_IMAGE_URI,
+    ...(imageURI ? { image: imageURI } : {}),
     agent_type: "splitsy-payer",
     version: "1",
     wallet: walletAddress,
-    created_at: new Date().toISOString(),
+    created_at: stampedAt.toISOString(),
     capabilities: ["payment_verification", "debt_settlement"],
     platform: "splitsy",
   };
@@ -222,7 +233,6 @@ export async function uploadMetadataToIPFS(walletAddress: string): Promise<strin
     const fallback = {
       name: "Splitsy payer",
       description: "Payment reputation agent for Splitsy",
-      image: AGENT_IMAGE_URI,
       agent_type: "splitsy-payer",
       version: "1",
       wallet: walletAddress,

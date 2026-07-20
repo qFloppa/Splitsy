@@ -66,11 +66,11 @@ async function findWalletIdByAddress(address: string): Promise<string | null> {
 
 const { data: agents, error } = await supabase
   .from("reputation_agents")
-  .select("wallet_address, agent_id")
+  .select("wallet_address, agent_id, created_at")
   .not("agent_id", "is", null);
 if (error) throw new Error(error.message);
 
-for (const agent of (agents ?? []) as { wallet_address: string; agent_id: string }[]) {
+for (const agent of (agents ?? []) as { wallet_address: string; agent_id: string; created_at: string }[]) {
   try {
     const tokenId = BigInt(agent.agent_id);
     const owner = (
@@ -90,9 +90,10 @@ for (const agent of (agents ?? []) as { wallet_address: string; agent_id: string
       continue;
     }
 
-    // 1. Fresh metadata (adds the image). Must happen while we can still sign
-    //    as the owner — i.e. before any transfer to a browser wallet.
-    const uri = await uploadMetadataToIPFS(agent.wallet_address);
+    // 1. Fresh metadata (adds the image, stamped with the real registration
+    //    date). Must happen while we can still sign as the owner — i.e.
+    //    before any transfer to a browser wallet.
+    const uri = await uploadMetadataToIPFS(agent.wallet_address, new Date(agent.created_at));
     await executeContractOnArc(
       signerWalletId,
       IDENTITY_REGISTRY,
