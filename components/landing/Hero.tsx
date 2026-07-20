@@ -48,7 +48,8 @@ export function Hero() {
           stagger: { each: 0.075, from: "start" },
         })
         .from(ledeRef.current, { y: 18, autoAlpha: 0, duration: 0.8 }, "-=0.65")
-        .from(stampRef.current, { scale: 0.8, autoAlpha: 0, duration: 0.5, ease: "back.out(2.2)" }, "-=0.6");
+        .from(stampRef.current, { scale: 0.8, autoAlpha: 0, duration: 0.5, ease: "back.out(2.2)" }, "-=0.6")
+        .add(() => { headline.dataset.revealed = ""; });
     });
 
     return () => {

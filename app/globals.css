@@ -1969,6 +1969,12 @@ input[type="number"],
   margin-block: -0.08em;
 }
 
+/* Once the slide-up reveal finishes, the clip has no job left but to cut the
+   resting text's descenders (the "y" tails). Release it. */
+.lp-hero-headline[data-revealed] .line {
+  overflow: visible;
+}
+
 .lp-hero-headline .word {
   display: inline-block;
   transform-origin: 0% 100%;
