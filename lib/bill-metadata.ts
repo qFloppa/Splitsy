@@ -18,22 +18,55 @@ import { type ByteArray, encodeAbiParameters, keccak256, parseAbiParameters } fr
 // payer confirm the receipt they're shown is the exact one the creator committed
 // — closing the gap where a creator could scan a receipt but commit a different
 // total. See `hashReceiptBytes`.
+//
+// `dueDate` is an optional Unix timestamp (seconds) by which participants are
+// expected to pay. It's committed on-chain so the payment-reputation score can
+// grade timeliness against a deadline the creator can't later change. Absent
+// (undefined or 0) means "no due date" and MUST hash byte-identically to a bill
+// created before due dates existed — see the versioning note in billMetadataHash.
 export type BillPreimage = {
   merchant: string;
   currency: string;
   total: number;
   participantLabels: string[];
   receiptHash: string;
+  dueDate?: number;
 };
 
 // keccak256 of the ABI-encoded (merchant, currency, cents, "label|label|…",
 // receiptHash). receiptHash is a plain string (not bytes32) so the "no photo"
 // case can encode as "" without a special sentinel.
-export function billMetadataHash({ merchant, currency, total, participantLabels, receiptHash }: BillPreimage) {
+//
+// Versioning: a bill with no due date encodes EXACTLY as it did before due
+// dates existed (same param tuple, same order), so every previously created
+// bill still verifies byte-for-byte. A due date, when present, is appended as an
+// extra `uint256 dueDate` param — a strictly additive commitment that only
+// affects bills that opt in. The payer recomputes with the same published
+// preimage, so the branch is symmetric on both sides.
+export function billMetadataHash({
+  merchant,
+  currency,
+  total,
+  participantLabels,
+  receiptHash,
+  dueDate,
+}: BillPreimage) {
+  const cents = BigInt(Math.round(total * 100));
+  const labels = participantLabels.join("|");
+  if (dueDate && dueDate > 0) {
+    return keccak256(
+      encodeAbiParameters(
+        parseAbiParameters(
+          "string merchant, string currency, uint256 cents, string labels, string receiptHash, uint256 dueDate",
+        ),
+        [merchant, currency, cents, labels, receiptHash ?? "", BigInt(dueDate)],
+      ),
+    );
+  }
   return keccak256(
     encodeAbiParameters(
       parseAbiParameters("string merchant, string currency, uint256 cents, string labels, string receiptHash"),
-      [merchant, currency, BigInt(Math.round(total * 100)), participantLabels.join("|"), receiptHash ?? ""],
+      [merchant, currency, cents, labels, receiptHash ?? ""],
     ),
   );
 }

@@ -43,6 +43,7 @@ export async function GET(request: Request) {
     status: "scored",
     count: summary.count,
     avgScore: summary.avgScore,
+    lateCount: summary.lateCount,
     lastPaidAt: summary.lastPaidAt,
   });
 }

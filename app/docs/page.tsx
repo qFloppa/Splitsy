@@ -4,6 +4,7 @@ import DocsShell from "./DocsShell";
 import {
   ArrowRight,
   AtSign,
+  Award,
   BadgeDollarSign,
   BookOpen,
   CalendarClock,
@@ -30,6 +31,7 @@ const sections = [
   "Sign-In and Wallets",
   "Bill Splits",
   "Bill Verification",
+  "Payment Reputation",
   "Recurring Tabs",
   "Circle and Arc",
   "Architecture",
@@ -419,9 +421,17 @@ export default function DocsPage() {
     currency,           // string,   e.g. "USD"
     cents,              // uint256,  total in cents (e.g. 300 = $3.00)
     labels.join("|"),   // string,   participant labels in order
-    receiptHash         // string,   keccak256 of the receipt image ("" if none)
-  )
+    receiptHash,        // string,   keccak256 of the receipt image ("" if none)
+    dueDate             // uint256,  optional "pay by" Unix seconds — appended
+  )                     //           ONLY when the creator set a deadline
 )`}</pre>
+            <p>
+              The optional <code>dueDate</code> is a strictly additive commitment: a bill with no deadline encodes
+              exactly as bills did before due dates existed, so every previously created bill still verifies
+              byte-for-byte. When present, it anchors the deadline that{" "}
+              <a href="#payment-reputation">payment reputation</a> grades timeliness against — the creator cannot move
+              it after the fact.
+            </p>
             <p>
               The human-readable values behind that hash — the <strong>preimage</strong> — are published
               off-chain to Supabase so a payer&apos;s browser can recompute the hash and compare. The preimage is
@@ -522,6 +532,205 @@ export default function DocsPage() {
               every page load, each result is cached in the browser keyed by the receipt&apos;s content hash, so a
               reload reuses the same verdict.
             </Callout>
+          </section>
+
+          <section id="payment-reputation" className="docs-section">
+            <SectionHeading icon={<Award size={20} />} title="Payment Reputation" />
+            <p>
+              Every payer who settles an on-chain bill in full earns <strong>verifiable payment reputation</strong> using
+              the <a href="https://eips.ethereum.org/EIPS/eip-8004">ERC-8004</a> registries Arc pre-deploys on testnet —
+              no Splitsy contract is involved. The payer&apos;s wallet receives an <strong>identity NFT</strong> on the
+              IdentityRegistry, and each completed payment is recorded as a scored feedback entry on the
+              ReputationRegistry. When someone later tags that payer into a new bill, the creation form shows a badge:
+              <em> &quot;Paid N bills in full on Arc · 97/100 timeliness&quot;</em>.
+            </p>
+            <div className="docs-table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Registry</th>
+                    <th>Arc Testnet address</th>
+                    <th>Role</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td><code>IdentityRegistry</code></td>
+                    <td><code>0x8004A818BFB912233c491871b3d84c89A494BD9e</code></td>
+                    <td>Mints one ERC-721 identity NFT per payer wallet via <code>register(metadataURI)</code>; the tokenId is the payer&apos;s <em>agent id</em>.</td>
+                  </tr>
+                  <tr>
+                    <td><code>ReputationRegistry</code></td>
+                    <td><code>0x8004B663056A597Dffe9eCcC1965A193B7388713</code></td>
+                    <td>Stores each payment&apos;s score via <code>giveFeedback(agentId, score, …, feedbackHash)</code>.</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+
+            <Callout title="Consent policy — why this can't be used to grief anyone">
+              Feedback is <strong>positive-only</strong> and recorded <strong>only for a payment the wallet itself
+              made</strong> — paying is the consent. A debt someone merely tags you into can never touch your score, so
+              fake bills can&apos;t harm a reputation. An empty profile means &quot;new here&quot;, and the badge always
+              renders it as neutral (&quot;No payment history yet&quot;), never as bad.
+            </Callout>
+
+            <h3 className="docs-subheading">How a score is earned</h3>
+            <div className="docs-steps">
+              <Step number="1" title="A payment settles on-chain">
+                The anchor is always a <code>BillSplitRegistry.DebtPaid</code> event (or a recurring
+                <code>settleTab</code> collection). Only payments that complete the payer&apos;s full share
+                (<code>paidTotal ≥ owedTotal</code>) are scored.
+              </Step>
+              <Step number="2" title="The payer gets an identity NFT (first payment only)">
+                Registration is lazy: on the wallet&apos;s first scored payment, <code>register()</code> mints its
+                identity NFT. A Circle-wallet payer&apos;s own wallet signs (it just paid, so it holds gas); for
+                browser-wallet payers a dedicated <strong>registrar</strong> wallet mints on their behalf.
+              </Step>
+              <Step number="3" title="Timeliness is graded against the committed due date">
+                The score compares the <code>payDebt</code> <em>block timestamp</em> (never a server clock) to the
+                <code>dueDate</code> the creator committed into the bill&apos;s metadata hash — a deadline that cannot be
+                moved after creation.
+              </Step>
+              <Step number="4" title="A validator wallet records the feedback">
+                A dedicated Splitsy <strong>validator</strong> wallet calls <code>giveFeedback</code> with the score, a
+                timing tag, and a <code>feedbackHash</code> binding the entry to the exact payment transaction it scores.
+              </Step>
+            </div>
+
+            <h3 className="docs-subheading">The scoring curve</h3>
+            <div className="docs-table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Situation</th>
+                    <th>Tag</th>
+                    <th>Score</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td>Bill had no due date</td>
+                    <td><code>paid_in_full</code></td>
+                    <td>100</td>
+                  </tr>
+                  <tr>
+                    <td>Paid by the due date + 2-day grace window</td>
+                    <td><code>paid_on_time</code></td>
+                    <td>100</td>
+                  </tr>
+                  <tr>
+                    <td>Paid after the grace window</td>
+                    <td><code>paid_late</code></td>
+                    <td>100 − 5 per whole day late, floored at 50</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            <p>
+              Paying is always positive — even a very late payment is evidence of good faith, so the floor is a passing
+              50, and a payment that is never made simply records nothing. The badge&apos;s aggregate is an{" "}
+              <strong>amount-weighted average</strong>: each payment is weighted by the payer&apos;s USDC share, so a
+              large bill paid late drags the average more than a small one. Weighting happens only at aggregation; every
+              on-chain score stays simple and independently verifiable. Recurring tabs score too: each settled cycle a
+              member is collected from earns one independent score, graded against that cycle&apos;s boundary.
+            </p>
+
+            <h3 className="docs-subheading">Three wallets, by design</h3>
+            <p>
+              ERC-8004 forbids an agent&apos;s owner from scoring its own agent, so Splitsy separates roles across three
+              distinct wallets:
+            </p>
+            <div className="docs-table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Wallet</th>
+                    <th>Who it is</th>
+                    <th>What it does</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td>Payer</td>
+                    <td>The wallet that paid the bill</td>
+                    <td>Owns (or is bound to) the identity NFT being scored. Circle-wallet payers sign their own registration.</td>
+                  </tr>
+                  <tr>
+                    <td>Registrar</td>
+                    <td>Dedicated Splitsy Circle wallet</td>
+                    <td>Mints identity NFTs for browser-wallet payers, who never hand Splitsy a wallet to sign with. Owns those NFTs — which is exactly why it must not also score them.</td>
+                  </tr>
+                  <tr>
+                    <td>Validator</td>
+                    <td>A second dedicated Splitsy Circle wallet</td>
+                    <td>Records every <code>giveFeedback</code>. Distinct from the registrar and from all payer wallets, so the no-self-scoring rule always holds.</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+
+            <h3 className="docs-subheading">Verify a score yourself</h3>
+            <p>
+              Every feedback entry commits{" "}
+              <code>feedbackHash = keccak256(&quot;splitsy:bill:&lt;billId&gt;:&lt;payTxHash&gt;&quot;)</code> (recurring
+              cycles use <code>splitsy:tab:&lt;tabId&gt;:cycle:&lt;n&gt;:&lt;settleTxHash&gt;</code>), and its{" "}
+              <code>fileuri</code> field carries the same payment hash as <code>tx:&lt;payTxHash&gt;</code>. That makes
+              each score independently re-checkable against the payment it claims to describe, with nothing but a block
+              explorer:
+            </p>
+            <div className="docs-steps">
+              <Step number="1" title="Find the feedback entry">
+                On <a href="https://testnet.arcscan.app">Arcscan</a>, open the ReputationRegistry address above and
+                locate the <code>giveFeedback</code> transaction (the badge&apos;s data mirrors <code>feedback_tx</code>
+                per entry). Read the decoded inputs: agent id, score, timing tag, bill tag, and <code>feedbackHash</code>.
+              </Step>
+              <Step number="2" title="Recompute the hash">
+                Compute <code>keccak256</code> of the UTF-8 string{" "}
+                <code>splitsy:bill:&lt;billId&gt;:&lt;payTxHash&gt;</code> using the bill id from the tag and the payment
+                hash from <code>fileuri</code>. It must equal the committed <code>feedbackHash</code> — one changed
+                character breaks it.
+              </Step>
+              <Step number="3" title="Check the payment is real and complete">
+                Open the payment transaction on Arcscan and confirm it emitted{" "}
+                <code>DebtPaid</code> from the BillSplitRegistry with the same bill id, with the scored wallet as payer,
+                and with <code>paidTotal ≥ owedTotal</code>.
+              </Step>
+              <Step number="4" title="Check the deadline it was graded against">
+                Fetch the bill&apos;s published preimage (see <a href="#bill-verification">Bill Verification</a>) and
+                recompute the metadata hash — the committed <code>dueDate</code> inside it is the deadline the timing
+                score used, and the payment&apos;s block timestamp is the &quot;paid at&quot; moment. Apply the curve
+                above and you reproduce the exact score.
+              </Step>
+              <Step number="5" title="Check the identity binding">
+                On the IdentityRegistry, confirm the agent id from step 1 is the token minted in the payer&apos;s
+                registration transaction — the mint&apos;s <code>Transfer</code> log carries the tokenId.
+              </Step>
+            </div>
+
+            <Callout title="Regenerating reputation from chain data">
+              Splitsy mirrors feedback rows in its database purely for fast display (Arc&apos;s <code>eth_getLogs</code>{" "}
+              is range-capped, so history can&apos;t be re-scanned per page load) — <strong>the chain remains the audit
+              trail</strong>. If the mirror is lost or a payment was missed, an operator replays history through the same
+              scoring path with <code>scripts/circle-scp-replay.ts</code>: it pulls the stored <code>DebtPaid</code>{" "}
+              events, decodes each, and re-runs scoring. The path is idempotent per (payer, bill) — and the
+              on-chain registry rejects nothing twice differently — so replaying never double-counts, and every
+              regenerated row is re-verifiable by the steps above.
+            </Callout>
+
+            <h3 className="docs-subheading">What the badge shows — and what it never does</h3>
+            <ul className="docs-list">
+              <li>The badge appears while tagging payers into a new bill, looked up by handle, email, or address.</li>
+              <li>It shows the count of bills paid in full, the amount-weighted timeliness average, and how many were late.</li>
+              <li>Looking up a handle never reveals the wallet address behind it — the API returns only the aggregate.</li>
+              <li>Looking up a handle never creates a wallet; wallets are only provisioned when a bill is actually created.</li>
+              <li>&quot;No payment history yet&quot; covers both &quot;person unknown&quot; and &quot;wallet known, no payments&quot; — deliberately indistinguishable.</li>
+            </ul>
+            <p>
+              Optionally, each identity NFT&apos;s <code>metadataURI</code> points to an agent profile pinned to IPFS
+              (name, agent type, wallet). Without IPFS configured, registration falls back to an inline{" "}
+              <code>data:</code> URI — the reputation mechanics are identical either way.
+            </p>
           </section>
 
           <section id="recurring-tabs" className="docs-section">
@@ -723,6 +932,7 @@ export default function DocsPage() {
               <li>Contracts use custom errors and explicit checks for invalid amounts, unknown bills, unauthorized claims, and duplicate recurring members.</li>
               <li>Receipt OCR data should be reviewed by the splitter before submission. The scanner is a convenience layer, not an accounting authority.</li>
               <li>Bridge flows depend on the connected wallet signing each step and on Circle attestation for CCTP minting.</li>
+              <li>Payment reputation is consent-based and positive-only: a score can only be created by a payment the wallet itself made, and every entry is re-verifiable against the on-chain payment it commits to (see <a href="#payment-reputation">Payment Reputation</a>).</li>
             </ul>
             <Callout title="Disclaimer & acknowledgments">
               Splitsy is an experimental demo on Arc Testnet that uses test USDC only — no real funds — and is not

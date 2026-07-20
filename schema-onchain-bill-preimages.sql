@@ -16,6 +16,7 @@ create table if not exists onchain_bill_preimages (
   total_usd           numeric(20,2) not null,   -- exact dollars used in the hash
   participant_labels  text[] not null,          -- ordered, as hashed (join '|')
   receipt_hash        text not null default '', -- keccak256 of the receipt image bytes ('' = no photo)
+  due_date            bigint not null default 0, -- Unix seconds the bill is due (0 = no due date), committed in the hash
   created_at          timestamptz not null default now(),
   primary key (registry_address, bill_id)
 );
@@ -23,6 +24,11 @@ create table if not exists onchain_bill_preimages (
 -- Additive for existing deployments (no-op if the column already exists).
 alter table onchain_bill_preimages
   add column if not exists receipt_hash text not null default '';
+
+-- Additive: due date committed into the metadata hash (0 = none). Existing rows
+-- default to 0, which hashes byte-identically to a pre-due-date bill.
+alter table onchain_bill_preimages
+  add column if not exists due_date bigint not null default 0;
 
 -- Receipt images live in Supabase Storage, not on-chain — only their keccak256
 -- goes into the commitment. Bucket is public-read so a payer's browser can fetch

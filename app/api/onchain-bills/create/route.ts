@@ -24,7 +24,7 @@ export async function POST(request: Request) {
 
   const body = (await request.json().catch(() => null)) as {
     merchant?: unknown; currency?: unknown; total?: unknown;
-    participants?: InRow[]; receiptHash?: unknown; receiptImageBase64?: unknown;
+    participants?: InRow[]; receiptHash?: unknown; receiptImageBase64?: unknown; dueDate?: unknown;
   } | null;
   if (!body || !Array.isArray(body.participants) || body.participants.length === 0) {
     return Response.json({ error: "participants required" }, { status: 400 });
@@ -35,6 +35,10 @@ export async function POST(request: Request) {
   if (!Number.isFinite(total)) return Response.json({ error: "invalid total" }, { status: 400 });
   const receiptHash = typeof body.receiptHash === "string" ? body.receiptHash : "";
   const receiptImageBase64 = typeof body.receiptImageBase64 === "string" ? body.receiptImageBase64 : undefined;
+  // Optional due date (Unix seconds). Anything not a positive integer is treated
+  // as "no due date" so a malformed value can't slip into the on-chain hash.
+  const dueDate =
+    typeof body.dueDate === "number" && Number.isInteger(body.dueDate) && body.dueDate > 0 ? body.dueDate : undefined;
 
   // Split rows into social (need resolving) and raw-address, remembering order.
   const socialRows: { provider: IdentityProvider; handle: string }[] = [];
@@ -75,7 +79,7 @@ export async function POST(request: Request) {
     labels.push(s.label);
   }
 
-  const metadataHash = billMetadataHash({ merchant, currency, total, participantLabels: labels, receiptHash });
+  const metadataHash = billMetadataHash({ merchant, currency, total, participantLabels: labels, receiptHash, dueDate });
 
   // Execute createBill from the creator's DCW.
   try {
@@ -109,7 +113,7 @@ export async function POST(request: Request) {
     // inside publishOnchainBillPreimage (hard gate) and swallowed by this catch —
     // text-only publish is impossible once a receiptHash is committed on-chain.
     await publishOnchainBillPreimage(
-      { registryAddress: REGISTRY_ADDRESS, billId: billId.toString(), merchant, currency, total, participantLabels: labels, receiptHash },
+      { registryAddress: REGISTRY_ADDRESS, billId: billId.toString(), merchant, currency, total, participantLabels: labels, receiptHash, dueDate },
       metadataHash,
       receiptBytes,
     );

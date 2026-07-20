@@ -144,19 +144,32 @@ More details are in `docs/snapsplit-contract.md`.
 Payers earn verifiable on-chain reputation using Arc's pre-deployed [ERC-8004](https://eips.ethereum.org/EIPS/eip-8004) registries (no Splitsy contract changes). After a wallet pays its full share of an on-chain bill:
 
 1. The payer's wallet gets an identity NFT on the IdentityRegistry (lazily, first payment only).
-2. A dedicated Splitsy validator DCW records `paid_in_full` feedback on the ReputationRegistry, with `feedbackHash = keccak256("splitsy:bill:<billId>:<payTx>")` so any score can be re-verified against the `DebtPaid` event it claims to describe.
-3. The bill-creation UI shows a badge ("Paid N bills in full on Arc") for tagged payers, via `GET /api/reputation`.
+2. A dedicated Splitsy validator DCW records scored feedback on the ReputationRegistry, with `feedbackHash = keccak256("splitsy:bill:<billId>:<payTx>")` so any score can be re-verified against the `DebtPaid` event it claims to describe.
+3. The bill-creation UI shows a badge ("Paid N bills in full on Arc · 97/100 timeliness") for tagged payers, via `GET /api/reputation`.
 
-Both payment paths earn reputation:
+**Timing scores.** Bill creators can set an optional "Pay by" date, committed into the bill's on-chain `metadataHash` so it can't be moved later. Each payment is graded against it using the `payDebt` **block timestamp** (never a server clock): no due date or paid within the due date + a 2-day grace window scores 100 (`paid_in_full` / `paid_on_time`); later loses 5 points per whole day down to a floor of 50 (`paid_late`). Paying is always positive — a payment never made records nothing. The badge average is **amount-weighted** by each payment's USDC share, so a large late bill drags more than a small one; per-payment on-chain scores stay simple and independently verifiable. The pure scoring curve lives in `lib/reputation-score.ts` (unit-tested in `lib/reputation-score.test.ts`).
+
+All three payment shapes earn reputation:
 
 - **Circle DCW payments** go through the server pay route, which records feedback in an `after()` hook once `payDebt` settles. The payer's own DCW signs the identity registration (it just paid, so it holds gas).
 - **Browser / non-custodial payments** settle on-chain directly and never touch the server, so a Circle Smart Contract Platform event monitor on `BillSplitRegistry.DebtPaid` POSTs to the webhook (`app/api/webhooks/circle`). Splitsy can't sign as the payer's wallet, so a dedicated **registrar** DCW mints their identity NFT — a third wallet, distinct from the validator, so ERC-8004's no-self-scoring rule still holds. Only paid-in-full settlements (`paidTotal >= owedTotal`) are scored.
+- **Recurring tab cycles** are scored by the settle route after each confirmed `settleTab`: every member the settlement collected from earns one independent score per cycle (keyed `tab:<id>:cycle:<n>`), graded against that cycle's boundary. Consent is the member's standing USDC approval to the tab.
 
 **Consent policy:** feedback is positive-only and recorded only for payments the wallet itself made — a debt someone merely tags you into can never touch your score, so fake bills can't grief anyone. "No history" always displays as neutral.
 
+**Verify a score yourself:** open the `giveFeedback` tx on [Arcscan](https://testnet.arcscan.app) (mirrored as `feedback_tx` in `reputation_feedback`), recompute `keccak256("splitsy:bill:<billId>:<payTx>")` from its tag + `fileuri` fields and compare to the committed `feedbackHash`, confirm the payment tx emitted a matching paid-in-full `DebtPaid`, then pull the bill's preimage, recompute the metadata hash, and apply the scoring curve to the committed due date vs. the payment's block timestamp — you reproduce the exact score. The `/docs` page walks through this step by step.
+
+**Regenerate from chain data:** the Supabase mirror (`reputation_feedback`) exists only for fast display — the chain is the audit trail. If the mirror is lost or the webhook missed events, replay history through the same scoring path:
+
+```bash
+node --env-file=.env.local --experimental-strip-types scripts/circle-scp-replay.ts
+```
+
+It pulls the `DebtPaid` events Circle stored under the monitor and re-runs scoring; idempotent per (payer, bill), so re-running never double-counts.
+
 Setup:
 
-1. Run `schema-reputation.sql` in the Supabase SQL editor.
+1. Run `schema-reputation.sql` in the Supabase SQL editor (additive — also adds the `share_units` / `due_date` / `paid_at` columns to existing deployments). Run `schema-onchain-bill-preimages.sql` too if upgrading: it adds the `due_date` column that timing scores read.
 2. Fund two auto-created Circle wallets with a little Arc Testnet USDC for gas (https://faucet.circle.com): the validator (refId `splitsy:reputation-validator`) and the registrar (refId `splitsy:reputation-registrar`). Both are created on first use; until funded, payments still succeed and only the reputation side effect is skipped (logged server-side).
 3. To score browser payments, register the `DebtPaid` event monitor once: `node --env-file=.env.local --experimental-strip-types scripts/circle-scp-monitor-setup.ts`. This imports the registry into Circle's Contracts platform and creates the monitor. Make sure your webhook is subscribed to Smart Contract Platform (`contracts.eventLog`) notifications in the Circle console.
 

@@ -155,6 +155,12 @@ export default function DisclaimerPage() {
                 are inherently visible to anyone — do not include sensitive personal information.
               </li>
               <li>
+                Paying an on-chain bill in full records a <strong>public, positive-only payment-reputation entry</strong>{" "}
+                (an identity token plus a timeliness score anchored to the payment transaction) on Arc&apos;s ERC-8004
+                registries. Only payments your wallet itself makes create reputation — being tagged into a bill never does —
+                and like all on-chain data these records cannot be deleted.
+              </li>
+              <li>
                 Full details are in our <Link href="/legal">Terms &amp; Privacy</Link>.
               </li>
             </ul>
@@ -168,7 +174,7 @@ export default function DisclaimerPage() {
               <a href="/.well-known/security.txt">/.well-known/security.txt</a>. For general questions, contact{" "}
               <a href="mailto:support@splitsy.xyz">support@splitsy.xyz</a>.
             </p>
-            <p style={{ marginTop: "1.25rem", fontSize: "0.85rem", opacity: 0.7 }}>Last updated: 2026-07-12</p>
+            <p style={{ marginTop: "1.25rem", fontSize: "0.85rem", opacity: 0.7 }}>Last updated: 2026-07-20</p>
           </section>
         </article>
       </div>

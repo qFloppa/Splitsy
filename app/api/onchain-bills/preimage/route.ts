@@ -68,13 +68,23 @@ export async function POST(request: Request) {
     participantLabels?: unknown;
     receiptHash?: unknown;
     receiptImageBase64?: unknown;
+    dueDate?: unknown;
   } | null;
   if (!body) {
     return Response.json({ error: "Invalid JSON body" }, { status: 400 });
   }
 
-  const { registryAddress, billId, merchant, currency, total, participantLabels, receiptHash, receiptImageBase64 } =
-    body;
+  const {
+    registryAddress,
+    billId,
+    merchant,
+    currency,
+    total,
+    participantLabels,
+    receiptHash,
+    receiptImageBase64,
+    dueDate,
+  } = body;
   if (!isAddress(registryAddress) || !isBillId(billId)) {
     return Response.json({ error: "registryAddress and billId are required" }, { status: 400 });
   }
@@ -90,6 +100,16 @@ export async function POST(request: Request) {
   ) {
     return Response.json({ error: "Invalid bill fields" }, { status: 400 });
   }
+  // Optional due date: a positive integer Unix timestamp (seconds), or absent/0
+  // for "no due date". Reject anything else so a malformed value can't slip into
+  // the commitment the payer will re-hash.
+  if (
+    dueDate !== undefined &&
+    (typeof dueDate !== "number" || !Number.isInteger(dueDate) || dueDate < 0)
+  ) {
+    return Response.json({ error: "Invalid due date" }, { status: 400 });
+  }
+  const normalizedDueDate = typeof dueDate === "number" && dueDate > 0 ? dueDate : undefined;
   // A committed receiptHash requires the image bytes to store; "" requires none.
   if (Boolean(receiptHash) !== Boolean(receiptImageBase64)) {
     return Response.json({ error: "receiptHash and receiptImageBase64 must be provided together" }, { status: 400 });
@@ -112,7 +132,7 @@ export async function POST(request: Request) {
 
   try {
     await publishOnchainBillPreimage(
-      { registryAddress, billId, merchant, currency, total, participantLabels, receiptHash },
+      { registryAddress, billId, merchant, currency, total, participantLabels, receiptHash, dueDate: normalizedDueDate },
       onchainHash,
       receiptBytes,
     );

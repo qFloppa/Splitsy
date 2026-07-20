@@ -6,7 +6,13 @@ import type { IdentityProvider } from "@/lib/types";
 
 type Rep =
   | { status: "none" }
-  | { status: "scored"; count: number; avgScore: number; lastPaidAt: string | null };
+  | {
+      status: "scored";
+      count: number;
+      avgScore: number | null;
+      lateCount: number;
+      lastPaidAt: string | null;
+    };
 
 const looksLikeAddress = (v: string) => /^0x[a-fA-F0-9]{40}$/.test(v.trim());
 const looksLikeEmail = (v: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v.trim());
@@ -49,10 +55,23 @@ export function ReputationBadge({ provider, value }: { provider: IdentityProvide
   if (rep.status === "none") {
     return <span className="text-xs text-[var(--text-muted)]">No payment history yet</span>;
   }
+  // The average is amount-weighted timeliness (0-100): a perfect record and a
+  // record dragged down by large late bills read differently. Show it alongside
+  // the count, plus how many of those bills were paid late. All positive-only —
+  // "no late bills" is the common, clean case.
+  const onTime = rep.lateCount === 0;
   return (
-    <span className="inline-flex items-center gap-1 text-xs font-medium text-[var(--text)]">
-      <ShieldCheck size={13} className="text-emerald-500" aria-hidden="true" />
+    <span className="inline-flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-xs font-medium text-[var(--text)]">
+      <ShieldCheck size={13} className={onTime ? "text-emerald-500" : "text-amber-500"} aria-hidden="true" />
       Paid {rep.count} {rep.count === 1 ? "bill" : "bills"} in full on Arc
+      {rep.avgScore != null && (
+        <span className="text-[var(--text-muted)]">· {rep.avgScore}/100 timeliness</span>
+      )}
+      {rep.lateCount > 0 && (
+        <span className="text-amber-600">
+          · {rep.lateCount} paid late
+        </span>
+      )}
     </span>
   );
 }

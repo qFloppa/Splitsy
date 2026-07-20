@@ -166,6 +166,13 @@ export default function LegalPage() {
                 <strong>Onchain data</strong> — bills, debts, and payments submitted to Arc Testnet are written to a public
                 blockchain and are inherently visible to anyone.
               </li>
+              <li>
+                <strong>Payment reputation</strong> — when your wallet pays an on-chain bill in full, an identity token and a
+                positive, scored feedback record (bill reference, timeliness score, and payment transaction) are written to
+                Arc&apos;s public ERC-8004 registries, and mirrored in our database for display. Reputation is created{" "}
+                <strong>only by payments your wallet itself makes</strong> — being tagged into a bill records nothing — and
+                having no history is always shown as neutral.
+              </li>
             </ul>
           </section>
 
@@ -213,7 +220,8 @@ export default function LegalPage() {
               We retain account and bill data for as long as your account is active. You may request deletion of your account
               and associated sign-in data at any time by emailing{" "}
               <a href="mailto:privacy@splitsy.xyz">privacy@splitsy.xyz</a>. We will delete the data we control, though
-              information already written to a public blockchain cannot be removed.
+              information already written to a public blockchain — including payment-reputation records on the ERC-8004
+              registries — cannot be removed.
             </p>
           </section>
 
@@ -339,7 +347,7 @@ export default function LegalPage() {
               <a href="mailto:support@splitsy.xyz">support@splitsy.xyz</a>. See also our{" "}
               <Link href="/disclaimer">Disclaimer &amp; acknowledgments</Link>.
             </p>
-            <p style={{ marginTop: "1.25rem", fontSize: "0.85rem", opacity: 0.7 }}>Last updated: 2026-07-12</p>
+            <p style={{ marginTop: "1.25rem", fontSize: "0.85rem", opacity: 0.7 }}>Last updated: 2026-07-20</p>
           </section>
         </article>
       </div>

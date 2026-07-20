@@ -1,6 +1,12 @@
 import { createPublicClient, createWalletClient, http, type Hex } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { arcTestnet } from "viem/chains";
+import {
+  getTabAddressOnchain,
+  getSettledMembersFromReceipt,
+  getTabSettlementContext,
+} from "@/lib/recurring-read";
+import { recordRecurringPaidFeedbackSafely } from "@/lib/erc8004";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -128,6 +134,13 @@ async function settleTab({
     const txHash = await walletClient.writeContract(request);
     await publicClient.waitForTransactionReceipt({ hash: txHash });
 
+    // ERC-8004 reputation: each member the settlement actually collected from
+    // earns a "paid on time" score, graded against the cycle boundary. Consent
+    // is their standing approval to the tab; the pull is the payment. Best-effort
+    // and non-blocking — a scoring miss must never fail an on-chain settlement
+    // that already succeeded (recordRecurringPaidFeedbackSafely swallows errors).
+    await scoreSettledMembers({ tabId, txHash });
+
     return { tabId: tabId.toString(), status: "settled", txHash };
   } catch (caught) {
     const reason = errorName(caught);
@@ -137,6 +150,42 @@ async function settleTab({
     }
 
     return { tabId: tabId.toString(), status: "failed", reason: errorMessage(caught) };
+  }
+}
+
+// Score every member collected in a just-confirmed settlement. Reads run
+// against the settled tab (the factory only settles ids it deployed, so the
+// address is trusted). The cycle number = the tab's post-settlement
+// settlementCount, which keys each score per (member, tab, cycle) so a member
+// paying N cycles earns N independent scores. Entirely best-effort: any failure
+// here is logged and swallowed so the settlement result stays authoritative.
+async function scoreSettledMembers({ tabId, txHash }: { tabId: bigint; txHash: `0x${string}` }): Promise<void> {
+  try {
+    const tabAddress = await getTabAddressOnchain(tabId);
+    if (tabAddress === "0x0000000000000000000000000000000000000000") return;
+
+    const [paidMembers, { cycle, dueDate }] = await Promise.all([
+      getSettledMembersFromReceipt(txHash, tabAddress),
+      getTabSettlementContext(tabAddress),
+    ]);
+    // cycle 0 means the context read failed; without a cycle key we can't keep
+    // scoring idempotent, so skip rather than risk double-scoring on retry.
+    if (cycle === 0) return;
+
+    await Promise.all(
+      paidMembers.map((p) =>
+        recordRecurringPaidFeedbackSafely({
+          memberAddress: p.member,
+          tabId: tabId.toString(),
+          cycle,
+          settlementTxHash: txHash,
+          dueDate,
+          shareUnits: Number(p.amount),
+        }),
+      ),
+    );
+  } catch (caught) {
+    console.error(`reputation[recurring]: scoring settlement of tab ${tabId} failed:`, errorMessage(caught));
   }
 }
 

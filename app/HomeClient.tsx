@@ -5,6 +5,7 @@ import {
   ArrowLeftRight,
   BadgeDollarSign,
   BookOpen,
+  CalendarClock,
   Camera,
   ChevronDown,
   CheckCircle2,
@@ -198,6 +199,19 @@ function bytesToBase64(bytes: Uint8Array): string {
   return btoa(binary);
 }
 
+// A yyyy-mm-dd string from an <input type="date"> → Unix seconds at local
+// midnight of that day, or undefined for empty/invalid input. `new Date("yyyy-
+// mm-dd")` parses as UTC midnight, so we build the date from parts in local time
+// instead — the creator means "due that calendar day where they are".
+function dueDateToUnix(value: string): number | undefined {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value.trim());
+  if (!m) return undefined;
+  const [, y, mo, d] = m;
+  const date = new Date(Number(y), Number(mo) - 1, Number(d));
+  if (Number.isNaN(date.getTime())) return undefined;
+  return Math.floor(date.getTime() / 1000);
+}
+
 // A dual-identity user (signed in social + connected browser wallet) has TWO
 // Arc wallets that can create/pay/claim bills: their Circle DCW and their own
 // non-custodial wallet. Registry rows are tagged with the wallet they were read
@@ -282,6 +296,10 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
   });
   const [fxQuote, setFxQuote] = useState<FxQuote | null>(null);
   const [splitMode, setSplitMode] = useState<"equal" | "manual">("equal");
+  // Optional "pay by" date for the split, as a yyyy-mm-dd string from a <input
+  // type=date> ("" = no due date). Committed into the on-chain metadata hash and
+  // used to grade payment-reputation timeliness; absent leaves scoring unchanged.
+  const [dueDateInput, setDueDateInput] = useState("");
   const [bridgeResults, setBridgeResults] = useState<Record<string, BridgeSummary>>({});
   const [bridgeSession, setBridgeSession] = useState<BrowserWalletSession | null>(null);
   const [recurringCycle, setRecurringCycle] = useState<RecurringCycle>("weekly");
@@ -874,6 +892,7 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
     setReceiptCommit(null);
     setError("");
     setSplitMode("equal");
+    setDueDateInput("");
     setParticipantShareInputs({});
     setSubmittedBillId(null);
     setParticipants([
@@ -1012,6 +1031,10 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
       }
 
       const receiptHash = receiptCommit?.hash ?? "";
+      // yyyy-mm-dd → Unix seconds at local midnight, or undefined for no due
+      // date. Both creation paths commit this identically so the payer's re-hash
+      // matches. Invalid/empty input leaves it undefined (scoring unchanged).
+      const dueDate = dueDateToUnix(dueDateInput);
 
       // Social creator → server signs from their Circle DCW. Either it's the
       // only identity they have, or they explicitly picked it over their
@@ -1034,6 +1057,7 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
             })),
             receiptHash,
             receiptImageBase64: receiptCommit ? bytesToBase64(receiptCommit.bytes) : undefined,
+            dueDate,
           }),
         });
         const data = await res.json();
@@ -1066,7 +1090,7 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
         ...wallet,
         metadataHash: billMetadataHash({
           merchant: bill.merchant, currency: bill.currency, total: confirmedUsd,
-          participantLabels: labels, receiptHash,
+          participantLabels: labels, receiptHash, dueDate,
         }),
         participants: addresses.map((a) => normalizeAddress(a)),
         owedAmounts,
@@ -1089,7 +1113,7 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
           registryAddress: BILL_SPLIT_REGISTRY_ADDRESS,
           billId: result.billId.toString(),
           merchant: bill.merchant, currency: bill.currency, total: confirmedUsd,
-          participantLabels: labels, receiptHash,
+          participantLabels: labels, receiptHash, dueDate,
           receiptImageBase64: publishedReceipt ? bytesToBase64(publishedReceipt.bytes) : undefined,
         }),
       }).catch(() => {});
@@ -2588,6 +2612,41 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
                       </div>
                     );
                   })}
+                </div>
+
+                {/* Optional pay-by date. Committed into the on-chain metadata
+                    hash so payment reputation can grade timeliness against a
+                    deadline the creator can't move after the fact. Leaving it
+                    blank keeps the bill (and every payer's score) exactly as it
+                    was before due dates existed. */}
+                <div className="mt-4 flex flex-col gap-2 rounded-[var(--radius)] border border-[var(--border)] bg-[var(--surface-muted)] p-3 text-sm sm:flex-row sm:items-center sm:justify-between">
+                  <div>
+                    <label className="font-semibold text-[var(--text)]" htmlFor="bill-due-date">
+                      Pay by <span className="font-normal text-[var(--text-muted)]">(optional)</span>
+                    </label>
+                    <p className="mt-1 text-[var(--text-muted)]">
+                      Payers who settle on time build stronger on-chain payment reputation. Leave blank for no deadline.
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <input
+                      className="input-field w-auto"
+                      id="bill-due-date"
+                      min={new Date().toISOString().slice(0, 10)}
+                      onChange={(event) => setDueDateInput(event.target.value)}
+                      type="date"
+                      value={dueDateInput}
+                    />
+                    {dueDateInput ? (
+                      <button
+                        className="secondary-button"
+                        onClick={() => setDueDateInput("")}
+                        type="button"
+                      >
+                        Clear
+                      </button>
+                    ) : null}
+                  </div>
                 </div>
 
                 {/* Dual identity (signed in social + connected wallet): the
@@ -4318,6 +4377,9 @@ function BillVerification({ billId, metadataHash }: { billId: bigint; metadataHa
   const [status, setStatus] = useState<"loading" | "verified" | "mismatch" | "unpublished" | "error">("loading");
   const [merchant, setMerchant] = useState<string>("");
   const [receiptUrl, setReceiptUrl] = useState<string | null>(null);
+  // The committed due date (Unix seconds), surfaced so payers know the deadline
+  // their timeliness is scored against. 0/undefined = no due date on this bill.
+  const [dueDate, setDueDate] = useState<number | undefined>(undefined);
   // Independent re-OCR of the receipt vs the on-chain total. "altered" is the
   // signal that the creator charged something other than what the receipt reads.
   // "no-receipt" = the creator typed the total by hand (nothing to cross-check).
@@ -4349,6 +4411,9 @@ function BillVerification({ billId, metadataHash }: { billId: bigint; metadataHa
         const ok = verifyBillPreimage(preimage, metadataHash);
         if (!cancelled) {
           setMerchant(preimage.merchant);
+          // Only trust the due date once the preimage verifies — it's part of
+          // the committed hash, so a verified preimage proves the creator set it.
+          setDueDate(ok ? preimage.dueDate : undefined);
           setStatus(ok ? "verified" : "mismatch");
         }
         if (!ok) return;
@@ -4483,6 +4548,17 @@ function BillVerification({ billId, metadataHash }: { billId: bigint; metadataHa
             <span>Details don’t match Arc — don’t pay until the creator re-checks this bill.</span>
           </p>
         )}
+
+        {/* Committed pay-by date, if the creator set one. Positive framing:
+            paying on time builds reputation; it's a nudge, not a threat. */}
+        {verified && dueDate ? (
+          <p className="flex items-start gap-1.5 text-[var(--text-muted)]">
+            <CalendarClock className="mt-0.5 shrink-0" size={13} />
+            <span>
+              Pay by {new Date(dueDate * 1000).toLocaleDateString()} to keep your on-chain payment reputation strong.
+            </span>
+          </p>
+        ) : null}
 
         {/* Check 2 — does the charged total match the receipt? Only meaningful
             once the commitment itself is verified. */}

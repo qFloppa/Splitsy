@@ -1,4 +1,5 @@
 import { createSupabaseServerClient } from "./supabase.ts";
+import { TAG_PAID_LATE, weightedAverageScore } from "./reputation-score.ts";
 
 export type ReputationAgent = {
   wallet_address: string;
@@ -14,15 +15,26 @@ export type ReputationFeedbackRow = {
   tag: string;
   payment_tx: string;
   feedback_tx: string | null;
+  // Timing + weight context (all optional so older callers still compile; the
+  // columns default to 0). share_units weights the average by the payer's share;
+  // due_date/paid_at record what the timing score was graded against.
+  share_units?: number;
+  due_date?: number;
+  paid_at?: number;
 };
 
 // What the badge shows. `count === 0` means "no history" and must render as
 // neutral/unknown — never as a bad score (see consent policy in
 // schema-reputation.sql: an empty profile is indistinguishable from a new user).
+//
+// avgScore is amount-weighted (see weightedAverageScore): a large late bill
+// pulls it down more than a small one. onTimeCount/lateCount break down the
+// timeliness the average summarizes, so the badge can say "N paid, M late".
 export type ReputationSummary = {
   agentId: string | null;
   count: number;
   avgScore: number | null;
+  lateCount: number;
   lastPaidAt: string | null;
 };
 
@@ -80,19 +92,29 @@ export async function getReputationSummary(walletAddress: string): Promise<Reput
     client.from("reputation_agents").select("agent_id").eq("wallet_address", addr).maybeSingle(),
     client
       .from("reputation_feedback")
-      .select("score, created_at")
+      .select("score, tag, share_units, created_at")
       .eq("wallet_address", addr)
       .order("created_at", { ascending: false }),
   ]);
   if (agentRes.error) throw new Error(`Failed to read reputation agent: ${agentRes.error.message}`);
   if (feedbackRes.error) throw new Error(`Failed to read reputation feedback: ${feedbackRes.error.message}`);
 
-  const rows = (feedbackRes.data ?? []) as Array<{ score: number; created_at: string }>;
+  const rows = (feedbackRes.data ?? []) as Array<{
+    score: number;
+    tag: string;
+    share_units: number | string | null;
+    created_at: string;
+  }>;
   const count = rows.length;
+  // share_units arrives as a numeric string (Postgres numeric) — coerce to a
+  // Number for weighting. 0/NaN falls back to neutral weight in the aggregator.
+  const weighted = rows.map((r) => ({ score: r.score, shareUnits: Number(r.share_units) || 0 }));
+  const lateCount = rows.filter((r) => r.tag === TAG_PAID_LATE).length;
   return {
     agentId: (agentRes.data as { agent_id: string } | null)?.agent_id ?? null,
     count,
-    avgScore: count === 0 ? null : Math.round(rows.reduce((s, r) => s + r.score, 0) / count),
+    avgScore: weightedAverageScore(weighted),
+    lateCount,
     lastPaidAt: rows[0]?.created_at ?? null,
   };
 }

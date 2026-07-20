@@ -1,5 +1,5 @@
-import { hashReceiptBytes, type BillPreimage, verifyBillPreimage } from "@/lib/bill-metadata";
-import { createSupabaseServerClient } from "@/lib/supabase";
+import { hashReceiptBytes, type BillPreimage, verifyBillPreimage } from "./bill-metadata.ts";
+import { createSupabaseServerClient } from "./supabase.ts";
 
 const RECEIPT_BUCKET = "onchain-bill-receipts";
 
@@ -63,6 +63,9 @@ export async function publishOnchainBillPreimage(
       total_usd: input.total,
       participant_labels: input.participantLabels,
       receipt_hash: input.receiptHash,
+      // 0 = no due date, matching the column default and the billMetadataHash
+      // convention (absent/0 hashes byte-identically to a pre-due-date bill).
+      due_date: input.dueDate && input.dueDate > 0 ? input.dueDate : 0,
     },
     { onConflict: "registry_address,bill_id", ignoreDuplicates: true },
   );
@@ -95,7 +98,7 @@ export async function getOnchainBillPreimage(
 
   const { data, error } = await client
     .from("onchain_bill_preimages")
-    .select("merchant, currency, total_usd, participant_labels, receipt_hash")
+    .select("merchant, currency, total_usd, participant_labels, receipt_hash, due_date")
     .match(key(registryAddress, billId))
     .maybeSingle();
   if (error) throw new Error(`Failed to read bill preimage: ${error.message}`);
@@ -106,6 +109,11 @@ export async function getOnchainBillPreimage(
     ? client.storage.from(RECEIPT_BUCKET).getPublicUrl(receiptPath(registryAddress, billId)).data.publicUrl
     : null;
 
+  // 0 (the column default) means "no due date" — surface it as undefined so the
+  // preimage hashes byte-identically to a pre-due-date bill on the payer's side.
+  const dueDateRaw = Number(data.due_date ?? 0);
+  const dueDate = dueDateRaw > 0 ? dueDateRaw : undefined;
+
   return {
     merchant: data.merchant,
     currency: data.currency,
@@ -113,5 +121,6 @@ export async function getOnchainBillPreimage(
     participantLabels: data.participant_labels ?? [],
     receiptHash,
     receiptUrl,
+    dueDate,
   };
 }

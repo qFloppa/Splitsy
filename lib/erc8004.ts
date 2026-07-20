@@ -24,13 +24,16 @@
 // so anyone can re-verify a score against the DebtPaid event it claims to score.
 import { createPublicClient, decodeEventLog, encodeFunctionData, http, keccak256, toHex } from "viem";
 import { arcTestnet } from "viem/chains";
+import { getParticipantOnchain, REGISTRY_ADDRESS } from "./arc-read.ts";
 import { executeContractOnArc, getOrCreateArcWallet } from "./circle-dcw.ts";
+import { getOnchainBillPreimage } from "./onchain-bill-preimage-repo.ts";
 import {
   getAgentByWallet,
   hasFeedbackForBill,
   insertAgent,
   insertFeedback,
 } from "./reputation-repo.ts";
+import { scorePaymentTiming } from "./reputation-score.ts";
 
 // Arc Testnet ERC-8004 registries (docs.arc.io); env-overridable for redeploys.
 export const IDENTITY_REGISTRY = (process.env.ERC8004_IDENTITY_REGISTRY ??
@@ -249,28 +252,97 @@ export type PaidFeedbackInput = {
   paymentTxHash: string; // the payDebt tx — the consent anchor
 };
 
-// giveFeedback(score=100, "paid_in_full") from the validator wallet, then
-// mirror the row for display. Shared by both payment paths; the caller has
-// already resolved the payer's agentId (registered by whichever wallet is
-// appropriate). Idempotent guard lives in the callers.
-async function scorePaidInFull(input: {
+// The timing + amount context a payment is graded on. Every field is read from
+// an authoritative source (chain or the committed preimage), never the caller.
+type ScoringContext = {
+  dueDate: number; // committed Unix seconds (0 = the bill had no deadline)
+  paidAt: number; //  payDebt block timestamp — what we grade against, not now()
+  shareUnits: number; // payer's owed share in USDC base units (weights the avg)
+};
+
+// Resolve when a payment settled, the deadline it was due, and the payer's share.
+//
+// paidAt comes from the block the payDebt tx was mined in — authoritative and
+// identical across the DCW, webhook, and replay paths, unlike a server clock.
+// dueDate comes from the preimage the creator committed into the metadataHash,
+// so it can't be moved after the fact. Each lookup degrades independently: a
+// missing due date scores as "no deadline" (a clean 100), and a share we can't
+// read falls back to 0 (neutral weight) — scoring must never fail a payment.
+async function resolveScoringContext(billId: string, paymentTxHash: string, payerAddress: string): Promise<ScoringContext> {
+  let paidAt = 0;
+  try {
+    const receipt = await publicClient.getTransactionReceipt({ hash: paymentTxHash as `0x${string}` });
+    const block = await publicClient.getBlock({ blockNumber: receipt.blockNumber });
+    paidAt = Number(block.timestamp);
+  } catch (err) {
+    console.error(`reputation: could not read block time for ${paymentTxHash}:`, err instanceof Error ? err.message : err);
+  }
+
+  let dueDate = 0;
+  try {
+    const preimage = await getOnchainBillPreimage(REGISTRY_ADDRESS, billId);
+    dueDate = preimage?.dueDate && preimage.dueDate > 0 ? preimage.dueDate : 0;
+  } catch (err) {
+    console.error(`reputation: could not read due date for bill ${billId}:`, err instanceof Error ? err.message : err);
+  }
+
+  let shareUnits = 0;
+  try {
+    const participant = await getParticipantOnchain(BigInt(billId), payerAddress as `0x${string}`);
+    shareUnits = Number(participant.owed);
+  } catch (err) {
+    console.error(`reputation: could not read share for bill ${billId}:`, err instanceof Error ? err.message : err);
+  }
+
+  return { dueDate, paidAt, shareUnits };
+}
+
+// giveFeedback from the validator wallet, then mirror the row for display.
+// Shared by both payment paths; the caller has already resolved the payer's
+// agentId (registered by whichever wallet is appropriate). Idempotent guard
+// lives in the callers.
+//
+// The score grades timeliness against the committed due date (see
+// scorePaymentTiming): no deadline or paid on time = 100; late loses points on a
+// gentle curve down to a floor of 50. The payer's share is stored so the badge
+// can weight its average by amount. If the block time can't be read we can't
+// grade timing fairly, so we fall back to a clean 100 rather than penalize a
+// payer for our own read failure.
+// Grade a resolved payment, record it on the ReputationRegistry from the
+// validator wallet, and mirror the row. The one place giveFeedback + insert
+// live, shared by every payment shape (one-off bills and recurring cycles) —
+// callers differ only in how they resolve the context and the two keys below.
+//
+//   storageKey — written to the mirror's bill_id column; the unique
+//     (wallet, bill_id) constraint is what makes each payment scored once. A
+//     one-off bill uses its numeric id; a recurring cycle uses a per-cycle key
+//     so each cycle scores independently.
+//   feedbackTag — the human-readable tag2 committed on-chain, also folded into
+//     feedbackHash = keccak256("splitsy:<feedbackTag>:<paymentTxHash>") so any
+//     score stays re-verifiable against the on-chain payment it claims to score.
+async function commitFeedback(input: {
   payerAddress: string;
   agentId: string;
-  billId: string;
+  storageKey: string;
+  feedbackTag: string;
   paymentTxHash: string;
+  ctx: ScoringContext;
 }): Promise<void> {
   const validator = await getValidatorWallet();
-  const tag = "paid_in_full";
-  const feedbackHash = keccak256(toHex(`splitsy:bill:${input.billId}:${input.paymentTxHash}`));
+  const { ctx } = input;
+  // paidAt === 0 means the block read failed; grade as "no deadline" so a read
+  // failure never costs the payer points.
+  const timing = scorePaymentTiming(ctx.paidAt > 0 ? ctx.dueDate : 0, ctx.paidAt);
+  const feedbackHash = keccak256(toHex(`splitsy:${input.feedbackTag}:${input.paymentTxHash}`));
   const callData = encodeFunctionData({
     abi: ERC8004_ABI,
     functionName: "giveFeedback",
     args: [
       BigInt(input.agentId),
-      100n,
+      BigInt(timing.score),
       0,
-      tag,
-      `bill:${input.billId}`,
+      timing.tag,
+      input.feedbackTag,
       `tx:${input.paymentTxHash}`,
       "",
       feedbackHash,
@@ -281,11 +353,31 @@ async function scorePaidInFull(input: {
   await insertFeedback({
     wallet_address: input.payerAddress,
     agent_id: input.agentId,
-    bill_id: input.billId,
-    score: 100,
-    tag,
+    bill_id: input.storageKey,
+    score: timing.score,
+    tag: timing.tag,
     payment_tx: input.paymentTxHash,
     feedback_tx: tx.txHash,
+    share_units: ctx.shareUnits,
+    due_date: ctx.dueDate,
+    paid_at: ctx.paidAt,
+  });
+}
+
+async function scorePaidInFull(input: {
+  payerAddress: string;
+  agentId: string;
+  billId: string;
+  paymentTxHash: string;
+}): Promise<void> {
+  const ctx = await resolveScoringContext(input.billId, input.paymentTxHash, input.payerAddress);
+  await commitFeedback({
+    payerAddress: input.payerAddress,
+    agentId: input.agentId,
+    storageKey: input.billId,
+    feedbackTag: `bill:${input.billId}`,
+    paymentTxHash: input.paymentTxHash,
+    ctx,
   });
 }
 
@@ -354,6 +446,68 @@ export async function recordPaidFeedbackSafely(input: PaidFeedbackInput): Promis
   } catch (err) {
     console.error(
       `reputation: failed to record feedback for bill ${input.billId} payer ${input.payerAddress}:`,
+      err instanceof Error ? err.message : err,
+    );
+  }
+}
+
+export type RecurringPaidFeedbackInput = {
+  memberAddress: string; // the MemberSettled.member the cycle was collected from
+  tabId: string; //         factory tab id (namespaces the storage key)
+  cycle: number; //         settlementCount this collection satisfied (1-based)
+  settlementTxHash: string; // the settleTab tx — the on-chain payment anchor
+  dueDate: number; //       cycle-boundary Unix seconds (0 = grade as no deadline)
+  shareUnits: number; //    units pulled this cycle, for amount-weighting the avg
+};
+
+// Record reputation for one member collected in one recurring-tab settlement —
+// the pull-based analog of recordExternalPaidFeedback. Consent is the member's
+// standing USDC approval to the tab (given when they joined); the settler merely
+// triggers the pull, so like a browser payer the member never signs at collect
+// time and the REGISTRAR (not the validator) mints their identity NFT. Scored
+// per (member, tab, cycle) so every cycle counts once and independently.
+//
+// paidAt is read from the settleTab block — authoritative and identical to what
+// any observer sees, never a server clock. A block read failure grades as "no
+// deadline" (a clean score) rather than penalizing a member for our read miss.
+export async function recordRecurringPaidFeedback(input: RecurringPaidFeedbackInput): Promise<void> {
+  const storageKey = `tab:${input.tabId}:cycle:${input.cycle}`;
+  if (await hasFeedbackForBill(input.memberAddress, storageKey)) {
+    console.log(`reputation[recurring]: ${storageKey} member ${input.memberAddress} already scored — skip`);
+    return;
+  }
+
+  let paidAt = 0;
+  try {
+    const receipt = await publicClient.getTransactionReceipt({ hash: input.settlementTxHash as `0x${string}` });
+    const block = await publicClient.getBlock({ blockNumber: receipt.blockNumber });
+    paidAt = Number(block.timestamp);
+  } catch (err) {
+    console.error(
+      `reputation[recurring]: could not read block time for ${input.settlementTxHash}:`,
+      err instanceof Error ? err.message : err,
+    );
+  }
+
+  const registrar = await getRegistrarWallet();
+  const agentId = await ensureAgent(input.memberAddress, registrar.walletId);
+  await commitFeedback({
+    payerAddress: input.memberAddress,
+    agentId,
+    storageKey,
+    feedbackTag: storageKey,
+    paymentTxHash: input.settlementTxHash,
+    ctx: { dueDate: input.dueDate, paidAt, shareUnits: input.shareUnits },
+  });
+  console.log(`reputation[recurring]: ${storageKey} member ${input.memberAddress} — done`);
+}
+
+export async function recordRecurringPaidFeedbackSafely(input: RecurringPaidFeedbackInput): Promise<void> {
+  try {
+    await recordRecurringPaidFeedback(input);
+  } catch (err) {
+    console.error(
+      `reputation[recurring]: failed for tab ${input.tabId} cycle ${input.cycle} member ${input.memberAddress}:`,
       err instanceof Error ? err.message : err,
     );
   }

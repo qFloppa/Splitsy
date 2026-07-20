@@ -24,12 +24,31 @@ create table if not exists reputation_feedback (
   id              uuid primary key default gen_random_uuid(),
   wallet_address  text not null,     -- payer this feedback scores
   agent_id        text not null,
-  bill_id         text not null,     -- on-chain BillSplitRegistry bill id
+  bill_id         text not null,     -- payment key: a BillSplitRegistry bill id,
+                                     -- or a recurring cycle key "tab:<id>:cycle:<n>"
   score           int not null,      -- 0-100, mirrors the on-chain int128
-  tag             text not null,     -- e.g. 'paid_in_full'
+  tag             text not null,     -- 'paid_in_full' | 'paid_on_time' | 'paid_late'
   payment_tx      text not null,     -- the payDebt tx (the consent anchor)
   feedback_tx     text,              -- the giveFeedback tx on the ReputationRegistry
+  -- Amount weighting: the payer's own share on this bill, in USDC base units
+  -- (6 dp), read from chain at scoring time. The badge average is weighted by
+  -- this, so a large late payment drags a score more than a small one. 0 for
+  -- rows written before amount-weighting existed (treated as weight 1 = neutral).
+  share_units     numeric(78,0) not null default 0,
+  -- Timing context, for display + audit. due_date is the committed Unix seconds
+  -- (0 = the bill had no due date, scored as on-time). paid_at is the payDebt
+  -- block timestamp the score was graded against (not the server clock).
+  due_date        bigint not null default 0,
+  paid_at         bigint not null default 0,
   created_at      timestamptz not null default now(),
   unique (wallet_address, bill_id)   -- one verdict per payer per bill
 );
 create index if not exists idx_reputation_feedback_wallet on reputation_feedback (wallet_address);
+
+-- Additive for existing deployments (no-ops if the columns already exist).
+alter table reputation_feedback
+  add column if not exists share_units numeric(78,0) not null default 0;
+alter table reputation_feedback
+  add column if not exists due_date bigint not null default 0;
+alter table reputation_feedback
+  add column if not exists paid_at bigint not null default 0;

@@ -43,6 +43,9 @@ const TAB_READ_ABI = [
   { type: "function", name: "recipient", stateMutability: "view", inputs: [], outputs: [{ type: "address" }] },
   { type: "function", name: "claimable", stateMutability: "view", inputs: [], outputs: [{ type: "uint256" }] },
   { type: "function", name: "maxSettlements", stateMutability: "view", inputs: [], outputs: [{ type: "uint256" }] },
+  { type: "function", name: "createdAt", stateMutability: "view", inputs: [], outputs: [{ type: "uint256" }] },
+  { type: "function", name: "settlementInterval", stateMutability: "view", inputs: [], outputs: [{ type: "uint256" }] },
+  { type: "function", name: "settlementCount", stateMutability: "view", inputs: [], outputs: [{ type: "uint256" }] },
   {
     type: "function",
     name: "isMember",
@@ -63,6 +66,34 @@ const TAB_READ_ABI = [
     stateMutability: "view",
     inputs: [{ name: "member", type: "address" }],
     outputs: [{ type: "uint256" }],
+  },
+] as const;
+
+// A tab settlement emits, per member: MemberSettled (amount pulled + success),
+// and SettlementShortfall when the member couldn't cover their full cycle due.
+// Reputation scores only members who paid IN FULL for the cycle — the pull-based
+// analog of BillSplitRegistry.DebtPaid's paidInFull gate — so both events matter:
+// a positive MemberSettled with NO accompanying SettlementShortfall.
+export const MEMBER_SETTLED_ABI = [
+  {
+    type: "event",
+    name: "MemberSettled",
+    anonymous: false,
+    inputs: [
+      { indexed: true, name: "tabId", type: "uint256" },
+      { indexed: true, name: "member", type: "address" },
+      { indexed: false, name: "amount", type: "uint256" },
+      { indexed: false, name: "success", type: "bool" },
+    ],
+  },
+  {
+    type: "event",
+    name: "SettlementShortfall",
+    anonymous: false,
+    inputs: [
+      { indexed: true, name: "tabId", type: "uint256" },
+      { indexed: true, name: "member", type: "address" },
+    ],
   },
 ] as const;
 
@@ -104,6 +135,95 @@ export async function verifyFactoryTab(tabAddress: `0x${string}`): Promise<boole
 
 export async function getTabRecipientOnchain(tabAddress: `0x${string}`): Promise<`0x${string}`> {
   return publicClient.readContract({ address: tabAddress, abi: TAB_READ_ABI, functionName: "recipient" });
+}
+
+// Resolve a tab id to its deployed address via the factory registry, or the zero
+// address if the id was never minted.
+export async function getTabAddressOnchain(tabId: bigint): Promise<`0x${string}`> {
+  return publicClient.readContract({
+    address: RECURRING_TAB_FACTORY_ADDRESS,
+    abi: FACTORY_READ_ABI,
+    functionName: "tabs",
+    args: [tabId],
+  });
+}
+
+// A member who paid their full cycle due in a settlement: address + units pulled.
+// Reputation scores exactly these (the pull-based analog of a full payDebt).
+export type MemberPayment = { member: `0x${string}`; amount: bigint };
+
+// Parse a settleTab receipt into the members who paid their cycle IN FULL. Only
+// OUR tab's logs count (a receipt could carry unrelated events). A member is
+// scored iff they had a positive MemberSettled AND no SettlementShortfall in the
+// same settlement:
+//   - shortfall with nothing collected → MemberSettled(amount 0) + Shortfall → skip
+//   - partial payment                  → MemberSettled(amount>0) + Shortfall → skip
+//   - full payment                     → MemberSettled(amount>0), no Shortfall → score
+// Mirrors the bill path's paidInFull gate: positive-only, full-payment-only.
+export function getSettledMembersFromLogs(
+  logs: { address: string; data: `0x${string}`; topics: [] | [`0x${string}`, ...`0x${string}`[]] }[],
+  tabAddress: `0x${string}`,
+): MemberPayment[] {
+  const collected = new Map<string, bigint>();
+  const shortfell = new Set<string>();
+  for (const log of logs) {
+    if (log.address.toLowerCase() !== tabAddress.toLowerCase()) continue;
+    try {
+      const decoded = decodeEventLog({ abi: MEMBER_SETTLED_ABI, data: log.data, topics: log.topics });
+      if (decoded.eventName === "MemberSettled") {
+        if (decoded.args.success && decoded.args.amount > 0n) {
+          collected.set(decoded.args.member.toLowerCase(), decoded.args.amount);
+        }
+      } else if (decoded.eventName === "SettlementShortfall") {
+        shortfell.add(decoded.args.member.toLowerCase());
+      }
+    } catch {
+      continue;
+    }
+  }
+  const paid: MemberPayment[] = [];
+  for (const [member, amount] of collected) {
+    if (shortfell.has(member)) continue;
+    paid.push({ member: member as `0x${string}`, amount });
+  }
+  return paid;
+}
+
+export async function getSettledMembersFromReceipt(
+  txHash: `0x${string}`,
+  tabAddress: `0x${string}`,
+): Promise<MemberPayment[]> {
+  const receipt = await publicClient.getTransactionReceipt({ hash: txHash });
+  return getSettledMembersFromLogs(
+    receipt.logs as { address: string; data: `0x${string}`; topics: [] | [`0x${string}`, ...`0x${string}`[]] }[],
+    tabAddress,
+  );
+}
+
+// The cycle a just-confirmed settlement satisfied and the deadline its members
+// are graded against, in one read. Called after the settleTab tx confirms, so
+// settlementCount already reflects this settlement: `cycle` is that count (the
+// per-member idempotency key), and `dueDate` is that cycle's boundary
+// (createdAt + interval * count) — a member collected at or before it is on
+// time. A read failure returns { cycle: 0, dueDate: 0 }: dueDate 0 grades as "no
+// deadline" (a clean score) so a read miss never penalizes a member.
+export async function getTabSettlementContext(
+  tabAddress: `0x${string}`,
+): Promise<{ cycle: number; dueDate: number }> {
+  try {
+    const [createdAt, interval, count] = await publicClient.multicall({
+      allowFailure: false,
+      contracts: [
+        { address: tabAddress, abi: TAB_READ_ABI, functionName: "createdAt" },
+        { address: tabAddress, abi: TAB_READ_ABI, functionName: "settlementInterval" },
+        { address: tabAddress, abi: TAB_READ_ABI, functionName: "settlementCount" },
+      ],
+    });
+    if (count === 0n) return { cycle: 0, dueDate: 0 };
+    return { cycle: Number(count), dueDate: Number(createdAt + interval * count) };
+  } catch {
+    return { cycle: 0, dueDate: 0 };
+  }
 }
 
 export async function getTabClaimableOnchain(tabAddress: `0x${string}`): Promise<bigint> {
