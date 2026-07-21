@@ -2008,6 +2008,12 @@ input[type="number"],
   background: inherit;
   background-clip: text;
   -webkit-background-clip: text;
+  /* background-clip: text only paints inside the word's box, and at
+     line-height 0.98 that box ends above the descender ink — the "y" tails
+     get no gradient and turn invisible. Pad the box down past the descenders
+     (margin compensates so layout doesn't move). */
+  padding-bottom: 0.18em;
+  margin-bottom: -0.18em;
 }
 
 /* The brand S stands in for the letter S of "Split" — sized to the caps'

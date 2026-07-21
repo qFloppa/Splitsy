@@ -105,6 +105,30 @@ import type { IdentityProvider } from "@/lib/types";
 import { useTheme } from "@/lib/use-theme";
 import { wagmiConfig } from "@/lib/wagmi";
 
+// A collapse/expand toggle that survives reloads. null = auto (caller decides
+// from list length); an explicit tap persists true/false to localStorage.
+// localStorage may be unavailable (private mode) — then it just isn't remembered.
+function usePersistedExpand(key: string): [boolean | null, (next: boolean) => void] {
+  const [value, setValue] = useState<boolean | null>(null);
+  useEffect(() => {
+    try {
+      const saved = window.localStorage.getItem(key);
+      if (saved === "true" || saved === "false") setValue(saved === "true");
+    } catch {
+      // Keep the auto default.
+    }
+  }, [key]);
+  const set = (next: boolean) => {
+    setValue(next);
+    try {
+      window.localStorage.setItem(key, String(next));
+    } catch {
+      // Choice still applies for this session.
+    }
+  };
+  return [value, set];
+}
+
 type FxQuote = {
   amountUsd: number;
   rate: number;
@@ -326,7 +350,14 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
   // merged pending window and the shared History panel can sum/gate across both
   // the social and on-chain debt systems.
   const [socialPendingCount, setSocialPendingCount] = useState(0);
+  // Sum of the off-chain (social) debts, reported up by XDebtsPanel, so the
+  // collapsed "Action needed" summary shows one $ total across both systems.
+  const [socialPendingTotalUsd, setSocialPendingTotalUsd] = useState(0);
   const [socialHistoryCount, setSocialHistoryCount] = useState(0);
+  // Whether the "Action needed" list is expanded. Null = auto: expanded for a
+  // short list, collapsed once it gets long (a summary stands in). A tap pins
+  // it, persisted across reloads.
+  const [debtsExpanded, setDebtsExpanded] = usePersistedExpand("splitsy-expand-debts");
   // The signed-in Splitsy user (social creator), if any — lets a DCW user create
   // an on-chain bill server-side without a browser wallet. Provider + handle are
   // kept so the split form can reject the creator tagging themselves.
@@ -424,6 +455,11 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
   // that the single "Action needed" window heading shows.
   const activeWalletDebts = registryReadAddress ? debts.filter((debt) => debt.remaining > 0n) : [];
   const pendingTotal = socialPendingCount + activeWalletDebts.length;
+  // Combined $ owed across both systems, for the collapsed summary line.
+  const walletPendingUnits = activeWalletDebts.reduce((sum, debt) => sum + debt.remaining, 0n);
+  const pendingTotalUsd = socialPendingTotalUsd + Number(billUnitsToUsdc(walletPendingUnits));
+  // Auto-collapse a long pending list; a tap on Expand/Collapse pins the choice.
+  const debtsShown = debtsExpanded ?? pendingTotal <= 3;
   // Whether the wallet side has any history record (paid / pending-as-creditor /
   // claimed), so the shared History panel can show one empty state across both
   // the social and wallet systems.
@@ -2329,19 +2365,31 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
                       You have {pendingTotal} unpaid bill{pendingTotal === 1 ? "" : "s"}
                     </h3>
                     <p className="mt-2 text-sm text-[var(--text-muted)]">
-                      Tagged to your handle or registered to your wallet. Settle each from the matching account.
+                      {debtsShown
+                        ? "Tagged to your handle or registered to your wallet. Settle each from the matching account."
+                        : `Total $${pendingTotalUsd.toFixed(2)} owed. Expand to settle each from the matching account.`}
                     </p>
                   </div>
-                  {registryReadAddress ? (
-                    <button className="secondary-button" onClick={() => refreshBillRegistry()} type="button">
-                      <RefreshCw size={16} />
-                      Refresh
-                    </button>
-                  ) : null}
+                  <div className="flex items-center gap-2">
+                    {/* Collapse once the list gets long (>3), so many unpaid bills
+                        don't stretch the page; a tap pins the choice. */}
+                    {pendingTotal > 3 ? (
+                      <button className="secondary-button" onClick={() => setDebtsExpanded(!debtsShown)} type="button">
+                        <ChevronDown className={`transition-transform ${debtsShown ? "rotate-180" : ""}`} size={16} />
+                        {debtsShown ? "Collapse" : "Expand"}
+                      </button>
+                    ) : null}
+                    {registryReadAddress ? (
+                      <button className="secondary-button" onClick={() => refreshBillRegistry()} type="button">
+                        <RefreshCw size={16} />
+                        Refresh
+                      </button>
+                    ) : null}
+                  </div>
                 </div>
               ) : null}
-              <div className={pendingTotal > 0 ? "mt-4 space-y-3" : undefined}>
-                <XDebtsPanel onCount={setSocialPendingCount} />
+              <div className={`${pendingTotal > 0 ? "mt-4 space-y-3" : ""}${debtsShown ? "" : " hidden"}`}>
+                <XDebtsPanel onCount={setSocialPendingCount} onTotal={setSocialPendingTotalUsd} />
                 {registryReadAddress ? (
                   <WalletDebtRows
                     activeDebts={activeWalletDebts}
@@ -3008,6 +3056,11 @@ function ClaimFundsPanel({
 }) {
   const claimableBills = splitterBills.filter((debt) => debt.claimable > 0n);
   const claimRef = useRef<HTMLDivElement | null>(null);
+  // Collapse a long claimable list (>3) behind a summary; a tap pins the choice
+  // (persisted across reloads).
+  const [expanded, setExpanded] = usePersistedExpand("splitsy-expand-claims");
+  const shown = expanded ?? claimableBills.length <= 3;
+  const claimableTotalUnits = claimableBills.reduce((sum, debt) => sum + debt.claimable, 0n);
 
   useEffect(() => {
     if (claimableBills.length === 0) {
@@ -3025,12 +3078,29 @@ function ClaimFundsPanel({
 
   return (
     <div ref={claimRef}>
-      <Panel title="Claim funds" icon={<BadgeDollarSign size={19} />}>
+      <Panel
+        title="Claim funds"
+        icon={<BadgeDollarSign size={19} />}
+        action={
+          claimableBills.length > 3 ? (
+            <button className="secondary-button" onClick={() => setExpanded(!shown)} type="button">
+              <ChevronDown className={`transition-transform ${shown ? "rotate-180" : ""}`} size={16} />
+              {shown ? "Collapse" : "Expand"}
+            </button>
+          ) : null
+        }
+      >
         {claimMessage ? (
           <div className="mb-4">
             <Message tone={claimMessageTone}>{claimMessage}</Message>
           </div>
         ) : null}
+        {!shown ? (
+          <p className="text-sm text-[var(--text-muted)]">
+            {claimableBills.length} bills ready to claim, total{" "}
+            <span className="amount-text">${billUnitsToUsdc(claimableTotalUnits)}</span>.
+          </p>
+        ) : (
         <div className="space-y-3">
           {claimableBills.map((debt) => {
             const key = debt.billId.toString();
@@ -3079,6 +3149,7 @@ function ClaimFundsPanel({
             );
           })}
         </div>
+        )}
       </Panel>
     </div>
   );
@@ -3443,6 +3514,17 @@ function RecurringWorkspace({
   // the other on the SAME tab. That tab is shown as two list rows; viewRole
   // picks which side this detail view represents (defaults to recipient).
   const [viewRole, setViewRole] = useState<"recipient" | "payer" | null>(null);
+  // Collapse a long recurring-tabs list (>3) behind a summary; a tap pins it
+  // (persisted across reloads).
+  const [tabsExpanded, setTabsExpanded] = usePersistedExpand("splitsy-expand-tabs");
+  // Rows shown = one per tab, or two for a tab where the viewer is both
+  // recipient and payer — matches the flatMap that renders the list.
+  const tabRowCount = walletTabs.reduce((sum, tab) => {
+    const isRecip = isViewer(tab.recipient);
+    const isPayer = tab.members.some((member) => isViewer(member.address));
+    return sum + (isRecip && isPayer ? 2 : 1);
+  }, 0);
+  const tabsShown = tabsExpanded ?? tabRowCount <= 3;
   const viewerIsRecipient = Boolean(tabState && isViewer(tabState.recipient));
   const viewerIsMember = Boolean(tabState && tabState.members.some((member) => isViewer(member.address)));
   const isDualRole = viewerIsRecipient && viewerIsMember;
@@ -3648,7 +3730,18 @@ function RecurringWorkspace({
         </Panel>
 
         {showRecurringDetails ? (
-          <Panel title="Your recurring tabs" icon={<RefreshCw size={19} />}>
+          <Panel
+            title="Your recurring tabs"
+            icon={<RefreshCw size={19} />}
+            action={
+              tabRowCount > 3 ? (
+                <button className="secondary-button" onClick={() => setTabsExpanded(!tabsShown)} type="button">
+                  <ChevronDown className={`transition-transform ${tabsShown ? "rotate-180" : ""}`} size={16} />
+                  {tabsShown ? "Collapse" : "Expand"}
+                </button>
+              ) : null
+            }
+          >
             <div className="flex flex-wrap gap-2">
               <button className="secondary-button" disabled={!actingAccount} onClick={refreshRecurringTabsForWallet} type="button">
                 <RefreshCw size={16} />
@@ -3660,6 +3753,11 @@ function RecurringWorkspace({
                 <Message tone={recurringState === "error" ? "error" : recurringState === "success" ? "success" : "neutral"}>{recurringMessage}</Message>
               </div>
             ) : null}
+            {!tabsShown ? (
+              <p className="mt-4 text-sm text-[var(--text-muted)]">
+                {tabRowCount} recurring tabs. Expand to view and act on each.
+              </p>
+            ) : (
             <div className="mt-4 space-y-2">
               {walletTabs.flatMap((tab) => {
                 // A tab where the viewer is both recipient and a payer becomes
@@ -3699,6 +3797,7 @@ function RecurringWorkspace({
                 ));
               })}
             </div>
+            )}
           </Panel>
         ) : null}
       </div>

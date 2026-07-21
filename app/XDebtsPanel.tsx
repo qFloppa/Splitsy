@@ -36,15 +36,16 @@ function celebrate() {
   });
 }
 
-export default function XDebtsPanel({ onCount }: { onCount?: (n: number) => void }) {
+export default function XDebtsPanel({ onCount, onTotal }: { onCount?: (n: number) => void; onTotal?: (usd: number) => void }) {
   const [debts, setDebts] = useState<IOwe[]>([]);
   const [flow, setFlow] = useState<Flow | null>(null);
 
-  // Report the unpaid count up so the parent can render one merged pending
-  // window whose heading sums social + wallet debts.
+  // Report the unpaid count + summed $ up so the parent can render one merged
+  // pending window whose heading sums social + wallet debts.
   useEffect(() => {
     onCount?.(debts.length);
-  }, [debts.length, onCount]);
+    onTotal?.(debts.reduce((sum, d) => sum + (Number(d.amount_usdc) || 0), 0));
+  }, [debts, onCount, onTotal]);
 
   function apply(list: IOwe[]) {
     setDebts(list.filter((d) => d.status !== "paid"));
