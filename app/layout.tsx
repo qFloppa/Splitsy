@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
-import { Inter, Roboto_Mono } from "next/font/google";
+import { Geist_Mono, Hanken_Grotesk } from "next/font/google";
+import localFont from "next/font/local";
 import { headers } from "next/headers";
 import Link from "next/link";
 import "./globals.css";
@@ -8,9 +9,17 @@ import { HeroBackground } from "@/components/ui/hero-background";
 
 // Self-hosted via next/font: no external requests, no layout shift. The CSS
 // font stacks in globals.css lead with these variables and keep the old
-// system fallbacks.
-const inter = Inter({ subsets: ["latin"], variable: "--font-inter", display: "swap" });
-const robotoMono = Roboto_Mono({ subsets: ["latin"], variable: "--font-roboto-mono", display: "swap" });
+// system fallbacks. Clash Display (Fontshare EULA, see app/fonts/) is the
+// display face for hero/headings only — its variable range tops out at 700,
+// so display rules in globals.css must not ask for heavier weights.
+const hankenGrotesk = Hanken_Grotesk({ subsets: ["latin"], variable: "--font-hanken", display: "swap" });
+const geistMono = Geist_Mono({ subsets: ["latin"], variable: "--font-geist-mono", display: "swap" });
+const clashDisplay = localFont({
+  src: "./fonts/ClashDisplay-Variable.woff2",
+  weight: "200 700",
+  variable: "--font-clash",
+  display: "swap",
+});
 
 const siteUrl = "https://splitsy.xyz";
 const siteDescription =
@@ -89,7 +98,11 @@ export default async function RootLayout({
   const nonce = (await headers()).get("x-nonce") ?? undefined;
 
   return (
-    <html lang="en" className={`${inter.variable} ${robotoMono.variable} h-full antialiased`} suppressHydrationWarning>
+    <html
+      lang="en"
+      className={`${hankenGrotesk.variable} ${geistMono.variable} ${clashDisplay.variable} h-full antialiased`}
+      suppressHydrationWarning
+    >
       <head>
         {/* Resolve the theme before first paint (stored choice → OS preference)
             so neither the landing page nor the app flashes the wrong theme.
