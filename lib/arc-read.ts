@@ -50,6 +50,13 @@ const READ_ABI = [
     inputs: [{ name: "splitter", type: "address" }],
     outputs: [{ name: "", type: "uint256[]" }],
   },
+  {
+    type: "function",
+    name: "billIdsForParticipant",
+    stateMutability: "view",
+    inputs: [{ name: "participantAddress", type: "address" }],
+    outputs: [{ name: "", type: "uint256[]" }],
+  },
 ] as const;
 
 const publicClient = createPublicClient({
@@ -98,6 +105,17 @@ export async function getBillIdsForSplitterOnchain(addr: `0x${string}`): Promise
     address: REGISTRY_ADDRESS,
     abi: READ_ABI,
     functionName: "billIdsForSplitter",
+    args: [addr],
+  });
+}
+
+// Reverse of the splitter lookup: bills where `addr` OWES (is a participant),
+// not the ones it created. The dashboard aggregator joins both directions.
+export async function getBillIdsForParticipantOnchain(addr: `0x${string}`): Promise<readonly bigint[]> {
+  return publicClient.readContract({
+    address: REGISTRY_ADDRESS,
+    abi: READ_ABI,
+    functionName: "billIdsForParticipant",
     args: [addr],
   });
 }

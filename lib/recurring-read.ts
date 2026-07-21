@@ -110,6 +110,48 @@ export async function getNextTabIdOnchain(): Promise<bigint> {
   });
 }
 
+// Recurring tabs where `recipient` is the payee (the reverse-lookup the
+// dashboard needs). ponytail: full-scan of tab ids, same as the client's
+// readRecurringTabsForWallet. Add an id index only if tab count grows enough
+// to matter.
+export async function listRecipientTabsOnchain(
+  recipient: `0x${string}`,
+): Promise<Array<{ address: `0x${string}`; claimable: bigint; settlementCount: bigint; maxSettlements: bigint }>> {
+  const nextId = await getNextTabIdOnchain();
+  const ids = Array.from({ length: Math.max(0, Number(nextId - 1n)) }, (_, i) => BigInt(i + 1));
+  if (ids.length === 0) return [];
+  const addrs = await publicClient.multicall({
+    allowFailure: true,
+    contracts: ids.map((id) => ({
+      address: RECURRING_TAB_FACTORY_ADDRESS, abi: FACTORY_READ_ABI, functionName: "tabs", args: [id],
+    })),
+  });
+  const tabAddrs = addrs
+    .map((r) => (r.status === "success" ? (r.result as unknown as `0x${string}`) : null))
+    .filter((a): a is `0x${string}` => Boolean(a) && a !== "0x0000000000000000000000000000000000000000");
+  const rows = await Promise.all(
+    tabAddrs.map(async (address) => {
+      try {
+        const [recip, claimable, settlementCount, maxSettlements] = await publicClient.multicall({
+          allowFailure: false,
+          contracts: [
+            { address, abi: TAB_READ_ABI, functionName: "recipient" },
+            { address, abi: TAB_READ_ABI, functionName: "claimable" },
+            { address, abi: TAB_READ_ABI, functionName: "settlementCount" },
+            { address, abi: TAB_READ_ABI, functionName: "maxSettlements" },
+          ],
+        });
+        return { address, recipient: recip as `0x${string}`, claimable, settlementCount, maxSettlements };
+      } catch {
+        return null;
+      }
+    }),
+  );
+  return rows
+    .filter((r): r is NonNullable<typeof r> => r !== null && r.recipient.toLowerCase() === recipient.toLowerCase())
+    .map(({ address, claimable, settlementCount, maxSettlements }) => ({ address, claimable, settlementCount, maxSettlements }));
+}
+
 // Provenance gate for the DCW authorize/claim routes: an arbitrary client-sent
 // address is only acted on if OUR factory deployed it — the tab self-reports a
 // tabId, and the factory's registry must map that id back to the same address.
