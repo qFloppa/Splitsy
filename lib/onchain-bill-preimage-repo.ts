@@ -17,6 +17,9 @@ export type OnchainBillPreimage = BillPreimage & {
 export type PublishedBillPreimage = BillPreimage & {
   receiptUrl: string | null;
   participantProviders: string[];
+  // Row insert time as Unix seconds (0 if unparseable) — the dashboard's only
+  // creation timestamp for on-chain bills, since getBill exposes none.
+  createdAtSeconds: number;
 };
 
 function key(registryAddress: string, billId: string) {
@@ -105,7 +108,7 @@ export async function getOnchainBillPreimage(
 
   const { data, error } = await client
     .from("onchain_bill_preimages")
-    .select("merchant, currency, total_usd, participant_labels, participant_providers, receipt_hash, due_date")
+    .select("merchant, currency, total_usd, participant_labels, participant_providers, receipt_hash, due_date, created_at")
     .match(key(registryAddress, billId))
     .maybeSingle();
   if (error) throw new Error(`Failed to read bill preimage: ${error.message}`);
@@ -121,6 +124,9 @@ export async function getOnchainBillPreimage(
   const dueDateRaw = Number(data.due_date ?? 0);
   const dueDate = dueDateRaw > 0 ? dueDateRaw : undefined;
 
+  const parsedAt = data.created_at ? Date.parse(data.created_at) : NaN;
+  const createdAtSeconds = Number.isNaN(parsedAt) ? 0 : Math.floor(parsedAt / 1000);
+
   return {
     merchant: data.merchant,
     currency: data.currency,
@@ -130,5 +136,6 @@ export async function getOnchainBillPreimage(
     receiptHash,
     receiptUrl,
     dueDate,
+    createdAtSeconds,
   };
 }
