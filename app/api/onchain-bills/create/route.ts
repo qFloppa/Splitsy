@@ -5,6 +5,7 @@ import { encodeCreateBill } from "@/lib/registry-calldata";
 import { executeContractOnArc, InsufficientFundsError } from "@/lib/circle-dcw";
 import { REGISTRY_ADDRESS, getBillOnchain, getBillIdsForSplitterOnchain } from "@/lib/arc-read";
 import { publishOnchainBillPreimage } from "@/lib/onchain-bill-preimage-repo";
+import { participantProvidersFromSlots } from "./participant-providers";
 import type { IdentityProvider } from "@/lib/types";
 
 export const runtime = "nodejs";
@@ -78,6 +79,7 @@ export async function POST(request: Request) {
     owed.push(toUnits(s.amountUsd));
     labels.push(s.label);
   }
+  const participantProviders = participantProvidersFromSlots(slots, socialRows);
 
   const metadataHash = billMetadataHash({ merchant, currency, total, participantLabels: labels, receiptHash, dueDate });
 
@@ -113,7 +115,7 @@ export async function POST(request: Request) {
     // inside publishOnchainBillPreimage (hard gate) and swallowed by this catch —
     // text-only publish is impossible once a receiptHash is committed on-chain.
     await publishOnchainBillPreimage(
-      { registryAddress: REGISTRY_ADDRESS, billId: billId.toString(), merchant, currency, total, participantLabels: labels, receiptHash, dueDate },
+      { registryAddress: REGISTRY_ADDRESS, billId: billId.toString(), merchant, currency, total, participantLabels: labels, participantProviders, receiptHash, dueDate },
       metadataHash,
       receiptBytes,
     );

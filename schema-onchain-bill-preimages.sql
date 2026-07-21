@@ -30,6 +30,14 @@ alter table onchain_bill_preimages
 alter table onchain_bill_preimages
   add column if not exists due_date bigint not null default 0;
 
+-- Additive: per-participant identity provider, index-aligned with
+-- participant_labels. 'wallet' for address slots; 'x'|'discord'|'email' for
+-- social slots. Existing rows are null -> bucketed 'unknown' in the dashboard.
+-- Display/analytics only: NOT part of billMetadataHash, so this never affects
+-- verification of existing or future bills.
+alter table onchain_bill_preimages
+  add column if not exists participant_providers text[];
+
 -- Receipt images live in Supabase Storage, not on-chain — only their keccak256
 -- goes into the commitment. Bucket is public-read so a payer's browser can fetch
 -- and eyeball the image; writes go through the service role in the publish route.

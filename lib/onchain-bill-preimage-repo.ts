@@ -7,11 +7,17 @@ const RECEIPT_BUCKET = "onchain-bill-receipts";
 export type OnchainBillPreimage = BillPreimage & {
   registryAddress: string;
   billId: string;
+  // Per-participant identity provider, index-aligned with participantLabels.
+  // Display/analytics only — NOT part of billMetadataHash.
+  participantProviders?: string[];
 };
 
 // What a payer's browser reads back: the preimage plus a public URL to the
 // receipt image (null when the bill was entered by hand with no photo).
-export type PublishedBillPreimage = BillPreimage & { receiptUrl: string | null };
+export type PublishedBillPreimage = BillPreimage & {
+  receiptUrl: string | null;
+  participantProviders: string[];
+};
 
 function key(registryAddress: string, billId: string) {
   return { registry_address: registryAddress.toLowerCase(), bill_id: billId };
@@ -62,6 +68,7 @@ export async function publishOnchainBillPreimage(
       currency: input.currency,
       total_usd: input.total,
       participant_labels: input.participantLabels,
+      participant_providers: input.participantProviders ?? null,
       receipt_hash: input.receiptHash,
       // 0 = no due date, matching the column default and the billMetadataHash
       // convention (absent/0 hashes byte-identically to a pre-due-date bill).
@@ -98,7 +105,7 @@ export async function getOnchainBillPreimage(
 
   const { data, error } = await client
     .from("onchain_bill_preimages")
-    .select("merchant, currency, total_usd, participant_labels, receipt_hash, due_date")
+    .select("merchant, currency, total_usd, participant_labels, participant_providers, receipt_hash, due_date")
     .match(key(registryAddress, billId))
     .maybeSingle();
   if (error) throw new Error(`Failed to read bill preimage: ${error.message}`);
@@ -119,6 +126,7 @@ export async function getOnchainBillPreimage(
     currency: data.currency,
     total: Number(data.total_usd),
     participantLabels: data.participant_labels ?? [],
+    participantProviders: data.participant_providers ?? [],
     receiptHash,
     receiptUrl,
     dueDate,
