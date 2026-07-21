@@ -11,6 +11,7 @@ import { Hero } from "./Hero";
 import { DemoSection } from "./DemoSection";
 import { SectionAnyone } from "./SectionAnyone";
 import { SectionOnchain } from "./SectionOnchain";
+import { SectionStack } from "./SectionStack";
 import { FinalCTA } from "./FinalCTA";
 
 gsap.registerPlugin(ScrollTrigger);
@@ -44,6 +45,7 @@ export default function LandingPage() {
           <DemoSection />
           <SectionAnyone />
           <SectionOnchain />
+          <SectionStack />
           <FinalCTA />
         </main>
       </div>
