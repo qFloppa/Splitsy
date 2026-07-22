@@ -96,6 +96,48 @@ export async function publishOnchainBillPreimage(
   }
 }
 
+// Fetch preimages for multiple bills in one query. Returns a Map keyed by
+// billId string; missing bills are absent from the map (not null entries).
+// The dashboard calls this instead of N individual getOnchainBillPreimage calls.
+export async function getOnchainBillPreimages(
+  registryAddress: string,
+  billIds: string[],
+): Promise<Map<string, PublishedBillPreimage>> {
+  const result = new Map<string, PublishedBillPreimage>();
+  if (billIds.length === 0) return result;
+  const client = createSupabaseServerClient();
+  if (!client) return result;
+
+  const reg = registryAddress.toLowerCase();
+  const { data, error } = await client
+    .from("onchain_bill_preimages")
+    .select("bill_id, merchant, currency, total_usd, participant_labels, participant_providers, receipt_hash, due_date, created_at")
+    .eq("registry_address", reg)
+    .in("bill_id", billIds);
+  if (error) throw new Error(`Failed to read bill preimages: ${error.message}`);
+
+  for (const row of data ?? []) {
+    const receiptHash = row.receipt_hash ?? "";
+    const receiptUrl = receiptHash
+      ? client.storage.from(RECEIPT_BUCKET).getPublicUrl(receiptPath(reg, row.bill_id)).data.publicUrl
+      : null;
+    const dueDateRaw = Number(row.due_date ?? 0);
+    const parsedAt = row.created_at ? Date.parse(row.created_at) : NaN;
+    result.set(row.bill_id, {
+      merchant: row.merchant,
+      currency: row.currency,
+      total: Number(row.total_usd),
+      participantLabels: row.participant_labels ?? [],
+      participantProviders: row.participant_providers ?? [],
+      receiptHash,
+      receiptUrl,
+      dueDate: dueDateRaw > 0 ? dueDateRaw : undefined,
+      createdAtSeconds: Number.isNaN(parsedAt) ? 0 : Math.floor(parsedAt / 1000),
+    });
+  }
+  return result;
+}
+
 // Fetch the published preimage for one on-chain bill, or null if none. The
 // caller (a payer's browser) re-hashes it against the chain — this table is
 // merely a convenience transport, never a source of truth.

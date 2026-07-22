@@ -63,10 +63,12 @@ const publicClient = createPublicClient({
   chain: arcTestnet,
   // batch: coalesce the many concurrent eth_calls the dashboard fires (getBill +
   // per-participant getParticipant, fanned out via Promise.all) into batched
-  // JSON-RPC POSTs — same calls, same results, far fewer round trips. The Arc
-  // RPC accepts JSON-RPC array batches.
+  // JSON-RPC POSTs — far fewer round trips. batchSize 3 because drpc's free plan
+  // hard-rejects batches of >3 with HTTP 500 ("Batch of more than 3 requests are
+  // not allowed on free plan"); a multi-wallet dashboard load (21 bills) packed
+  // one oversized batch and 500'd every time. 3 is the cap it accepts.
   transport: http(process.env.NEXT_PUBLIC_ARC_TESTNET_RPC_URL ?? "https://rpc.testnet.arc.network", {
-    batch: true,
+    batch: { batchSize: 3 },
   }),
 });
 
@@ -95,6 +97,72 @@ export async function getParticipantOnchain(billId: bigint, addr: `0x${string}`)
     args: [billId, addr],
   });
   return { owed: r[0], paid: r[1], exists: r[2] };
+}
+
+// --- batched reads for the dashboard's fan-out ------------------------------
+// The dashboard reads dozens of bills at once. Firing one readContract per bill
+// via Promise.all blew past the RPC's limits (drpc's free plan rejects JSON-RPC
+// batches of >3 with HTTP 500, and the per-call burst trips its RPS cap → 429).
+// Multicall3 collapses N contract reads into ONE eth_call, so the whole
+// dashboard becomes a handful of requests. allowFailure so a single unreadable
+// bill yields null (skipped by the caller) instead of sinking the whole batch.
+
+export type BillOnchain = {
+  billId: bigint;
+  splitter: `0x${string}`;
+  metadataHash: `0x${string}`;
+  totalOwed: bigint;
+  totalPaid: bigint;
+  claimed: bigint;
+  participantList: readonly `0x${string}`[];
+};
+
+export async function getBillsOnchain(billIds: bigint[]): Promise<(BillOnchain | null)[]> {
+  if (billIds.length === 0) return [];
+  const res = await publicClient.multicall({
+    allowFailure: true,
+    contracts: billIds.map((billId) => ({
+      address: REGISTRY_ADDRESS,
+      abi: READ_ABI,
+      functionName: "getBill",
+      args: [billId],
+    })),
+  });
+  return res.map((r, i) => {
+    if (r.status !== "success") return null;
+    const v = r.result as readonly [`0x${string}`, `0x${string}`, bigint, bigint, bigint, readonly `0x${string}`[]];
+    return {
+      billId: billIds[i],
+      splitter: v[0],
+      metadataHash: v[1],
+      totalOwed: v[2],
+      totalPaid: v[3],
+      claimed: v[4],
+      participantList: v[5],
+    };
+  });
+}
+
+export type ParticipantOnchain = { owed: bigint; paid: bigint; exists: boolean };
+
+export async function getParticipantsOnchain(
+  pairs: { billId: bigint; addr: `0x${string}` }[],
+): Promise<(ParticipantOnchain | null)[]> {
+  if (pairs.length === 0) return [];
+  const res = await publicClient.multicall({
+    allowFailure: true,
+    contracts: pairs.map(({ billId, addr }) => ({
+      address: REGISTRY_ADDRESS,
+      abi: READ_ABI,
+      functionName: "getParticipant",
+      args: [billId, addr],
+    })),
+  });
+  return res.map((r) => {
+    if (r.status !== "success") return null;
+    const v = r.result as readonly [bigint, bigint, boolean];
+    return { owed: v[0], paid: v[1], exists: v[2] };
+  });
 }
 
 export async function getClaimableOnchain(billId: bigint) {
