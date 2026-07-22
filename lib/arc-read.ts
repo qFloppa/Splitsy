@@ -61,7 +61,13 @@ const READ_ABI = [
 
 const publicClient = createPublicClient({
   chain: arcTestnet,
-  transport: http(process.env.NEXT_PUBLIC_ARC_TESTNET_RPC_URL ?? "https://rpc.testnet.arc.network"),
+  // batch: coalesce the many concurrent eth_calls the dashboard fires (getBill +
+  // per-participant getParticipant, fanned out via Promise.all) into batched
+  // JSON-RPC POSTs — same calls, same results, far fewer round trips. The Arc
+  // RPC accepts JSON-RPC array batches.
+  transport: http(process.env.NEXT_PUBLIC_ARC_TESTNET_RPC_URL ?? "https://rpc.testnet.arc.network", {
+    batch: true,
+  }),
 });
 
 export async function getBillOnchain(billId: bigint) {

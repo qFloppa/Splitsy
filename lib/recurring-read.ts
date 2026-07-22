@@ -99,7 +99,12 @@ export const MEMBER_SETTLED_ABI = [
 
 const publicClient = createPublicClient({
   chain: arcTestnet,
-  transport: http(process.env.NEXT_PUBLIC_ARC_TESTNET_RPC_URL ?? "https://rpc.testnet.arc.network"),
+  // batch: coalesce concurrent eth_calls (the per-tab recipient/claimable reads
+  // fanned out via Promise.all in listRecipientTabsOnchain) into batched
+  // JSON-RPC POSTs. Complements multicall, which batches within a single tab.
+  transport: http(process.env.NEXT_PUBLIC_ARC_TESTNET_RPC_URL ?? "https://rpc.testnet.arc.network", {
+    batch: true,
+  }),
 });
 
 export async function getNextTabIdOnchain(): Promise<bigint> {

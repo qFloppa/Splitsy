@@ -105,6 +105,46 @@ function isAllZero(d: DashboardData) {
   return k.createdCount === 0 && d.recurring.length === 0 && d.reputation.count === 0 && noMoney;
 }
 
+// ── stale-while-revalidate cache ─────────────────────────────────────────────
+// Switching tabs unmounts this panel, so a naive fetch re-runs on every return.
+// We stash the last response per fetch key and paint it instantly on remount /
+// scope change while a background refetch keeps it fresh. The key is the exact
+// query the effect issues, so each scope (social / wallet / all) and demo have
+// distinct entries — a switch never shows another scope's numbers.
+const CACHE_PREFIX = "splitsy:dashboard:";
+
+function cacheKeyFor(demo: boolean, walletsParam: string): string {
+  return demo ? "demo" : walletsParam;
+}
+
+// walletsParam for a given scope, matching the render-time derivation below.
+// Standalone so handlers and the initial-state seed can compute a target scope's
+// key without waiting for the next render.
+function walletsParamFor(scope: Scope, socialWallet: string | null, browserWallet: string | null): string {
+  const list =
+    scope === "social" ? [socialWallet] : scope === "wallet" ? [browserWallet] : [socialWallet, browserWallet];
+  return list.filter(Boolean).join(",");
+}
+
+function readDashboardCache(key: string): DashboardData | null {
+  if (!key || typeof sessionStorage === "undefined") return null;
+  try {
+    const raw = sessionStorage.getItem(CACHE_PREFIX + key);
+    return raw ? (JSON.parse(raw) as DashboardData) : null;
+  } catch {
+    return null; // malformed/unavailable — treat as a miss
+  }
+}
+
+function writeDashboardCache(key: string, data: DashboardData): void {
+  if (!key || typeof sessionStorage === "undefined") return;
+  try {
+    sessionStorage.setItem(CACHE_PREFIX + key, JSON.stringify(data));
+  } catch {
+    // quota or serialization failure — the cache is best-effort, so skip.
+  }
+}
+
 // socialWallet = the Circle DCW address from social login (X/Discord/email);
 // browserWallet = the connected non-custodial wallet. Either may be null. The
 // scope selector appears only when both exist.
@@ -115,29 +155,28 @@ export default function DashboardPanel({
   socialWallet?: string | null;
   browserWallet?: string | null;
 }) {
-  const [data, setData] = useState<DashboardData | null>(null);
-  const [demo, setDemo] = useState(false);
-  const [range, setRange] = useState<RangeKey>("30d");
-  const [scope, setScope] = useState<Scope>("all");
-  const [buckets, setBuckets] = useState<Set<IdentityBucket>>(new Set());
-  const [error, setError] = useState<string | null>(null);
-  const [reloadKey, setReloadKey] = useState(0);
-
   const hasSocial = Boolean(socialWallet);
   const hasWallet = Boolean(browserWallet);
   const bothIdentities = hasSocial && hasWallet;
   // With one identity, the scope is forced to it; the selector only shows when
   // both exist. "all" unions the two.
-  const effectiveScope: Scope = bothIdentities ? scope : hasSocial ? "social" : "wallet";
-  const walletsParam = (
-    effectiveScope === "social"
-      ? [socialWallet]
-      : effectiveScope === "wallet"
-        ? [browserWallet]
-        : [socialWallet, browserWallet]
-  )
-    .filter(Boolean)
-    .join(",");
+  const initialScope: Scope = bothIdentities ? "all" : hasSocial ? "social" : "wallet";
+
+  const [demo, setDemo] = useState(false);
+  const [range, setRange] = useState<RangeKey>("30d");
+  const [scope, setScope] = useState<Scope>(initialScope);
+  const [buckets, setBuckets] = useState<Set<IdentityBucket>>(new Set());
+  const [error, setError] = useState<string | null>(null);
+  const [reloadKey, setReloadKey] = useState(0);
+  // Seed from cache so returning to the tab paints instantly (the effect below
+  // still refetches to revalidate). Runs client-side only — the panel mounts on
+  // tab click, well after hydration — so there's no SSR/cache mismatch.
+  const [data, setData] = useState<DashboardData | null>(() =>
+    readDashboardCache(walletsParamFor(initialScope, socialWallet, browserWallet)),
+  );
+
+  const effectiveScope: Scope = bothIdentities ? scope : initialScope;
+  const walletsParam = walletsParamFor(effectiveScope, socialWallet, browserWallet);
 
   // Nothing to report on: signed out AND no wallet connected (derived, no state —
   // the connect card renders from this and the effect skips fetching).
@@ -146,17 +185,23 @@ export default function DashboardPanel({
   useEffect(() => {
     if (!demo && !walletsParam) return;
     let alive = true;
+    const key = cacheKeyFor(demo, walletsParam);
+    // Read (not write) inside the effect is fine — decides error handling only.
+    const hadCache = Boolean(readDashboardCache(key));
     const qs = demo ? "?demo=1" : `?wallets=${encodeURIComponent(walletsParam)}`;
     fetch(`/api/dashboard${qs}`)
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))))
       .then((d: DashboardData) => {
+        writeDashboardCache(key, d);
         if (alive) {
           setData(d);
           setError(null); // clear a stale error after a scope/wallet change refetch
         }
       })
       .catch((e) => {
-        if (alive) setError(String(e));
+        // Keep showing cached data on a failed revalidation; only fall back to
+        // the error screen when there's nothing cached for this scope.
+        if (alive && !hadCache) setError(String(e));
       });
     return () => {
       alive = false;
@@ -164,19 +209,23 @@ export default function DashboardPanel({
   }, [demo, reloadKey, walletsParam]);
 
   // Reset synchronously from the events that trigger a refetch, not inside the
-  // effect (avoids react-hooks/set-state-in-effect) — nulling data re-shows the skeleton.
+  // effect (avoids react-hooks/set-state-in-effect). Seed from the target key's
+  // cache: a cache hit paints instantly, a miss nulls data to re-show the skeleton.
   function reload() {
-    setData(null);
+    setData(readDashboardCache(cacheKeyFor(demo, walletsParam)));
     setError(null);
     setReloadKey((k) => k + 1);
   }
   function toggleDemo() {
-    setData(null);
+    const nextDemo = !demo;
+    setData(readDashboardCache(cacheKeyFor(nextDemo, walletsParam)));
     setError(null);
-    setDemo((d) => !d);
+    setDemo(nextDemo);
   }
   function pickScope(s: Scope) {
-    setData(null);
+    // s becomes effectiveScope (the selector only shows when both identities
+    // exist), so compute its walletsParam directly for the cache lookup.
+    setData(readDashboardCache(walletsParamFor(s, socialWallet, browserWallet)));
     setError(null);
     setScope(s);
   }
