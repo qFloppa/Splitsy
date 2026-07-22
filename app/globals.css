@@ -33,6 +33,18 @@
   --accent-soft: rgba(39, 117, 202, 0.1);
   --success: var(--settled-green);
   --success-soft: rgba(23, 165, 107, 0.12);
+
+  /* Dashboard chart palette. The 5 identity hues are CVD-validated (dataviz
+     validate_palette.js — do not "improve"); created/settled are a separate
+     2-series activity pair (indigo/green), not identity buckets. */
+  --chart-identity-x: #2a78d6;
+  --chart-identity-discord: #008300;
+  --chart-identity-email: #e87ba4;
+  --chart-identity-wallet: #eda100;
+  --chart-identity-unknown: #1baf7a;
+  --chart-created: #6366f1;   /* activity: created (indigo) */
+  --chart-settled: #1baf7a;   /* activity: settled (green) */
+
   --warning-bg: #fff8df;
   --warning-text: #7b5a00;
   --danger-bg: #fff1ef;
@@ -102,6 +114,16 @@
   --accent-soft: rgba(98, 168, 241, 0.15);
   --success: #46d996;
   --success-soft: rgba(70, 217, 150, 0.13);
+
+  /* Dashboard chart palette — dark. CVD-validated identity hues + activity pair. */
+  --chart-identity-x: #3987e5;
+  --chart-identity-discord: #008300;
+  --chart-identity-email: #d55181;
+  --chart-identity-wallet: #c98500;
+  --chart-identity-unknown: #199e70;
+  --chart-created: #818cf8;
+  --chart-settled: #199e70;
+
   --warning-bg: rgba(255, 207, 81, 0.14);
   --warning-text: #ffd875;
   --danger-bg: rgba(244, 99, 80, 0.14);
