@@ -43,6 +43,7 @@ import XAuthControl from "./XAuthControl";
 import SignInMenu from "./SignInMenu";
 import XDebtsPanel from "./XDebtsPanel";
 import XHistoryPanel from "./XHistoryPanel";
+import DashboardPanel from "./DashboardPanel";
 import { HistoryCard, PaidBillStamp } from "./HistoryCard";
 import {
   bridgeSourceChains,
@@ -139,7 +140,7 @@ type FxQuote = {
 type OcrState = "idle" | "reading" | "ready" | "error";
 type BillRunState = "idle" | "connecting" | "working" | "success" | "error";
 type RecurringRunState = "idle" | "connecting" | "working" | "error" | "success";
-type AppTab = "bills" | "recurring" | "history";
+type AppTab = "bills" | "recurring" | "history" | "dashboard";
 type RecurringCycle = "test" | "weekly" | "monthly" | "custom";
 type RecurringMemberInput = {
   id: string;
@@ -2320,6 +2321,9 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
                 <TabButton active={activeTab === "history"} onClick={() => switchAppTab("history")}>
                   History
                 </TabButton>
+                <TabButton active={activeTab === "dashboard"} onClick={() => switchAppTab("dashboard")}>
+                  Dashboard
+                </TabButton>
                 <Link className="tab-button" href="/docs">
                   <BookOpen size={16} />
                   Docs
@@ -2811,7 +2815,7 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
             walletTabs={walletTabs}
           />
           </motion.div>
-        ) : (
+        ) : activeTab === "history" ? (
           <motion.div
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: 8 }}
@@ -2830,6 +2834,16 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
                 ) : null}
               </div>
             </Panel>
+          </motion.div>
+        ) : (
+          <motion.div
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 8 }}
+            initial={{ opacity: 0, y: 8 }}
+            key="dashboard"
+            transition={{ duration: 0.22, ease: "easeOut" }}
+          >
+            <DashboardPanel />
           </motion.div>
         )}
         </AnimatePresence>
