@@ -2843,7 +2843,7 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
             key="dashboard"
             transition={{ duration: 0.22, ease: "easeOut" }}
           >
-            <DashboardPanel />
+            <DashboardPanel socialWallet={socialWalletAddress} browserWallet={connectedWalletAccount} />
           </motion.div>
         )}
         </AnimatePresence>

@@ -26,6 +26,9 @@ import {
 import { IDENTITY_BUCKETS, type DashboardData, type IdentityBucket } from "@/lib/dashboard-types";
 
 type RangeKey = "7d" | "30d" | "90d" | "all";
+// Which of the user's wallet identities the dashboard reports on. "all" unions
+// the social (custodial DCW) and non-custodial (browser) wallets.
+type Scope = "all" | "social" | "wallet";
 
 const RANGE_DAYS: Record<Exclude<RangeKey, "all">, number> = { "7d": 7, "30d": 30, "90d": 90 };
 const BUCKET_LABEL: Record<IdentityBucket, string> = {
@@ -102,20 +105,55 @@ function isAllZero(d: DashboardData) {
   return k.createdCount === 0 && d.recurring.length === 0 && d.reputation.count === 0 && noMoney;
 }
 
-export default function DashboardPanel() {
+// socialWallet = the Circle DCW address from social login (X/Discord/email);
+// browserWallet = the connected non-custodial wallet. Either may be null. The
+// scope selector appears only when both exist.
+export default function DashboardPanel({
+  socialWallet = null,
+  browserWallet = null,
+}: {
+  socialWallet?: string | null;
+  browserWallet?: string | null;
+}) {
   const [data, setData] = useState<DashboardData | null>(null);
   const [demo, setDemo] = useState(false);
   const [range, setRange] = useState<RangeKey>("30d");
+  const [scope, setScope] = useState<Scope>("all");
   const [buckets, setBuckets] = useState<Set<IdentityBucket>>(new Set());
   const [error, setError] = useState<string | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
 
+  const hasSocial = Boolean(socialWallet);
+  const hasWallet = Boolean(browserWallet);
+  const bothIdentities = hasSocial && hasWallet;
+  // With one identity, the scope is forced to it; the selector only shows when
+  // both exist. "all" unions the two.
+  const effectiveScope: Scope = bothIdentities ? scope : hasSocial ? "social" : "wallet";
+  const walletsParam = (
+    effectiveScope === "social"
+      ? [socialWallet]
+      : effectiveScope === "wallet"
+        ? [browserWallet]
+        : [socialWallet, browserWallet]
+  )
+    .filter(Boolean)
+    .join(",");
+
+  // Nothing to report on: signed out AND no wallet connected (derived, no state —
+  // the connect card renders from this and the effect skips fetching).
+  const noWallet = !demo && !walletsParam;
+
   useEffect(() => {
+    if (!demo && !walletsParam) return;
     let alive = true;
-    fetch(`/api/dashboard${demo ? "?demo=1" : ""}`)
+    const qs = demo ? "?demo=1" : `?wallets=${encodeURIComponent(walletsParam)}`;
+    fetch(`/api/dashboard${qs}`)
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))))
       .then((d: DashboardData) => {
-        if (alive) setData(d);
+        if (alive) {
+          setData(d);
+          setError(null); // clear a stale error after a scope/wallet change refetch
+        }
       })
       .catch((e) => {
         if (alive) setError(String(e));
@@ -123,7 +161,7 @@ export default function DashboardPanel() {
     return () => {
       alive = false;
     };
-  }, [demo, reloadKey]);
+  }, [demo, reloadKey, walletsParam]);
 
   // Reset synchronously from the events that trigger a refetch, not inside the
   // effect (avoids react-hooks/set-state-in-effect) — nulling data re-shows the skeleton.
@@ -137,6 +175,11 @@ export default function DashboardPanel() {
     setError(null);
     setDemo((d) => !d);
   }
+  function pickScope(s: Scope) {
+    setData(null);
+    setError(null);
+    setScope(s);
+  }
 
   const filtered = useMemo(() => (data ? applyFilters(data, range, buckets) : null), [data, range, buckets]);
 
@@ -147,6 +190,23 @@ export default function DashboardPanel() {
       else next.add(b);
       return next;
     });
+  }
+
+  // No wallet at all (signed out + nothing connected): guide, don't alarm.
+  if (noWallet) {
+    return (
+      <div className="panel">
+        <div className="flex flex-col items-center gap-3 py-10 text-center">
+          <BarChart3 className="text-[var(--text-muted)]" size={28} />
+          <p className="max-w-sm text-sm text-[var(--text-muted)]">
+            Sign in or connect a non-custodial wallet to see your analytics.
+          </p>
+          <button className="secondary-button" onClick={toggleDemo} type="button">
+            <FlaskConical size={15} /> View sample data
+          </button>
+        </div>
+      </div>
+    );
   }
 
   if (error) {
@@ -171,7 +231,13 @@ export default function DashboardPanel() {
 
   return (
     <div className="space-y-4">
-      <DashboardHeader isDemo={data.isDemo} demo={demo} onToggleDemo={toggleDemo} />
+      <DashboardHeader
+        isDemo={data.isDemo}
+        demo={demo}
+        onToggleDemo={toggleDemo}
+        scope={effectiveScope}
+        onScope={bothIdentities ? pickScope : undefined}
+      />
 
       {showEmpty ? (
         <EmptyState onDemo={toggleDemo} />
@@ -198,14 +264,20 @@ export default function DashboardPanel() {
 
 // ── shared shells ───────────────────────────────────────────────────────────
 
+const SCOPE_LABEL: Record<Scope, string> = { all: "All", social: "Social", wallet: "Non-custodial" };
+
 function DashboardHeader({
   isDemo,
   demo,
   onToggleDemo,
+  scope,
+  onScope,
 }: {
   isDemo: boolean;
   demo: boolean;
   onToggleDemo: () => void;
+  scope: Scope;
+  onScope?: (s: Scope) => void; // undefined → only one identity, no selector
 }) {
   return (
     <div className="flex flex-wrap items-center justify-between gap-2">
@@ -220,9 +292,25 @@ function DashboardHeader({
           </span>
         ) : null}
       </h2>
-      <button className="secondary-button" onClick={onToggleDemo} type="button">
-        <FlaskConical size={15} /> {demo ? "Exit sample data" : "View sample data"}
-      </button>
+      <div className="flex flex-wrap items-center gap-2">
+        {onScope && !demo ? (
+          <div className="segmented-control text-xs" role="group" aria-label="Wallet identity">
+            {(["all", "social", "wallet"] as Scope[]).map((s) => (
+              <button
+                key={s}
+                className={`tab-button ${scope === s ? "tab-button-active" : ""}`}
+                onClick={() => onScope(s)}
+                type="button"
+              >
+                {SCOPE_LABEL[s]}
+              </button>
+            ))}
+          </div>
+        ) : null}
+        <button className="secondary-button" onClick={onToggleDemo} type="button">
+          <FlaskConical size={15} /> {demo ? "Exit sample data" : "View sample data"}
+        </button>
+      </div>
     </div>
   );
 }

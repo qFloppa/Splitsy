@@ -168,14 +168,26 @@ export async function releaseFeedbackClaim(walletAddress: string, billId: string
 }
 
 export async function getReputationSummary(walletAddress: string): Promise<ReputationSummary> {
+  return getReputationSummaryForWallets([walletAddress]);
+}
+
+// Reputation across one or more of a person's wallets (social DCW + non-custodial),
+// scored as a single record: feedback is a per-payment fact, so a user's timeliness
+// is the weighted average over every wallet they pay from. Dedupes addresses; an
+// empty/all-blank list yields the zero summary without a query.
+export async function getReputationSummaryForWallets(walletAddresses: string[]): Promise<ReputationSummary> {
+  const addrs = [...new Set(walletAddresses.map((a) => a.toLowerCase()).filter(Boolean))];
+  if (addrs.length === 0) {
+    return { agentId: null, count: 0, avgScore: null, lateCount: 0, lastPaidAt: null };
+  }
+
   const client = requireClient();
-  const addr = walletAddress.toLowerCase();
   const [agentRes, feedbackRes] = await Promise.all([
-    client.from("reputation_agents").select("agent_id").eq("wallet_address", addr).maybeSingle(),
+    client.from("reputation_agents").select("agent_id").in("wallet_address", addrs).limit(1).maybeSingle(),
     client
       .from("reputation_feedback")
       .select("score, tag, share_units, created_at")
-      .eq("wallet_address", addr)
+      .in("wallet_address", addrs)
       .order("created_at", { ascending: false }),
   ]);
   if (agentRes.error) throw new Error(`Failed to read reputation agent: ${agentRes.error.message}`);
