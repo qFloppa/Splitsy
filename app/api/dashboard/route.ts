@@ -2,12 +2,12 @@ import { getSessionUser } from "@/lib/session";
 import {
   getBillIdsForSplitterOnchain,
   getBillIdsForParticipantOnchain,
-  getBillOnchain,
-  getParticipantOnchain,
+  getBillsOnchain,
+  getParticipantsOnchain,
   REGISTRY_ADDRESS,
 } from "@/lib/arc-read";
-import { listRecipientTabsOnchain } from "@/lib/recurring-read";
-import { getOnchainBillPreimage } from "@/lib/onchain-bill-preimage-repo";
+import { listRecipientTabsForWalletsOnchain } from "@/lib/recurring-read";
+import { getOnchainBillPreimages } from "@/lib/onchain-bill-preimage-repo";
 import { getReputationSummaryForWallets } from "@/lib/reputation-repo";
 import { buildDashboard, type CreatedBill, type OwedBill } from "@/lib/dashboard-aggregate";
 import { DEMO_DASHBOARD } from "@/lib/dashboard-fixture";
@@ -30,17 +30,6 @@ function parseWallets(url: URL, sessionWallet: string | null): `0x${string}`[] {
   return [...new Set(all)] as `0x${string}`[];
 }
 
-// A tab where the user is recipient from more than one of their wallets should
-// appear once. Keyed by tab address.
-function dedupeTabs<T extends { address: string }>(tabs: T[]): T[] {
-  const seen = new Map<string, T>();
-  for (const t of tabs) {
-    const key = t.address.toLowerCase();
-    if (!seen.has(key)) seen.set(key, t);
-  }
-  return [...seen.values()];
-}
-
 // Orchestration over already-tested parts (reads → buildDashboard). bigint never
 // crosses Response.json — buildDashboard returns strings/numbers only.
 export async function GET(request: Request) {
@@ -58,19 +47,22 @@ export async function GET(request: Request) {
     return Response.json({ error: "No wallet to report on" }, { status: 400 });
   }
 
-  // 1. id lists per wallet (cheap, parallel). Union the created/owed id sets
-  //    across wallets, deduping so a bill reachable from two of the user's
-  //    wallets is read (and counted) exactly once.
-  const perWallet = await Promise.all(
-    wallets.map(async (w) => {
-      const [splitterIds, participantIds, tabs] = await Promise.all([
-        getBillIdsForSplitterOnchain(w),
-        getBillIdsForParticipantOnchain(w),
-        listRecipientTabsOnchain(w),
-      ]);
-      return { wallet: w, splitterIds, participantIds, tabs };
-    }),
-  );
+  // 1. id lists per wallet + the recipient tabs, in parallel. Union the
+  //    created/owed id sets across wallets, deduping so a bill reachable from
+  //    two of the user's wallets is read (and counted) exactly once. Tabs are
+  //    scanned ONCE for all wallets (deduped by tab) rather than per wallet.
+  const [perWallet, recipientTabs] = await Promise.all([
+    Promise.all(
+      wallets.map(async (w) => {
+        const [splitterIds, participantIds] = await Promise.all([
+          getBillIdsForSplitterOnchain(w),
+          getBillIdsForParticipantOnchain(w),
+        ]);
+        return { wallet: w, splitterIds, participantIds };
+      }),
+    ),
+    listRecipientTabsForWalletsOnchain(wallets),
+  ]);
 
   const createdIds = [...new Set(perWallet.flatMap((p) => p.splitterIds.map((id) => id.toString())))];
   // An owed bill is scoped to the wallet that owes it — remember which wallet so
@@ -83,46 +75,66 @@ export async function GET(request: Request) {
       if (!owedPairs.has(key)) owedPairs.set(key, p.wallet);
     }
   }
-  const recipientTabs = dedupeTabs(perWallet.flatMap((p) => p.tabs));
 
-  // 2. per-bill detail (batched)
-  const created: CreatedBill[] = await Promise.all(
-    createdIds.map(async (idStr) => {
-      const billId = BigInt(idStr);
-      const [bill, preimage] = await Promise.all([
-        getBillOnchain(billId),
-        getOnchainBillPreimage(REGISTRY_ADDRESS, idStr),
-      ]);
-      const participants = await Promise.all(
-        bill.participantList.map(async (addr) => {
-          const p = await getParticipantOnchain(billId, addr as `0x${string}`);
-          return { addr: addr.toLowerCase(), owed: p.owed, paid: p.paid };
-        }),
-      );
-      return {
-        billId,
-        totalOwed: bill.totalOwed,
-        totalPaid: bill.totalPaid,
-        claimed: bill.claimed,
-        participants,
-        labels: preimage?.participantLabels ?? [],
-        providers: preimage?.participantProviders ?? [],
-        createdAtSeconds: preimage?.createdAtSeconds ?? 0,
-      };
-    }),
-  );
+  // 2. per-bill detail. Reads are collapsed into Multicall3 batches (one
+  //    eth_call each) rather than one readContract per bill: a multi-wallet
+  //    dashboard fans out to dozens of bills, and per-call reads overran the
+  //    RPC's batch/rate limits (see getBillsOnchain). Preimages are Supabase
+  //    reads (not RPC), so they stay a plain parallel fetch.
+  const createdBigIds = createdIds.map((idStr) => BigInt(idStr));
+  const bills = await getBillsOnchain(createdBigIds); // index-aligned with createdIds
 
-  const owed: OwedBill[] = await Promise.all(
-    [...owedPairs.entries()].map(async ([idStr, wallet]) => {
-      const billId = BigInt(idStr);
-      const [p, preimage] = await Promise.all([
-        getParticipantOnchain(billId, wallet),
-        getOnchainBillPreimage(REGISTRY_ADDRESS, idStr),
-      ]);
-      // ponytail: no preimage → createdAtSeconds 0 bins into 30d+ aging. Fine for v1.
-      return { billId, myOwed: p.owed, myPaid: p.paid, createdAtSeconds: preimage?.createdAtSeconds ?? 0 };
-    }),
+  // Flatten every (bill, participant) into one multicall, remembering which
+  // slice of the result belongs to which bill so we can reassemble below.
+  const partPairs: { billId: bigint; addr: `0x${string}` }[] = [];
+  const partSlots: number[][] = bills.map(() => []);
+  bills.forEach((bill, bi) => {
+    if (!bill) return;
+    for (const addr of bill.participantList) {
+      partSlots[bi].push(partPairs.length);
+      partPairs.push({ billId: bill.billId, addr });
+    }
+  });
+  const owedEntries = [...owedPairs.entries()];
+  const allBillIds = [...new Set([...createdIds, ...owedEntries.map(([id]) => id)])];
+  const [partResults, preimageMap] = await Promise.all([
+    getParticipantsOnchain(partPairs),
+    getOnchainBillPreimages(REGISTRY_ADDRESS, allBillIds),
+  ]);
+
+  const created: CreatedBill[] = [];
+  bills.forEach((bill, bi) => {
+    if (!bill) return; // getBill failed for this id — can't aggregate what we couldn't read
+    const preimage = preimageMap.get(createdIds[bi]);
+    const participants = bill.participantList.map((addr, k) => {
+      const p = partResults[partSlots[bi][k]];
+      return { addr: addr.toLowerCase(), owed: p?.owed ?? 0n, paid: p?.paid ?? 0n };
+    });
+    created.push({
+      billId: bill.billId,
+      totalOwed: bill.totalOwed,
+      totalPaid: bill.totalPaid,
+      claimed: bill.claimed,
+      participants,
+      labels: preimage?.participantLabels ?? [],
+      providers: preimage?.participantProviders ?? [],
+      createdAtSeconds: preimage?.createdAtSeconds ?? 0,
+    });
+  });
+
+  const owedParts = await getParticipantsOnchain(
+    owedEntries.map(([idStr, wallet]) => ({ billId: BigInt(idStr), addr: wallet })),
   );
+  const owed: OwedBill[] = owedEntries.map(([idStr], i) => {
+    const p = owedParts[i];
+    // ponytail: no preimage → createdAtSeconds 0 bins into 30d+ aging. Fine for v1.
+    return {
+      billId: BigInt(idStr),
+      myOwed: p?.owed ?? 0n,
+      myPaid: p?.paid ?? 0n,
+      createdAtSeconds: preimageMap.get(idStr)?.createdAtSeconds ?? 0,
+    };
+  });
 
   // 3. reputation across all of the user's wallets + shortfalls
   const reputationSummary = await getReputationSummaryForWallets(wallets);

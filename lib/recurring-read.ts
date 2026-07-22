@@ -102,8 +102,10 @@ const publicClient = createPublicClient({
   // batch: coalesce concurrent eth_calls (the per-tab recipient/claimable reads
   // fanned out via Promise.all in listRecipientTabsOnchain) into batched
   // JSON-RPC POSTs. Complements multicall, which batches within a single tab.
+  // batchSize 3: drpc's free plan rejects batches of >3 with HTTP 500 (see
+  // arc-read.ts) — many tabs would otherwise overflow one batch.
   transport: http(process.env.NEXT_PUBLIC_ARC_TESTNET_RPC_URL ?? "https://rpc.testnet.arc.network", {
-    batch: true,
+    batch: { batchSize: 3 },
   }),
 });
 
@@ -119,42 +121,69 @@ export async function getNextTabIdOnchain(): Promise<bigint> {
 // dashboard needs). ponytail: full-scan of tab ids, same as the client's
 // readRecurringTabsForWallet. Add an id index only if tab count grows enough
 // to matter.
-export async function listRecipientTabsOnchain(
-  recipient: `0x${string}`,
-): Promise<Array<{ address: `0x${string}`; claimable: bigint; settlementCount: bigint; maxSettlements: bigint }>> {
+export type RecipientTab = {
+  address: `0x${string}`;
+  claimable: bigint;
+  settlementCount: bigint;
+  maxSettlements: bigint;
+};
+
+// Tabs whose recipient is any of `recipients` (a person's social + browser
+// wallets), scanned once and deduped by tab. Two multicalls total regardless of
+// tab count: one for the id→address map, then ONE for every tab's
+// (recipient, claimable, settlementCount, maxSettlements) — 4 reads per tab
+// collapsed into a single eth_call. The prior version fired one multicall PER
+// tab via Promise.all, whose burst tripped the RPC's per-second rate limit on a
+// dashboard load with several tabs.
+export async function listRecipientTabsForWalletsOnchain(recipients: string[]): Promise<RecipientTab[]> {
+  const want = new Set(recipients.map((r) => r.toLowerCase()));
+  if (want.size === 0) return [];
   const nextId = await getNextTabIdOnchain();
   const ids = Array.from({ length: Math.max(0, Number(nextId - 1n)) }, (_, i) => BigInt(i + 1));
   if (ids.length === 0) return [];
-  const addrs = await publicClient.multicall({
+
+  const addrRes = await publicClient.multicall({
     allowFailure: true,
     contracts: ids.map((id) => ({
       address: RECURRING_TAB_FACTORY_ADDRESS, abi: FACTORY_READ_ABI, functionName: "tabs", args: [id],
     })),
   });
-  const tabAddrs = addrs
+  const tabAddrs = addrRes
     .map((r) => (r.status === "success" ? (r.result as unknown as `0x${string}`) : null))
     .filter((a): a is `0x${string}` => Boolean(a) && a !== "0x0000000000000000000000000000000000000000");
-  const rows = await Promise.all(
-    tabAddrs.map(async (address) => {
-      try {
-        const [recip, claimable, settlementCount, maxSettlements] = await publicClient.multicall({
-          allowFailure: false,
-          contracts: [
-            { address, abi: TAB_READ_ABI, functionName: "recipient" },
-            { address, abi: TAB_READ_ABI, functionName: "claimable" },
-            { address, abi: TAB_READ_ABI, functionName: "settlementCount" },
-            { address, abi: TAB_READ_ABI, functionName: "maxSettlements" },
-          ],
-        });
-        return { address, recipient: recip as `0x${string}`, claimable, settlementCount, maxSettlements };
-      } catch {
-        return null;
-      }
-    }),
-  );
-  return rows
-    .filter((r): r is NonNullable<typeof r> => r !== null && r.recipient.toLowerCase() === recipient.toLowerCase())
-    .map(({ address, claimable, settlementCount, maxSettlements }) => ({ address, claimable, settlementCount, maxSettlements }));
+  if (tabAddrs.length === 0) return [];
+
+  // All per-tab reads in ONE multicall: tab i occupies detail[i*4 .. i*4+3].
+  const fields = ["recipient", "claimable", "settlementCount", "maxSettlements"] as const;
+  const detail = await publicClient.multicall({
+    allowFailure: true,
+    contracts: tabAddrs.flatMap((address) => fields.map((functionName) => ({ address, abi: TAB_READ_ABI, functionName }))),
+  });
+
+  const rows: RecipientTab[] = [];
+  tabAddrs.forEach((address, i) => {
+    const recip = detail[i * 4];
+    const claimable = detail[i * 4 + 1];
+    const settlementCount = detail[i * 4 + 2];
+    const maxSettlements = detail[i * 4 + 3];
+    if (
+      recip?.status !== "success" || claimable?.status !== "success" ||
+      settlementCount?.status !== "success" || maxSettlements?.status !== "success"
+    ) return; // a tab we couldn't fully read — skip rather than report partial
+    if (!want.has((recip.result as `0x${string}`).toLowerCase())) return;
+    rows.push({
+      address,
+      claimable: claimable.result as bigint,
+      settlementCount: settlementCount.result as bigint,
+      maxSettlements: maxSettlements.result as bigint,
+    });
+  });
+  return rows;
+}
+
+// Single-recipient convenience wrapper.
+export async function listRecipientTabsOnchain(recipient: `0x${string}`): Promise<RecipientTab[]> {
+  return listRecipientTabsForWalletsOnchain([recipient]);
 }
 
 // Provenance gate for the DCW authorize/claim routes: an arbitrary client-sent
