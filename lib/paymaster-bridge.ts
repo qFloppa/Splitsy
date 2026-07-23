@@ -89,26 +89,6 @@ function bundlerUrl(chainId: number): string {
   return `https://public.pimlico.io/v2/${chainId}/rpc`;
 }
 
-// Coarse EIP-7702 capability probe. There's no standard pre-flight for 7702, so
-// we use EIP-5792 wallet_getCapabilities as a "modern enough" heuristic: wallets
-// that implement it (e.g. MetaMask) are the ones that also do 7702, and a wallet
-// too old to answer it definitely can't. If this passes but signAuthorization
-// still fails downstream, the burn step surfaces a clean error — no crash.
-export async function canUsePaymaster(
-  provider: EIP1193Provider,
-  address: `0x${string}`,
-): Promise<boolean> {
-  try {
-    const caps = await provider.request({
-      method: "wallet_getCapabilities",
-      params: [address],
-    } as Parameters<typeof provider.request>[0]);
-    return caps !== null && caps !== undefined;
-  } catch {
-    return false;
-  }
-}
-
 /** Native gas balance for an address on a given source chain. */
 export async function getNativeBalance(
   address: `0x${string}`,
@@ -274,6 +254,12 @@ export async function bridgeWithPaymaster({
     });
   } catch (e) {
     onStep?.({ method: "sign7702", state: "error" });
+    // A wallet that doesn't implement EIP-7702 fails here with method-not-found;
+    // translate that to an actionable message (a user rejection passes through).
+    const msg = (e as Error)?.message ?? "";
+    if (/method|not found|not support|unsupported|-32601|7702/i.test(msg) && !/reject|denied|4001/i.test(msg)) {
+      throw new Error("This wallet can't authorize paying gas in USDC (needs EIP-7702). Add a little native gas token and bridge again.");
+    }
     throw e;
   }
   onStep?.({ method: "sign7702", state: "success" });

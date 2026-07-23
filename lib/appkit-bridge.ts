@@ -17,13 +17,12 @@ import type { Connector } from "wagmi";
 import { parseUnits, type EIP1193Provider } from "viem";
 import {
   bridgeWithPaymaster,
-  canUsePaymaster,
   getNativeBalance,
   LOW_NATIVE_THRESHOLD,
   type PaymasterBridgeStep,
 } from "@/lib/paymaster-bridge";
 
-export { canUsePaymaster, getNativeBalance, LOW_NATIVE_THRESHOLD };
+export { getNativeBalance, LOW_NATIVE_THRESHOLD };
 
 export type BridgeSourceChain =
   | "Arbitrum_Sepolia"

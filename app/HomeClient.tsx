@@ -53,7 +53,6 @@ import {
   type BridgeStepEvent,
   BridgeSummary,
   type BrowserWalletSession,
-  canUsePaymaster,
   createBrowserWalletSessionFromConnector,
   getNativeBalance,
   LOW_NATIVE_THRESHOLD,
@@ -1399,18 +1398,15 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
   }
 
   // Decide how to run a bridge based on the payer's native gas balance on the
-  // source chain. Enough gas → normal EOA bridge. No gas + wallet can do 7702 →
-  // ask, and use the paymaster on yes. No gas + wallet can't do 7702 → tell them
-  // to top up native gas (returns null: caller aborts and shows the hint).
+  // source chain. Enough gas → normal EOA bridge. Low gas → offer the paymaster
+  // (pay gas in USDC); on yes use it, on no tell them to top up native gas
+  // (returns null: caller aborts and shows the hint).
   async function resolveBridgeMode(
     session: BrowserWalletSession,
     sourceChain: BridgeSourceChain,
     amountLabel: string,
     showHint: (message: string) => void,
   ): Promise<"paymaster" | "normal" | null> {
-    const provider = (await connector?.getProvider().catch(() => null)) as EIP1193Provider | null;
-    if (!provider) return "normal";
-
     let native: bigint;
     try {
       native = await getNativeBalance(session.connectedAddress as `0x${string}`, sourceChain);
@@ -1419,14 +1415,10 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
     }
     if (native >= LOW_NATIVE_THRESHOLD) return "normal";
 
+    // No reliable read-only probe for EIP-7702 exists, so offer the paymaster
+    // whenever native gas is low and let the 7702 signature be the real test —
+    // wallets that can't do it fail gracefully with a clear message below.
     const symbol = nativeSymbol(sourceChain);
-    if (!(await canUsePaymaster(provider, session.connectedAddress as `0x${string}`))) {
-      showHint(
-        `You need a little ${symbol} on ${sourceLabel(sourceChain)} to cover bridge gas, and this wallet can't pay gas in USDC. Add some ${symbol} and try again.`,
-      );
-      return null;
-    }
-
     const useIt = await new Promise<boolean>((resolve) => {
       setPaymasterPrompt({
         context: { sourceLabel: sourceLabel(sourceChain), amountLabel, nativeSymbol: symbol },
