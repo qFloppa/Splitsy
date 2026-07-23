@@ -34,7 +34,7 @@ import gsap from "gsap";
 import Image from "next/image";
 import Link from "next/link";
 import { ChangeEvent, DragEvent, FormEvent, ReactNode, useEffect, useMemo, useRef, useState } from "react";
-import { getAddress } from "viem";
+import { getAddress, type EIP1193Provider } from "viem";
 import { arcTestnet } from "viem/chains";
 import { useAccount, useConnect, useDisconnect, useSwitchChain } from "wagmi";
 import { getWalletClient } from "wagmi/actions";
@@ -48,12 +48,17 @@ import { HistoryCard, PaidBillStamp } from "./HistoryCard";
 import {
   bridgeSourceChains,
   bridgeUsdcToArc,
+  bridgeUsdcToArcWithPaymaster,
   BridgeSourceChain,
   type BridgeStepEvent,
   BridgeSummary,
   type BrowserWalletSession,
+  canUsePaymaster,
   createBrowserWalletSessionFromConnector,
+  getNativeBalance,
+  LOW_NATIVE_THRESHOLD,
 } from "@/lib/appkit-bridge";
+import { PaymasterConfirmDialog, type PaymasterConfirmContext } from "@/components/PaymasterConfirmDialog";
 import {
   approveBillRegistry,
   billMetadataHash,
@@ -327,6 +332,12 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
   const [dueDateInput, setDueDateInput] = useState("");
   const [bridgeResults, setBridgeResults] = useState<Record<string, BridgeSummary>>({});
   const [bridgeSession, setBridgeSession] = useState<BrowserWalletSession | null>(null);
+  // When a bridge is blocked on "no native gas", we surface a confirm dialog and
+  // park the pending decision here; resolve() is wired to the dialog's buttons.
+  const [paymasterPrompt, setPaymasterPrompt] = useState<{
+    context: PaymasterConfirmContext;
+    resolve: (useIt: boolean) => void;
+  } | null>(null);
   const [recurringCycle, setRecurringCycle] = useState<RecurringCycle>("weekly");
   const [customCycleDays, setCustomCycleDays] = useState("30");
   const [billWallet, setBillWallet] = useState<BillSplitWallet | null>(null);
@@ -1387,6 +1398,49 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
     }
   }
 
+  // Decide how to run a bridge based on the payer's native gas balance on the
+  // source chain. Enough gas → normal EOA bridge. No gas + wallet can do 7702 →
+  // ask, and use the paymaster on yes. No gas + wallet can't do 7702 → tell them
+  // to top up native gas (returns null: caller aborts and shows the hint).
+  async function resolveBridgeMode(
+    session: BrowserWalletSession,
+    sourceChain: BridgeSourceChain,
+    amountLabel: string,
+    showHint: (message: string) => void,
+  ): Promise<"paymaster" | "normal" | null> {
+    const provider = (await connector?.getProvider().catch(() => null)) as EIP1193Provider | null;
+    if (!provider) return "normal";
+
+    let native: bigint;
+    try {
+      native = await getNativeBalance(session.connectedAddress as `0x${string}`, sourceChain);
+    } catch {
+      return "normal"; // balance probe failed — don't block the normal path
+    }
+    if (native >= LOW_NATIVE_THRESHOLD) return "normal";
+
+    const symbol = nativeSymbol(sourceChain);
+    if (!(await canUsePaymaster(provider, session.connectedAddress as `0x${string}`))) {
+      showHint(
+        `You need a little ${symbol} on ${sourceLabel(sourceChain)} to cover bridge gas, and this wallet can't pay gas in USDC. Add some ${symbol} and try again.`,
+      );
+      return null;
+    }
+
+    const useIt = await new Promise<boolean>((resolve) => {
+      setPaymasterPrompt({
+        context: { sourceLabel: sourceLabel(sourceChain), amountLabel, nativeSymbol: symbol },
+        resolve,
+      });
+    });
+    setPaymasterPrompt(null);
+    if (!useIt) {
+      showHint(`Add a little ${symbol} on ${sourceLabel(sourceChain)} for gas, then bridge again.`);
+      return null;
+    }
+    return "paymaster";
+  }
+
   async function bridgeForDebt(debt: BillSplitDebt, debtSourceChain: BridgeSourceChain) {
     const session = bridgeSession ?? (await connectForBridge());
     const debtKey = debt.billId.toString();
@@ -1414,6 +1468,13 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
     const source = sourceLabel(debtSourceChain);
     const amountLabel = billUnitsToUsdc(amount);
     const balanceBeforeBridge = arcUsdcBalance;
+
+    const mode = await resolveBridgeMode(session, debtSourceChain, amountLabel, (message) => {
+      setBillState("error");
+      setDebtMessages((current) => ({ ...current, [debtKey]: { tone: "error", message } }));
+    });
+    if (!mode) return;
+
     beginBridgeFlow(amountLabel, source);
 
     try {
@@ -1423,13 +1484,24 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
         delete next[debtKey];
         return next;
       });
-      const result = await bridgeUsdcToArc({
-        session,
-        sourceChain: debtSourceChain,
-        recipientAddress: billWallet.account,
-        amount: amountLabel,
-        onStep: (event) => handleBridgeStep(event, source),
-      });
+      const provider = (await connector?.getProvider()) as EIP1193Provider;
+      const result =
+        mode === "paymaster"
+          ? await bridgeUsdcToArcWithPaymaster({
+              session,
+              provider,
+              sourceChain: debtSourceChain,
+              recipientAddress: billWallet.account,
+              amount: amountLabel,
+              onStep: (event) => handleBridgeStep(event, source),
+            })
+          : await bridgeUsdcToArc({
+              session,
+              sourceChain: debtSourceChain,
+              recipientAddress: billWallet.account,
+              amount: amountLabel,
+              onStep: (event) => handleBridgeStep(event, source),
+            });
       setBridgeResults((current) => ({ ...current, [debtKey]: result }));
 
       if (result.state === "error") {
@@ -1522,17 +1594,35 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
 
     const source = sourceLabel(sourceChain);
     const balanceBeforeBridge = arcUsdcBalance;
+
+    const mode = await resolveBridgeMode(session, sourceChain, amountLabel, (message) => {
+      setRecurringState("error");
+      setRecurringMessage(message);
+    });
+    if (!mode) return;
+
     beginBridgeFlow(amountLabel, source);
 
     try {
       setRecurringState("working");
-      const result = await bridgeUsdcToArc({
-        session,
-        sourceChain,
-        recipientAddress: recurringWallet.account,
-        amount: amountLabel,
-        onStep: (event) => handleBridgeStep(event, source),
-      });
+      const provider = (await connector?.getProvider()) as EIP1193Provider;
+      const result =
+        mode === "paymaster"
+          ? await bridgeUsdcToArcWithPaymaster({
+              session,
+              provider,
+              sourceChain,
+              recipientAddress: recurringWallet.account,
+              amount: amountLabel,
+              onStep: (event) => handleBridgeStep(event, source),
+            })
+          : await bridgeUsdcToArc({
+              session,
+              sourceChain,
+              recipientAddress: recurringWallet.account,
+              amount: amountLabel,
+              onStep: (event) => handleBridgeStep(event, source),
+            });
 
       if (result.state === "error") {
         failFlow("The bridge did not complete. No funds were claimed on Arc.");
@@ -2850,6 +2940,13 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
       </section>
 
       {progressFlow ? <ProgressModal flow={progressFlow} onClose={closeFlow} /> : null}
+      {paymasterPrompt ? (
+        <PaymasterConfirmDialog
+          context={paymasterPrompt.context}
+          onConfirm={() => paymasterPrompt.resolve(true)}
+          onCancel={() => paymasterPrompt.resolve(false)}
+        />
+      ) : null}
       <XAuthControl />
     </main>
   );
@@ -4805,6 +4902,14 @@ function ModeButton({
 
 function sourceLabel(id: BridgeSourceChain) {
   return bridgeSourceChains.find((chain) => chain.id === id)?.label ?? id;
+}
+
+// Native gas token per bridge source chain — used only for the "you have no X"
+// paymaster prompt copy.
+function nativeSymbol(id: BridgeSourceChain) {
+  if (id === "Avalanche_Fuji") return "AVAX";
+  if (id === "Polygon_Amoy_Testnet") return "POL";
+  return "ETH";
 }
 
 function toUsdInput(value: number, rate: number) {

@@ -11,9 +11,19 @@ import {
   PolygonAmoy,
 } from "@circle-fin/app-kit/chains";
 import { createViemAdapterFromProvider, resolveChainIdentifier } from "@circle-fin/adapter-viem-v2";
+import { CCTPV2BridgingProvider } from "@circle-fin/provider-cctp-v2";
 import type { AppKitActions } from "@circle-fin/app-kit";
 import type { Connector } from "wagmi";
-import type { EIP1193Provider } from "viem";
+import { parseUnits, type EIP1193Provider } from "viem";
+import {
+  bridgeWithPaymaster,
+  canUsePaymaster,
+  getNativeBalance,
+  LOW_NATIVE_THRESHOLD,
+  type PaymasterBridgeStep,
+} from "@/lib/paymaster-bridge";
+
+export { canUsePaymaster, getNativeBalance, LOW_NATIVE_THRESHOLD };
 
 export type BridgeSourceChain =
   | "Arbitrum_Sepolia"
@@ -217,6 +227,78 @@ export async function bridgeUsdcToArc({
   } finally {
     unsubscribe?.();
   }
+}
+
+// Source-chain CCTP domain definitions for the granular attestation/mint path.
+const SOURCE_CHAIN_DEFS: Record<BridgeSourceChain, unknown> = {
+  Arbitrum_Sepolia: ArbitrumSepolia,
+  Avalanche_Fuji: AvalancheFuji,
+  Base_Sepolia: BaseSepolia,
+  Ethereum_Sepolia: EthereumSepolia,
+  Optimism_Sepolia: OptimismSepolia,
+  Polygon_Amoy_Testnet: PolygonAmoy,
+};
+
+// 7702 auth + USDC permit both surface to the existing UI as the "approve"
+// phase; the burn drives the advance to the bridge step.
+function mapPaymasterStep(step: PaymasterBridgeStep): BridgeStepEvent {
+  if (step.method === "burn") {
+    return { method: "burn", state: step.state, txHash: step.txHash };
+  }
+  return { method: "approve", state: step.state === "error" ? "error" : "pending" };
+}
+
+// Paymaster variant of bridgeUsdcToArc: hand-rolls the source-chain approve +
+// burn as an ERC-4337 UserOperation (gas paid in USDC) so a wallet with no
+// native gas token can still bridge, then hands the burn txHash to AppKit's
+// CCTP attestation + mint for the Arc side (Arc gas is USDC natively).
+export async function bridgeUsdcToArcWithPaymaster({
+  session,
+  provider,
+  sourceChain,
+  recipientAddress,
+  amount,
+  onStep,
+}: {
+  session: BrowserWalletSession;
+  provider: EIP1193Provider;
+  sourceChain: BridgeSourceChain;
+  recipientAddress: string;
+  amount: string;
+  onStep?: (event: BridgeStepEvent) => void;
+}): Promise<BridgeSummary> {
+  // Put the wallet on the source chain before the burn signs its 7702 auth +
+  // permit there (mirrors bridgeUsdcToArc's ensureChain before kit.bridge).
+  const srcChain = resolveChainIdentifier(sourceChain);
+  if (srcChain.type !== "evm") throw new Error(`${sourceChain} is not an EVM chain.`);
+  await session.adapter.ensureChain(srcChain);
+
+  const { txHash } = await bridgeWithPaymaster({
+    provider,
+    address: session.connectedAddress as `0x${string}`,
+    sourceChain,
+    amount: parseUnits(amount, 6),
+    recipientAddress,
+    onStep: (step) => onStep?.(mapPaymasterStep(step)),
+  });
+
+  const cctp = new CCTPV2BridgingProvider();
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- cross-package WalletContext structural types
+  const source = { adapter: session.adapter, address: session.connectedAddress, chain: SOURCE_CHAIN_DEFS[sourceChain] } as any;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- cross-package DestinationWalletContext
+  const destination = { adapter: session.adapter, address: session.connectedAddress, chain: ArcTestnet, recipientAddress } as any;
+
+  onStep?.({ method: "fetchAttestation", state: "pending" });
+  const attestation = await cctp.fetchAttestation(source, txHash);
+  onStep?.({ method: "fetchAttestation", state: "success" });
+
+  onStep?.({ method: "mint", state: "pending" });
+  await session.adapter.ensureChain(resolveChainIdentifier("Arc_Testnet"));
+  const prepared = await cctp.mint(source, destination, attestation);
+  const mintTxHash = await prepared.execute();
+  onStep?.({ method: "mint", state: "success", txHash: mintTxHash });
+
+  return { state: "success", explorerUrls: [], steps: ["burn: success", "mint: success"] };
 }
 
 // Bridge over the AppKit event bus so the UI can render live per-transaction
