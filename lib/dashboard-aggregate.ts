@@ -57,7 +57,10 @@ export type DashboardInput = {
 
 const max0 = (v: bigint) => (v < 0n ? 0n : v);
 
-export function buildDashboard(input: DashboardInput): DashboardData {
+// `treasury` is Omit'd: it needs a handle lookup (I/O), so the route composes it
+// from buildTreasury and spreads it onto this result to form the full
+// DashboardData. Keeping it out preserves this module's no-I/O guarantee.
+export function buildDashboard(input: DashboardInput): Omit<DashboardData, "treasury"> {
   const { created, owed, recipientTabs, nowSeconds } = input;
 
   // KPIs. Dedupe rule: a bill where I am both splitter and participant appears

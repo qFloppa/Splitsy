@@ -11,6 +11,9 @@ import { getOnchainBillPreimages } from "@/lib/onchain-bill-preimage-repo";
 import { getReputationSummaryForWallets } from "@/lib/reputation-repo";
 import { buildDashboard, type CreatedBill, type OwedBill } from "@/lib/dashboard-aggregate";
 import { DEMO_DASHBOARD } from "@/lib/dashboard-fixture";
+import type { DashboardData } from "@/lib/dashboard-types";
+import { buildTreasury, type TreasuryCreatedBill, type TreasuryOwedBill, type CounterpartyIdentity } from "@/lib/treasury";
+import { getUsersByWallets } from "@/lib/users-repo";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -122,9 +125,13 @@ export async function GET(request: Request) {
     });
   });
 
-  const owedParts = await getParticipantsOnchain(
-    owedEntries.map(([idStr, wallet]) => ({ billId: BigInt(idStr), addr: wallet })),
-  );
+  // Owed bills need their splitter (the counterparty I owe) for the treasury
+  // view, which getParticipant does not return — one more multicall, not a
+  // per-bill fan-out (see getBillsOnchain on why per-call reads break the RPC).
+  const [owedParts, owedBills] = await Promise.all([
+    getParticipantsOnchain(owedEntries.map(([idStr, wallet]) => ({ billId: BigInt(idStr), addr: wallet }))),
+    getBillsOnchain(owedEntries.map(([idStr]) => BigInt(idStr))),
+  ]);
   const owed: OwedBill[] = owedEntries.map(([idStr], i) => {
     const p = owedParts[i];
     // ponytail: no preimage → createdAtSeconds 0 bins into 30d+ aging. Fine for v1.
@@ -140,6 +147,59 @@ export async function GET(request: Request) {
   const reputationSummary = await getReputationSummaryForWallets(wallets);
   const shortfallCountByTab: Record<string, number> = {}; // ponytail: fill from SettlementShortfall logs if needed
 
+  // ── treasury: net position per counterparty ────────────────────────────────
+  // Reuses the reads above; the only new I/O is the handle lookup below.
+  const treasuryCreated: TreasuryCreatedBill[] = created.map((b) => ({
+    billId: b.billId.toString(),
+    totalPaid: b.totalPaid,
+    claimed: b.claimed,
+    participants: b.participants,
+  }));
+  const treasuryOwed: TreasuryOwedBill[] = owedEntries.flatMap(([idStr], i) => {
+    const bill = owedBills[i];
+    if (!bill) return []; // unreadable bill — can't name the counterparty, so skip it
+    return [{
+      billId: idStr,
+      splitter: bill.splitter.toLowerCase(),
+      myOwed: owed[i].myOwed,
+      myPaid: owed[i].myPaid,
+    }];
+  });
+
+  // Labels keyed LOWERCASE — buildTreasury lowercases chain addresses before
+  // looking this map up, and chain reads return checksummed hex, so a mixed-case
+  // key would silently fall back to the raw address / "unknown" bucket.
+  // A preimage names the participants of a bill I created (index-aligned with
+  // participantList, but possibly SHORTER on pre-migration rows — hence the
+  // optional index); the users table names anyone with a social wallet. The users
+  // row wins: it is the live handle, a preimage label is a creation-time snapshot.
+  const identities: Record<string, CounterpartyIdentity> = {};
+  bills.forEach((bill, bi) => {
+    if (!bill) return;
+    const preimage = preimageMap.get(createdIds[bi]);
+    bill.participantList.forEach((addr, k) => {
+      const label = preimage?.participantLabels?.[k];
+      if (!label) return;
+      const key = addr.toLowerCase();
+      if (!identities[key]) identities[key] = { label, provider: preimage?.participantProviders?.[k] ?? null };
+    });
+  });
+  const counterpartyAddresses = [
+    ...treasuryCreated.flatMap((b) => b.participants.map((p) => p.addr)),
+    ...treasuryOwed.map((b) => b.splitter),
+  ];
+  // Overwrites (not `if (!identities[key])`) so the live handle beats the snapshot.
+  for (const [addr, user] of await getUsersByWallets(counterpartyAddresses)) {
+    identities[addr.toLowerCase()] = { label: `@${user.handle}`, provider: user.provider };
+  }
+
+  const treasury = buildTreasury({
+    myWallets: wallets, // every wallet the viewer controls, else own activity looks like a position
+    created: treasuryCreated,
+    owed: treasuryOwed,
+    identities,
+  });
+
   const data = buildDashboard({
     nowSeconds: Math.floor(Date.now() / 1000),
     myWallet: wallets[0],
@@ -154,5 +214,6 @@ export async function GET(request: Request) {
       points: [], // ponytail: point series if needed
     },
   });
-  return Response.json(data);
+  const response: DashboardData = { ...data, treasury };
+  return Response.json(response);
 }

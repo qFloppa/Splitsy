@@ -86,4 +86,44 @@ export const DEMO_DASHBOARD: DashboardData = {
       shortfallCount: 1,
     },
   ],
+  // Nets to -18.35: two counterparties owe me, one I owe more than they owe me.
+  treasury: {
+    positions: [
+      {
+        counterparty: "0x9f3c2b1a7d6e5048392a1b0c4d5e6f7089abcdef",
+        label: "@dev",
+        bucket: "x",
+        theyOweMeUsdc: "0",
+        iOweThemUsdc: "43.75",
+        netUsdc: "-43.75",
+        payBillIds: ["41", "44"],
+      },
+      {
+        counterparty: "0x2e4f6a8c0b1d3f5709a8b7c6d5e4f3a2b1c0d9e8",
+        label: "@carla",
+        bucket: "discord",
+        theyOweMeUsdc: "18.4",
+        iOweThemUsdc: "0",
+        netUsdc: "18.4",
+        payBillIds: [],
+      },
+      {
+        counterparty: "0x7a1b2c3d4e5f60718293a4b5c6d7e8f901234567",
+        label: "sam@example.com",
+        bucket: "email",
+        theyOweMeUsdc: "7",
+        iOweThemUsdc: "0",
+        netUsdc: "7",
+        payBillIds: [],
+      },
+    ],
+    claimBillIds: ["38", "40"],
+    totalTheyOweMeUsdc: "25.4",
+    totalIOweThemUsdc: "43.75",
+    netUsdc: "-18.35",
+    claimableUsdc: "72.25",
+    payLegCount: 2,
+    claimLegCount: 2,
+    grossTxCount: 6, // 2 debts x (approve + payDebt) + 2 claims
+  },
 };
