@@ -86,3 +86,37 @@ export async function getUserById(id: string): Promise<AppUser | null> {
   }
   return (data as AppUser) ?? null;
 }
+
+// Reverse lookup: wallet address -> the social identity that owns it. The
+// registry only records addresses, so the treasury view needs this to show
+// "@alice" instead of 0xab…12. One query, Map keyed lowercase. Wallets with no
+// row (non-custodial users) are simply absent — callers fall back to the address.
+export async function getUsersByWallets(
+  addresses: string[],
+): Promise<Map<string, { handle: string; provider: IdentityProvider }>> {
+  const result = new Map<string, { handle: string; provider: IdentityProvider }>();
+  const wanted = [...new Set(addresses.map((a) => a.toLowerCase()))].filter(Boolean);
+  if (wanted.length === 0) return result;
+
+  const client = createSupabaseServerClient();
+  if (!client) return result;
+
+  // Lowercase .in() is safe: every wallet_address originates from Circle DCW
+  // (getOrCreateArcWallet -> setUserWallet, directly or via pending_wallets),
+  // which returns lowercase hex — verified against all existing rows.
+  const { data, error } = await client
+    .from("users")
+    .select("wallet_address, handle, provider")
+    .in("wallet_address", wanted);
+  // Display-only enrichment: a failure degrades to addresses, never breaks the view.
+  if (error || !data) return result;
+
+  for (const row of data) {
+    if (!row.wallet_address) continue;
+    result.set(String(row.wallet_address).toLowerCase(), {
+      handle: row.handle,
+      provider: row.provider as IdentityProvider,
+    });
+  }
+  return result;
+}
