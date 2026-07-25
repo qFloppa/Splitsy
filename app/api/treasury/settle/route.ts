@@ -1,0 +1,124 @@
+// "Settle net" for the Circle wallet identity: approve, pay every outstanding
+// debt, and claim every funded bill — as ONE atomic on-chain transaction.
+//
+// Splitsy's social wallets are Circle SCA accounts (lib/circle-dcw.ts), which
+// expose executeBatch on the wallet's own address. Atomicity is the point: one
+// reverting leg reverts everything, so there is no half-settled state to report
+// or unwind. See https://developers.circle.com/wallets/batch-operations.md
+//
+// Note this does NOT move less USDC — registry escrow binds each debt to its
+// billId, so every debt still gets its own payDebt leg. What collapses is the
+// transaction count: 2N+M calls become 1.
+//
+// Every amount is read from chain, never from the client (hence no request body).
+import { cookies } from "next/headers";
+import { after } from "next/server";
+import { getSessionUser } from "@/lib/session";
+import { verifyWalletUnlock, WALLET_UNLOCK_COOKIE } from "@/lib/session-core";
+import { encodeApprove, encodeClaim, encodeExecuteBatch, encodePayDebt } from "@/lib/registry-calldata";
+import { executeContractOnArc, InsufficientFundsError } from "@/lib/circle-dcw";
+import {
+  REGISTRY_ADDRESS,
+  getBillIdsForParticipantOnchain,
+  getBillIdsForSplitterOnchain,
+  getBillsOnchain,
+  getParticipantsOnchain,
+} from "@/lib/arc-read";
+import { recordPaidFeedbackSafely } from "@/lib/erc8004";
+
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+
+const ARC_USDC_ADDRESS = process.env.ARC_TESTNET_USDC_ADDRESS ?? "0x3600000000000000000000000000000000000000";
+
+const usdc = (v: bigint) => (Number(v) / 1e6).toString();
+
+export async function POST() {
+  const user = await getSessionUser();
+  if (!user) return Response.json({ error: "Not signed in" }, { status: 401 });
+
+  const secret = process.env.SESSION_SECRET ?? "";
+  const unlockToken = (await cookies()).get(WALLET_UNLOCK_COOKIE)?.value ?? "";
+  if (verifyWalletUnlock(unlockToken, secret, Date.now()) !== user.id) {
+    return Response.json({ error: "locked" }, { status: 403 });
+  }
+  if (!user.circle_wallet_id || !user.wallet_address) {
+    return Response.json({ error: "Your wallet isn't provisioned yet. Log in again." }, { status: 409 });
+  }
+  const wallet = user.wallet_address as `0x${string}`;
+  const walletId = user.circle_wallet_id;
+
+  // 1. Derive every leg from chain.
+  const [owedIds, createdIds] = await Promise.all([
+    getBillIdsForParticipantOnchain(wallet),
+    getBillIdsForSplitterOnchain(wallet),
+  ]);
+  const [parts, createdBills] = await Promise.all([
+    getParticipantsOnchain(owedIds.map((billId) => ({ billId, addr: wallet }))),
+    getBillsOnchain([...createdIds]),
+  ]);
+
+  const payLegs = owedIds.flatMap((billId, i) => {
+    const p = parts[i];
+    if (!p) return [];
+    const remaining = p.owed - p.paid;
+    return remaining > 0n ? [{ billId, amount: remaining }] : [];
+  });
+  const claimLegs = createdBills.flatMap((b) => {
+    if (!b) return [];
+    const claimable = b.totalPaid - b.claimed;
+    return claimable > 0n ? [{ billId: b.billId, amount: claimable }] : [];
+  });
+
+  if (payLegs.length === 0 && claimLegs.length === 0) {
+    return Response.json({ error: "Nothing to settle." }, { status: 409 });
+  }
+
+  // 2. Build the batch. Order matters: the approval must precede the payDebts
+  //    that spend it. Claims are independent and go last.
+  const total = payLegs.reduce((s, l) => s + l.amount, 0n);
+  const calls: { to: string; data: `0x${string}` }[] = [];
+  if (total > 0n) {
+    calls.push({ to: ARC_USDC_ADDRESS, data: encodeApprove(REGISTRY_ADDRESS, total) });
+  }
+  for (const leg of payLegs) {
+    calls.push({ to: REGISTRY_ADDRESS, data: encodePayDebt(leg.billId, leg.amount) });
+  }
+  for (const leg of claimLegs) {
+    calls.push({ to: REGISTRY_ADDRESS, data: encodeClaim(leg.billId, leg.amount) });
+  }
+
+  // 3. One atomic transaction, sent to the wallet's OWN address (that is where
+  //    executeBatch lives on an SCA account).
+  let tx: { txHash: string | null };
+  try {
+    tx = await executeContractOnArc(walletId, wallet, encodeExecuteBatch(calls));
+  } catch (err) {
+    if (err instanceof InsufficientFundsError) {
+      return Response.json({ error: "insufficient_funds" }, { status: 402 });
+    }
+    // Atomic: nothing settled, so report the whole thing as failed.
+    return Response.json(
+      { error: err instanceof Error ? err.message : "Settlement failed" },
+      { status: 502 },
+    );
+  }
+
+  // Same consent rule as the per-bill pay route: paying a full remaining share
+  // is what permits ERC-8004 scoring. Deferred so the extra txs never delay this
+  // response, and never turn a settled batch into an error.
+  if (tx.txHash) {
+    const paymentTxHash = tx.txHash;
+    for (const leg of payLegs) {
+      const billId = leg.billId.toString();
+      after(() => recordPaidFeedbackSafely({ payerAddress: wallet, payerWalletId: walletId, billId, paymentTxHash }));
+    }
+  }
+
+  return Response.json({
+    ok: true,
+    txHash: tx.txHash,
+    paid: payLegs.map((l) => ({ billId: l.billId.toString(), amountUsdc: usdc(l.amount) })),
+    claimed: claimLegs.map((l) => ({ billId: l.billId.toString(), amountUsdc: usdc(l.amount) })),
+  });
+}

@@ -119,3 +119,41 @@ export function encodeCreateTab(
 export function encodeTabClaim(): `0x${string}` {
   return encodeFunctionData({ abi: RECURRING_TAB_CALL_ABI, functionName: "claim", args: [] });
 }
+
+// Circle SCA wallets expose executeBatch on the wallet address itself: each
+// tuple is (target contract, native value, calldata) and the whole batch lands
+// as ONE atomic transaction — any reverting leg reverts all of it.
+// See https://developers.circle.com/wallets/batch-operations.md
+// Encoded here rather than passed as abiFunctionSignature/abiParameters because
+// Circle treats those as mutually exclusive with callData, and
+// executeContractOnArc already sends callData.
+export const SCA_BATCH_ABI = [
+  {
+    type: "function",
+    name: "executeBatch",
+    stateMutability: "nonpayable",
+    inputs: [
+      {
+        name: "calls",
+        type: "tuple[]",
+        components: [
+          { name: "target", type: "address" },
+          { name: "value", type: "uint256" },
+          { name: "data", type: "bytes" },
+        ],
+      },
+    ],
+    outputs: [],
+  },
+] as const;
+
+export function encodeExecuteBatch(
+  calls: { to: string; value?: bigint; data: `0x${string}` }[],
+): `0x${string}` {
+  if (calls.length === 0) throw new Error("encodeExecuteBatch: no calls");
+  return encodeFunctionData({
+    abi: SCA_BATCH_ABI,
+    functionName: "executeBatch",
+    args: [calls.map((c) => ({ target: c.to as `0x${string}`, value: c.value ?? 0n, data: c.data }))],
+  });
+}
