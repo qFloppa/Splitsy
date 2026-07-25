@@ -34,7 +34,7 @@ import gsap from "gsap";
 import Image from "next/image";
 import Link from "next/link";
 import { ChangeEvent, DragEvent, FormEvent, ReactNode, useEffect, useMemo, useRef, useState } from "react";
-import { getAddress, type EIP1193Provider } from "viem";
+import { getAddress } from "viem";
 import { arcTestnet } from "viem/chains";
 import { useAccount, useConnect, useDisconnect, useSwitchChain } from "wagmi";
 import { getWalletClient } from "wagmi/actions";
@@ -48,16 +48,12 @@ import { HistoryCard, PaidBillStamp } from "./HistoryCard";
 import {
   bridgeSourceChains,
   bridgeUsdcToArc,
-  bridgeUsdcToArcWithPaymaster,
   BridgeSourceChain,
   type BridgeStepEvent,
   BridgeSummary,
   type BrowserWalletSession,
   createBrowserWalletSessionFromConnector,
-  getNativeBalance,
-  LOW_NATIVE_THRESHOLD,
 } from "@/lib/appkit-bridge";
-import { PaymasterConfirmDialog, type PaymasterConfirmContext } from "@/components/PaymasterConfirmDialog";
 import {
   approveBillRegistry,
   billMetadataHash,
@@ -331,12 +327,6 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
   const [dueDateInput, setDueDateInput] = useState("");
   const [bridgeResults, setBridgeResults] = useState<Record<string, BridgeSummary>>({});
   const [bridgeSession, setBridgeSession] = useState<BrowserWalletSession | null>(null);
-  // When a bridge is blocked on "no native gas", we surface a confirm dialog and
-  // park the pending decision here; resolve() is wired to the dialog's buttons.
-  const [paymasterPrompt, setPaymasterPrompt] = useState<{
-    context: PaymasterConfirmContext;
-    resolve: (useIt: boolean) => void;
-  } | null>(null);
   const [recurringCycle, setRecurringCycle] = useState<RecurringCycle>("weekly");
   const [customCycleDays, setCustomCycleDays] = useState("30");
   const [billWallet, setBillWallet] = useState<BillSplitWallet | null>(null);
@@ -1397,40 +1387,73 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
     }
   }
 
-  // Decide how to run a bridge based on the payer's native gas balance on the
-  // source chain. Enough gas → normal EOA bridge. Low gas → offer the paymaster
-  // (pay gas in USDC); on yes use it, on no tell them to top up native gas
-  // (returns null: caller aborts and shows the hint).
-  async function resolveBridgeMode(
-    session: BrowserWalletSession,
-    sourceChain: BridgeSourceChain,
-    amountLabel: string,
-    showHint: (message: string) => void,
-  ): Promise<"paymaster" | "normal" | null> {
-    let native: bigint;
-    try {
-      native = await getNativeBalance(session.connectedAddress as `0x${string}`, sourceChain);
-    } catch {
-      return "normal"; // balance probe failed — don't block the normal path
-    }
-    if (native >= LOW_NATIVE_THRESHOLD) return "normal";
+  // "Settle net" from the connected browser wallet: ONE approval for the summed
+  // outstanding debt, then one payDebt per bill (escrow binds each debt to its
+  // billId — no on-chain netting exists), then claim every funded bill I created.
+  // Sequential, not atomic: executeBatch is an SCA feature and this is an EOA —
+  // the Circle-wallet path (/api/treasury/settle) is the one-transaction one.
+  // Legs are re-read from chain, never taken from the dashboard payload.
+  async function settleNetWithWallet() {
+    const wallet = billWallet ?? (await connectBillWallet());
+    if (!wallet) return;
 
-    // No reliable read-only probe for EIP-7702 exists, so offer the paymaster
-    // whenever native gas is low and let the 7702 signature be the real test —
-    // wallets that can't do it fail gracefully with a clear message below.
-    const symbol = nativeSymbol(sourceChain);
-    const useIt = await new Promise<boolean>((resolve) => {
-      setPaymasterPrompt({
-        context: { sourceLabel: sourceLabel(sourceChain), amountLabel, nativeSymbol: symbol },
-        resolve,
-      });
-    });
-    setPaymasterPrompt(null);
-    if (!useIt) {
-      showHint(`Add a little ${symbol} on ${sourceLabel(sourceChain)} for gas, then bridge again.`);
-      return null;
+    const [myDebts, myBills] = await Promise.all([
+      readDebtsForWallet(wallet.account),
+      readBillsForSplitter(wallet.account),
+    ]);
+    const payLegs = myDebts.filter((d) => d.remaining > 0n);
+    const claimLegs = myBills.filter((b) => b.claimable > 0n);
+    if (payLegs.length === 0 && claimLegs.length === 0) {
+      setBillMessage("Nothing to settle — every bill is already square.");
+      return;
     }
-    return "paymaster";
+
+    const total = payLegs.reduce((sum, d) => sum + d.remaining, 0n);
+    setProgressFlow({
+      kind: "pay",
+      open: true,
+      amountLabel: billUnitsToUsdc(total),
+      contextLabel: `${payLegs.length + claimLegs.length} positions`,
+      status: "running",
+      errorMessage: "",
+      steps: [
+        { key: "switch", icon: "switch", label: "Connect to Arc Testnet", hint: "Approve the network switch in your wallet", state: "active" },
+        { key: "approve", icon: "approve", label: "Approve USDC once", hint: "One approval covers every payment below", state: "pending" },
+        { key: "pay", icon: "pay", label: `Settle ${payLegs.length} debt${payLegs.length === 1 ? "" : "s"}`, hint: "One payment per escrowed bill", state: "pending" },
+        { key: "claim", icon: "claim", label: `Collect ${claimLegs.length} bill${claimLegs.length === 1 ? "" : "s"}`, hint: "Pull paid USDC to your wallet", state: "pending" },
+      ],
+    });
+
+    try {
+      setBillState("working");
+      await ensureBillSplitWalletOnArc(wallet);
+      advanceFlow("switch", "approve");
+
+      if (total > 0n) {
+        await approveBillRegistry({ ...wallet, amount: total });
+      }
+      advanceFlow("approve", "pay");
+
+      for (const debt of payLegs) {
+        await payBillDebtWithMemo({ ...wallet, billId: debt.billId, amount: debt.remaining });
+      }
+      advanceFlow("pay", "claim");
+
+      for (const bill of claimLegs) {
+        await claimBillFunds({ ...wallet, billId: bill.billId, amount: bill.claimable });
+      }
+      completeFlow();
+
+      setBillState("success");
+      setBillMessage(
+        `Settled ${payLegs.length + claimLegs.length} positions on Arc with ${total > 0n ? "one" : "no"} USDC approval.`,
+      );
+      await refreshBillRegistry(wallet.account);
+    } catch (caught) {
+      setBillState("error");
+      failFlow(errorMessage(caught));
+      throw caught; // the panel surfaces it too
+    }
   }
 
   async function bridgeForDebt(debt: BillSplitDebt, debtSourceChain: BridgeSourceChain) {
@@ -1461,12 +1484,6 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
     const amountLabel = billUnitsToUsdc(amount);
     const balanceBeforeBridge = arcUsdcBalance;
 
-    const mode = await resolveBridgeMode(session, debtSourceChain, amountLabel, (message) => {
-      setBillState("error");
-      setDebtMessages((current) => ({ ...current, [debtKey]: { tone: "error", message } }));
-    });
-    if (!mode) return;
-
     beginBridgeFlow(amountLabel, source);
 
     try {
@@ -1476,24 +1493,13 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
         delete next[debtKey];
         return next;
       });
-      const provider = (await connector?.getProvider()) as EIP1193Provider;
-      const result =
-        mode === "paymaster"
-          ? await bridgeUsdcToArcWithPaymaster({
-              session,
-              provider,
-              sourceChain: debtSourceChain,
-              recipientAddress: billWallet.account,
-              amount: amountLabel,
-              onStep: (event) => handleBridgeStep(event, source),
-            })
-          : await bridgeUsdcToArc({
-              session,
-              sourceChain: debtSourceChain,
-              recipientAddress: billWallet.account,
-              amount: amountLabel,
-              onStep: (event) => handleBridgeStep(event, source),
-            });
+      const result = await bridgeUsdcToArc({
+        session,
+        sourceChain: debtSourceChain,
+        recipientAddress: billWallet.account,
+        amount: amountLabel,
+        onStep: (event) => handleBridgeStep(event, source),
+      });
       setBridgeResults((current) => ({ ...current, [debtKey]: result }));
 
       if (result.state === "error") {
@@ -1587,34 +1593,17 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
     const source = sourceLabel(sourceChain);
     const balanceBeforeBridge = arcUsdcBalance;
 
-    const mode = await resolveBridgeMode(session, sourceChain, amountLabel, (message) => {
-      setRecurringState("error");
-      setRecurringMessage(message);
-    });
-    if (!mode) return;
-
     beginBridgeFlow(amountLabel, source);
 
     try {
       setRecurringState("working");
-      const provider = (await connector?.getProvider()) as EIP1193Provider;
-      const result =
-        mode === "paymaster"
-          ? await bridgeUsdcToArcWithPaymaster({
-              session,
-              provider,
-              sourceChain,
-              recipientAddress: recurringWallet.account,
-              amount: amountLabel,
-              onStep: (event) => handleBridgeStep(event, source),
-            })
-          : await bridgeUsdcToArc({
-              session,
-              sourceChain,
-              recipientAddress: recurringWallet.account,
-              amount: amountLabel,
-              onStep: (event) => handleBridgeStep(event, source),
-            });
+      const result = await bridgeUsdcToArc({
+        session,
+        sourceChain,
+        recipientAddress: recurringWallet.account,
+        amount: amountLabel,
+        onStep: (event) => handleBridgeStep(event, source),
+      });
 
       if (result.state === "error") {
         failFlow("The bridge did not complete. No funds were claimed on Arc.");
@@ -2925,20 +2914,17 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
             key="dashboard"
             transition={{ duration: 0.22, ease: "easeOut" }}
           >
-            <DashboardPanel socialWallet={socialWalletAddress} browserWallet={connectedWalletAccount} />
+            <DashboardPanel
+              socialWallet={socialWalletAddress}
+              browserWallet={connectedWalletAccount}
+              onSettleNet={connectedWalletAccount ? settleNetWithWallet : undefined}
+            />
           </motion.div>
         )}
         </AnimatePresence>
       </section>
 
       {progressFlow ? <ProgressModal flow={progressFlow} onClose={closeFlow} /> : null}
-      {paymasterPrompt ? (
-        <PaymasterConfirmDialog
-          context={paymasterPrompt.context}
-          onConfirm={() => paymasterPrompt.resolve(true)}
-          onCancel={() => paymasterPrompt.resolve(false)}
-        />
-      ) : null}
       <XAuthControl />
     </main>
   );
@@ -4894,14 +4880,6 @@ function ModeButton({
 
 function sourceLabel(id: BridgeSourceChain) {
   return bridgeSourceChains.find((chain) => chain.id === id)?.label ?? id;
-}
-
-// Native gas token per bridge source chain — used only for the "you have no X"
-// paymaster prompt copy.
-function nativeSymbol(id: BridgeSourceChain) {
-  if (id === "Avalanche_Fuji") return "AVAX";
-  if (id === "Polygon_Amoy_Testnet") return "POL";
-  return "ETH";
 }
 
 function toUsdInput(value: number, rate: number) {
