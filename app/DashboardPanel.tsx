@@ -14,7 +14,7 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { BarChart3, FlaskConical, Loader2, RefreshCw, ShieldCheck } from "lucide-react";
+import { ArrowRightLeft, BarChart3, FlaskConical, Landmark, Loader2, RefreshCw, ShieldCheck } from "lucide-react";
 import {
   ChartContainer,
   ChartLegend,
@@ -23,7 +23,7 @@ import {
   ChartTooltipContent,
   type ChartConfig,
 } from "@/components/ui/chart";
-import { IDENTITY_BUCKETS, type DashboardData, type IdentityBucket } from "@/lib/dashboard-types";
+import { IDENTITY_BUCKETS, type DashboardData, type IdentityBucket, type TreasuryPlan } from "@/lib/dashboard-types";
 
 type RangeKey = "7d" | "30d" | "90d" | "all";
 // Which of the user's wallet identities the dashboard reports on. "all" unions
@@ -151,9 +151,13 @@ function writeDashboardCache(key: string, data: DashboardData): void {
 export default function DashboardPanel({
   socialWallet = null,
   browserWallet = null,
+  onSettleNet,
 }: {
   socialWallet?: string | null;
   browserWallet?: string | null;
+  // Settle from the connected browser wallet. Owned by HomeClient, which holds
+  // the wallet client and the progress modal; undefined when none is connected.
+  onSettleNet?: () => Promise<void>;
 }) {
   const hasSocial = Boolean(socialWallet);
   const hasWallet = Boolean(browserWallet);
@@ -166,6 +170,7 @@ export default function DashboardPanel({
   const [range, setRange] = useState<RangeKey>("30d");
   const [scope, setScope] = useState<Scope>(initialScope);
   const [buckets, setBuckets] = useState<Set<IdentityBucket>>(new Set());
+  const [view, setView] = useState<"analytics" | "treasury">("analytics");
   const [error, setError] = useState<string | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
   // Seed from cache so returning to the tab paints instantly (the effect below
@@ -288,7 +293,18 @@ export default function DashboardPanel({
         onScope={bothIdentities ? pickScope : undefined}
       />
 
-      {showEmpty ? (
+      <ViewToggle view={view} onView={setView} />
+
+      {view === "treasury" && data.treasury ? (
+        <TreasurySection
+          treasury={data.treasury}
+          isDemo={data.isDemo}
+          scope={effectiveScope}
+          bothIdentities={bothIdentities}
+          onSettleNet={onSettleNet}
+          onSettled={reload}
+        />
+      ) : showEmpty ? (
         <EmptyState onDemo={toggleDemo} />
       ) : (
         <>
@@ -314,6 +330,25 @@ export default function DashboardPanel({
 // ── shared shells ───────────────────────────────────────────────────────────
 
 const SCOPE_LABEL: Record<Scope, string> = { all: "All", social: "Social", wallet: "Non-custodial" };
+
+function ViewToggle({ view, onView }: { view: "analytics" | "treasury"; onView: (v: "analytics" | "treasury") => void }) {
+  return (
+    <div className="flex gap-1 rounded-[var(--radius)] border border-[var(--border)] bg-[var(--surface-muted)] p-1 text-sm w-fit">
+      {(["analytics", "treasury"] as const).map((v) => (
+        <button
+          key={v}
+          type="button"
+          onClick={() => onView(v)}
+          className={`rounded-[calc(var(--radius)-4px)] px-3 py-1.5 capitalize ${
+            view === v ? "bg-[var(--surface)] font-semibold" : "text-[var(--text-muted)]"
+          }`}
+        >
+          {v}
+        </button>
+      ))}
+    </div>
+  );
+}
 
 function DashboardHeader({
   isDemo,
@@ -861,6 +896,155 @@ function EmptyState({ onDemo }: { onDemo: () => void }) {
         </button>
       </div>
     </Frame>
+  );
+}
+
+// One net position per counterparty, plus the single batched settle action.
+// The netting here is a VIEW of exposure: registry escrow means each debt is
+// still discharged by its own payDebt leg (see lib/treasury.ts). What batching
+// removes is transactions, not transfers — and how many depends on who signs:
+// a Circle SCA wallet does the whole batch atomically in ONE tx, a browser EOA
+// still needs one approve plus one tx per leg.
+function TreasurySection({
+  treasury,
+  isDemo,
+  scope,
+  bothIdentities,
+  onSettleNet,
+  onSettled,
+}: {
+  treasury: TreasuryPlan;
+  isDemo: boolean;
+  scope: Scope;
+  bothIdentities: boolean;
+  onSettleNet?: () => Promise<void>;
+  onSettled: () => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState<string | null>(null);
+
+  const { payLegCount, claimLegCount, grossTxCount } = treasury;
+  const hasWork = payLegCount > 0 || claimLegCount > 0;
+  // "all" spans both identities and each signs differently (Circle SCA batch vs.
+  // browser EOA), so settling needs an explicit choice of which one pays.
+  const needsScopeChoice = bothIdentities && scope === "all";
+  const canSettle = hasWork && !isDemo && !needsScopeChoice && (scope === "social" || Boolean(onSettleNet));
+  // Social = Circle SCA → one atomic executeBatch. Wallet = EOA → 1 approve + N.
+  const atomic = scope === "social";
+  const settledTxCount = atomic ? 1 : (payLegCount > 0 ? 1 : 0) + payLegCount + claimLegCount;
+
+  async function settle() {
+    setBusy(true);
+    setNote(null);
+    try {
+      if (scope === "wallet") {
+        await onSettleNet!();
+      } else {
+        const pin = await fetch("/api/wallet/pin").then((r) => r.json()).catch(() => ({}));
+        if (!pin.unlocked) {
+          setNote("Unlock your wallet (the wallet button in the bottom-right corner), then tap Settle net again.");
+          return;
+        }
+        const res = await fetch("/api/treasury/settle", { method: "POST" });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          setNote(data.error === "insufficient_funds" ? "Your wallet needs more test USDC." : data.error ?? "Settlement failed.");
+          return;
+        }
+        const legs = (data.paid?.length ?? 0) + (data.claimed?.length ?? 0);
+        setNote(`Settled ${legs} position${legs === 1 ? "" : "s"} in one transaction on Arc.`);
+      }
+      onSettled();
+    } catch (e) {
+      setNote(e instanceof Error ? e.message : "Settlement failed.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <TreasuryTile label="Owed to me" value={usd(treasury.totalTheyOweMeUsdc)} />
+        <TreasuryTile label="I owe" value={usd(treasury.totalIOweThemUsdc)} />
+        <TreasuryTile label="Net position" value={usd(treasury.netUsdc)} emphasis />
+        <TreasuryTile label="Claimable now" value={usd(treasury.claimableUsdc)} />
+      </div>
+
+      <div className="panel space-y-3">
+        <h3 className="flex items-center gap-2 text-sm font-semibold">
+          <Landmark size={16} className="text-[var(--accent)]" /> Net position by counterparty
+        </h3>
+        {treasury.positions.length === 0 ? (
+          <p className="text-sm text-[var(--text-muted)]">Nothing outstanding — every bill is settled.</p>
+        ) : (
+          <ul className="space-y-2">
+            {treasury.positions.map((p) => {
+              const net = num(p.netUsdc);
+              return (
+                <li
+                  key={p.counterparty}
+                  className="flex flex-wrap items-center justify-between gap-2 rounded-[var(--radius)] border border-[var(--border)] bg-[var(--surface-muted)] p-3 text-sm"
+                >
+                  <span className="flex items-center gap-2">
+                    <strong>{p.label.startsWith("0x") ? shortAddr(p.label) : p.label}</strong>
+                    <span className="text-xs text-[var(--text-muted)]">{BUCKET_LABEL[p.bucket]}</span>
+                  </span>
+                  <span className="flex items-center gap-3 text-xs text-[var(--text-muted)]">
+                    <span>they owe {usd(p.theyOweMeUsdc)}</span>
+                    <ArrowRightLeft size={13} />
+                    <span>I owe {usd(p.iOweThemUsdc)}</span>
+                    <strong className={`amount-text text-sm ${net < 0 ? "text-[var(--warning-text)]" : "text-[var(--text)]"}`}>
+                      {net >= 0 ? "+" : ""}
+                      {usd(p.netUsdc)}
+                    </strong>
+                  </span>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </div>
+
+      <div className="panel space-y-3">
+        <p className="text-sm">
+          Settling each bill separately: <strong className="amount-text">{grossTxCount}</strong> transactions.{" "}
+          {atomic ? (
+            <>
+              From your Splitsy wallet: <strong className="amount-text">1</strong> — every approval, payment and claim
+              lands in a single atomic transaction.
+            </>
+          ) : (
+            <>
+              In one batch: <strong className="amount-text">{settledTxCount}</strong> — a single USDC approval covers
+              every payment.
+            </>
+          )}
+        </p>
+        <p className="text-xs text-[var(--text-muted)]">
+          Each bill is escrowed on Arc, so its debt is still paid to its own bill — batching removes transactions, not
+          transfers.
+        </p>
+        {needsScopeChoice ? (
+          <p className="text-xs text-[var(--text-muted)]">Pick Social or Non-custodial above to choose which wallet settles.</p>
+        ) : null}
+        <button type="button" className="primary-button" disabled={!canSettle || busy} onClick={settle}>
+          {busy ? <Loader2 size={15} className="animate-spin" /> : <ArrowRightLeft size={15} />}
+          {busy ? "Settling on Arc…" : "Settle net"}
+        </button>
+        {note ? <p className="text-xs text-[var(--text-muted)]">{note}</p> : null}
+        {isDemo ? <p className="text-xs text-[var(--text-muted)]">Sample data — settling is disabled.</p> : null}
+      </div>
+    </div>
+  );
+}
+
+function TreasuryTile({ label, value, emphasis }: { label: string; value: string; emphasis?: boolean }) {
+  return (
+    <div className="panel">
+      <div className="text-xs text-[var(--text-muted)]">{label}</div>
+      <div className={`amount-text ${emphasis ? "text-xl font-semibold" : "text-lg"}`}>{value}</div>
+    </div>
   );
 }
 
