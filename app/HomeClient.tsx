@@ -40,6 +40,7 @@ import { arcTestnet } from "viem/chains";
 import { useAccount, useConnect, useDisconnect, useSwitchChain } from "wagmi";
 import { getWalletClient } from "wagmi/actions";
 import { ConnectButton } from "@rainbow-me/rainbowkit";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import XAuthControl from "./XAuthControl";
 import SignInMenu from "./SignInMenu";
 import XDebtsPanel from "./XDebtsPanel";
@@ -2647,23 +2648,27 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
                       <div className="receipt-card p-4 sm:p-5" ref={receiptPrintRef}>
                         {billIsScanned ? (
                           <>
-                            <div className="mb-4 rounded-[var(--radius)] border border-[var(--receipt-border-soft)] bg-[var(--receipt-overlay)] p-3 text-xs text-[var(--receipt-muted)]">
-                              <p className="font-semibold text-[var(--receipt-text)]">
-                                {fxPending ? `Converting ${originCurrency} to USD…` : "Converted to USD for settlement"}
-                              </p>
-                              <p className="mt-1">
-                                Origin currency {originCurrency}.{" "}
-                                {fxPending ? (
-                                  "Scout is buying the rate — amounts below are still in the origin currency."
-                                ) : (
-                                  <>
-                                    Rate{" "}
-                                    <span className="amount-text">1 {originCurrency} = {usdRate.toFixed(6)} USD</span>
-                                    {fxQuote?.asOf ? ` · ${new Date(fxQuote.asOf).toLocaleString()}` : ""}
-                                  </>
-                                )}
-                              </p>
-                            </div>
+                            {/* A USD bill needs no conversion notice — there is
+                                nothing to convert and no rate worth showing. */}
+                            {originCurrency !== "USD" ? (
+                              <div className="mb-4 rounded-[var(--radius)] border border-[var(--receipt-border-soft)] bg-[var(--receipt-overlay)] p-3 text-xs text-[var(--receipt-muted)]">
+                                <p className="font-semibold text-[var(--receipt-text)]">
+                                  {fxPending ? `Converting ${originCurrency} to USD…` : "Converted to USD for settlement"}
+                                </p>
+                                <p className="mt-1">
+                                  Origin currency {originCurrency}.{" "}
+                                  {fxPending ? (
+                                    "Scout is buying the rate — amounts below are still in the origin currency."
+                                  ) : (
+                                    <>
+                                      Rate{" "}
+                                      <span className="amount-text">1 {originCurrency} = {usdRate.toFixed(6)} USD</span>
+                                      {fxQuote?.asOf ? ` · ${new Date(fxQuote.asOf).toLocaleString()}` : ""}
+                                    </>
+                                  )}
+                                </p>
+                              </div>
+                            ) : null}
                             {scoutReport ? <ScoutReceipt report={scoutReport} /> : null}
                             {/* While the rate is in flight usdRate is 1, so these
                                 amounts are still the origin currency — label them
@@ -4495,24 +4500,66 @@ function useBatchSettlement(payments: ScoutReport["payments"]) {
   return settled;
 }
 
+// What the "!" explains. Kept next to the receipt because this is the only place
+// a user meets the agent economy, and "an agent paid for your scan" needs saying.
+const X402_EXPLAINER = [
+  "Scout is an autonomous agent with its own wallet and on-chain identity (ERC-8004 #).",
+  "Splitsy's scanning and currency endpoints are paywalled with x402, the HTTP standard for machine payments. Scout signs a gasless USDC authorization for each call it makes, and Circle Gateway batches those payments into one on-chain settlement on Arc.",
+  "It decides for itself: it refuses photos too poor to read, buys a second stricter opinion when its own parse looks unsure, and stops at a daily budget. If paying ever fails, it falls back to a free scan so your bill still goes through.",
+];
+
+function X402Info() {
+  return (
+    <TooltipProvider>
+      <Tooltip>
+        <TooltipTrigger
+          aria-label="How agent payments work"
+          className="inline-flex size-4 items-center justify-center rounded-full border border-current text-[10px] font-bold leading-none"
+          // Inside a <summary>, a click would toggle the disclosure — this is a
+          // hover affordance, not a second toggle.
+          onClick={(event) => event.preventDefault()}
+          type="button"
+        >
+          !
+        </TooltipTrigger>
+        <TooltipContent className="max-w-xs space-y-2 text-left font-normal leading-relaxed" side="top">
+          {X402_EXPLAINER.map((paragraph) => (
+            <p key={paragraph.slice(0, 24)}>{paragraph}</p>
+          ))}
+        </TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
+  );
+}
+
 // The agent's receipt: what Scout paid, to which endpoint, and what it had left.
-// Shown above the parsed bill so the nanopayments are visible, not implied.
+// Collapsed to a single line by default — the nanopayments should be visible but
+// not shout over the bill the user actually came to check.
 function ScoutReceipt({ report }: { report: ScoutReport }) {
   const { agent, payments, degraded } = report;
   const settledTx = useBatchSettlement(payments);
   return (
-    <div className="mb-4 rounded-[var(--radius)] border border-[var(--receipt-border-soft)] bg-[var(--receipt-overlay)] p-3 text-xs text-[var(--receipt-muted)]">
-      <p className="flex flex-wrap items-center gap-1 font-semibold text-[var(--receipt-text)]">
+    <details className="scout-receipt mb-4 rounded-[var(--radius)] border border-[var(--receipt-border-soft)] bg-[var(--receipt-overlay)] p-3 text-xs text-[var(--receipt-muted)]">
+      <summary className="flex cursor-pointer list-none items-center gap-1.5 font-semibold text-[var(--receipt-text)]">
         <Bot size={14} /> Scanned by Scout
+        <span className="amount-text font-normal">
+          {degraded ? "unpaid fallback" : `${report.totalSpentUsd.toFixed(3)} USDC`}
+        </span>
+        <X402Info />
+        <ChevronDown className="scout-receipt-chevron ml-auto" size={14} />
+      </summary>
+
+      <p className="mt-2 flex flex-wrap items-center gap-1">
+        Agent{" "}
         <a
-          className="font-normal underline"
+          className="underline"
           href={`https://testnet.arcscan.app/address/${agent.address}`}
           rel="noreferrer"
           target="_blank"
         >
           {agent.address.slice(0, 6)}…{agent.address.slice(-4)}
         </a>
-        {agent.tokenId ? <span className="font-normal">· ERC-8004 #{agent.tokenId}</span> : null}
+        {agent.tokenId ? <span>· ERC-8004 #{agent.tokenId}</span> : null}
       </p>
 
       {payments.length > 0 ? (
@@ -4555,7 +4602,7 @@ function ScoutReceipt({ report }: { report: ScoutReport }) {
         <span className="amount-text">{report.budgetRemainingUsd.toFixed(3)} USDC</span>
         {degraded ? " · fell back to an unpaid scan" : ""}
       </p>
-    </div>
+    </details>
   );
 }
 

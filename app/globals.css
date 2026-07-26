@@ -769,6 +769,20 @@ input[type="number"],
   transform: rotate(180deg);
 }
 
+/* Scout's nanopayment receipt — collapsed to one line until asked to expand. */
+.scout-receipt summary::-webkit-details-marker {
+  display: none;
+}
+
+.scout-receipt-chevron {
+  color: var(--accent);
+  transition: transform 180ms ease;
+}
+
+.scout-receipt[open] .scout-receipt-chevron {
+  transform: rotate(180deg);
+}
+
 .bill-items-body {
   margin-top: 0.55rem;
   overflow: hidden;
