@@ -1,6 +1,18 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { resolveLedger, SCRIPTED_LEDGER } from "./landing-ledger.ts";
+import { priceUsd } from "./x402/pricing.ts";
+
+test("the scripted figures are the scripted transcript's own spend", () => {
+  // The tiles render beside a transcript that quotes these prices, so derive
+  // them from the price table rather than restate them: a typo here, or an OCR
+  // price change, must fail loudly instead of contradicting the text next to it.
+  const scripted = (priceUsd("/api/ocr") * 2 + priceUsd("/api/fx")).toFixed(3);
+  assert.equal(SCRIPTED_LEDGER.earnedUsdc, scripted);
+  assert.equal(SCRIPTED_LEDGER.spentUsdc, scripted);
+  assert.equal(SCRIPTED_LEDGER.callsServed, "3");
+  assert.equal(SCRIPTED_LEDGER.live, false);
+});
 
 test("falls back to the scripted figures when there is no payload", () => {
   assert.deepEqual(resolveLedger(null), SCRIPTED_LEDGER);
