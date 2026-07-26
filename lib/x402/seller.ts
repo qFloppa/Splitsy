@@ -11,20 +11,64 @@ import { recordPayment } from "./payments-repo";
 // batches settlement, so a $0.005 call costs the buyer no gas.
 const facilitator = new BatchFacilitatorClient();
 
-function requirementsFor(price: string, sellerAddress: string) {
+// Fallback terms, used only if the facilitator can't be reached. 604800s (7 days)
+// is Gateway's current minValiditySeconds for Arc — NOT the 345600 the SDK's own
+// middleware hardcodes. The buyer signs validBefore = now + maxTimeoutSeconds, so
+// anything under the facilitator's minimum is rejected as
+// "authorization_validity_too_short" and no payment can ever settle.
+const FALLBACK_VALIDITY_SECONDS = 604800;
+
+// Gateway checks the validity *remaining* when it verifies, not when the buyer
+// signed, so a window of exactly minValiditySeconds is already short by the time
+// the request lands. Ask for an hour more than the minimum.
+const VALIDITY_MARGIN_SECONDS = 3600;
+
+type GatewayTerms = { verifyingContract: string; validitySeconds: number };
+
+// Gateway's own terms for Arc, fetched once and cached. Preferred over constants
+// because the minimum validity window is a facilitator-side policy that can move
+// without a release here.
+let termsPromise: Promise<GatewayTerms> | null = null;
+
+function gatewayTerms(): Promise<GatewayTerms> {
+  termsPromise ??= facilitator
+    .getSupported()
+    .then((supported) => {
+      const kind = supported.kinds.find((k) => k.network === ARC_TESTNET_NETWORK);
+      const extra = kind?.extra as
+        | { verifyingContract?: string; minValiditySeconds?: number }
+        | undefined;
+      return {
+        verifyingContract: extra?.verifyingContract ?? ARC_TESTNET_GATEWAY_WALLET,
+        validitySeconds:
+          (extra?.minValiditySeconds ?? FALLBACK_VALIDITY_SECONDS) + VALIDITY_MARGIN_SECONDS,
+      };
+    })
+    .catch((error) => {
+      console.error("[x402] getSupported failed, using fallback terms:", error);
+      termsPromise = null; // let the next request retry
+      return {
+        verifyingContract: ARC_TESTNET_GATEWAY_WALLET,
+        validitySeconds: FALLBACK_VALIDITY_SECONDS + VALIDITY_MARGIN_SECONDS,
+      };
+    });
+  return termsPromise;
+}
+
+function requirementsFor(price: string, sellerAddress: string, terms: GatewayTerms) {
   return {
     scheme: "exact" as const,
     network: ARC_TESTNET_NETWORK,
     asset: ARC_TESTNET_USDC,
     amount: usdToAtomic(price),
     payTo: sellerAddress,
-    maxTimeoutSeconds: 345600,
+    maxTimeoutSeconds: terms.validitySeconds,
     // Signals Gateway batching to the buyer: the EIP-712 domain it must sign
     // against is the GatewayWallet contract, not the USDC token.
     extra: {
       name: "GatewayWalletBatched",
       version: "1",
-      verifyingContract: ARC_TESTNET_GATEWAY_WALLET,
+      verifyingContract: terms.verifyingContract,
     },
   };
 }
@@ -44,7 +88,7 @@ export function withGateway(
     if (!sellerAddress) {
       return Response.json({ error: "Missing SELLER_ADDRESS on the server." }, { status: 500 });
     }
-    const requirements = requirementsFor(price, sellerAddress);
+    const requirements = requirementsFor(price, sellerAddress, await gatewayTerms());
 
     const signature = req.headers.get("payment-signature");
     if (!signature) {

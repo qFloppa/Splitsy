@@ -4432,7 +4432,9 @@ function ScoutReceipt({ report }: { report: ScoutReport }) {
             <li key={`${payment.endpoint}-${index}`}>
               Paid <span className="amount-text">{payment.amountUsd.toFixed(3)} USDC</span> → {payment.endpoint}
               {payment.confidence != null ? ` (confidence ${(payment.confidence * 100).toFixed(0)}%)` : ""}
-              {payment.tx ? (
+              {/* Gateway batches settlement, so a fresh payment has only a
+                  transfer id — the on-chain hash exists once its batch lands. */}
+              {payment.tx?.startsWith("0x") ? (
                 <>
                   {" · "}
                   <a
@@ -4444,6 +4446,8 @@ function ScoutReceipt({ report }: { report: ScoutReport }) {
                     tx
                   </a>
                 </>
+              ) : payment.tx ? (
+                <span title={payment.tx}> · batched {payment.tx.slice(0, 8)}</span>
               ) : null}
             </li>
           ))}
