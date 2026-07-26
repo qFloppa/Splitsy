@@ -14,6 +14,7 @@
     "test:netting": "node --test --experimental-strip-types lib/netting.test.ts",
     "test:dashboard": "node --test --experimental-strip-types lib/dashboard-aggregate.test.ts",
     "test:treasury": "node --test --experimental-strip-types lib/treasury.test.ts",
+    "test:landing": "node --test --experimental-strip-types lib/landing-ledger.test.ts",
     "test:dashboard-create": "node --test --experimental-strip-types app/api/onchain-bills/create/route.test.ts",
     "start": "next start",
     "lint": "eslint"
