@@ -1,6 +1,10 @@
+import { withGateway } from "@/lib/x402/seller";
+
 export const runtime = "nodejs";
 
-export async function POST(request: Request) {
+// x402-paywalled: $0.001 USDC per quote. Scout pays this when a receipt is in a
+// foreign currency; the browser reaches it via /api/scout/fx.
+const handler = async (request: Request): Promise<Response> => {
   const { amount, fromCurrency } = (await request.json()) as {
     amount?: number;
     fromCurrency?: string;
@@ -38,4 +42,6 @@ export async function POST(request: Request) {
     source,
     asOf: payload.time_last_update_utc ?? new Date().toISOString(),
   });
-}
+};
+
+export const POST = withGateway(handler, "$0.001", "/api/fx");
