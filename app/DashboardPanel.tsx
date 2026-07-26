@@ -24,6 +24,7 @@ import {
   type ChartConfig,
 } from "@/components/ui/chart";
 import { IDENTITY_BUCKETS, type DashboardData, type IdentityBucket, type TreasuryPlan } from "@/lib/dashboard-types";
+import AgentEconomyPanel from "./AgentEconomyPanel";
 
 type RangeKey = "7d" | "30d" | "90d" | "all";
 // Which of the user's wallet identities the dashboard reports on. "all" unions
@@ -321,6 +322,7 @@ export default function DashboardPanel({
             <ReputationSection data={data} />
             <RecurringSection data={data} />
           </div>
+          <AgentEconomyPanel />
         </>
       )}
     </div>

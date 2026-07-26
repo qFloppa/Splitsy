@@ -5,6 +5,7 @@ import {
   ArrowLeftRight,
   BadgeDollarSign,
   BookOpen,
+  Bot,
   CalendarClock,
   Camera,
   ChevronDown,
@@ -135,6 +136,16 @@ type FxQuote = {
   rate: number;
   source: string;
   asOf: string;
+};
+
+// What /api/scout/scan reports back about the agent's run: every nanopayment it
+// made, what it cost, and how much of today's cap is left.
+type ScoutReport = {
+  payments: { endpoint: string; amountUsd: number; tx: string | null; confidence?: number }[];
+  totalSpentUsd: number;
+  budgetRemainingUsd: number;
+  degraded: boolean;
+  agent: { address: string; tokenId: string | null };
 };
 
 type OcrState = "idle" | "reading" | "ready" | "error";
@@ -282,16 +293,23 @@ async function scanReceiptTotalUsd(bytes: Uint8Array): Promise<number | null> {
   try {
     const form = new FormData();
     form.append("image", new Blob([bytes as BlobPart], { type: "image/jpeg" }), "receipt.jpg");
-    const ocr = await fetch("/api/ocr", { method: "POST", body: form });
+    const ocr = await fetch("/api/scout/scan", { method: "POST", body: form });
     if (!ocr.ok) return null;
-    const { bill } = (await ocr.json()) as { bill?: { total?: number; currency?: string } };
+    const scan = (await ocr.json()) as {
+      bill?: { total?: number; currency?: string };
+      fx?: { amountUsd?: number };
+    };
+    const bill = scan.bill;
     const total = Number(bill?.total);
     if (!Number.isFinite(total) || total <= 0) return null;
 
     const currency = (bill?.currency ?? "USD").toUpperCase();
     if (currency === "USD") return Number(total.toFixed(2));
 
-    const fx = await fetch("/api/fx", {
+    // Scout buys FX during the scan; only ask again if it couldn't.
+    if (Number.isFinite(scan.fx?.amountUsd)) return Number(scan.fx!.amountUsd);
+
+    const fx = await fetch("/api/scout/fx", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ amount: total, fromCurrency: currency }),
@@ -320,6 +338,9 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
     merchant: "Upload a bill",
   });
   const [fxQuote, setFxQuote] = useState<FxQuote | null>(null);
+  // What Scout did and spent on the last scan — rendered as a receipt under the
+  // parsed bill. Null when no agent ran (unconfigured Scout, or manual entry).
+  const [scoutReport, setScoutReport] = useState<ScoutReport | null>(null);
   const [splitMode, setSplitMode] = useState<"equal" | "manual">("equal");
   // Optional "pay by" date for the split, as a yyyy-mm-dd string from a <input
   // type=date> ("" = no due date). Committed into the on-chain metadata hash and
@@ -606,20 +627,26 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
     setError("");
     setFxQuote(null);
 
-    const response = await fetch("/api/ocr", {
+    // Scout (the nanopayment agent) drives the scan: it judges the photo, pays
+    // Splitsy's x402 OCR endpoint in USDC fractions, and buys a second opinion
+    // when its own parse comes back unsure. `declined` means it refused to spend
+    // on an unreadable image — that is a real answer, not an error to retry.
+    const response = await fetch("/api/scout/scan", {
       method: "POST",
       body: formData,
     });
     const payload = await response.json();
 
-    if (!response.ok) {
+    if (!response.ok || payload.declined || !payload.bill) {
       setOcrState("error");
-      setError(payload.error ?? "Receipt scan failed.");
+      setError(payload.declined ?? payload.error ?? "Receipt scan failed.");
+      setScoutReport(null);
       return;
     }
 
     const parsed = normalizeParsedBill(payload.bill);
     setBill(parsed);
+    setScoutReport(payload.agent ? payload : null);
     setManualBillEntry(false);
     setOcrState("ready");
 
@@ -644,12 +671,19 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
       return;
     }
 
+    // Scout already bought the FX quote as part of the scan when the bill is in a
+    // foreign currency — reuse it rather than paying for the same rate twice.
+    if (payload.fx) {
+      setFxQuote(payload.fx);
+      return;
+    }
+
     await quoteFx(parsed.total, parsed.currency);
   }
 
   async function quoteFx(amount: number, currency: string) {
     setError("");
-    const response = await fetch("/api/fx", {
+    const response = await fetch("/api/scout/fx", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ amount, fromCurrency: currency }),
@@ -2598,6 +2632,7 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
                                 {fxQuote?.asOf ? ` · ${new Date(fxQuote.asOf).toLocaleString()}` : ""}
                               </p>
                             </div>
+                            {scoutReport ? <ScoutReceipt report={scoutReport} /> : null}
                             <div className="grid gap-3 sm:grid-cols-2">
                               <Field label="Merchant" value={bill.merchant} onChange={(value) => updateBillField("merchant", value)} />
                               <Field label="Origin currency" value={bill.currency} onChange={(value) => updateBillField("currency", value)} />
@@ -4369,6 +4404,58 @@ function Panel({
       </div>
       {children}
     </section>
+  );
+}
+
+// The agent's receipt: what Scout paid, to which endpoint, and what it had left.
+// Shown above the parsed bill so the nanopayments are visible, not implied.
+function ScoutReceipt({ report }: { report: ScoutReport }) {
+  const { agent, payments, degraded } = report;
+  return (
+    <div className="mb-4 rounded-[var(--radius)] border border-[var(--receipt-border-soft)] bg-[var(--receipt-overlay)] p-3 text-xs text-[var(--receipt-muted)]">
+      <p className="flex flex-wrap items-center gap-1 font-semibold text-[var(--receipt-text)]">
+        <Bot size={14} /> Scanned by Scout
+        <a
+          className="font-normal underline"
+          href={`https://testnet.arcscan.app/address/${agent.address}`}
+          rel="noreferrer"
+          target="_blank"
+        >
+          {agent.address.slice(0, 6)}…{agent.address.slice(-4)}
+        </a>
+        {agent.tokenId ? <span className="font-normal">· ERC-8004 #{agent.tokenId}</span> : null}
+      </p>
+
+      {payments.length > 0 ? (
+        <ul className="mt-1.5 space-y-0.5">
+          {payments.map((payment, index) => (
+            <li key={`${payment.endpoint}-${index}`}>
+              Paid <span className="amount-text">{payment.amountUsd.toFixed(3)} USDC</span> → {payment.endpoint}
+              {payment.confidence != null ? ` (confidence ${(payment.confidence * 100).toFixed(0)}%)` : ""}
+              {payment.tx ? (
+                <>
+                  {" · "}
+                  <a
+                    className="underline"
+                    href={`https://testnet.arcscan.app/tx/${payment.tx}`}
+                    rel="noreferrer"
+                    target="_blank"
+                  >
+                    tx
+                  </a>
+                </>
+              ) : null}
+            </li>
+          ))}
+        </ul>
+      ) : null}
+
+      <p className="mt-1.5">
+        Spent <span className="amount-text">{report.totalSpentUsd.toFixed(3)} USDC</span> · budget left{" "}
+        <span className="amount-text">{report.budgetRemainingUsd.toFixed(3)} USDC</span>
+        {degraded ? " · fell back to an unpaid scan" : ""}
+      </p>
+    </div>
   );
 }
 
