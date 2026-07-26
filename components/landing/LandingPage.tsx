@@ -11,6 +11,7 @@ import { Hero } from "./Hero";
 import { DemoSection } from "./DemoSection";
 import { SectionAnyone } from "./SectionAnyone";
 import { SectionOnchain } from "./SectionOnchain";
+import { SectionTreasury } from "./SectionTreasury";
 import { SectionStack } from "./SectionStack";
 import { FinalCTA } from "./FinalCTA";
 
@@ -45,6 +46,7 @@ export default function LandingPage() {
           <DemoSection />
           <SectionAnyone />
           <SectionOnchain />
+          <SectionTreasury />
           <SectionStack />
           <FinalCTA />
         </main>
