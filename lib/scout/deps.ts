@@ -1,3 +1,4 @@
+import { after } from "next/server";
 import { getScout } from "./wallet.ts";
 import type { ScanDeps } from "./scan.ts";
 import { parseReceipt } from "../ocr-core.ts";
@@ -19,15 +20,21 @@ export function buildScoutDeps(baseUrl: string): ScanDeps & { address: `0x${stri
     dailyCapUsd: DAILY_CAP_USD,
     spentTodayUsd: sumSpentTodayUsd,
     parseDirect: (imageBase64, mimeType, hq) => parseReceipt(imageBase64, mimeType, { hq }),
-    record: (direction, endpoint, amountUsd, tx, confidence) =>
-      recordPayment({
-        direction,
-        endpoint,
-        counterparty: address,
-        amountUsdc: amountUsd.toString(),
-        gatewayTx: tx,
-        confidence,
-      }),
+    // Ledger writes happen after the response is sent. The payment has already
+    // settled by this point, so making the user wait ~0.5s per write for a
+    // bookkeeping round-trip buys them nothing.
+    record: async (direction, endpoint, amountUsd, tx, confidence) => {
+      after(() =>
+        recordPayment({
+          direction,
+          endpoint,
+          counterparty: address,
+          amountUsdc: amountUsd.toString(),
+          gatewayTx: tx,
+          confidence,
+        }),
+      );
+    },
     pay: async (path, body) => {
       const result = await gateway.pay(`${baseUrl}${path}`, { method: "POST", body });
       return {

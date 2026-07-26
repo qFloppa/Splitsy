@@ -518,6 +518,11 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
   const showBillEditor = billIsScanned || manualBillEntry;
   const billReadyForSplit = billIsScanned || (manualBillEntry && confirmedUsd > 0);
   const usdRate = fxQuote?.rate ?? 1;
+  // Scout buys the FX quote after the scan so the bill can render immediately.
+  // Until it lands, usdRate is 1 and the amounts are still in the origin
+  // currency — the UI must say so instead of mislabelling them as USD.
+  const fxPending = ocrState === "ready" && bill.currency !== "USD" && !fxQuote;
+  const amountUnit = fxPending ? bill.currency : "USD";
   const originCurrency = fxQuote?.source ?? bill.currency;
   const imageInputRef = useRef<HTMLInputElement | null>(null);
   const receiptPrintRef = useRef<HTMLDivElement | null>(null);
@@ -696,6 +701,24 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
     }
 
     setFxQuote(payload);
+
+    // Scout buys the quote separately from the scan so the bill can render
+    // first — fold that payment back into the on-screen receipt.
+    if (payload.paid) {
+      setScoutReport((current) =>
+        current
+          ? {
+              ...current,
+              payments: [
+                ...current.payments,
+                { endpoint: "/api/fx", amountUsd: payload.paid.amountUsd, tx: payload.paid.tx },
+              ],
+              totalSpentUsd: current.totalSpentUsd + payload.paid.amountUsd,
+              budgetRemainingUsd: Math.max(0, current.budgetRemainingUsd - payload.paid.amountUsd),
+            }
+          : current,
+      );
+    }
   }
 
   function updateBillField(field: keyof ParsedBill, value: string) {
@@ -2625,21 +2648,33 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
                         {billIsScanned ? (
                           <>
                             <div className="mb-4 rounded-[var(--radius)] border border-[var(--receipt-border-soft)] bg-[var(--receipt-overlay)] p-3 text-xs text-[var(--receipt-muted)]">
-                              <p className="font-semibold text-[var(--receipt-text)]">Converted to USD for settlement</p>
+                              <p className="font-semibold text-[var(--receipt-text)]">
+                                {fxPending ? `Converting ${originCurrency} to USD…` : "Converted to USD for settlement"}
+                              </p>
                               <p className="mt-1">
-                                Origin currency {originCurrency}. Rate{" "}
-                                <span className="amount-text">1 {originCurrency} = {usdRate.toFixed(6)} USD</span>
-                                {fxQuote?.asOf ? ` · ${new Date(fxQuote.asOf).toLocaleString()}` : ""}
+                                Origin currency {originCurrency}.{" "}
+                                {fxPending ? (
+                                  "Scout is buying the rate — amounts below are still in the origin currency."
+                                ) : (
+                                  <>
+                                    Rate{" "}
+                                    <span className="amount-text">1 {originCurrency} = {usdRate.toFixed(6)} USD</span>
+                                    {fxQuote?.asOf ? ` · ${new Date(fxQuote.asOf).toLocaleString()}` : ""}
+                                  </>
+                                )}
                               </p>
                             </div>
                             {scoutReport ? <ScoutReceipt report={scoutReport} /> : null}
+                            {/* While the rate is in flight usdRate is 1, so these
+                                amounts are still the origin currency — label them
+                                that way rather than asserting a wrong USD figure. */}
                             <div className="grid gap-3 sm:grid-cols-2">
                               <Field label="Merchant" value={bill.merchant} onChange={(value) => updateBillField("merchant", value)} />
                               <Field label="Origin currency" value={bill.currency} onChange={(value) => updateBillField("currency", value)} />
-                              <Field label="Subtotal USD" type="number" value={toUsdInput(bill.subtotal, usdRate)} onChange={(value) => updateBillUsdField("subtotal", value)} />
-                              <Field label="Tax USD" type="number" value={toUsdInput(bill.tax, usdRate)} onChange={(value) => updateBillUsdField("tax", value)} />
-                              <Field label="Tip USD" type="number" value={toUsdInput(bill.tip, usdRate)} onChange={(value) => updateBillUsdField("tip", value)} />
-                              <Field label="Total USD" type="number" value={toUsdInput(bill.total, usdRate)} onChange={(value) => updateBillUsdField("total", value)} />
+                              <Field label={`Subtotal ${amountUnit}`} type="number" value={toUsdInput(bill.subtotal, usdRate)} onChange={(value) => updateBillUsdField("subtotal", value)} />
+                              <Field label={`Tax ${amountUnit}`} type="number" value={toUsdInput(bill.tax, usdRate)} onChange={(value) => updateBillUsdField("tax", value)} />
+                              <Field label={`Tip ${amountUnit}`} type="number" value={toUsdInput(bill.tip, usdRate)} onChange={(value) => updateBillUsdField("tip", value)} />
+                              <Field label={`Total ${amountUnit}`} type="number" value={toUsdInput(bill.total, usdRate)} onChange={(value) => updateBillUsdField("total", value)} />
                             </div>
                           </>
                         ) : (
@@ -4407,10 +4442,64 @@ function Panel({
   );
 }
 
+// Watches Gateway transfer ids until their batch settles, yielding a
+// {transferId -> txHash} map. Batches land in minutes, so this polls slowly and
+// stops as soon as every payment on screen has a hash.
+function useBatchSettlement(payments: ScoutReport["payments"]) {
+  const [settled, setSettled] = useState<Record<string, string>>({});
+
+  const pendingKey = payments
+    .map((p) => p.tx)
+    .filter((tx): tx is string => Boolean(tx) && !tx!.startsWith("0x"))
+    .join(",");
+
+  useEffect(() => {
+    const ids = pendingKey ? pendingKey.split(",") : [];
+    if (ids.length === 0) return;
+
+    let live = true;
+    let pending = new Set(ids);
+    let timer: ReturnType<typeof setInterval>;
+
+    const check = async () => {
+      const found: Record<string, string> = {};
+      await Promise.all(
+        [...pending].map(async (id) => {
+          try {
+            const res = await fetch(`/api/scout/transfer?id=${encodeURIComponent(id)}`);
+            const data = (await res.json()) as { txHash?: string | null };
+            if (data.txHash) found[id] = data.txHash;
+          } catch {
+            // Transient — the next tick retries.
+          }
+        }),
+      );
+      if (!live) return;
+
+      const hashes = Object.keys(found);
+      if (hashes.length > 0) {
+        pending = new Set([...pending].filter((id) => !found[id]));
+        setSettled((current) => ({ ...current, ...found }));
+      }
+      if (pending.size === 0) clearInterval(timer); // everything landed — stop polling
+    };
+
+    check();
+    timer = setInterval(check, 20_000);
+    return () => {
+      live = false;
+      clearInterval(timer);
+    };
+  }, [pendingKey]);
+
+  return settled;
+}
+
 // The agent's receipt: what Scout paid, to which endpoint, and what it had left.
 // Shown above the parsed bill so the nanopayments are visible, not implied.
 function ScoutReceipt({ report }: { report: ScoutReport }) {
   const { agent, payments, degraded } = report;
+  const settledTx = useBatchSettlement(payments);
   return (
     <div className="mb-4 rounded-[var(--radius)] border border-[var(--receipt-border-soft)] bg-[var(--receipt-overlay)] p-3 text-xs text-[var(--receipt-muted)]">
       <p className="flex flex-wrap items-center gap-1 font-semibold text-[var(--receipt-text)]">
@@ -4433,22 +4522,29 @@ function ScoutReceipt({ report }: { report: ScoutReport }) {
               Paid <span className="amount-text">{payment.amountUsd.toFixed(3)} USDC</span> → {payment.endpoint}
               {payment.confidence != null ? ` (confidence ${(payment.confidence * 100).toFixed(0)}%)` : ""}
               {/* Gateway batches settlement, so a fresh payment has only a
-                  transfer id — the on-chain hash exists once its batch lands. */}
-              {payment.tx?.startsWith("0x") ? (
-                <>
-                  {" · "}
-                  <a
-                    className="underline"
-                    href={`https://testnet.arcscan.app/tx/${payment.tx}`}
-                    rel="noreferrer"
-                    target="_blank"
-                  >
-                    tx
-                  </a>
-                </>
-              ) : payment.tx ? (
-                <span title={payment.tx}> · batched {payment.tx.slice(0, 8)}</span>
-              ) : null}
+                  transfer id — the on-chain hash appears once its batch lands,
+                  which useBatchSettlement waits for. */}
+              {(() => {
+                const hash = payment.tx?.startsWith("0x") ? payment.tx : settledTx[payment.tx ?? ""];
+                if (hash) {
+                  return (
+                    <>
+                      {" · "}
+                      <a
+                        className="underline"
+                        href={`https://testnet.arcscan.app/tx/${hash}`}
+                        rel="noreferrer"
+                        target="_blank"
+                      >
+                        settled tx
+                      </a>
+                    </>
+                  );
+                }
+                return payment.tx ? (
+                  <span title={payment.tx}> · batching {payment.tx.slice(0, 8)}…</span>
+                ) : null;
+              })()}
             </li>
           ))}
         </ul>

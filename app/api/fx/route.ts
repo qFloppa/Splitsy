@@ -1,5 +1,6 @@
 import { quoteUsd } from "@/lib/fx-core";
 import { withGateway } from "@/lib/x402/seller";
+import { PRICES } from "@/lib/x402/pricing";
 
 export const runtime = "nodejs";
 
@@ -22,4 +23,4 @@ const handler = async (request: Request): Promise<Response> => {
   }
 };
 
-export const POST = withGateway(handler, "$0.001", "/api/fx");
+export const POST = withGateway(handler, PRICES["/api/fx"], "/api/fx");

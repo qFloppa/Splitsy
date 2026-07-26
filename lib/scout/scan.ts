@@ -1,5 +1,6 @@
 import { assessImage, shouldPayAgain, pickBetterParse } from "./decide.ts";
 import { canSpend, remainingBudget } from "../x402/spend.ts";
+import { priceUsd } from "../x402/pricing.ts";
 import type { ParsedBill } from "../snapsplit.ts";
 
 // Every outside effect is injected so the decision loop — which spends real
@@ -37,11 +38,21 @@ export type ScanResult = {
   degraded: boolean;
 };
 
-export const OCR_PRICE = 0.005;
-export const FX_PRICE = 0.001;
+export const OCR_PRICE = priceUsd("/api/ocr");
+export const FX_PRICE = priceUsd("/api/fx");
 
 export async function runScout(
-  input: { imageBase64: string; mimeType: string; bytes: number; width: number; height: number },
+  input: {
+    imageBase64: string;
+    mimeType: string;
+    bytes: number;
+    width: number;
+    height: number;
+    // Leave the FX buy to a follow-up call. The browser renders the bill as soon
+    // as it lands and fills the USD figure in after, instead of waiting ~3s for
+    // a second paid round-trip it cannot see yet.
+    skipFx?: boolean;
+  },
   deps: ScanDeps,
 ): Promise<ScanResult> {
   const payments: ScanPayment[] = [];
@@ -133,7 +144,7 @@ export async function runScout(
   // A foreign-currency bill needs a USD figure to split on, which is the second
   // seller. Optional: without it the UI just shows the source currency.
   let fx: FxQuote | undefined;
-  if (bill.currency && bill.currency !== "USD" && canSpend(spent, FX_PRICE, deps.dailyCapUsd)) {
+  if (!input.skipFx && bill.currency && bill.currency !== "USD" && canSpend(spent, FX_PRICE, deps.dailyCapUsd)) {
     try {
       const quote = await deps.pay("/api/fx", { amount: bill.total, fromCurrency: bill.currency });
       spent += quote.amountUsd;

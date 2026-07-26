@@ -1,3 +1,4 @@
+import { after } from "next/server";
 import { runScout } from "@/lib/scout/scan";
 import { buildScoutDeps, scoutBaseUrl, DAILY_CAP_USD } from "@/lib/scout/deps";
 import { ensureGatewayBalance } from "@/lib/scout/wallet";
@@ -39,9 +40,23 @@ export async function POST(request: Request) {
     return unpaidFallback(imageBase64, mimeType);
   }
 
-  await ensureGatewayBalance().catch(() => {}); // best-effort top-up
+  // Top up after responding, not before: a getBalances() round-trip costs ~1s on
+  // every scan to guard against a balance that is almost always fine. Running it
+  // behind the response means the *next* scan benefits, and a genuinely empty
+  // balance still degrades gracefully via the unpaid fallback.
+  after(() => ensureGatewayBalance().catch(() => {}));
 
-  const result = await runScout({ imageBase64, mimeType, bytes: file.size, width: dimensions.width, height: dimensions.height }, deps);
+  const result = await runScout(
+    {
+      imageBase64,
+      mimeType,
+      bytes: file.size,
+      width: dimensions.width,
+      height: dimensions.height,
+      skipFx: true, // the browser buys FX separately so the bill can render first
+    },
+    deps,
+  );
 
   return Response.json({
     ...result,

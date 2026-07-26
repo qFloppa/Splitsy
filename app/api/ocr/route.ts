@@ -1,5 +1,6 @@
 import { parseReceipt } from "@/lib/ocr-core";
 import { withGateway } from "@/lib/x402/seller";
+import { PRICES } from "@/lib/x402/pricing";
 
 export const runtime = "nodejs";
 
@@ -30,4 +31,4 @@ const handler = async (request: Request): Promise<Response> => {
   }
 };
 
-export const POST = withGateway(handler, "$0.005", "/api/ocr");
+export const POST = withGateway(handler, PRICES["/api/ocr"], "/api/ocr");

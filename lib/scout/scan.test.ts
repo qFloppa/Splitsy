@@ -108,6 +108,24 @@ test("pays FX for a foreign-currency bill", async () => {
   assert.equal(r.totalSpentUsd, 0.006);
 });
 
+test("skipFx leaves the FX buy to the caller", async () => {
+  const r = await runScout(
+    { ...img, skipFx: true },
+    deps({
+      pay: async (path) =>
+        path.includes("ocr")
+          ? { result: { bill: billWith({ currency: "EUR", total: 10, confidence: 0.95 }) }, amountUsd: 0.005, tx: "0xtx" }
+          : { result: {}, amountUsd: 0.001, tx: "0xfx" },
+    }),
+  );
+  assert.deepEqual(
+    r.payments.map((p) => p.endpoint),
+    ["/api/ocr"],
+  );
+  assert.equal(r.fx, undefined);
+  assert.equal(r.bill?.currency, "EUR"); // still a foreign bill, just unconverted
+});
+
 test("budget exhausted before any pay degrades to the unpaid parse", async () => {
   const r = await runScout(img, deps({ spentTodayUsd: async () => 0.05 }));
   assert.equal(r.payments.length, 0);
