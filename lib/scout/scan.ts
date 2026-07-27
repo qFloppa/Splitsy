@@ -125,6 +125,7 @@ export async function runScout(
         imageBase64: input.imageBase64,
         mimeType: input.mimeType,
         hq: true,
+        model: process.env.SCOUT_SECOND_OPINION_MODEL ?? "gemini-3.6-flash",
       });
       const secondBill = second.result.bill as ParsedBill;
       spent += second.amountUsd;

@@ -8,10 +8,11 @@ export const runtime = "nodejs";
 // scan. Human uploads reach this through /api/scout/scan, which pays on their
 // behalf — the browser never sees the 402.
 const handler = async (request: Request): Promise<Response> => {
-  const { imageBase64, mimeType, hq } = (await request.json()) as {
+  const { imageBase64, mimeType, hq, model } = (await request.json()) as {
     imageBase64?: string;
     mimeType?: string;
     hq?: boolean;
+    model?: string;
   };
 
   if (!imageBase64 || !mimeType) {
@@ -22,7 +23,7 @@ const handler = async (request: Request): Promise<Response> => {
   }
 
   try {
-    return Response.json({ bill: await parseReceipt(imageBase64, mimeType, { hq }) });
+    return Response.json({ bill: await parseReceipt(imageBase64, mimeType, { hq, model }) });
   } catch (error) {
     return Response.json(
       { error: error instanceof Error ? error.message : "Receipt scan failed." },

@@ -1,17 +1,21 @@
 import { normalizeParsedBill, type ParsedBill } from "@/lib/snapsplit";
 
-const RECEIPT_SCANNER_MODEL = process.env.RECEIPT_SCANNER_MODEL ?? "receipt-scanner-model";
+const DEFAULT_MODEL = process.env.RECEIPT_SCANNER_MODEL ?? "gemini-3.1-flash-lite";
 
 // The receipt parse, extracted from /api/ocr so Scout can call it two ways:
 // over HTTP as a paid x402 buy, or directly as the unpaid fallback when the
-// paid path is unavailable. `hq` is the second-opinion pass — same model, a
-// stricter prompt — worth paying for only when the first parse came back unsure.
+// paid path is unavailable. `hq` triggers the second-opinion pass; `model`
+// lets Scout swap in a different model for that pass (different weights = genuinely
+// independent opinion, not just a re-prompt of the same model).
 export async function parseReceipt(
   imageBase64: string,
   mimeType: string,
-  opts?: { hq?: boolean },
+  opts?: { hq?: boolean; model?: string },
 ): Promise<ParsedBill> {
-  const apiKey = process.env.RECEIPT_SCANNER_API_KEY;
+  const model = opts?.model ?? DEFAULT_MODEL;
+  // Second-opinion pass uses a dedicated key so it can hit a different quota/project.
+  const apiKey = (opts?.hq ? process.env.SCOUT_SECOND_OPINION_API_KEY : undefined)
+    ?? process.env.RECEIPT_SCANNER_API_KEY;
   if (!apiKey) throw new Error("Missing RECEIPT_SCANNER_API_KEY on the server.");
 
   const prompt = [
@@ -26,7 +30,7 @@ export async function parseReceipt(
   ].join(" ");
 
   const response = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/${RECEIPT_SCANNER_MODEL}:generateContent`,
+    `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
