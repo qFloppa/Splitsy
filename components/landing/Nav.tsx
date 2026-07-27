@@ -29,6 +29,12 @@ export function Nav() {
           >
             How it works
           </a>
+          <a
+            className="hidden rounded-md px-3 py-2 text-sm font-semibold text-[var(--text-soft)] no-underline transition-colors duration-[var(--dur-1)] hover:text-[var(--text)] sm:block"
+            href="#agent"
+          >
+            Agent APIs
+          </a>
           <Link
             className="rounded-md px-3 py-2 text-sm font-semibold text-[var(--text-soft)] no-underline transition-colors duration-[var(--dur-1)] hover:text-[var(--text)]"
             href="/docs"

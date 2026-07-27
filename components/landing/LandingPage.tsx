@@ -9,6 +9,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { Nav } from "./Nav";
 import { Hero } from "./Hero";
 import { DemoSection } from "./DemoSection";
+import { SectionAgent } from "./SectionAgent";
 import { SectionAnyone } from "./SectionAnyone";
 import { SectionOnchain } from "./SectionOnchain";
 import { SectionTreasury } from "./SectionTreasury";
@@ -44,6 +45,7 @@ export default function LandingPage() {
         <main id="main">
           <Hero />
           <DemoSection />
+          <SectionAgent />
           <SectionAnyone />
           <SectionOnchain />
           <SectionTreasury />
