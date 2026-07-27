@@ -1236,6 +1236,29 @@ input[type="number"],
   color: var(--docs-link);
 }
 
+.docs-search {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  border: 1px solid var(--docs-border);
+  border-radius: 6px;
+  padding: 0.35rem 0.5rem;
+  color: var(--docs-muted);
+}
+
+.docs-search input {
+  background: none;
+  border: none;
+  color: var(--docs-text);
+  font-size: 0.8rem;
+  outline: none;
+  width: 100%;
+}
+
+.docs-search input::placeholder {
+  color: var(--docs-muted);
+}
+
 .docs-content {
   min-width: 0;
 }

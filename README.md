@@ -2,7 +2,7 @@
 
 Splitsy is a Next.js prototype for scanning receipts, splitting shared costs, and collecting payments on Arc Testnet. It combines:
 
-- Receipt scanning for structured bill extraction.
+- Receipt scanning via an autonomous OCR agent ("Scout") that pays for AI tooling in USDC fractions using Circle Nanopayments (x402).
 - Social sign-in via X, Discord, Google, or a one-time email code — each provisions a Circle test-USDC wallet.
 - FX conversion into USD.
 - Equal or manual bill splitting.
@@ -10,13 +10,14 @@ Splitsy is a Next.js prototype for scanning receipts, splitting shared costs, an
 - Arc transaction memos for bill payment reconciliation.
 - Circle AppKit bridging from supported CCTP source chains into Arc Testnet.
 - Recurring USDC tabs with cycle settings and allowance-based collection.
-- Netting utilities for reducing repeated shared expenses into fewer transfers.
+- Net-settlement treasury: every open position collapsed to one net figure per counterparty, settled atomically on Circle SCA wallets.
 
 ## Stack
 
 - Next.js `16.2.9` with the App Router.
 - React `19.2.4`.
 - Circle AppKit and Viem for wallet, bridge, and chain interactions.
+- `@circle-fin/x402-batching` for Scout's x402 buyer client and the seller facilitator.
 - Hardhat 3 for contract tests and Arc Testnet deployment.
 - Server-side receipt scanning API.
 
@@ -55,6 +56,13 @@ X_CLIENT_ID=... / X_CLIENT_SECRET=...             # Sign in with X
 DISCORD_CLIENT_ID=... / DISCORD_CLIENT_SECRET=...  # Sign in with Discord
 GOOGLE_CLIENT_ID=... / GOOGLE_CLIENT_SECRET=...    # Sign in with Google
 RESEND_API_KEY=... / EMAIL_FROM=...                # Email-OTP delivery (Resend)
+
+# Scout agent (x402 nanopayments)
+SCOUT_PRIVATE_KEY=0x...           # server-held EOA; generate with scripts/scout-setup.ts
+SELLER_ADDRESS=0x...              # Splitsy treasury DCW — receives x402 earnings
+SCOUT_DAILY_CAP_USDC=1            # Scout's daily spend ceiling in USDC (default 1)
+SCOUT_ERC8004_TOKEN_ID=...        # set after scout-setup.ts registers Scout on Arc
+NEXT_PUBLIC_BASE_URL=https://your-deployment.vercel.app
 ```
 
 ### Sign-in providers
@@ -92,25 +100,133 @@ Useful scripts:
 npm run lint
 npm run build
 npm run test:netting
+npm run test:treasury
+npm run test:dashboard
+npm run test:landing
 npm run test:contracts
 npm run deploy:arc:bill-registry
 npm run deploy:arc:factory
+node --env-file=.env.local --experimental-strip-types scripts/scout-setup.ts
 ```
 
 ## Demo Flow
 
-1. Upload a receipt image.
-2. Review the parsed merchant, totals, tax, tip, line items, and confidence.
-3. Convert non-USD bills into USD.
+1. Upload a receipt image. Scout assesses image quality (size + dimensions) and pays Splitsy's own `/api/ocr` endpoint in USDC via x402 ($0.005/call). If parse confidence is below 0.8 and budget remains, Scout pays for a second-opinion pass and takes the better result.
+2. Review the parsed merchant, totals, tax, tip, line items, and confidence. A Scout identity card shows the agent's on-chain ERC-8004 address and the nanopayments it made.
+3. Convert non-USD bills into USD (Scout pays `/api/fx` at $0.001/call if needed).
 4. Split equally or enter manual payer amounts.
 5. Submit the split bill.
 6. Debtors connect the matching wallet and see unpaid debt in the app.
 7. Debtors pay fully or partially on Arc with a transaction memo, or bridge USDC from a supported CCTP source chain first.
 8. The splitter claims paid funds from the registry.
-9. Create weekly, monthly, or custom recurring tabs on Arc Testnet.
-10. Payers approve the recurring tab as a constrained USDC spender. Funds stay in their wallets until the backend settler runs and pulls due recurring shares.
+9. Open the Treasury view on the dashboard: every open debt and credit collapses to one net figure per counterparty. Hit "Settle net" — Circle SCA wallets execute one atomic `executeBatch` transaction; browser wallets run a sequential approve + pay + claim loop.
+10. Create weekly, monthly, or custom recurring tabs on Arc Testnet.
+11. Payers approve the recurring tab as a constrained USDC spender. Funds stay in their wallets until the backend settler runs and pulls due recurring shares.
 
 The repository includes a small sample image at `.tmp/test-receipt.png` for local receipt-scan testing.
+
+## Scout Agent (x402 Nanopayments)
+
+Scout is a server-side autonomous agent that pays for Splitsy's own OCR and FX
+endpoints in USDC fractions via Circle Nanopayments (x402) on Arc Testnet.
+
+### How it works
+
+Every receipt upload routes through `POST /api/scout/scan`. Scout runs a
+decision loop driven by three signals:
+
+1. **Image quality** (`lib/scout/decide.ts:assessImage`) — rejects images under 8 KB or 200 px on either edge before spending anything.
+2. **Parse confidence** — if the OCR result's `confidence` is below 0.8 and daily budget remains, Scout pays for a second-opinion pass with a stricter prompt and takes the better result.
+3. **Remaining budget** (`lib/x402/spend.ts:canSpend`) — enforces the `SCOUT_DAILY_CAP_USDC` ceiling. When exhausted, Scout returns the best-effort parse with a `lowConfidence` flag.
+
+If the paid path fails at any point, the route falls back to a direct internal
+call to `lib/ocr-core.ts` so the human upload UX never breaks.
+
+### Prices
+
+Defined once in `lib/x402/pricing.ts`:
+
+| Endpoint   | Price per call |
+|------------|---------------|
+| `/api/ocr` | $0.005 USDC   |
+| `/api/fx`  | $0.001 USDC   |
+
+### Scout's wallet
+
+Scout is a **server-held EOA** (`SCOUT_PRIVATE_KEY`), not a Circle DCW.
+`lib/scout/wallet.ts` constructs a `GatewayClient` from
+`@circle-fin/x402-batching` with `chain: "arcTestnet"`. The rest of Splitsy
+continues to use DCWs; Scout's EOA is only its x402 payment signer.
+
+### x402 seller endpoints
+
+`/api/ocr` and `/api/fx` are wrapped by `lib/x402/seller.ts`'s `withGateway`
+HOF. Unauthenticated requests receive HTTP 402 with a `PAYMENT-REQUIRED`
+challenge. The facilitator is Circle's `BatchFacilitatorClient`
+(`@circle-fin/x402-batching`). `maxTimeoutSeconds` is set to `345600` (7 days)
+because Circle's SDK default of 4 days is shorter than the Gateway's auth
+validity window on Arc.
+
+### ERC-8004 identity
+
+Scout is registered on Arc's canonical IdentityRegistry
+(`0x8004A818BFB912233c491871b3d84c89A494BD9e`). The upload UI shows a Scout
+identity card linking to Arcscan.
+
+### Payments ledger
+
+Every earned and spent payment is recorded in the `x402_payments` Supabase
+table (schema: `schema-x402-payments.sql`). The "Agent economy" panel in the
+dashboard shows earnings, spend, calls served, and remaining daily budget,
+fetched from `GET /api/scout/stats`.
+
+### Scout setup (one-time per environment)
+
+```bash
+# 1. Generate Scout's EOA, register ERC-8004, make initial Gateway deposit
+node --env-file=.env.local --experimental-strip-types scripts/scout-setup.ts
+
+# 2. Apply the payments table
+# Run schema-x402-payments.sql in the Supabase SQL editor
+
+# 3. Add SCOUT_PRIVATE_KEY, SELLER_ADDRESS, SCOUT_ERC8004_TOKEN_ID to .env.local
+```
+
+Fund Scout's EOA with test USDC from the [Circle faucet](https://faucet.circle.com) before running.
+
+See `docs/scout-agent.md` for full technical details.
+
+## Net-Settlement Treasury
+
+The Treasury view (dashboard → Treasury tab) aggregates every open on-chain
+bill position into one net figure per counterparty.
+
+### The escrow constraint
+
+`BillSplitRegistry.payDebt` is escrow-bound to a specific `billId` — debts
+cannot be routed through third parties or cancelled against each other on-chain.
+Netting is a **view-level truth** (your true net exposure per counterparty). The
+execution win is **transaction batching**, not fewer USDC moved.
+
+### Settlement paths
+
+| Wallet type | What happens |
+|---|---|
+| Circle SCA (social login) | One atomic `executeBatch` — all-or-nothing |
+| Browser EOA | Sequential: one `approve`, one `payDebt` per bill, one `claim` per bill |
+
+The transaction count formula is `grossTxCount = 2 × payLegCount + claimLegCount`
+(the bill-by-bill baseline). A Circle SCA wallet replaces all of that with one
+transaction.
+
+### Read model
+
+`lib/treasury.ts:buildTreasury` is a pure function that folds registry reads
+into `TreasuryPlan`: one `TreasuryPosition` per counterparty (both directions
+netted), sorted by absolute net descending. All money arithmetic is base-unit
+`bigint`; only `unitsToUsdc` crosses the wire boundary.
+
+See `docs/treasury.md` for full technical details.
 
 ## Contracts
 
@@ -135,6 +251,8 @@ The current Arc Testnet deployment is:
 RecurringTabFactory: 0x6c4d980f7a9250e3892a3541b5a62420b628f3c1
 Arcscan: https://testnet.arcscan.app/address/0x6c4d980f7a9250e3892a3541b5a62420b628f3c1
 USDC: 0x3600000000000000000000000000000000000000
+ERC-8004 IdentityRegistry: 0x8004A818BFB912233c491871b3d84c89A494BD9e
+Gateway Wallet: 0x0077777d7EBA4688BDeF3E311b846F25870A19B9
 ```
 
 More details are in `docs/snapsplit-contract.md`.
@@ -209,6 +327,18 @@ Set `CRON_SECRET` or `RECURRING_SETTLER_SECRET` in the hosting environment so cr
 
 The allowance-based recurring contract differs from the older prepaid tab deployment. Redeploy `RecurringTabFactory` and update `NEXT_PUBLIC_RECURRING_TAB_FACTORY_ADDRESS` before testing recurring collection on Arc Testnet.
 
+## Arc Testnet Constants
+
+| Name | Value |
+|---|---|
+| Network CAIP-2 | `eip155:5042002` |
+| USDC | `0x3600000000000000000000000000000000000000` |
+| Gateway Wallet | `0x0077777d7EBA4688BDeF3E311b846F25870A19B9` |
+| RPC | `https://rpc.testnet.arc.network` |
+| ERC-8004 IdentityRegistry | `0x8004A818BFB912233c491871b3d84c89A494BD9e` |
+
+All constants live in `lib/x402/constants.ts`.
+
 ## Current Verification
 
 These checks pass locally:
@@ -216,6 +346,8 @@ These checks pass locally:
 ```bash
 npm run lint
 npm run test:netting
+npm run test:treasury
+npm run test:landing
 npm run build
 ```
 

@@ -1,26 +1,34 @@
 import Link from "next/link";
 import Image from "next/image";
 import DocsShell from "./DocsShell";
+import DocsSearchInput from "./DocsSearchInput";
 import {
   ArrowRight,
+  ArrowRightLeft,
   AtSign,
   Award,
   BadgeDollarSign,
   BookOpen,
+  Bot,
   CalendarClock,
   CheckCircle2,
   CircleDollarSign,
   Code2,
+  Coins,
   Eye,
   FileText,
+  Gauge,
   KeyRound,
   Landmark,
+  Layers,
   LockKeyhole,
   ReceiptText,
   RefreshCw,
   Route,
+  Scale,
   Send,
   ShieldCheck,
+  Terminal,
   UserCheck,
   WalletCards,
 } from "lucide-react";
@@ -34,6 +42,8 @@ const sections = [
   "Payment Reputation",
   "Recurring Tabs",
   "Circle and Arc",
+  "Scout Agent",
+  "Net-Settlement Treasury",
   "Architecture",
   "Contracts",
   "Operations",
@@ -120,6 +130,7 @@ export default function DocsPage() {
       <div className="docs-layout">
         <aside className="docs-sidebar">
           <p>Contents</p>
+          <DocsSearchInput />
           {sections.map((section) => (
             <a href={`#${slug(section)}`} key={section}>
               {section}
@@ -791,6 +802,252 @@ export default function DocsPage() {
               </InfoCard>
             </div>
             <SourceList />
+          </section>
+
+          <section id="scout-agent" className="docs-section">
+            <SectionHeading icon={<Bot size={20} />} title="Scout Agent" />
+            <p>
+              When you upload a receipt, Splitsy does not scan it directly. The upload is handed to{" "}
+              <strong>Scout</strong> — an autonomous agent with <strong>its own wallet</strong>, its own{" "}
+              <a href="https://eips.ethereum.org/EIPS/eip-8004">ERC-8004</a> on-chain identity, and a daily
+              spending budget. Scout decides whether your photo is worth scanning, then <strong>pays
+              Splitsy&apos;s own scanning API in USDC</strong>, per call, over Arc. If the first read looks
+              shaky it buys a second opinion out of its own budget.
+            </p>
+            <p>
+              This is a real machine-to-machine economy, not a metaphor: every scan is an HTTP request that
+              gets answered with <code>402 Payment Required</code>, a USDC payment authorization, and only
+              then the parsed bill. You never pay for it and never see a prompt — the agent&apos;s spending is
+              its own.
+            </p>
+
+            <div className="docs-card-grid">
+              <InfoCard icon={<Gauge />} title="It judges before it spends">
+                Scout checks the photo first. Under <strong>8&nbsp;KB</strong>, or under{" "}
+                <strong>200&nbsp;px</strong> on either edge, and it refuses to pay at all — you get asked for
+                a clearer picture instead. Nothing is spent on an unreadable image.
+              </InfoCard>
+              <InfoCard icon={<Terminal />} title="It pays per call over HTTP">
+                Splitsy&apos;s <code>/api/ocr</code> and <code>/api/fx</code> are paywalled with the{" "}
+                <strong>x402</strong> protocol. Scout signs an offchain <strong>EIP-3009</strong>{" "}
+                authorization instead of sending a transaction — so it pays for the API and burns{" "}
+                <strong>no gas</strong> doing it.
+              </InfoCard>
+              <InfoCard icon={<CheckCircle2 />} title="It buys a second opinion">
+                Each parse carries a confidence score. Below <strong>0.80</strong>, and with budget left,
+                Scout pays a second time for a stricter re-read, then keeps whichever parse scored higher.
+              </InfoCard>
+              <InfoCard icon={<Coins />} title="It has a hard budget">
+                A daily cap (default <strong>$1.00</strong> USDC) is the agent&apos;s risk control. When the
+                cap is reached Scout stops paying and returns its best-effort read, flagged as low
+                confidence — it can never overspend.
+              </InfoCard>
+            </div>
+
+            <Callout title="Why this is only possible on Arc">
+              A $0.005 payment is absurd on most chains — the gas would cost hundreds of times the payment
+              itself. Arc settles in <strong>sub-second finality</strong> with{" "}
+              <strong>USDC-denominated gas of roughly a cent</strong>, and Circle&apos;s Gateway batches many
+              authorizations into one settlement so gas is paid once per batch rather than once per payment.
+              That is what makes a half-cent API call worth charging for at all.
+            </Callout>
+
+            <h3 className="docs-subheading">What a single scan actually does</h3>
+            <div className="docs-steps">
+              <Step number="1" title="Assess the image — no spend yet">
+                Scout reads the file size and pixel dimensions. Too small or too low-resolution and it
+                declines with a reason, having paid nothing.
+              </Step>
+              <Step number="2" title="Request the scanner, get a 402">
+                Scout calls <code>/api/ocr</code>. The endpoint answers{" "}
+                <code>402 Payment Required</code> with a <code>PAYMENT-REQUIRED</code> header quoting the
+                terms: scheme <code>exact</code>, network <code>eip155:5042002</code> (Arc Testnet), the USDC
+                asset, and the amount in atomic units (<code>5000</code> = $0.005).
+              </Step>
+              <Step number="3" title="Sign an authorization, not a transaction">
+                Scout signs an offchain EIP-3009 authorization from its wallet and retries the same request
+                with a <code>payment-signature</code> header. No transaction is broadcast at this point, so
+                the agent spends no gas.
+              </Step>
+              <Step number="4" title="Circle verifies and settles">
+                Splitsy&apos;s server hands the authorization to Circle&apos;s batch facilitator, which
+                verifies it and settles the USDC. Only then does the endpoint run the scan and return the
+                parsed bill, with a <code>PAYMENT-RESPONSE</code> header carrying the settlement reference.
+              </Step>
+              <Step number="5" title="Check confidence, maybe pay again">
+                If confidence is under 0.80 and the daily cap allows it, Scout repeats the paid call with a
+                stricter re-read instruction and keeps the better of the two parses.
+              </Step>
+              <Step number="6" title="Convert the currency if needed">
+                If the receipt is not in USD, Scout pays <code>/api/fx</code> ($0.001) for a rate to quote
+                the total in USD — the same figure your split is calculated from.
+              </Step>
+            </div>
+
+            <h3 className="docs-subheading">What Scout charges itself</h3>
+            <div className="docs-table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Paid endpoint</th>
+                    <th>Price per call</th>
+                    <th>When Scout calls it</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td><code>/api/ocr</code></td>
+                    <td>$0.005 USDC</td>
+                    <td>Once per scan; a second time if the first parse scores under 0.80 confidence.</td>
+                  </tr>
+                  <tr>
+                    <td><code>/api/fx</code></td>
+                    <td>$0.001 USDC</td>
+                    <td>Only when the receipt&apos;s currency is not USD.</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            <p>
+              So a clean USD receipt costs the agent $0.005; a blurry euro receipt costs $0.011. Both sides of
+              every payment are recorded — what Splitsy <em>earned</em> as the seller and what Scout{" "}
+              <em>spent</em> as the buyer — and the dashboard&apos;s <strong>Agent economy</strong> panel shows
+              the running totals with the budget left for the day.
+            </p>
+
+            <h3 className="docs-subheading">Scout&apos;s wallet and on-chain identity</h3>
+            <p>
+              Scout does not use a Circle wallet like yours. It holds a dedicated server-side account on Arc
+              whose <strong>only</strong> job is signing x402 payment authorizations — deliberately separate
+              from every user wallet, and funded with a small amount of test USDC deposited into Circle&apos;s
+              Gateway so its payments can be batched.
+            </p>
+            <p>
+              It is also registered as an agent on the same{" "}
+              <strong>ERC-8004 IdentityRegistry</strong> that gives payers their reputation NFTs (
+              <code>0x8004A818BFB912233c491871b3d84c89A494BD9e</code>), via{" "}
+              <code>register(metadataURI)</code>. That means the agent that scanned your receipt has a
+              publicly checkable identity: the scan result shows{" "}
+              <em>&quot;scanned by agent 0x… — see its onchain identity&quot;</em> and links straight to{" "}
+              <a href="https://testnet.arcscan.app">Arcscan</a>.
+            </p>
+
+            <Callout title="A paid scan can never block your upload">
+              The paywalled path is an agent-economy demonstration layered on top of the product — it is never
+              a single point of failure for you. If the facilitator is unreachable, settlement fails, or the
+              budget is exhausted, Splitsy falls back to scanning your receipt directly with no payment at
+              all, and the result is flagged so you know the paid path degraded. Your upload always
+              completes.
+            </Callout>
+          </section>
+
+          <section id="net-settlement-treasury" className="docs-section">
+            <SectionHeading icon={<Scale size={20} />} title="Net-Settlement Treasury" />
+            <p>
+              Once you have joined a few bills, what you owe and what you are owed is scattered across all of
+              them. The dashboard&apos;s <strong>Treasury</strong> tab collapses that into{" "}
+              <strong>one net figure per person</strong> — and a single <strong>Settle net</strong> button
+              that discharges every open position at once.
+            </p>
+            <div className="docs-card-grid">
+              <InfoCard icon={<Layers />} title="The open ledger">
+                Every share you owe on bills others created, and every unpaid share owed to you on bills you
+                created — read live from the registry on Arc, not from a cached balance.
+              </InfoCard>
+              <InfoCard icon={<Scale />} title="One net position">
+                Both directions with the same person are folded together. If Alex owes you $8 on one bill and
+                you owe Alex $12 on another, you see a single <strong>−$4.00</strong>, sorted so your largest
+                exposure is first.
+              </InfoCard>
+              <InfoCard icon={<ArrowRightLeft />} title="One settlement">
+                Settle net pays every debt and collects every claimable bill in one action. On a Splitsy
+                wallet the whole thing is <strong>one atomic transaction</strong>.
+              </InfoCard>
+              <InfoCard icon={<CircleDollarSign />} title="Claimable, separately">
+                Money already paid to you but not yet withdrawn is shown as its own figure — it is yours to
+                collect and is included in the same batch.
+              </InfoCard>
+            </div>
+
+            <Callout title="Netting is a view of exposure, not a shortcut around paying">
+              This is the one thing worth being precise about. Each bill <strong>escrows its own USDC</strong>{" "}
+              on Arc: <code>payDebt</code> credits the payer on <em>one specific bill</em>, and{" "}
+              <code>claim</code> pays only that bill&apos;s creator. So a debt can never be routed through a
+              third party or cancelled against a debt on a different bill. The net figure tells you your true
+              exposure; the <em>full</em> amount owed on each bill is still paid to that bill. What batching
+              removes is <strong>transactions</strong>, never the money owed — and it never collects on your
+              behalf what someone else still owes you.
+            </Callout>
+
+            <h3 className="docs-subheading">What Settle net costs to run</h3>
+            <p>
+              Settling bill by bill means an approval plus a payment for every debt, and a claim for every
+              bill you are collecting on — <code>2 × debts + claims</code> transactions in total. What
+              replaces that depends on which wallet signs:
+            </p>
+            <div className="docs-table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Signing wallet</th>
+                    <th>Transactions to settle everything</th>
+                    <th>Failure behaviour</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td>Splitsy wallet (social sign-in)</td>
+                    <td><strong>1</strong> — every approval, payment and claim in one atomic batch</td>
+                    <td>All-or-nothing: if any leg would fail, the entire batch reverts and nothing settles.</td>
+                  </tr>
+                  <tr>
+                    <td>Connected browser wallet</td>
+                    <td><strong>1 approval + 1 per debt + 1 per claim</strong></td>
+                    <td>Sequential: the progress modal shows exactly which step is running, and a later step failing leaves earlier ones settled.</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            <p>
+              The asymmetry is not arbitrary. Splitsy&apos;s social wallets are Circle{" "}
+              <strong>smart contract accounts</strong>, which can execute a batch of calls as one atomic
+              transaction; a connected browser wallet is a plain externally-owned account, which cannot, so it
+              still signs each leg. Either way a <strong>single USDC approval</strong> covers every payment
+              instead of one approval per bill.
+            </p>
+
+            <h3 className="docs-subheading">Settling from your Splitsy wallet</h3>
+            <div className="docs-steps">
+              <Step number="1" title="Unlock the wallet">
+                Because this moves money, Settle net requires your wallet PIN to be unlocked — the same
+                five-minute unlock used for a normal send. Locked, the button tells you to unlock first.
+              </Step>
+              <Step number="2" title="Amounts are re-read from chain">
+                Every outstanding amount is read fresh from the registry at the moment you press the button.
+                Nothing the browser sent is trusted, so a stale dashboard can never cause a wrong amount to
+                be signed.
+              </Step>
+              <Step number="3" title="One batch is assembled and sent">
+                One USDC approval for the summed total, one payment per debt, one claim per collectible bill —
+                packed into a single atomic transaction against your own wallet account.
+              </Step>
+              <Step number="4" title="Reputation is scored as usual">
+                Each debt settled in full earns payment reputation exactly as an individual payment would
+                (see <a href="#payment-reputation">Payment Reputation</a>). Batching changes the transaction
+                count, not the consent rules or the scoring.
+              </Step>
+            </div>
+
+            <h3 className="docs-subheading">Reading the Treasury tab</h3>
+            <ul className="docs-list">
+              <li><strong>Owed to me</strong> — the sum of every unpaid share on bills you created.</li>
+              <li><strong>I owe</strong> — the sum of every unpaid share you hold on other people&apos;s bills.</li>
+              <li><strong>Net position</strong> — the difference. Positive means you are owed on balance; negative means you owe.</li>
+              <li><strong>Claimable now</strong> — money already paid into your bills that you have not yet withdrawn.</li>
+              <li>Per person, both directions are shown alongside the net, labelled with their handle where Splitsy knows it and a shortened address where it does not.</li>
+              <li>The tab shares the dashboard&apos;s wallet scope selector. With both a Splitsy wallet and a browser wallet connected you must pick which one settles, because each signs differently.</li>
+              <li>On sample data (<code>?demo=1</code>) the figures render but settling is disabled.</li>
+            </ul>
           </section>
 
           <section id="architecture" className="docs-section">
