@@ -7,6 +7,8 @@ import {
   ArrowLeftRight,
   ArrowUpRight,
   BadgeCheck,
+  Bot,
+  Coins,
   Fuel,
   Layers,
   WalletCards,
@@ -52,6 +54,29 @@ const STACK: Tech[] = [
     href: "https://docs.arc.io/arc/concepts/stablecoin-native-model",
     linkLabel: "docs.arc.io",
     icon: <Fuel size={17} />,
+  },
+  {
+    key: "x402",
+    origin: "Circle",
+    name: "x402 machine payments",
+    description:
+      "Splitsy's own /api/ocr and /api/fx answer HTTP 402 with the terms of the call. A buying agent signs an offchain EIP-3009 authorization instead of sending a transaction, so it pays for the API in USDC and spends no gas doing it.",
+    proof: "402 → payment-signature → 200 · $0.005 per scan",
+    href: "https://developers.circle.com/gateway/nanopayments/concepts/x402",
+    linkLabel: "developers.circle.com",
+    icon: <Bot size={17} />,
+    wide: true,
+  },
+  {
+    key: "nanopayments",
+    origin: "Circle",
+    name: "Gateway batched settlement",
+    description:
+      "The facilitator verifies each authorization and settles net positions in bulk, paying gas once per batch instead of once per payment. That is what makes a half-cent API call worth charging for at all.",
+    proof: "GatewayWalletBatched v1 · 0x0077…19B9",
+    href: "https://developers.circle.com/gateway/nanopayments/concepts/batched-settlement",
+    linkLabel: "developers.circle.com",
+    icon: <Coins size={17} />,
   },
   {
     key: "circle-wallets",
