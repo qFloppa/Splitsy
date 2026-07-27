@@ -327,7 +327,7 @@ export function AgentStage() {
         <div className="flex flex-wrap items-center justify-between gap-2">
           <p className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-[0.08em] text-[var(--text-muted)]">
             {ledger.live ? (
-              <span className="size-1.5 shrink-0 animate-pulse rounded-full bg-[var(--success)]" />
+              <span className="size-1.5 shrink-0 animate-pulse rounded-full bg-[var(--success)] motion-reduce:animate-none" />
             ) : null}
             {ledger.live ? "Live from the x402 ledger" : "Agent economy · all time"}
           </p>

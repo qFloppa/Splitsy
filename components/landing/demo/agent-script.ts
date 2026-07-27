@@ -9,8 +9,9 @@ export const FX_PRICE = PRICES["/api/fx"];
 export const THRESHOLD = CONFIDENCE_THRESHOLD.toFixed(2);
 
 // SCOUT_DAILY_CAP_USDC's default from lib/scout/deps.ts. Not importable — that
-// module pulls in next/server and viem — so it is restated here. The live
-// dailyCapUsd from /api/scout/stats supersedes it where the fetch succeeds.
+// module pulls in next/server and viem — so it is restated here. /api/scout/stats
+// does carry a live dailyCapUsd, but nothing consumes it: the wallet line always
+// shows this constant, so a redeployed cap would silently drift from the demo.
 export const DEMO_CAP = "$0.050";
 
 // Two OCR calls plus one FX call: 0.005 + 0.005 + 0.001. Kept as a constant so

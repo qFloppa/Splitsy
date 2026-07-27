@@ -65,8 +65,12 @@ export async function getAgentStats(): Promise<{
 } | null> {
   const supabase = createSupabaseServerClient();
   if (!supabase) return null;
-  const { data } = await supabase.from("x402_payments").select("direction, amount_usdc");
-  const rows = (data ?? []) as Array<{ direction: X402Direction; amount_usdc: string }>;
+  const { data, error } = await supabase.from("x402_payments").select("direction, amount_usdc");
+  if (error || !data) {
+    console.error("[x402] getAgentStats failed, reporting no reading:", error?.message);
+    return null;
+  }
+  const rows = data as Array<{ direction: X402Direction; amount_usdc: string }>;
   const sum = (d: X402Direction) =>
     rows.filter((r) => r.direction === d).reduce((s, r) => s + Number(r.amount_usdc), 0);
   return {
