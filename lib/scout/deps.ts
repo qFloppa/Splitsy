@@ -4,7 +4,7 @@ import type { ScanDeps } from "./scan.ts";
 import { parseReceipt } from "../ocr-core.ts";
 import { sumSpentTodayUsd, recordPayment } from "../x402/payments-repo.ts";
 
-export const DAILY_CAP_USD = Number(process.env.SCOUT_DAILY_CAP_USDC ?? "0.05");
+export const DAILY_CAP_USD = Number(process.env.SCOUT_DAILY_CAP_USDC ?? "1");
 
 // Binds Scout's decision loop to the real world: its Gateway wallet pays
 // Splitsy's own paywalled endpoints over HTTP, and the ledger records the spend.

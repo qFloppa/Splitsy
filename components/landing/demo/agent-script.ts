@@ -12,7 +12,7 @@ export const THRESHOLD = CONFIDENCE_THRESHOLD.toFixed(2);
 // module pulls in next/server and viem — so it is restated here. /api/scout/stats
 // does carry a live dailyCapUsd, but nothing consumes it: the wallet line always
 // shows this constant, so a redeployed cap would silently drift from the demo.
-export const DEMO_CAP = "$0.050";
+export const DEMO_CAP = "$1";
 
 // Two OCR calls plus one FX call: 0.005 + 0.005 + 0.001. Kept as a constant so
 // the left pane's counter and the closing transcript line cannot disagree.

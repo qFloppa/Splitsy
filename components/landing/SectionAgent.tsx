@@ -42,7 +42,7 @@ export function SectionAgent() {
         Upload a receipt. <span className="lp-headline-accent">An agent goes shopping.</span>
       </h2>
       <p className="lp-lede mt-5 max-w-2xl" data-agent-heading>
-        Scout has its own wallet, an ERC-8004 identity on Arc, and a daily budget of five cents. It
+        Scout has its own wallet, an ERC-8004 identity on Arc, and a daily budget of one dollar. It
         judges your photo before spending anything, pays Splitsy&apos;s own x402 endpoints per call, and
         buys a second opinion when the parse looks shaky — signing gasless authorizations that Circle
         Gateway batches and settles on Arc.
