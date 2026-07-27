@@ -17,6 +17,8 @@ import {
 } from "lucide-react";
 import { motion, useReducedMotion } from "motion/react";
 
+import { PRICES } from "@/lib/x402/pricing";
+
 type Tech = {
   key: string;
   origin: "Arc" | "Circle" | "ERC standard";
@@ -61,7 +63,7 @@ const STACK: Tech[] = [
     name: "x402 machine payments",
     description:
       "Splitsy's own /api/ocr and /api/fx answer HTTP 402 with the terms of the call. A buying agent signs an offchain EIP-3009 authorization instead of sending a transaction, so it pays for the API in USDC and spends no gas doing it.",
-    proof: "402 → payment-signature → 200 · $0.005 per scan",
+    proof: `402 → payment-signature → 200 · ${PRICES["/api/ocr"]} per scan`,
     href: "https://developers.circle.com/gateway/nanopayments/concepts/x402",
     linkLabel: "developers.circle.com",
     icon: <Bot size={17} />,
