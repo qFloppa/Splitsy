@@ -1,9 +1,19 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import gsap from "gsap";
 import { Bot, Check, Terminal, TriangleAlert } from "lucide-react";
 
-import { ACTS, DEMO_CAP, OCR_PRICE, STEPS, THRESHOLD, TOTAL_SPEND, type Line } from "./agent-script";
+import {
+  ACTS,
+  DEMO_CAP,
+  OCR_PRICE,
+  STEP_LABELS,
+  STEPS,
+  THRESHOLD,
+  TOTAL_SPEND,
+  type Line,
+} from "./agent-script";
 
 /**
  * The agent-economy demo: Scout's decision signals on the left, the x402 HTTP
@@ -19,6 +29,199 @@ export function AgentStage() {
   const stageRef = useRef<HTMLDivElement>(null);
   const [activeStep, setActiveStep] = useState(0);
   const seekRef = useRef<(index: number) => void>(() => {});
+
+  useEffect(() => {
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    const stage = stageRef.current;
+    if (!stage) return;
+
+    let ctx: gsap.Context | undefined;
+    let tickFn: (() => void) | undefined;
+    let stepIndex = 0;
+
+    const build = () => {
+      if (tickFn) gsap.ticker.remove(tickFn);
+      tickFn = undefined;
+      ctx?.revert();
+
+      ctx = gsap.context(() => {
+        const q = gsap.utils.selector(stage);
+        const el = (sel: string) => q(sel)[0];
+
+        const signals = q("[data-signal]");
+        const overlay = el("[data-overlay]");
+        const spendOut = el("[data-spend]");
+        const track = el("[data-track]");
+        const groups = q("[data-act-group]");
+        const viewport = track.parentElement as HTMLElement;
+        const confidence = signals[2];
+        const confOk = confidence.querySelector("[data-signal-ok]");
+        const confWarn = confidence.querySelector("[data-signal-warn]");
+        const confDetail = confidence.querySelector("[data-signal-detail]");
+        const confWarnDetail = confidence.querySelector("[data-signal-warn-detail]");
+
+        // ---- reset to the starting frame ----
+        // autoAlpha uses visibility, not display, so hidden lines still occupy
+        // layout and the offsets measured below are the final ones.
+        gsap.set(track, { y: 0 });
+        gsap.set(q("[data-line]"), { autoAlpha: 0, y: 5 });
+        gsap.set(signals, { autoAlpha: 0, y: 8 });
+        gsap.set(overlay, { autoAlpha: 0 });
+        gsap.set(confOk, { autoAlpha: 0 });
+        gsap.set(confDetail, { autoAlpha: 0 });
+        // The warn pair is hidden from assistive tech as well as from sight:
+        // visibility:hidden would do it, but these two are crossfaded by opacity
+        // against their green siblings, so the attribute carries the semantics.
+        gsap.set([confWarn, confWarnDetail], { autoAlpha: 0, attr: { "aria-hidden": "true" } });
+
+        // How far the track must slide so act i's last line sits just inside
+        // the viewport's bottom edge. Clamped at 0 so early acts never scroll.
+        const trackTop = track.getBoundingClientRect().top;
+        const groupBottoms = groups.map((g) => g.getBoundingClientRect().bottom - trackTop);
+        const viewInner = viewport.clientHeight - 24; // p-3 top + bottom
+        const scrollFor = (i: number) => -Math.max(0, groupBottoms[i] - viewInner);
+
+        // The spend counter is a tweened proxy rather than a sequence of
+        // textContent writes, so scrubbing backwards unwinds it correctly.
+        const spend = { usd: 0 };
+        const renderSpend = () => {
+          spendOut.textContent = `$${spend.usd.toFixed(3)}`;
+        };
+        renderSpend();
+
+        const tl = gsap.timeline({ paused: true });
+
+        ACTS.forEach((act, actIndex) => {
+          tl.addLabel(act.label);
+
+          // Signals 1 and 2 are the pre-flight gates: both fire before a cent
+          // is spent, which is the whole point of the first act.
+          if (actIndex === 0) {
+            tl.to([signals[0], signals[1]], {
+              autoAlpha: 1,
+              y: 0,
+              duration: 0.4,
+              ease: "expo.out",
+              stagger: 0.18,
+            });
+          }
+
+          // Signal 3 appears amber when the parse comes back unsure, then
+          // resolves green once the second opinion is in. Both transitions use
+          // tl.set() on two sibling elements so reverse playback restores them.
+          if (actIndex === 4) {
+            tl.to(confidence, { autoAlpha: 1, y: 0, duration: 0.4, ease: "expo.out" })
+              .set(confidence, { attr: { "data-state": "warn" } }, "<")
+              .set([confWarn, confWarnDetail], { autoAlpha: 1, attr: { "aria-hidden": "false" } }, "<");
+          }
+
+          // Slide the track first so the incoming act has room, then reveal it.
+          tl.to(track, { y: scrollFor(actIndex), duration: 0.45, ease: "power2.inOut" }).to(
+            groups[actIndex].querySelectorAll("[data-line]"),
+            { autoAlpha: 1, y: 0, duration: 0.3, ease: "power2.out", stagger: 0.14 },
+            "-=0.25",
+          );
+
+          // Money moves as its ledger line lands, not before.
+          if (actIndex === 3 || actIndex === 4) {
+            tl.to(
+              spend,
+              { usd: `+=${parseFloat(OCR_PRICE.replace("$", ""))}`, duration: 0.4, onUpdate: renderSpend },
+              "<",
+            );
+          }
+          if (actIndex === 5) {
+            tl.to(
+              spend,
+              { usd: parseFloat(TOTAL_SPEND.replace("$", "")), duration: 0.4, onUpdate: renderSpend },
+              "<",
+            );
+          }
+
+          if (actIndex === 4) {
+            tl.set(confidence, { attr: { "data-state": "ok" } })
+              .set([confWarn, confWarnDetail], { autoAlpha: 0, attr: { "aria-hidden": "true" } }, "<")
+              .set([confOk, confDetail], { autoAlpha: 1 }, "<");
+          }
+
+          tl.to({}, { duration: actIndex === ACTS.length - 1 ? 1.6 : 0.55 });
+        });
+
+        tl.to(overlay, { autoAlpha: 1, duration: 0.5, ease: "power2.in" }).to(overlay, {
+          autoAlpha: 0,
+          duration: 0.01,
+        });
+
+        // ---- drive: autoplay while on screen ----
+        // No pin and no scrub. DemoStage already scroll-jacks this page once;
+        // a second pinned section would make the scroll feel taken away.
+        let inView = false;
+        let seeking = false;
+
+        // ---- rail highlighting ----
+        // Muted while seeking: a seek tween scrubs through every intervening
+        // label, and announcing each one walks the highlight to the step the
+        // user clicked the long way round.
+        const labelTimes = STEP_LABELS.map((label) => tl.labels[label] / tl.duration());
+        tl.eventCallback("onUpdate", () => {
+          if (seeking) return;
+          const p = tl.progress();
+          let idx = 0;
+          for (let i = 0; i < labelTimes.length; i++) if (p >= labelTimes[i]) idx = i;
+          if (idx !== stepIndex) {
+            stepIndex = idx;
+            setActiveStep(idx);
+          }
+        });
+
+        const io = new IntersectionObserver(([entry]) => (inView = entry.isIntersecting), {
+          threshold: 0.15,
+        });
+        io.observe(stage);
+
+        tickFn = () => {
+          if (!inView || seeking) return;
+          tl.progress((tl.progress() + gsap.ticker.deltaRatio(60) / 60 / tl.duration()) % 1);
+        };
+        gsap.ticker.add(tickFn);
+
+        seekRef.current = (index: number) => {
+          seeking = true;
+          stepIndex = index; // the rail's own onClick already highlighted it
+          gsap.to(tl, {
+            progress: labelTimes[index] + 0.001,
+            duration: 0.6,
+            ease: "power2.inOut",
+            overwrite: true, // a second click kills the first seek rather than racing it
+            onComplete: () => {
+              seeking = false;
+            },
+          });
+        };
+
+        return () => io.disconnect();
+      }, stage);
+    };
+
+    build();
+
+    let resizeTimer: ReturnType<typeof setTimeout>;
+    let lastWidth = stage.clientWidth;
+    const ro = new ResizeObserver(() => {
+      if (stage.clientWidth === lastWidth) return; // height changes as lines reveal; only width needs a rebuild
+      lastWidth = stage.clientWidth;
+      clearTimeout(resizeTimer);
+      resizeTimer = setTimeout(build, 250);
+    });
+    ro.observe(stage);
+
+    return () => {
+      ro.disconnect();
+      clearTimeout(resizeTimer);
+      if (tickFn) gsap.ticker.remove(tickFn);
+      ctx?.revert();
+    };
+  }, []);
 
   return (
     <div className="relative grid gap-5 p-5 md:grid-cols-[minmax(0,0.85fr)_minmax(0,1.15fr)] md:p-7" ref={stageRef}>
@@ -40,20 +243,13 @@ export function AgentStage() {
         </p>
 
         <div className="mt-3 space-y-2">
+          <Signal title="Image is legible" detail="1.4 MB · 1290 × 1720" foot="floors: 8 KB · 200 px" />
           <Signal
-            index={0}
-            title="Image is legible"
-            detail="1.4 MB · 1290 × 1720"
-            foot="floors: 8 KB · 200 px"
-          />
-          <Signal
-            index={1}
             title="Budget allows it"
             detail={`${DEMO_CAP} cap · ${OCR_PRICE} per call`}
             foot="the cap is the risk control"
           />
           <Signal
-            index={2}
             title="Confidence"
             detail="0.94 — kept the better parse"
             foot={`below ${THRESHOLD} it buys a second opinion`}
@@ -135,13 +331,11 @@ export function AgentStage() {
 // swapping textContent from a timeline does not survive scrubbing backwards,
 // whereas toggling two elements with tl.set() reverts cleanly.
 function Signal({
-  index,
   title,
   detail,
   foot,
   warnDetail,
 }: {
-  index: number;
   title: string;
   detail: string;
   foot: string;
@@ -151,7 +345,6 @@ function Signal({
     <div
       className="rounded-[var(--radius)] border border-[var(--border)] bg-[var(--surface)] px-3 py-2.5 data-[state=warn]:border-[var(--warning-text)]"
       data-signal
-      data-signal-index={index}
       data-state="ok"
     >
       <p className="flex items-center gap-2 text-xs font-bold text-[var(--text)]">
@@ -180,8 +373,9 @@ function Signal({
       </p>
       {/* Authored hidden from assistive tech as well as from sight: opacity-0
           alone would have a screen reader announce both mutually exclusive
-          confidence readings as if both were current. Task 4's timeline flips
-          this attribute alongside the crossfade. */}
+          confidence readings as if both were current. The timeline flips this
+          attribute alongside the crossfade, so whichever reading is on screen
+          is the one that is exposed. */}
       {warnDetail ? (
         <p
           aria-hidden="true"
