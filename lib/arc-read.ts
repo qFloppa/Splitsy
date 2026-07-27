@@ -72,6 +72,18 @@ const publicClient = createPublicClient({
   }),
 });
 
+// USDC balance of an address on Arc. Callers check it before sending, because a
+// transfer that runs out of money reverts and a revert carries no reason string —
+// "insufficient funds" has to be established up front or not at all.
+export async function getUsdcBalanceOnchain(addr: `0x${string}`): Promise<bigint> {
+  return publicClient.readContract({
+    address: (process.env.ARC_TESTNET_USDC_ADDRESS ?? "0x3600000000000000000000000000000000000000") as `0x${string}`,
+    abi: [parseAbiItem("function balanceOf(address owner) view returns (uint256)")],
+    functionName: "balanceOf",
+    args: [addr],
+  });
+}
+
 export async function getBillOnchain(billId: bigint) {
   const r = await publicClient.readContract({
     address: REGISTRY_ADDRESS,

@@ -88,12 +88,17 @@ pays in USDC fractions via Nanopayments, and has an on-chain ERC-8004 identity.
 
 ### Wallet & funding
 
-- Dedicated **Circle DCW** on Arc = Scout's agent wallet (separate from user wallets),
-  provisioned like existing DCWs (`lib/circle-dcw.ts` patterns).
-- **One-time Gateway deposit on Arc** establishes Scout's nanopayments balance
-  (done before demo; Arc's fast finality keeps this short).
-- **Spending policy** (per-call cap + daily cap) enforced in app logic (and, if
-  available, Circle wallet policy). The cap *is* the agent's risk management.
+- **Dedicated server-held EOA** (raw viem private key) on Arc = Scout's payment
+  wallet. Decided 2026-07-24: `@circle-fin/x402-batching`'s `GatewayClient` signs
+  the EIP-3009 authorization with a raw `privateKey`, not a Circle DCW — this
+  mirrors Circle's own `arc-nanopayments` sample. The rest of Splitsy keeps using
+  DCWs; Scout's lightweight EOA is only its x402 signer. Funded with test USDC via
+  Circle faucet.
+- **One-time Gateway deposit on Arc** (`gateway.deposit()`) establishes Scout's
+  nanopayments balance; auto-redeposit when the available balance drops below a
+  threshold (sample pattern). Arc's fast finality keeps the deposit short.
+- **Spending policy** (per-call cap + session/daily cap) enforced in app logic.
+  The cap *is* the agent's risk management.
 
 ### Decision loop (on receipt upload — Option A)
 
@@ -200,13 +205,24 @@ Arc read helpers.
   (facilitator mocked).
 - Treasury aggregation: extends existing netting tests with a multi-bill fixture.
 
+## Resolved during planning (from `circlefin/arc-nanopayments` @ master)
+- **Packages:** `@circle-fin/x402-batching` — buyer `GatewayClient` from `/client`
+  (`new GatewayClient({ chain: "arcTestnet", privateKey })`, `.deposit()`,
+  `.getBalances()`, `.pay(url,{method,body})`); seller `BatchFacilitatorClient`
+  from `/server` (`.verify()`, `.settle()`). No facilitator URL to configure.
+- **Arc constants:** network CAIP-2 `eip155:5042002`; USDC
+  `0x3600000000000000000000000000000000000000`; Gateway Wallet
+  `0x0077777d7EBA4688BDeF3E311b846F25870A19B9`; RPC `https://rpc.testnet.arc.network`;
+  `viem/chains` exports `arcTestnet`. Requirement `extra`:
+  `{ name: "GatewayWalletBatched", version: "1", verifyingContract: <gateway> }`,
+  `maxTimeoutSeconds: 345600`, `scheme: "exact"`.
+- **Headers:** base64 `PAYMENT-REQUIRED` (402), `payment-signature` (retry),
+  `PAYMENT-RESPONSE` (success).
+- **Wallet:** Scout is a server-held EOA (raw viem key), not a DCW.
+
 ## Open validation items (resolve first in planning)
-1. Exact x402/Nanopayments **package names** for buyer (`GatewayClient` + x402 client)
-   and seller (x402 middleware) and the **verify** endpoint URL. Mirror the
-   `circlefin/arc-nanopayments` sample repo.
-2. Confirm `/api/ocr` `confidence` field is reliable enough to threshold on; if not,
-   derive a proxy (e.g. presence of total + line items summing correctly).
-3. Confirm Scout wallet policy caps can be set via Circle (else enforce in app only).
+1. Confirm `/api/ocr` `confidence` field is reliable enough to threshold on; if not,
+   derive a proxy (total present AND line items sum within tolerance of total).
 
 ## Out of scope
 Gateway Unified Balance / bridging-to-pay, StableFX/Swap, conditional/scheduled

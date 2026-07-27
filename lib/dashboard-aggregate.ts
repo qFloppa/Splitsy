@@ -30,6 +30,20 @@ export function bucketForProvider(p: string | null | undefined): IdentityBucket 
   return (IDENTITY_BUCKETS as string[]).includes(p ?? "") ? (p as IdentityBucket) : "unknown";
 }
 
+// How to name a counterparty. A label is only a NAME when it came from a social
+// identity (X / Discord / email). Labels on address rows are positional form
+// defaults — "Payer 1", from HomeClient's bill builder — which name a row in
+// someone else's form, not a person, and collide across every bill ever made.
+// For those the address is the only real identifier, so return it.
+export function counterpartyLabel(
+  label: string | null | undefined,
+  provider: string | null | undefined,
+  addr: string,
+): string {
+  const bucket = bucketForProvider(provider);
+  return label && bucket !== "unknown" && bucket !== "wallet" ? label : addr;
+}
+
 export type CreatedBill = {
   // `claimed` is a uint256 base-unit AMOUNT already withdrawn by the creator,
   // NOT a boolean. claimable = totalPaid - claimed.
@@ -135,22 +149,29 @@ export function buildDashboard(input: DashboardInput): Omit<DashboardData, "trea
     else if (t.settlementCount > 0n) recurringFunnel.partiallyPaid += 1;
   }
 
-  // Top counterparties by billed volume; label falls back to the address when
-  // a preimage (and so its labels) is missing.
-  const parties = new Map<string, { bucket: IdentityBucket; volume: bigint; billCount: number }>();
+  // Top counterparties by billed volume. Keyed by ADDRESS, never by label: the
+  // same person can be labelled differently on two bills, and — worse — two
+  // strangers both land on "Payer 1", which a label-keyed map would silently
+  // merge into one row with their volumes added together.
+  const parties = new Map<string, { label: string; bucket: IdentityBucket; volume: bigint; billCount: number }>();
   for (const bill of created) {
     bill.participants.forEach((p, i) => {
-      const label = bill.labels[i] ?? p.addr;
-      const slot = parties.get(label) ?? { bucket: bucketForProvider(bill.providers[i]), volume: 0n, billCount: 0 };
+      const addr = p.addr.toLowerCase();
+      const slot = parties.get(addr) ?? {
+        label: counterpartyLabel(bill.labels[i], bill.providers[i], addr),
+        bucket: bucketForProvider(bill.providers[i]),
+        volume: 0n,
+        billCount: 0,
+      };
       slot.volume += p.owed;
       slot.billCount += 1;
-      parties.set(label, slot);
+      parties.set(addr, slot);
     });
   }
-  const topCounterparties: Counterparty[] = [...parties.entries()]
-    .sort(([, a], [, b]) => (b.volume > a.volume ? 1 : b.volume < a.volume ? -1 : 0))
+  const topCounterparties: Counterparty[] = [...parties.values()]
+    .sort((a, b) => (b.volume > a.volume ? 1 : b.volume < a.volume ? -1 : 0))
     .slice(0, 8)
-    .map(([label, v]) => ({ label, bucket: v.bucket, volumeUsdc: unitsToUsdc(v.volume), billCount: v.billCount }));
+    .map((v) => ({ label: v.label, bucket: v.bucket, volumeUsdc: unitsToUsdc(v.volume), billCount: v.billCount }));
 
   // Aging of outstanding creator-side debt. Unknown creation time (0) is
   // treated as oldest — it can only understate freshness, never overstate it.

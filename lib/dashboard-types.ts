@@ -59,6 +59,15 @@ export type TreasuryPlan = {
   grossTxCount: number;
 };
 
+// What the user ticked in the treasury view. The client picks *which* legs run;
+// it never says how much they cost — both settle paths re-read every amount from
+// chain, so a stale or forged selection can only ever settle a subset, never a
+// wrong number.
+export type TreasurySettleSelection = {
+  counterparties: string[] | null; // addresses to pay; null = every counterparty
+  collect: boolean; // also claim USDC already escrowed in bills I created
+};
+
 export type DashboardData = {
   generatedAtSeconds: number;
   isDemo: boolean;

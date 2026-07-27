@@ -63,6 +63,27 @@ export function normalizeParsedBill(input: Partial<ParsedBill>): ParsedBill {
   };
 }
 
+// What the breakdown doesn't explain, in the bill's own currency: a discount (or
+// a coupon, or a round-down) makes subtotal + tax + tip overshoot the total.
+// Negative means the reverse — an unlisted charge — which is not a discount.
+export function billDiscount(bill: ParsedBill) {
+  return Number((bill.subtotal + bill.tax + bill.tip - bill.total).toFixed(2));
+}
+
+// Re-derive the total after a subtotal/tax/tip edit, holding the discount
+// constant so an edited bill stays as discounted as the scan said it was.
+// A bill whose scan gave no breakdown keeps its total untouched: there the
+// total is the only figure there was, and deriving it from zeros would erase it.
+export function retotalBill(previous: ParsedBill, edited: ParsedBill): ParsedBill {
+  if (previous.subtotal + previous.tax + previous.tip <= 0) {
+    return edited;
+  }
+
+  const discount = Math.max(0, billDiscount(previous));
+  const total = edited.subtotal + edited.tax + edited.tip - discount;
+  return { ...edited, total: Math.max(0, Number(total.toFixed(2))) };
+}
+
 export function equalSplit(totalUsd: number, participants: SplitParticipant[]) {
   if (participants.length === 0) {
     return [];

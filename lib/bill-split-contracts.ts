@@ -271,8 +271,23 @@ function assertReceiptSuccess(receipt: TransactionReceipt, action: string): Tran
   return receipt;
 }
 
+// payDebt reverts inside USDC.transferFrom when the payer is short, and a receipt
+// only ever says "reverted" — no reason string survives. So check the balance
+// before we spend a wallet prompt on it, and name the real cause. Approval is the
+// choke point: every path that spends USDC approves the exact amount first.
+async function assertUsdcBalance(account: `0x${string}`, amount: bigint) {
+  const balance = await readArcUsdcBalance(account);
+  if (balance < amount) {
+    throw new Error(
+      `Not enough USDC: this needs ${billUnitsToUsdc(amount)} but your wallet holds ${billUnitsToUsdc(balance)}. ` +
+        `Top up on Arc Testnet (gas is paid in USDC too, so leave a little headroom) and try again.`,
+    );
+  }
+}
+
 export async function approveBillRegistry({ walletClient, account, amount }: BillSplitWallet & { amount: bigint }) {
   ensureRegistryConfigured();
+  await assertUsdcBalance(account, amount);
 
   const hash = await walletClient.writeContract({
     address: ARC_USDC_ADDRESS,

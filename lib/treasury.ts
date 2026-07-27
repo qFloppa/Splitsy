@@ -9,7 +9,7 @@
 // exposure per counterparty. The executable saving is transaction batching
 // (one approve for the summed amount instead of one per bill) — which is what
 // grossTxCount/payLegCount report. Do not restate it as fewer USDC moved.
-import { bucketForProvider, unitsToUsdc } from "./dashboard-aggregate.ts";
+import { bucketForProvider, counterpartyLabel, unitsToUsdc } from "./dashboard-aggregate.ts";
 import type { TreasuryPlan, TreasuryPosition } from "./dashboard-types.ts";
 
 export type TreasuryCreatedBill = {
@@ -79,7 +79,8 @@ export function buildTreasury(input: TreasuryInput): TreasuryPlan {
     const identity = input.identities[counterparty];
     return {
       counterparty,
-      label: identity?.label ?? counterparty,
+      // Same naming rule as topCounterparties — see counterpartyLabel.
+      label: counterpartyLabel(identity?.label, identity?.provider, counterparty),
       bucket: bucketForProvider(identity?.provider),
       theyOweMeUsdc: unitsToUsdc(v.theyOweMe),
       iOweThemUsdc: unitsToUsdc(v.iOweThem),
@@ -121,4 +122,23 @@ export function buildTreasury(input: TreasuryInput): TreasuryPlan {
 
 function netUnits(v: { theyOweMe: bigint; iOweThem: bigint }): bigint {
   return v.theyOweMe - v.iOweThem;
+}
+
+// Does this owed bill belong in a settle batch? Both settle paths ask — the
+// Circle SCA route and the browser-EOA loop — and they must agree, because a
+// mismatch means charging someone for a bill they unticked.
+//
+// `selected` is a whitelist of lowercase counterparty addresses, or null for
+// "everything". `me` is the settling wallet: a bill I created and also owe is
+// not a counterparty position (buildTreasury drops it above), so the treasury
+// view never quotes it and settling must not silently pay it either.
+export function shouldPayLeg(
+  leg: { splitter: string; remaining: bigint },
+  me: string,
+  selected: Set<string> | null,
+): boolean {
+  if (leg.remaining <= 0n) return false;
+  const splitter = leg.splitter.toLowerCase();
+  if (splitter === me.toLowerCase()) return false;
+  return !selected || selected.has(splitter);
 }

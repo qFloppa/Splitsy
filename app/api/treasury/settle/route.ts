@@ -1,5 +1,6 @@
-// "Settle net" for the Circle wallet identity: approve, pay every outstanding
-// debt, and claim every funded bill — as ONE atomic on-chain transaction.
+// "Settle net" for the Circle wallet identity: approve, pay the outstanding
+// debts the user selected, and claim every funded bill — as ONE atomic on-chain
+// transaction.
 //
 // Splitsy's social wallets are Circle SCA accounts (lib/circle-dcw.ts), which
 // expose executeBatch on the wallet's own address. Atomicity is the point: one
@@ -10,7 +11,8 @@
 // billId, so every debt still gets its own payDebt leg. What collapses is the
 // transaction count: 2N+M calls become 1.
 //
-// Every amount is read from chain, never from the client (hence no request body).
+// The body selects WHICH legs run (so a bogus bill can be left unpaid); it never
+// carries an amount. Every amount is read from chain.
 import { cookies } from "next/headers";
 import { after } from "next/server";
 import { getSessionUser } from "@/lib/session";
@@ -23,8 +25,10 @@ import {
   getBillIdsForSplitterOnchain,
   getBillsOnchain,
   getParticipantsOnchain,
+  getUsdcBalanceOnchain,
 } from "@/lib/arc-read";
 import { recordPaidFeedbackSafely } from "@/lib/erc8004";
+import { shouldPayLeg } from "@/lib/treasury";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -33,7 +37,7 @@ const ARC_USDC_ADDRESS = process.env.ARC_TESTNET_USDC_ADDRESS ?? "0x360000000000
 
 const usdc = (v: bigint) => (Number(v) / 1e6).toString();
 
-export async function POST() {
+export async function POST(request: Request) {
   const user = await getSessionUser();
   if (!user) return Response.json({ error: "Not signed in" }, { status: 401 });
 
@@ -47,45 +51,90 @@ export async function POST() {
   }
   const wallet = user.wallet_address as `0x${string}`;
   const walletId = user.circle_wallet_id;
+  const me = wallet.toLowerCase();
+
+  // Selection. Absent/malformed body = settle everything, which keeps the
+  // one-click path working. `counterparties` is a whitelist of addresses to pay,
+  // so unticking a bogus bill's creator simply drops its legs from the batch.
+  const body: unknown = await request.json().catch(() => null);
+  const raw = (body ?? {}) as { counterparties?: unknown; collect?: unknown };
+  const selected = Array.isArray(raw.counterparties)
+    ? new Set(raw.counterparties.map((a) => String(a).toLowerCase()))
+    : null; // null = every counterparty
+  const collect = raw.collect !== false;
 
   // 1. Derive every leg from chain.
   const [owedIds, createdIds] = await Promise.all([
     getBillIdsForParticipantOnchain(wallet),
     getBillIdsForSplitterOnchain(wallet),
   ]);
-  const [parts, createdBills] = await Promise.all([
+  // Owed bills are read twice over: getParticipant for my remaining share, and
+  // getBill for the splitter — the counterparty the selection names.
+  const [parts, owedBills, createdBills] = await Promise.all([
     getParticipantsOnchain(owedIds.map((billId) => ({ billId, addr: wallet }))),
+    getBillsOnchain([...owedIds]),
     getBillsOnchain([...createdIds]),
   ]);
 
   const payLegs = owedIds.flatMap((billId, i) => {
     const p = parts[i];
-    if (!p) return [];
+    const splitter = owedBills[i]?.splitter;
+    // Unreadable bill: we cannot say whose debt this is, so it cannot be
+    // matched against the selection. Skip rather than pay a nameless leg.
+    if (!p || !splitter) return [];
     const remaining = p.owed - p.paid;
-    return remaining > 0n ? [{ billId, amount: remaining }] : [];
+    if (!shouldPayLeg({ splitter, remaining }, me, selected)) return [];
+    return [{ billId, amount: remaining }];
   });
-  const claimLegs = createdBills.flatMap((b) => {
-    if (!b) return [];
-    const claimable = b.totalPaid - b.claimed;
-    return claimable > 0n ? [{ billId: b.billId, amount: claimable }] : [];
-  });
+  const claimLegs = collect
+    ? createdBills.flatMap((b) => {
+        if (!b) return [];
+        const claimable = b.totalPaid - b.claimed;
+        return claimable > 0n ? [{ billId: b.billId, amount: claimable }] : [];
+      })
+    : [];
 
   if (payLegs.length === 0 && claimLegs.length === 0) {
-    return Response.json({ error: "Nothing to settle." }, { status: 409 });
+    const narrowed = selected !== null || !collect;
+    return Response.json(
+      { error: narrowed ? "Nothing selected is still outstanding." : "Nothing to settle." },
+      { status: 409 },
+    );
   }
 
-  // 2. Build the batch. Order matters: the approval must precede the payDebts
-  //    that spend it. Claims are independent and go last.
+  // 2. Build the batch. Order matters twice over:
+  //    - Claims go FIRST. They pull escrowed USDC into this wallet, and because
+  //      the batch is atomic that balance is available to the payDebt legs in the
+  //      same transaction. Claiming last means a wallet that is short reverts the
+  //      whole batch — including the claim that would have covered it.
+  //    - The approval must precede the payDebts that spend it.
   const total = payLegs.reduce((s, l) => s + l.amount, 0n);
   const calls: { to: string; data: `0x${string}` }[] = [];
+  for (const leg of claimLegs) {
+    calls.push({ to: REGISTRY_ADDRESS, data: encodeClaim(leg.billId, leg.amount) });
+  }
   if (total > 0n) {
     calls.push({ to: ARC_USDC_ADDRESS, data: encodeApprove(REGISTRY_ADDRESS, total) });
   }
   for (const leg of payLegs) {
     calls.push({ to: REGISTRY_ADDRESS, data: encodePayDebt(leg.billId, leg.amount) });
   }
-  for (const leg of claimLegs) {
-    calls.push({ to: REGISTRY_ADDRESS, data: encodeClaim(leg.billId, leg.amount) });
+
+  // 2b. Short wallet? Say so now. Circle reports an on-chain revert as a bare
+  //     "execution failed", which reads as a bug rather than as an empty wallet.
+  //     Claims count toward the budget because they execute first in the same
+  //     atomic transaction. Gas is USDC on Arc too, so a wallet that clears this
+  //     by a hair can still fail — this catches the honest shortfall, not a
+  //     rounding one.
+  if (total > 0n) {
+    const claimTotal = claimLegs.reduce((s, l) => s + l.amount, 0n);
+    const budget = (await getUsdcBalanceOnchain(wallet)) + claimTotal;
+    if (budget < total) {
+      return Response.json(
+        { error: "insufficient_funds", neededUsdc: usdc(total), availableUsdc: usdc(budget) },
+        { status: 402 },
+      );
+    }
   }
 
   // 3. One atomic transaction, sent to the wallet's OWN address (that is where

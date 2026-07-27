@@ -96,15 +96,19 @@ import {
   usdcToUnits,
 } from "@/lib/recurring-contracts";
 import {
+  billDiscount,
   emptyParsedBill,
   equalSplit,
   normalizeParsedBill,
+  retotalBill,
   ParsedBill,
   SplitParticipant,
 } from "@/lib/snapsplit";
 import { providerDisplay } from "@/lib/provider-display";
 import { ReputationBadge } from "./ReputationBadge";
 import type { IdentityProvider } from "@/lib/types";
+import type { TreasurySettleSelection } from "@/lib/dashboard-types";
+import { shouldPayLeg } from "@/lib/treasury";
 import { useTheme } from "@/lib/use-theme";
 import { wagmiConfig } from "@/lib/wagmi";
 
@@ -525,6 +529,8 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
   const fxPending = ocrState === "ready" && bill.currency !== "USD" && !fxQuote;
   const amountUnit = fxPending ? bill.currency : "USD";
   const originCurrency = fxQuote?.source ?? bill.currency;
+  // A discount is shown as a note, not a field — the total already carries it.
+  const discountShown = Number((billDiscount(bill) * usdRate).toFixed(2));
   const imageInputRef = useRef<HTMLInputElement | null>(null);
   const receiptPrintRef = useRef<HTMLDivElement | null>(null);
   const reviewBillRef = useRef<HTMLDivElement | null>(null);
@@ -632,6 +638,9 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
     setOcrState("reading");
     setError("");
     setFxQuote(null);
+    // A new bill starts with a clean slate: the previous bill's "Bill #N is
+    // live" success would otherwise still be sitting in the split panel.
+    clearBillFlowState();
 
     // Scout (the nanopayment agent) drives the scan: it judges the photo, pays
     // Splitsy's x402 OCR endpoint in USDC fractions, and buys a second opinion
@@ -722,6 +731,15 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
     }
   }
 
+  // Message/state left over from the last created bill. Cleared whenever a new
+  // bill is started, so nothing from the previous one (or from a settlement)
+  // lingers in the "Review your split" panel.
+  function clearBillFlowState() {
+    setBillMessage("");
+    setBillState("idle");
+    setSubmittedBillId(null);
+  }
+
   function updateBillField(field: keyof ParsedBill, value: string) {
     setBill((current) =>
       normalizeParsedBill({
@@ -735,17 +753,18 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
   function updateBillUsdField(field: keyof ParsedBill, value: string) {
     const nextUsd = Number(value);
     const nextSourceValue = usdRate > 0 ? nextUsd / usdRate : nextUsd;
-    setBill((current) =>
-      normalizeParsedBill({
-        ...current,
-        [field]: Number.isFinite(nextSourceValue) ? nextSourceValue : 0,
-      }),
-    );
-    if (field === "total" && fxQuote) {
-      setFxQuote({
-        ...fxQuote,
-        amountUsd: Number.isFinite(nextUsd) ? Number(nextUsd.toFixed(2)) : 0,
-      });
+    const edited = normalizeParsedBill({
+      ...bill,
+      [field]: Number.isFinite(nextSourceValue) ? nextSourceValue : 0,
+    });
+    // Editing a component re-derives the total; editing the total is the user
+    // overriding it outright.
+    const next = field === "total" ? edited : retotalBill(bill, edited);
+    setBill(next);
+    // The split spends fxQuote.amountUsd, so every path that moves the total —
+    // including a component edit — has to move the converted amount with it.
+    if (fxQuote) {
+      setFxQuote({ ...fxQuote, amountUsd: Number((next.total * usdRate).toFixed(2)) });
     }
   }
 
@@ -763,9 +782,11 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
   }
 
   function updateParticipantShare(id: string, value: string) {
-    setParticipantShareInputs((current) => ({ ...current, [id]: value }));
-
+    // Nobody owes a negative share. Clamping only the stored number would leave
+    // the field reading "-5" while the row charged $0.
     const nextAmount = Number(value);
+    setParticipantShareInputs((current) => ({ ...current, [id]: nextAmount < 0 ? "0" : value }));
+
     setParticipants((current) =>
       current.map((participant) =>
         participant.id === id
@@ -1010,10 +1031,18 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
       setBillMessage("Manual shares cannot be larger than the bill Total USD amount.");
       return;
     }
-    const rows = displayParticipants.filter((p) => p.amountUsd > 0 && p.walletAddress.trim());
+    const rows = displayParticipants.filter((p) => p.walletAddress.trim());
     if (rows.length === 0) {
       setBillState("error");
       setBillMessage("Add at least one participant with a positive share.");
+      return;
+    }
+    // A tagged payer owing $0 used to be dropped silently — they'd never see the
+    // bill and the creator would never know why. Say it instead.
+    const zeroRow = rows.find((p) => !(p.amountUsd > 0));
+    if (zeroRow) {
+      setBillState("error");
+      setBillMessage(`"${zeroRow.label || zeroRow.walletAddress.trim()}" has no share — give them an amount above $0 or remove the row.`);
       return;
     }
 
@@ -1450,8 +1479,9 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
   // billId — no on-chain netting exists), then claim every funded bill I created.
   // Sequential, not atomic: executeBatch is an SCA feature and this is an EOA —
   // the Circle-wallet path (/api/treasury/settle) is the one-transaction one.
-  // Legs are re-read from chain, never taken from the dashboard payload.
-  async function settleNetWithWallet() {
+  // Legs are re-read from chain, never taken from the dashboard payload; the
+  // selection only narrows WHICH of them run.
+  async function settleNetWithWallet(selection?: TreasurySettleSelection) {
     const wallet = billWallet ?? (await connectBillWallet());
     if (!wallet) return;
 
@@ -1459,11 +1489,16 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
       readDebtsForWallet(wallet.account),
       readBillsForSplitter(wallet.account),
     ]);
-    const payLegs = myDebts.filter((d) => d.remaining > 0n);
-    const claimLegs = myBills.filter((b) => b.claimable > 0n);
+    const chosen = selection?.counterparties
+      ? new Set(selection.counterparties.map((a) => a.toLowerCase()))
+      : null; // null = every counterparty
+    const payLegs = myDebts.filter((d) => shouldPayLeg(d, wallet.account, chosen));
+    const claimLegs = selection?.collect === false ? [] : myBills.filter((b) => b.claimable > 0n);
     if (payLegs.length === 0 && claimLegs.length === 0) {
-      setBillMessage("Nothing to settle — every bill is already square.");
-      return;
+      // Returned, not pushed into billMessage: that bucket belongs to the bills
+      // tab, and a settlement note surfacing over "Review your split" reads as
+      // if it were about the bill being created. The dashboard shows this.
+      return selection ? "Nothing you selected is still outstanding." : "Nothing to settle — every bill is already square.";
     }
 
     const total = payLegs.reduce((sum, d) => sum + d.remaining, 0n);
@@ -1474,39 +1509,62 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
       contextLabel: `${payLegs.length + claimLegs.length} positions`,
       status: "running",
       errorMessage: "",
+      // Steps mirror the legs that will actually run — a collect-only settle
+      // must not show an approval step that never fires. Collect leads, because
+      // that is the order the transactions go out in below.
       steps: [
-        { key: "switch", icon: "switch", label: "Connect to Arc Testnet", hint: "Approve the network switch in your wallet", state: "active" },
-        { key: "approve", icon: "approve", label: "Approve USDC once", hint: "One approval covers every payment below", state: "pending" },
-        { key: "pay", icon: "pay", label: `Settle ${payLegs.length} debt${payLegs.length === 1 ? "" : "s"}`, hint: "One payment per escrowed bill", state: "pending" },
-        { key: "claim", icon: "claim", label: `Collect ${claimLegs.length} bill${claimLegs.length === 1 ? "" : "s"}`, hint: "Pull paid USDC to your wallet", state: "pending" },
+        { key: "switch", icon: "switch", label: "Connect to Arc Testnet", hint: "Approve the network switch in your wallet", state: "active" as const },
+        ...(claimLegs.length
+          ? ([{ key: "claim", icon: "claim", label: `Collect ${claimLegs.length} bill${claimLegs.length === 1 ? "" : "s"}`, hint: "Pull already-paid USDC to your wallet", state: "pending" }] satisfies FlowStep[])
+          : []),
+        ...(payLegs.length
+          ? ([
+              { key: "approve", icon: "approve", label: "Approve USDC once", hint: "One approval covers every payment below", state: "pending" },
+              { key: "pay", icon: "pay", label: `Pay ${payLegs.length} debt${payLegs.length === 1 ? "" : "s"}`, hint: "One payment per escrowed bill", state: "pending" },
+            ] satisfies FlowStep[])
+          : []),
       ],
     });
+
+    const claimTotal = claimLegs.reduce((sum, b) => sum + b.claimable, 0n);
 
     try {
       setBillState("working");
       await ensureBillSplitWalletOnArc(wallet);
-      advanceFlow("switch", "approve");
+      advanceFlow("switch", claimLegs.length ? "claim" : "approve");
 
-      if (total > 0n) {
-        await approveBillRegistry({ ...wallet, amount: total });
-      }
-      advanceFlow("approve", "pay");
-
-      for (const debt of payLegs) {
-        await payBillDebtWithMemo({ ...wallet, billId: debt.billId, amount: debt.remaining });
-      }
-      advanceFlow("pay", "claim");
-
+      // Collect first, pay second — same reason as the atomic Circle batch in
+      // /api/treasury/settle: claimed USDC lands in this wallet and funds the
+      // payments. Claiming last strands the money behind a payment that fails
+      // for want of it. (Unlike the SCA batch these are separate transactions,
+      // so a later failure leaves the collect standing, which is the good half.)
       for (const bill of claimLegs) {
         await claimBillFunds({ ...wallet, billId: bill.billId, amount: bill.claimable });
+      }
+
+      if (payLegs.length) {
+        advanceFlow("claim", "approve");
+        await approveBillRegistry({ ...wallet, amount: total });
+        advanceFlow("approve", "pay");
+
+        for (const debt of payLegs) {
+          await payBillDebtWithMemo({ ...wallet, billId: debt.billId, amount: debt.remaining });
+        }
       }
       completeFlow();
 
       setBillState("success");
-      setBillMessage(
-        `Settled ${payLegs.length + claimLegs.length} positions on Arc with ${total > 0n ? "one" : "no"} USDC approval.`,
-      );
+      // Say what moved, in both directions — "N positions settled" reads as if
+      // the money others owe you arrived too, and it did not.
+      const paidPart = payLegs.length
+        ? `Paid ${billUnitsToUsdc(total)} USDC across ${payLegs.length} bill${payLegs.length === 1 ? "" : "s"}`
+        : "";
+      const claimedPart = claimLegs.length
+        ? `collected ${billUnitsToUsdc(claimTotal)} USDC from ${claimLegs.length} bill${claimLegs.length === 1 ? "" : "s"}`
+        : "";
+      const sentence = [paidPart, claimedPart].filter(Boolean).join(" and ");
       await refreshBillRegistry(wallet.account);
+      return `${sentence.charAt(0).toUpperCase()}${sentence.slice(1)} on Arc.`;
     } catch (caught) {
       setBillState("error");
       failFlow(errorMessage(caught));
@@ -2505,8 +2563,11 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
                   </div>
                   <div className="flex items-center gap-2">
                     {/* Collapse once the list gets long (>3), so many unpaid bills
-                        don't stretch the page; a tap pins the choice. */}
-                    {pendingTotal > 3 ? (
+                        don't stretch the page; a tap pins the choice. Also show
+                        the toggle whenever the list is actually collapsed —
+                        otherwise a pinned "collapsed" from a longer list leaves a
+                        short one stuck shut with no way to reopen it. */}
+                    {pendingTotal > 3 || !debtsShown ? (
                       <button className="secondary-button" onClick={() => setDebtsExpanded(!debtsShown)} type="button">
                         <ChevronDown className={`transition-transform ${debtsShown ? "rotate-180" : ""}`} size={16} />
                         {debtsShown ? "Collapse" : "Expand"}
@@ -2627,6 +2688,7 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
                       setManualBillEntry(true);
                       setReceiptCommit(null);
                       setError("");
+                      clearBillFlowState();
                     }}
                     type="button"
                   >
@@ -2681,6 +2743,16 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
                               <Field label={`Tip ${amountUnit}`} type="number" value={toUsdInput(bill.tip, usdRate)} onChange={(value) => updateBillUsdField("tip", value)} />
                               <Field label={`Total ${amountUnit}`} type="number" value={toUsdInput(bill.total, usdRate)} onChange={(value) => updateBillUsdField("total", value)} />
                             </div>
+                            {discountShown > 0 ? (
+                              <p className="mt-3 text-xs text-[var(--receipt-muted)]">
+                                Discount applied:{" "}
+                                <span className="amount-text font-semibold text-[var(--receipt-text)]">
+                                  −{discountShown.toFixed(2)} {amountUnit}
+                                </span>{" "}
+                                off subtotal + tax + tip. The split uses the discounted total, and editing a field above keeps
+                                the discount.
+                              </p>
+                            ) : null}
                           </>
                         ) : (
                           <div className="grid gap-3 sm:grid-cols-2">
@@ -2992,6 +3064,8 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
             <DashboardPanel
               socialWallet={socialWalletAddress}
               browserWallet={connectedWalletAccount}
+              socialProvider={me?.provider ?? null}
+              socialHandle={me?.handle ?? null}
               onSettleNet={connectedWalletAccount ? settleNetWithWallet : undefined}
             />
           </motion.div>
@@ -3221,7 +3295,8 @@ function ClaimFundsPanel({
   const claimableBills = splitterBills.filter((debt) => debt.claimable > 0n);
   const claimRef = useRef<HTMLDivElement | null>(null);
   // Collapse a long claimable list (>3) behind a summary; a tap pins the choice
-  // (persisted across reloads).
+  // (persisted across reloads). The toggle also renders whenever the list is
+  // collapsed, so a pin carried over from a longer list can be undone.
   const [expanded, setExpanded] = usePersistedExpand("splitsy-expand-claims");
   const shown = expanded ?? claimableBills.length <= 3;
   const claimableTotalUnits = claimableBills.reduce((sum, debt) => sum + debt.claimable, 0n);
@@ -3246,7 +3321,7 @@ function ClaimFundsPanel({
         title="Claim funds"
         icon={<BadgeDollarSign size={19} />}
         action={
-          claimableBills.length > 3 ? (
+          claimableBills.length > 3 || !shown ? (
             <button className="secondary-button" onClick={() => setExpanded(!shown)} type="button">
               <ChevronDown className={`transition-transform ${shown ? "rotate-180" : ""}`} size={16} />
               {shown ? "Collapse" : "Expand"}
@@ -3679,7 +3754,8 @@ function RecurringWorkspace({
   // picks which side this detail view represents (defaults to recipient).
   const [viewRole, setViewRole] = useState<"recipient" | "payer" | null>(null);
   // Collapse a long recurring-tabs list (>3) behind a summary; a tap pins it
-  // (persisted across reloads).
+  // (persisted across reloads). The toggle also renders whenever the list is
+  // collapsed, so a pin carried over from a longer list can be undone.
   const [tabsExpanded, setTabsExpanded] = usePersistedExpand("splitsy-expand-tabs");
   // Rows shown = one per tab, or two for a tab where the viewer is both
   // recipient and payer — matches the flatMap that renders the list.
@@ -3898,7 +3974,7 @@ function RecurringWorkspace({
             title="Your recurring tabs"
             icon={<RefreshCw size={19} />}
             action={
-              tabRowCount > 3 ? (
+              tabRowCount > 3 || !tabsShown ? (
                 <button className="secondary-button" onClick={() => setTabsExpanded(!tabsShown)} type="button">
                   <ChevronDown className={`transition-transform ${tabsShown ? "rotate-180" : ""}`} size={16} />
                   {tabsShown ? "Collapse" : "Expand"}

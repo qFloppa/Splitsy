@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { buildTreasury, type TreasuryInput } from "./treasury.ts";
+import { buildTreasury, shouldPayLeg, type TreasuryInput } from "./treasury.ts";
 
 const USDC = 1_000_000n;
 
@@ -172,4 +172,51 @@ test("labels and identity buckets come from the identity map, else the address",
   assert.equal(byAddr.get("0xalice")!.bucket, "x");
   assert.equal(byAddr.get("0xstranger")!.label, "0xstranger");
   assert.equal(byAddr.get("0xstranger")!.bucket, "unknown");
+});
+
+test("a non-social label is discarded — the address is the only real identifier", () => {
+  const plan = buildTreasury(
+    input({
+      created: [
+        {
+          billId: "1",
+          totalPaid: 0n,
+          claimed: 0n,
+          participants: [
+            { addr: "0xpayer", owed: 2n * USDC, paid: 0n },
+            { addr: "0xraw", owed: 1n * USDC, paid: 0n },
+          ],
+        },
+      ],
+      identities: {
+        // "Payer 1" is HomeClient's positional form default for an address row,
+        // not a name — it must never stand in for the address.
+        "0xpayer": { label: "Payer 1", provider: null },
+        "0xraw": { label: "my hardware wallet", provider: "wallet" },
+      },
+    }),
+  );
+
+  const byAddr = new Map(plan.positions.map((p) => [p.counterparty, p]));
+  assert.equal(byAddr.get("0xpayer")!.label, "0xpayer");
+  assert.equal(byAddr.get("0xraw")!.label, "0xraw");
+});
+
+test("shouldPayLeg honours the selection whitelist and skips my own bills", () => {
+  const only = new Set(["0xalice"]);
+  const leg = (splitter: string, remaining = 5n * USDC) => ({ splitter, remaining });
+
+  // null selection = settle everything outstanding.
+  assert.equal(shouldPayLeg(leg("0xalice"), "0xme", null), true);
+  assert.equal(shouldPayLeg(leg("0xbob"), "0xme", null), true);
+
+  // A whitelist drops everyone else — this is how unticking a bogus bill's
+  // creator leaves it unpaid while the rest still settle.
+  assert.equal(shouldPayLeg(leg("0xALICE"), "0xme", only), true); // case-insensitive
+  assert.equal(shouldPayLeg(leg("0xbob"), "0xme", only), false);
+  assert.equal(shouldPayLeg(leg("0xalice"), "0xme", new Set()), false); // untick all
+
+  // Nothing left to pay, and my own bill: never legs, whatever is selected.
+  assert.equal(shouldPayLeg(leg("0xalice", 0n), "0xme", null), false);
+  assert.equal(shouldPayLeg(leg("0xme"), "0xME", null), false);
 });
