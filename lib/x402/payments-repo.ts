@@ -50,15 +50,21 @@ export async function sumSpentTodayUsd(): Promise<number> {
   return data.reduce((sum, r) => sum + Number(r.amount_usdc), 0);
 }
 
+/**
+ * The cumulative x402 ledger, or null when there is no database to read it
+ * from. The distinction is not pedantic: these figures are shown as real money
+ * on a public page, and "nothing has settled yet" and "we cannot see the
+ * ledger" are different claims. Returning zeros for the second would let an
+ * unconfigured deploy present fabricated figures as a live reading.
+ */
 export async function getAgentStats(): Promise<{
   earnedUsd: number;
   spentUsd: number;
   callsServed: number;
   callsPaid: number;
-}> {
+} | null> {
   const supabase = createSupabaseServerClient();
-  const empty = { earnedUsd: 0, spentUsd: 0, callsServed: 0, callsPaid: 0 };
-  if (!supabase) return empty;
+  if (!supabase) return null;
   const { data } = await supabase.from("x402_payments").select("direction, amount_usdc");
   const rows = (data ?? []) as Array<{ direction: X402Direction; amount_usdc: string }>;
   const sum = (d: X402Direction) =>

@@ -18,6 +18,9 @@ export async function GET() {
   }
 
   return Response.json({
+    // getAgentStats() is null when Supabase is unconfigured, and spreading null
+    // contributes no keys — so the ledger block is absent rather than zeroed.
+    // Consumers must treat a missing figure as "unknown", never as 0.
     ...stats,
     dailyCapUsd: DAILY_CAP_USD,
     budgetRemainingUsd: remainingBudget(spentToday, DAILY_CAP_USD),

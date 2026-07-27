@@ -2,7 +2,9 @@
 
 import { useEffect, useRef, useState } from "react";
 import gsap from "gsap";
-import { Bot, Check, Terminal, TriangleAlert } from "lucide-react";
+import { Bot, Check, ExternalLink, Terminal, TriangleAlert } from "lucide-react";
+
+import { resolveLedger, SCRIPTED_LEDGER, type LedgerTiles } from "@/lib/landing-ledger";
 
 import {
   ACTS,
@@ -29,6 +31,27 @@ export function AgentStage() {
   const stageRef = useRef<HTMLDivElement>(null);
   const [activeStep, setActiveStep] = useState(0);
   const seekRef = useRef<(index: number) => void>(() => {});
+  const [ledger, setLedger] = useState<LedgerTiles>(SCRIPTED_LEDGER);
+  const [agent, setAgent] = useState<{ address: string; tokenId: string | null } | null>(null);
+
+  // One fetch, no polling: this is a marketing page, not the dashboard. A
+  // failure is silent by design — the scripted figures already on screen stay
+  // put, and the "live" dot simply never appears.
+  useEffect(() => {
+    let live = true;
+    fetch("/api/scout/stats")
+      .then((response) => (response.ok ? response.json() : null))
+      .then((payload) => {
+        if (!live) return;
+        setLedger(resolveLedger(payload));
+        const found = payload?.agent;
+        if (found?.address) setAgent({ address: found.address, tokenId: found.tokenId ?? null });
+      })
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, []);
 
   useEffect(() => {
     if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
@@ -265,7 +288,7 @@ export function AgentStage() {
             </span>
           </p>
           <p className="mt-1.5 text-[11px] text-[var(--text-muted)]" data-wallet>
-            Scout signs from its own wallet — a server-held EOA on Arc with an ERC-8004 identity.
+            Signed from Scout&apos;s own wallet — a server-held EOA on Arc, capped at {DEMO_CAP} a day.
           </p>
         </div>
       </div>
@@ -297,6 +320,36 @@ export function AgentStage() {
           Scripted walkthrough — the field names, headers, prices and thresholds are the ones the server
           uses. The address and transaction hash are illustrative.
         </p>
+      </div>
+
+      {/* LIVE · the real x402 ledger, not the scripted run above */}
+      <div className="col-span-full rounded-[var(--radius)] border border-[var(--border)] bg-[var(--surface)] p-3">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <p className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-[0.08em] text-[var(--text-muted)]">
+            {ledger.live ? (
+              <span className="size-1.5 shrink-0 animate-pulse rounded-full bg-[var(--success)]" />
+            ) : null}
+            {ledger.live ? "Live from the x402 ledger" : "Agent economy · all time"}
+          </p>
+          {agent ? (
+            <a
+              className="inline-flex items-center gap-1 text-[11px] text-[var(--text-muted)]"
+              href={`https://testnet.arcscan.app/address/${agent.address}`}
+              rel="noreferrer"
+              target="_blank"
+            >
+              Scout {agent.address.slice(0, 6)}…{agent.address.slice(-4)}
+              {agent.tokenId ? ` · ERC-8004 #${agent.tokenId}` : ""}
+              <ExternalLink size={11} />
+            </a>
+          ) : null}
+        </div>
+
+        <div className="mt-2 grid grid-cols-3 gap-3">
+          <LedgerTile label="Earned" sub="x402 calls served" value={`${ledger.earnedUsdc} USDC`} />
+          <LedgerTile label="Scout spent" sub="paid to Splitsy's own APIs" value={`${ledger.spentUsdc} USDC`} />
+          <LedgerTile label="Calls served" sub="paid API responses" value={ledger.callsServed} />
+        </div>
       </div>
 
       {/* loop-reset veil */}
@@ -439,5 +492,15 @@ function TranscriptLine({ line }: { line: Line }) {
       <span className="min-w-0 flex-1 break-all text-right text-[var(--text)]">{line.value}</span>
       {line.note ? <span className="shrink-0 text-[var(--text-muted)]">{line.note}</span> : null}
     </p>
+  );
+}
+
+function LedgerTile({ label, value, sub }: { label: string; value: string; sub: string }) {
+  return (
+    <div className="min-w-0">
+      <p className="amount-text truncate text-base font-bold tabular-nums text-[var(--text)] sm:text-lg">{value}</p>
+      <p className="truncate text-[11px] font-semibold text-[var(--text)]">{label}</p>
+      <p className="truncate text-[11px] text-[var(--text-muted)]">{sub}</p>
+    </div>
   );
 }
