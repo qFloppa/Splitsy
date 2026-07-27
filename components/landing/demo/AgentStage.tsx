@@ -164,7 +164,11 @@ function Signal({
             <Check size={13} />
           </span>
           {warnDetail ? (
-            <span className="absolute inset-0 text-[var(--warning-text)] opacity-0" data-signal-warn>
+            <span
+              aria-hidden="true"
+              className="absolute inset-0 text-[var(--warning-text)] opacity-0"
+              data-signal-warn
+            >
               <TriangleAlert size={13} />
             </span>
           ) : null}
@@ -174,8 +178,16 @@ function Signal({
       <p className="mt-1 text-xs text-[var(--text-muted)]" data-signal-detail>
         {detail}
       </p>
+      {/* Authored hidden from assistive tech as well as from sight: opacity-0
+          alone would have a screen reader announce both mutually exclusive
+          confidence readings as if both were current. Task 4's timeline flips
+          this attribute alongside the crossfade. */}
       {warnDetail ? (
-        <p className="mt-1 text-xs text-[var(--warning-text)] opacity-0" data-signal-warn-detail>
+        <p
+          aria-hidden="true"
+          className="mt-1 text-xs text-[var(--warning-text)] opacity-0"
+          data-signal-warn-detail
+        >
           {warnDetail}
         </p>
       ) : null}
