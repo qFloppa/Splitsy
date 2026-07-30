@@ -95,7 +95,7 @@ IBillSplitRegistry public immutable registry;
 
 | Function | Caller | Behaviour |
 |---|---|---|
-| `setMandate(address agent, uint96 maxPerBill, uint128 maxPerDay, address[] creators)` | debtor, for themselves | Writes the mandate, replaces the allowlist, resets the bucket. `creators.length > MAX_ALLOWED_CREATORS` reverts |
+| `setMandate(address agent, uint96 maxPerBill, uint128 maxPerDay, address[] creators)` | debtor, for themselves | Writes the mandate and replaces the allowlist. Leaves `spent`/`lastSpendAt` alone. `creators.length > MAX_ALLOWED_CREATORS` reverts |
 | `revokeMandate()` | debtor | Zeroes `agent` **and** `spent`. Autopay off, immediately |
 | `allowedCreators(address debtor) view` | anyone | The allowlist, so the UI reads it from chain rather than a mirror |
 | `spendable(uint256 billId, address debtor) view` | anyone | What `payFor` would move right now; `0` when any rule blocks it. Mirrors the existing `collectible()` precedent at `BillSplitRegistry.sol:621` |
@@ -161,11 +161,25 @@ Errors: `NoMandate`, `NotAgent`, `NotParticipant`, `NothingOwed`,
   consent that cannot be withdrawn is not consent (the same rule
   `revokeCollect` already follows).
 
-### Deliberate behaviour worth stating
+### The bucket survives a settings change
 
-`setMandate` resets the bucket to zero, so a user can clear their own daily
-spend by re-saving their settings. That is acceptable: the cap exists to bound
-the **agent**, not to bind the user against themselves.
+`setMandate` deliberately does **not** touch `spent` or `lastSpendAt`. Zeroing
+them would make re-saving the settings panel a cap reset: pay 3 of a 3/day
+ceiling, hit Save, pay 3 more. Only the debtor can call `setMandate`, so that
+was never an agent-exploitable hole — but "the daily cap holds unless you press
+Save" is not a cap, and it is the first thing worth probing about this design.
+
+Carrying the bucket costs nothing and needs no special cases. Refill always
+uses the *current* `maxPerDay`, so lowering a cap mid-day binds immediately:
+`spent` may temporarily exceed the new ceiling, and `spent + amount >
+maxPerDay` simply declines every pull until it decays. Raising a cap takes
+effect at once. A stale mandate re-enabled after a long gap refills to zero on
+its first evaluation, so nothing needs clearing on the way back in.
+
+`revokeMandate` still zeroes `spent`, because that path also zeroes `agent`:
+there is no mandate left for a budget to belong to. Re-enabling after a revoke
+therefore starts fresh, which is the one reset path — and it costs a revoke
+transaction plus a new approval, not a click on Save.
 
 ## Off-chain changes
 
@@ -234,6 +248,8 @@ and `DebtPaid` monitors registered on 2026-07-30 for
 - the bucket refills: the same second spend succeeds after `warp(12 hours)` for a half-cap amount
 - a non-empty allowlist rejects a stranger creator and admits a listed one
 - a caller that is not `mandates[debtor].agent` reverts `NotAgent`
+- calling `setMandate` again after a spend does **not** clear the day's spend: the next over-cap `payFor` still reverts `OverDailyCap`
+- lowering `maxPerDay` below the current `spent` blocks the next pull rather than reverting the settings change
 - `revokeMandate` makes the next `payFor` revert `NoMandate`
 - a short USDC approval reverts, and `spendable` returns 0 for that case beforehand
 - no USDC remains on the mandate contract after a successful `payFor`
