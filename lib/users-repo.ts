@@ -93,8 +93,8 @@ export async function getUserById(id: string): Promise<AppUser | null> {
 // row (non-custodial users) are simply absent — callers fall back to the address.
 export async function getUsersByWallets(
   addresses: string[],
-): Promise<Map<string, { handle: string; provider: IdentityProvider }>> {
-  const result = new Map<string, { handle: string; provider: IdentityProvider }>();
+): Promise<Map<string, { id: string; handle: string; provider: IdentityProvider }>> {
+  const result = new Map<string, { id: string; handle: string; provider: IdentityProvider }>();
   const wanted = [...new Set(addresses.map((a) => a.toLowerCase()))].filter(Boolean);
   if (wanted.length === 0) return result;
 
@@ -106,7 +106,7 @@ export async function getUsersByWallets(
   // which returns lowercase hex — verified against all existing rows.
   const { data, error } = await client
     .from("users")
-    .select("wallet_address, handle, provider")
+    .select("id, wallet_address, handle, provider")
     .in("wallet_address", wanted);
   // Display-only enrichment: a failure degrades to addresses, never breaks the view.
   if (error || !data) return result;
@@ -114,6 +114,7 @@ export async function getUsersByWallets(
   for (const row of data) {
     if (!row.wallet_address) continue;
     result.set(String(row.wallet_address).toLowerCase(), {
+      id: String(row.id),
       handle: row.handle,
       provider: row.provider as IdentityProvider,
     });

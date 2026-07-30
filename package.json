@@ -10,6 +10,7 @@
     "deploy:arc:factory": "node --env-file=.env.local ./node_modules/hardhat/dist/src/cli.js run --network arcTestnet scripts/deploy-recurring-tab-factory.ts",
     "scout:setup": "node --experimental-strip-types --env-file=.env.local scripts/scout-setup.ts",
     "test:contracts": "hardhat test",
+    "audit:contracts": "slither . --config-file slither.config.json",
     "test:scout": "node --test --experimental-strip-types lib/scout/decide.test.ts lib/scout/scan.test.ts lib/x402/spend.test.ts lib/image-size.test.ts",
     "test:netting": "node --test --experimental-strip-types lib/netting.test.ts",
     "test:snapsplit": "node --test --experimental-strip-types lib/snapsplit.test.ts",
@@ -17,6 +18,8 @@
     "test:treasury": "node --test --experimental-strip-types lib/treasury.test.ts",
     "test:landing": "node --test --experimental-strip-types lib/landing-ledger.test.ts",
     "test:dashboard-create": "node --test --experimental-strip-types app/api/onchain-bills/create/route.test.ts",
+    "test:docs-search": "node --test --experimental-strip-types app/docs/search-score.test.ts",
+    "test:agents": "node --test --experimental-strip-types lib/autopay.test.ts lib/dunning.test.ts",
     "start": "next start",
     "lint": "eslint"
   },

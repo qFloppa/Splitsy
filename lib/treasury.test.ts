@@ -1,11 +1,14 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { buildTreasury, shouldPayLeg, type TreasuryInput } from "./treasury.ts";
+import { buildTreasury, claimableNow, refundableNow, shouldPayLeg, type TreasuryInput } from "./treasury.ts";
 
 const USDC = 1_000_000n;
+// A fixed instant, never Date.now() — buildTreasury takes the clock as input so
+// escrow release is testable in both directions.
+const NOW = 1_800_000_000n;
 
 function input(over: Partial<TreasuryInput> = {}): TreasuryInput {
-  return { myWallets: ["0xme"], created: [], owed: [], identities: {}, ...over };
+  return { myWallets: ["0xme"], created: [], owed: [], identities: {}, nowSeconds: NOW, ...over };
 }
 
 test("nets both directions with one counterparty into a single position", () => {
@@ -14,6 +17,9 @@ test("nets both directions with one counterparty into a single position", () => 
       created: [
         {
           billId: "1",
+          totalOwed: 0n,
+          dueDate: 0n,
+          escrowUntilFull: false,
           totalPaid: 0n,
           claimed: 0n,
           participants: [{ addr: "0xALICE", owed: 12n * USDC, paid: 0n }],
@@ -42,6 +48,9 @@ test("my own wallets are never counterparties to myself", () => {
       created: [
         {
           billId: "1",
+          totalOwed: 0n,
+          dueDate: 0n,
+          escrowUntilFull: false,
           totalPaid: 0n,
           claimed: 0n,
           participants: [
@@ -70,6 +79,9 @@ test("fully paid legs drop out entirely", () => {
       created: [
         {
           billId: "1",
+          totalOwed: 0n,
+          dueDate: 0n,
+          escrowUntilFull: false,
           totalPaid: 5n * USDC,
           claimed: 5n * USDC,
           participants: [{ addr: "0xbob", owed: 5n * USDC, paid: 5n * USDC }],
@@ -90,6 +102,9 @@ test("collects unclaimed funds on bills I created", () => {
       created: [
         {
           billId: "7",
+          totalOwed: 0n,
+          dueDate: 0n,
+          escrowUntilFull: false,
           totalPaid: 7n * USDC,
           claimed: 2n * USDC,
           participants: [{ addr: "0xbob", owed: 10n * USDC, paid: 7n * USDC }],
@@ -109,6 +124,9 @@ test("counts the legs a settle must execute", () => {
       created: [
         {
           billId: "9",
+          totalOwed: 0n,
+          dueDate: 0n,
+          escrowUntilFull: false,
           totalPaid: 4n * USDC,
           claimed: 0n,
           participants: [{ addr: "0xz", owed: 4n * USDC, paid: 4n * USDC }],
@@ -134,6 +152,9 @@ test("positions sort by absolute net, largest exposure first", () => {
       created: [
         {
           billId: "1",
+          totalOwed: 0n,
+          dueDate: 0n,
+          escrowUntilFull: false,
           totalPaid: 0n,
           claimed: 0n,
           participants: [{ addr: "0xalice", owed: 3n * USDC, paid: 0n }],
@@ -155,6 +176,9 @@ test("labels and identity buckets come from the identity map, else the address",
       created: [
         {
           billId: "1",
+          totalOwed: 0n,
+          dueDate: 0n,
+          escrowUntilFull: false,
           totalPaid: 0n,
           claimed: 0n,
           participants: [
@@ -180,6 +204,9 @@ test("a non-social label is discarded — the address is the only real identifie
       created: [
         {
           billId: "1",
+          totalOwed: 0n,
+          dueDate: 0n,
+          escrowUntilFull: false,
           totalPaid: 0n,
           claimed: 0n,
           participants: [
@@ -219,4 +246,113 @@ test("shouldPayLeg honours the selection whitelist and skips my own bills", () =
   // Nothing left to pay, and my own bill: never legs, whatever is selected.
   assert.equal(shouldPayLeg(leg("0xalice", 0n), "0xme", null), false);
   assert.equal(shouldPayLeg(leg("0xme"), "0xME", null), false);
+});
+
+// --- v2: batching and escrow -------------------------------------------------
+
+test("reports the batched transaction count alongside the bill-by-bill one", () => {
+  const plan = buildTreasury(
+    input({
+      created: [
+        {
+          billId: "1",
+          totalOwed: 10n * USDC,
+          totalPaid: 10n * USDC,
+          claimed: 0n,
+          dueDate: 0n,
+          escrowUntilFull: false,
+          participants: [],
+        },
+      ],
+      owed: [
+        { billId: "2", splitter: "0xalice", myOwed: 5n * USDC, myPaid: 0n },
+        { billId: "3", splitter: "0xbob", myOwed: 4n * USDC, myPaid: 0n },
+      ],
+    }),
+  );
+
+  assert.equal(plan.payLegCount, 2);
+  assert.equal(plan.claimLegCount, 1);
+  assert.equal(plan.grossTxCount, 5); // 2 approves + 2 payDebts + 1 claim
+  assert.equal(plan.batchedTxCount, 2); // one approve + one settle
+});
+
+test("an escrowed bill is not quoted as claimable until everyone has paid", () => {
+  const escrowed = {
+    billId: "1",
+    totalOwed: 20n * USDC,
+    totalPaid: 12n * USDC,
+    claimed: 0n,
+    dueDate: NOW + 86_400n,
+    escrowUntilFull: true,
+    participants: [],
+  };
+
+  const held = buildTreasury(input({ created: [escrowed] }));
+  assert.equal(held.claimableUsdc, "0");
+  assert.deepEqual(held.claimBillIds, []);
+
+  const paidUp = buildTreasury(input({ created: [{ ...escrowed, totalPaid: 20n * USDC }] }));
+  assert.equal(paidUp.claimableUsdc, "20");
+  assert.deepEqual(paidUp.claimBillIds, ["1"]);
+});
+
+// The deadline does not hand a short bill to its creator — that would let a
+// creditor wait out the escrow and keep a partial pot. Past the deadline the
+// bill has failed and the money goes back to the payers instead.
+test("escrow does not release at the due date while the bill is short", () => {
+  const escrowed = {
+    billId: "1",
+    totalOwed: 20n * USDC,
+    totalPaid: 12n * USDC,
+    claimed: 0n,
+    dueDate: NOW,
+    escrowUntilFull: true,
+    participants: [],
+  };
+
+  assert.equal(claimableNow(escrowed), 0n);
+  assert.equal(buildTreasury(input({ created: [escrowed] })).claimableUsdc, "0");
+  assert.equal(claimableNow({ ...escrowed, totalPaid: 20n * USDC }), 20n * USDC);
+});
+
+test("a bill without escrow is claimable regardless of its due date", () => {
+  const plain = {
+    billId: "1",
+    totalOwed: 20n * USDC,
+    totalPaid: 12n * USDC,
+    claimed: 0n,
+    dueDate: NOW + 86_400n,
+    escrowUntilFull: false,
+    participants: [],
+  };
+  assert.equal(claimableNow(plain), 12n * USDC);
+});
+
+test("a fully claimed bill is claimable for nothing", () => {
+  assert.equal(
+    claimableNow({ totalOwed: 20n * USDC, totalPaid: 20n * USDC, claimed: 20n * USDC, escrowUntilFull: false }),
+    0n,
+  );
+});
+
+// --- refund: the payer's exit from a failed all-or-nothing bill --------------
+
+const failedBill = { totalOwed: 20n * USDC, totalPaid: 12n * USDC, dueDate: NOW, escrowUntilFull: true };
+
+test("a payer's whole contribution is refundable once a short escrowed bill is past due", () => {
+  assert.equal(refundableNow(failedBill, 12n * USDC, NOW - 1n), 0n); // still time to complete it
+  assert.equal(refundableNow(failedBill, 12n * USDC, NOW), 12n * USDC); // >=, matching the contract
+});
+
+test("nothing is refundable once the bill reached its total", () => {
+  assert.equal(refundableNow({ ...failedBill, totalPaid: 20n * USDC }, 12n * USDC, NOW), 0n);
+});
+
+test("a bill without escrow is never refundable", () => {
+  assert.equal(refundableNow({ ...failedBill, escrowUntilFull: false }, 12n * USDC, NOW), 0n);
+});
+
+test("a payer who put nothing in gets nothing back", () => {
+  assert.equal(refundableNow(failedBill, 0n, NOW), 0n);
 });

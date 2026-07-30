@@ -124,6 +124,7 @@ export const DEMO_DASHBOARD: DashboardData = {
     claimableUsdc: "72.25",
     payLegCount: 2,
     claimLegCount: 2,
+    batchedTxCount: 2,
     grossTxCount: 6, // 2 debts x (approve + payDebt) + 2 claims
   },
 };

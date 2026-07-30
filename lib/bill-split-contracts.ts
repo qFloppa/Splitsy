@@ -63,6 +63,30 @@ export const billSplitRegistryAbi = [
       { indexed: true, internalType: "address", name: "splitter", type: "address" },
       { indexed: true, internalType: "bytes32", name: "metadataHash", type: "bytes32" },
       { indexed: false, internalType: "uint256", name: "totalOwed", type: "uint256" },
+      { indexed: false, internalType: "uint64", name: "dueDate", type: "uint64" },
+      { indexed: false, internalType: "bool", name: "escrowUntilFull", type: "bool" },
+    ],
+  },
+  {
+    type: "event",
+    name: "DebtFunded",
+    anonymous: false,
+    inputs: [
+      { indexed: true, internalType: "uint256", name: "billId", type: "uint256" },
+      { indexed: true, internalType: "address", name: "debtor", type: "address" },
+      { indexed: true, internalType: "address", name: "funder", type: "address" },
+      { indexed: false, internalType: "uint256", name: "amount", type: "uint256" },
+    ],
+  },
+  {
+    type: "event",
+    name: "DebtCollected",
+    anonymous: false,
+    inputs: [
+      { indexed: true, internalType: "uint256", name: "billId", type: "uint256" },
+      { indexed: true, internalType: "address", name: "debtor", type: "address" },
+      { indexed: true, internalType: "address", name: "splitter", type: "address" },
+      { indexed: false, internalType: "uint256", name: "amount", type: "uint256" },
     ],
   },
   {
@@ -95,6 +119,8 @@ export const billSplitRegistryAbi = [
       { internalType: "bytes32", name: "metadataHash", type: "bytes32" },
       { internalType: "address[]", name: "participantAddresses", type: "address[]" },
       { internalType: "uint256[]", name: "owedAmounts", type: "uint256[]" },
+      { internalType: "uint64", name: "dueDate", type: "uint64" },
+      { internalType: "bool", name: "escrowUntilFull", type: "bool" },
     ],
     outputs: [{ internalType: "uint256", name: "billId", type: "uint256" }],
   },
@@ -107,6 +133,73 @@ export const billSplitRegistryAbi = [
       { internalType: "uint256", name: "amount", type: "uint256" },
     ],
     outputs: [],
+  },
+  {
+    type: "function",
+    name: "payDebtFor",
+    stateMutability: "nonpayable",
+    inputs: [
+      { internalType: "uint256", name: "billId", type: "uint256" },
+      { internalType: "address", name: "debtor", type: "address" },
+      { internalType: "uint256", name: "amount", type: "uint256" },
+    ],
+    outputs: [],
+  },
+  {
+    type: "function",
+    name: "authorizeCollect",
+    stateMutability: "nonpayable",
+    inputs: [{ internalType: "uint256", name: "billId", type: "uint256" }],
+    outputs: [],
+  },
+  {
+    type: "function",
+    name: "revokeCollect",
+    stateMutability: "nonpayable",
+    inputs: [{ internalType: "uint256", name: "billId", type: "uint256" }],
+    outputs: [],
+  },
+  {
+    type: "function",
+    name: "collectDebt",
+    stateMutability: "nonpayable",
+    inputs: [
+      { internalType: "uint256", name: "billId", type: "uint256" },
+      { internalType: "address", name: "debtor", type: "address" },
+      { internalType: "uint256", name: "amount", type: "uint256" },
+    ],
+    outputs: [],
+  },
+  {
+    type: "function",
+    name: "settle",
+    stateMutability: "nonpayable",
+    inputs: [
+      { internalType: "uint256[]", name: "claimBillIds", type: "uint256[]" },
+      { internalType: "uint256[]", name: "payBillIds", type: "uint256[]" },
+      { internalType: "uint256[]", name: "payAmounts", type: "uint256[]" },
+    ],
+    outputs: [],
+  },
+  {
+    type: "function",
+    name: "collectMandate",
+    stateMutability: "view",
+    inputs: [
+      { internalType: "uint256", name: "billId", type: "uint256" },
+      { internalType: "address", name: "debtor", type: "address" },
+    ],
+    outputs: [{ internalType: "bool", name: "", type: "bool" }],
+  },
+  {
+    type: "function",
+    name: "collectible",
+    stateMutability: "view",
+    inputs: [
+      { internalType: "uint256", name: "billId", type: "uint256" },
+      { internalType: "address", name: "debtor", type: "address" },
+    ],
+    outputs: [{ internalType: "uint256", name: "", type: "uint256" }],
   },
   {
     type: "function",
@@ -127,6 +220,13 @@ export const billSplitRegistryAbi = [
   },
   {
     type: "function",
+    name: "refund",
+    stateMutability: "nonpayable",
+    inputs: [{ internalType: "uint256", name: "billId", type: "uint256" }],
+    outputs: [],
+  },
+  {
+    type: "function",
     name: "getBill",
     stateMutability: "view",
     inputs: [{ internalType: "uint256", name: "billId", type: "uint256" }],
@@ -136,6 +236,8 @@ export const billSplitRegistryAbi = [
       { internalType: "uint256", name: "totalOwed", type: "uint256" },
       { internalType: "uint256", name: "totalPaid", type: "uint256" },
       { internalType: "uint256", name: "claimed", type: "uint256" },
+      { internalType: "uint64", name: "dueDate", type: "uint64" },
+      { internalType: "bool", name: "escrowUntilFull", type: "bool" },
       { internalType: "address[]", name: "participantList", type: "address[]" },
     ],
   },
@@ -181,11 +283,13 @@ export type BillSplitDebt = {
   totalOwed: bigint;
   totalPaid: bigint;
   claimed: bigint;
+  dueDate: bigint; // Unix seconds; 0n = no deadline
+  escrowUntilFull: boolean;
   participantList: readonly `0x${string}`[];
   owed: bigint;
   paid: bigint;
   remaining: bigint;
-  claimable: bigint;
+  claimable: bigint; // 0n while the bill is escrowed — see the registry's claimable()
 };
 
 export type BillPaymentRecord = {
@@ -239,10 +343,14 @@ export async function createBillSplit({
   metadataHash,
   participants,
   owedAmounts,
+  dueDate = 0n,
+  escrowUntilFull = false,
 }: BillSplitWallet & {
   metadataHash: `0x${string}`;
   participants: `0x${string}`[];
   owedAmounts: bigint[];
+  dueDate?: bigint; // Unix seconds; 0n = no deadline
+  escrowUntilFull?: boolean; // requires a due date — the contract rejects the pair otherwise
 }) {
   ensureRegistryConfigured();
 
@@ -250,7 +358,7 @@ export async function createBillSplit({
     address: BILL_SPLIT_REGISTRY_ADDRESS,
     abi: billSplitRegistryAbi,
     functionName: "createBill",
-    args: [metadataHash, participants, owedAmounts],
+    args: [metadataHash, participants, owedAmounts, dueDate, escrowUntilFull],
     account,
     chain: arcTestnet,
   });
@@ -378,6 +486,96 @@ export async function claimBillFunds({
   return assertReceiptSuccess(await publicClient.waitForTransactionReceipt({ hash }), "Claim");
 }
 
+// The payer's exit from a failed all-or-nothing bill. No amount: the registry
+// always returns the caller's whole contribution, and only when the bill is
+// escrowUntilFull, past its due date and still short of totalOwed.
+export async function refundBillPayment({
+  walletClient,
+  account,
+  billId,
+}: BillSplitWallet & { billId: bigint }) {
+  ensureRegistryConfigured();
+
+  const hash = await walletClient.writeContract({
+    address: BILL_SPLIT_REGISTRY_ADDRESS,
+    abi: billSplitRegistryAbi,
+    functionName: "refund",
+    args: [billId],
+    account,
+    chain: arcTestnet,
+  });
+
+  return assertReceiptSuccess(await publicClient.waitForTransactionReceipt({ hash }), "Refund");
+}
+
+// One transaction for "claim everything owed to me, then pay everything I owe".
+// A browser EOA has no wallet-level batching, so before this a net settlement
+// cost one approve + one payDebt per leg plus one claim per funded bill; now it
+// is a single approve followed by this. Claims run first inside the contract, so
+// their proceeds fund the pay legs in the same tx.
+export async function settleBills({
+  walletClient,
+  account,
+  claimBillIds,
+  payBillIds,
+  payAmounts,
+}: BillSplitWallet & {
+  claimBillIds: bigint[];
+  payBillIds: bigint[];
+  payAmounts: bigint[];
+}) {
+  ensureRegistryConfigured();
+
+  const hash = await walletClient.writeContract({
+    address: BILL_SPLIT_REGISTRY_ADDRESS,
+    abi: billSplitRegistryAbi,
+    functionName: "settle",
+    args: [claimBillIds, payBillIds, payAmounts],
+    account,
+    chain: arcTestnet,
+  });
+
+  return assertReceiptSuccess(await publicClient.waitForTransactionReceipt({ hash }), "Settlement");
+}
+
+// Grant or withdraw the bill creator's standing permission to pull your
+// remaining share once the bill's due date has passed. Granting moves no money:
+// a collection is still capped by your own USDC approval and balance.
+export async function setBillCollectMandate({
+  walletClient,
+  account,
+  billId,
+  authorized,
+}: BillSplitWallet & {
+  billId: bigint;
+  authorized: boolean;
+}) {
+  ensureRegistryConfigured();
+
+  const hash = await walletClient.writeContract({
+    address: BILL_SPLIT_REGISTRY_ADDRESS,
+    abi: billSplitRegistryAbi,
+    functionName: authorized ? "authorizeCollect" : "revokeCollect",
+    args: [billId],
+    account,
+    chain: arcTestnet,
+  });
+
+  return assertReceiptSuccess(
+    await publicClient.waitForTransactionReceipt({ hash }),
+    authorized ? "Authorization" : "Revocation",
+  );
+}
+
+export async function readCollectMandate(billId: bigint, debtor: `0x${string}`) {
+  return publicClient.readContract({
+    address: BILL_SPLIT_REGISTRY_ADDRESS,
+    abi: billSplitRegistryAbi,
+    functionName: "collectMandate",
+    args: [billId, debtor],
+  });
+}
+
 export async function readDebtsForWallet(account: `0x${string}`) {
   ensureRegistryConfigured();
 
@@ -414,8 +612,11 @@ export async function readBillsForSplitter(account: `0x${string}`) {
 }
 
 export async function readDebt(billId: bigint, account: `0x${string}`): Promise<BillSplitDebt> {
-  const [[splitter, metadataHash, totalOwed, totalPaid, claimed, participantList], [owed, paid, exists], claimable] =
-    await Promise.all([
+  const [
+    [splitter, metadataHash, totalOwed, totalPaid, claimed, dueDate, escrowUntilFull, participantList],
+    [owed, paid, exists],
+    claimable,
+  ] = await Promise.all([
       publicClient.readContract({
         address: BILL_SPLIT_REGISTRY_ADDRESS,
         abi: billSplitRegistryAbi,
@@ -443,6 +644,8 @@ export async function readDebt(billId: bigint, account: `0x${string}`): Promise<
     totalOwed,
     totalPaid,
     claimed,
+    dueDate: BigInt(dueDate),
+    escrowUntilFull,
     participantList: [...participantList],
     owed: exists ? owed : 0n,
     paid: exists ? paid : 0n,

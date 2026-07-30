@@ -286,19 +286,6 @@ a {
   object-fit: contain;
 }
 
-.panel {
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: var(--surface);
-  padding: clamp(1rem, 2vw, 1.35rem);
-  box-shadow: var(--shadow-soft);
-  backdrop-filter: blur(18px);
-}
-
-.panel h2 {
-  letter-spacing: 0;
-}
-
 .header-title-row {
   display: flex;
   flex-wrap: wrap;
@@ -1231,6 +1218,10 @@ input[type="number"],
   text-decoration: none;
 }
 
+/* Pin the "Contents" label and search box above reordered links. */
+.docs-sidebar > p { order: -2; }
+.docs-sidebar > .docs-search-wrap { order: -1; }
+
 .docs-sidebar a:hover {
   background: var(--docs-card-soft);
   color: var(--docs-link);
@@ -1257,6 +1248,69 @@ input[type="number"],
 
 .docs-search input::placeholder {
   color: var(--docs-muted);
+}
+
+.docs-search-wrap {
+  display: grid;
+  gap: 0.35rem;
+  margin-bottom: 0.4rem;
+}
+
+.docs-search-clear {
+  display: grid;
+  place-items: center;
+  border: none;
+  background: none;
+  color: var(--docs-muted);
+  cursor: pointer;
+  padding: 0.1rem;
+  border-radius: 4px;
+}
+
+.docs-search-clear:hover {
+  color: var(--docs-text);
+  background: var(--docs-card-soft);
+}
+
+.docs-search-meta {
+  padding: 0 0.5rem;
+  font-size: 0.72rem;
+  color: var(--docs-muted);
+}
+
+.docs-search-hint {
+  opacity: 0.7;
+}
+
+/* Custom clear button replaces the native one — avoid a double ×. */
+.docs-search input::-webkit-search-cancel-button {
+  display: none;
+}
+
+/* Keyboard-active sidebar result. */
+.docs-sidebar a.docs-search-active {
+  background: var(--docs-card-soft);
+  color: var(--docs-link);
+}
+
+/* In-article term highlight. */
+.docs-section mark.docs-mark {
+  background: var(--docs-accent-soft);
+  color: var(--docs-link);
+  border-radius: 3px;
+  padding: 0.05rem 0.1rem;
+  border: none;
+  font: inherit;
+}
+
+/* Brief flash when a result is jumped to. */
+.docs-search-hit {
+  animation: docs-hit-flash 1.2s ease-out;
+}
+
+@keyframes docs-hit-flash {
+  0%   { box-shadow: 0 0 0 4px var(--docs-accent-soft); }
+  100% { box-shadow: 0 0 0 0 transparent; }
 }
 
 .docs-content {
@@ -2173,5 +2227,642 @@ input[type="number"],
 
   html {
     scroll-behavior: auto;
+  }
+}
+
+/* ── The spec-sheet system ───────────────────────────────────────────────────
+   Every app tab is built from the same three parts, so the five of them read as
+   one product rather than five screens that happened to ship together:
+
+     .tab-hero    one per tab — display-type title, lede, and a numbered legend
+                  that indexes the cards below it. The legend is the promise; the
+                  cards keep it in the same order.
+     .spec-card   one per section — a mono `NN · ROLE` step, a display title, a
+                  plain-language note, and a status chip. The step numbers are
+                  the spine: they let someone say "I'm stuck on 02".
+     .spec-*      the parts inside — chips, rule rows, fields, stat tiles, and
+                  the .trail-* timeline.
+
+   Two rules keep this from decaying into decoration:
+   1. Tint is state. The lit rail + warmed header of .spec-card-live appear if
+      and only if something is live (an agent may spend, a bill is payable, a
+      cycle is due). Nothing lights up for looks.
+   2. Numbers are stable. A step keeps its number whether or not its card is on
+      screen, so "02" always means the same thing. */
+
+.tab-hero {
+  position: relative;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: calc(var(--radius) + 4px);
+  background:
+    radial-gradient(130% 150% at 0% 0%, color-mix(in srgb, var(--accent) 13%, transparent), transparent 56%),
+    linear-gradient(180deg, color-mix(in srgb, var(--surface-strong) 94%, transparent), var(--surface));
+  box-shadow: var(--shadow-soft);
+  padding: clamp(1.35rem, 3vw, 2.4rem);
+}
+
+/* Plotting-paper texture, masked to the top-right so it never fights the type.
+   Two gradients rather than an image: no extra request, no asset to maintain. */
+.tab-hero::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-image:
+    linear-gradient(to right, color-mix(in srgb, var(--text) 7%, transparent) 1px, transparent 1px),
+    linear-gradient(to bottom, color-mix(in srgb, var(--text) 7%, transparent) 1px, transparent 1px);
+  background-size: 34px 34px;
+  mask-image: radial-gradient(86% 130% at 92% -10%, black, transparent 68%);
+}
+
+.tab-hero-grid {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  gap: clamp(1.25rem, 3vw, 2.25rem);
+}
+
+@media (min-width: 900px) {
+  .tab-hero-grid {
+    grid-template-columns: minmax(0, 1fr) 19rem;
+    align-items: start;
+  }
+}
+
+.tab-eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  color: var(--accent);
+  font-family: var(--font-mono);
+  font-size: 0.67rem;
+  font-weight: 700;
+  letter-spacing: 0.17em;
+  text-transform: uppercase;
+}
+
+.tab-hero-title {
+  margin-top: 0.75rem;
+  font-family: var(--font-display);
+  font-size: clamp(1.95rem, 3.6vw, 3.05rem);
+  font-weight: 600;
+  letter-spacing: -0.005em;
+  line-height: 1.04;
+}
+
+.tab-lede {
+  margin-top: 0.85rem;
+  max-width: 58ch;
+  color: var(--text-soft);
+  font-size: 0.95rem;
+  line-height: 1.65;
+}
+
+/* Index of the tab's contents, in the order the cards appear below. On tabs with
+   a real sequence (Bills, Recurring) the rows carry data-state and the legend
+   doubles as a progress readout — same tint-is-state rule as the cards. */
+.tab-legend {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--surface-strong) 72%, transparent);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.28);
+  padding: 0.35rem 0.9rem;
+}
+
+.tab-legend-row {
+  display: grid;
+  grid-template-columns: 0.55rem minmax(0, 1fr);
+  gap: 0.1rem 0.7rem;
+  border-bottom: 1px solid var(--border);
+  padding: 0.72rem 0;
+}
+
+.tab-legend-row:last-child {
+  border-bottom: 0;
+}
+
+/* The marker column. A hollow ring by default; filled only for a row whose step
+   is done or currently in play. */
+.tab-legend-row::before {
+  content: "";
+  grid-column: 1;
+  grid-row: 1 / 3;
+  align-self: start;
+  width: 0.55rem;
+  height: 0.55rem;
+  margin-top: 0.24rem;
+  border: 1.5px solid var(--border-strong);
+  border-radius: 999px;
+  transition:
+    background-color 220ms ease,
+    border-color 220ms ease,
+    box-shadow 220ms ease;
+}
+
+.tab-legend-row[data-state="done"]::before {
+  border-color: color-mix(in srgb, var(--success) 60%, transparent);
+  background: var(--success);
+}
+
+.tab-legend-row[data-state="active"]::before {
+  border-color: var(--accent);
+  background: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.tab-legend-row dt {
+  grid-column: 2;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 0.63rem;
+  font-weight: 700;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+}
+
+.tab-legend-row[data-state="active"] dt {
+  color: var(--accent);
+}
+
+.tab-legend-row dd {
+  grid-column: 2;
+  color: var(--text-soft);
+  font-size: 0.86rem;
+  font-weight: 600;
+}
+
+.tab-legend-row[data-state="active"] dd {
+  color: var(--text);
+}
+
+/* Right-hand slot in the hero for a tab's own controls (scope pickers, refresh),
+   so they read as part of the masthead instead of floating above the cards. */
+.tab-hero-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 1.15rem;
+}
+
+/* ── status chips ── */
+
+.spec-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.42rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--surface-strong) 78%, transparent);
+  color: var(--text-muted);
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.07em;
+  padding: 0.32rem 0.62rem;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.spec-chip-live {
+  border-color: color-mix(in srgb, var(--success) 52%, transparent);
+  background: var(--success-soft);
+  /* Mixed toward --text so this holds 4.5:1 against the soft green wash in both
+     themes: darker green on the light canvas, brighter on the dark one. */
+  color: color-mix(in srgb, var(--success) 78%, var(--text));
+}
+
+/* Needs-you tone. Distinct from -live: live means "running as configured",
+   attention means "this is waiting on a decision from you". */
+.spec-chip-attn {
+  border-color: color-mix(in srgb, var(--accent) 46%, transparent);
+  background: var(--accent-soft);
+  color: color-mix(in srgb, var(--accent) 82%, var(--text));
+}
+
+.spec-chip-warn {
+  border-color: color-mix(in srgb, var(--warning-text) 34%, transparent);
+  background: var(--warning-bg);
+  color: var(--warning-text);
+}
+
+.spec-dot {
+  width: 0.44rem;
+  height: 0.44rem;
+  border-radius: 999px;
+  background: currentColor;
+  box-shadow: 0 0 0 3px color-mix(in srgb, currentColor 20%, transparent);
+}
+
+.spec-chip-live .spec-dot,
+.spec-chip-attn .spec-dot {
+  animation: spec-dot-pulse 2.1s ease-in-out infinite;
+}
+
+@keyframes spec-dot-pulse {
+  50% {
+    opacity: 0.32;
+  }
+}
+
+/* ── spec-sheet cards ── */
+
+.spec-card {
+  position: relative;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: calc(var(--radius) + 2px);
+  background: var(--surface);
+  box-shadow: var(--shadow-soft);
+  transition: border-color 200ms ease;
+}
+
+.spec-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--surface-muted) 55%, transparent);
+  padding: 1rem clamp(1rem, 2vw, 1.3rem);
+  transition:
+    background-color 220ms ease,
+    border-color 220ms ease;
+}
+
+.spec-body {
+  padding: clamp(1rem, 2vw, 1.3rem);
+}
+
+/* Armed = this agent is currently permitted to spend. Reads as a lit rail down
+   the left edge and a warmed header; both vanish the moment it is switched off. */
+.spec-card-live {
+  border-color: color-mix(in srgb, var(--accent) 34%, var(--border));
+}
+
+.spec-card-live .spec-head {
+  background: linear-gradient(180deg, var(--accent-soft), transparent);
+  border-bottom-color: color-mix(in srgb, var(--accent) 26%, var(--border));
+}
+
+.spec-card-live::before {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 3px;
+  background: linear-gradient(180deg, var(--accent), color-mix(in srgb, var(--arc-cyan) 65%, var(--accent)));
+}
+
+.spec-step {
+  display: block;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 0.64rem;
+  font-weight: 700;
+  letter-spacing: 0.17em;
+  text-transform: uppercase;
+}
+
+.spec-title {
+  margin-top: 0.34rem;
+  font-family: var(--font-display);
+  font-size: 1.16rem;
+  font-weight: 600;
+  letter-spacing: 0;
+  line-height: 1.2;
+}
+
+.spec-note {
+  margin-top: 0.4rem;
+  max-width: 62ch;
+  color: var(--text-muted);
+  font-size: 0.81rem;
+  line-height: 1.6;
+}
+
+/* The step and the icon sit on one line above the title, so a card header reads
+   "glyph · 02 · SPLIT" then the title — the icon is an aid to scanning, not the
+   heading itself. */
+.spec-kicker {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.spec-icon {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 1.6rem;
+  height: 1.6rem;
+  border: 1px solid color-mix(in srgb, var(--accent) 26%, var(--border));
+  border-radius: 6px;
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.spec-card-live .spec-icon {
+  border-color: color-mix(in srgb, var(--accent) 48%, transparent);
+  background: color-mix(in srgb, var(--accent) 16%, var(--surface-strong));
+}
+
+/* Group heading inside a card body, for a card holding more than one list. */
+.spec-subhead {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 0.63rem;
+  font-weight: 700;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+}
+
+/* The rule runs to the end of the row, so a stack of groups gets a visible
+   horizon between them without a heavier divider. */
+.spec-subhead::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--border);
+}
+
+/* Empty is a designed state, not an absence: a dashed frame that reserves the
+   space the content will occupy, so nothing jumps when the first row arrives. */
+.spec-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.55rem;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--surface-muted) 45%, transparent);
+  color: var(--text-muted);
+  font-size: 0.82rem;
+  line-height: 1.6;
+  padding: 1.6rem 1.1rem;
+  text-align: center;
+}
+
+.spec-empty svg {
+  color: color-mix(in srgb, var(--text-muted) 70%, transparent);
+}
+
+.spec-empty strong {
+  color: var(--text-soft);
+  font-weight: 600;
+}
+
+/* ── rule fields ── */
+
+.spec-label {
+  display: block;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 0.63rem;
+  font-weight: 700;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+}
+
+.spec-input-wrap {
+  position: relative;
+  display: block;
+  margin-top: 0.4rem;
+}
+
+.spec-input {
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--surface-strong);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 1.02rem;
+  font-variant-numeric: tabular-nums;
+  padding: 0.6rem 4rem 0.6rem 0.72rem;
+  outline: none;
+  transition:
+    border-color 160ms ease,
+    box-shadow 160ms ease;
+}
+
+.spec-input:focus {
+  border-color: color-mix(in srgb, var(--accent) 60%, transparent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+/* Spinner arrows on a money field are noise; the value is typed, not nudged. */
+.spec-input::-webkit-outer-spin-button,
+.spec-input::-webkit-inner-spin-button {
+  appearance: none;
+  margin: 0;
+}
+
+.spec-input[type="number"] {
+  appearance: textfield;
+  -moz-appearance: textfield;
+}
+
+.spec-input-unit {
+  position: absolute;
+  top: 50%;
+  right: 0.7rem;
+  translate: 0 -50%;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  pointer-events: none;
+}
+
+.spec-textarea {
+  margin-top: 0.4rem;
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--surface-strong);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 0.76rem;
+  line-height: 1.6;
+  padding: 0.6rem 0.72rem;
+  outline: none;
+  resize: vertical;
+}
+
+.spec-textarea:focus {
+  border-color: color-mix(in srgb, var(--accent) 60%, transparent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.spec-hint {
+  display: block;
+  margin-top: 0.4rem;
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  line-height: 1.5;
+}
+
+/* ── mandate rows ── */
+
+.spec-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.9rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--surface-strong) 55%, transparent);
+  padding: 0.8rem 0.9rem;
+  transition:
+    border-color 180ms ease,
+    background-color 180ms ease;
+}
+
+.spec-row-on {
+  border-color: color-mix(in srgb, var(--accent) 32%, var(--border));
+  background: linear-gradient(90deg, var(--accent-soft), transparent 55%);
+}
+
+.spec-badge {
+  display: inline-flex;
+  min-width: 2.6rem;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface-muted);
+  color: var(--text-soft);
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  font-weight: 700;
+  padding: 0.25rem 0.4rem;
+}
+
+.spec-row-on .spec-badge {
+  border-color: color-mix(in srgb, var(--accent) 40%, transparent);
+  background: color-mix(in srgb, var(--accent) 14%, var(--surface-strong));
+  color: var(--accent-strong);
+}
+
+/* ── decision log ── */
+
+.trail-row {
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.9rem;
+  padding: 0.72rem 0 0.72rem 1.85rem;
+}
+
+/* The rail joining the marks, drawn per row so it stops at the last one. */
+.trail-row::before {
+  content: "";
+  position: absolute;
+  top: 1.6rem;
+  bottom: -0.3rem;
+  left: 0.51rem;
+  width: 1px;
+  background: var(--border);
+}
+
+.trail-row:last-child::before {
+  display: none;
+}
+
+.trail-mark {
+  position: absolute;
+  top: 0.8rem;
+  left: 0;
+  display: inline-flex;
+  width: 1.05rem;
+  height: 1.05rem;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: var(--surface-muted);
+  color: var(--text-muted);
+  box-shadow: 0 0 0 3px var(--surface);
+}
+
+.trail-done .trail-mark {
+  background: var(--success-soft);
+  color: var(--success);
+}
+
+.trail-amount {
+  display: block;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 0.84rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Same mix as the live chip: plain --success on the card surface lands near
+   3:1, which is short of 4.5:1 for text this size. */
+.trail-done .trail-amount {
+  color: color-mix(in srgb, var(--success) 78%, var(--text));
+}
+
+/* ── Scout ledger tiles ── */
+
+.spec-stat {
+  position: relative;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--surface-strong) 62%, transparent);
+  padding: 0.85rem 0.9rem;
+}
+
+.spec-stat::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 2px;
+  background: linear-gradient(90deg, var(--accent), color-mix(in srgb, var(--arc-cyan) 70%, var(--accent)) 70%, transparent);
+  opacity: 0.7;
+}
+
+.spec-stat-value {
+  font-family: var(--font-mono);
+  font-size: 1.12rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+}
+
+.spec-stat-label {
+  margin-top: 0.3rem;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.spec-stat-sub {
+  margin-top: 0.15rem;
+  color: var(--text-muted);
+  font-size: 0.74rem;
+}
+
+:root[data-theme="dark"] .tab-legend {
+  box-shadow: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spec-chip-live .spec-dot,
+  .spec-chip-attn .spec-dot {
+    animation: none;
   }
 }

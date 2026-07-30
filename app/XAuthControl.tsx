@@ -155,7 +155,10 @@ export default function XAuthControl() {
   }
 
   useEffect(() => {
-    if (open && me?.walletAddress) refreshBalance();
+    // Reading the chain is an external-system sync; the setState the linter sees
+    // is refreshBalance's own loading flag, which has to flip before the await.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    if (open && me?.walletAddress) void refreshBalance();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, me?.walletAddress]);
 

@@ -7,9 +7,14 @@
 // reverting leg reverts everything, so there is no half-settled state to report
 // or unwind. See https://developers.circle.com/wallets/batch-operations.md
 //
-// Note this does NOT move less USDC — registry escrow binds each debt to its
-// billId, so every debt still gets its own payDebt leg. What collapses is the
-// transaction count: 2N+M calls become 1.
+// Since registry v2 the batch is just TWO calls: one approve, then one
+// settle(claimIds, payIds, amounts) that carries every leg. The registry itself
+// runs the claims before the pays, so claim proceeds fund the pay legs inside
+// the same transaction.
+//
+// Note this does NOT move less USDC — registry accounting binds each debt to its
+// billId, so every debt still gets its own pay leg. What collapses is the
+// transaction count: 2N+M calls become 2.
 //
 // The body selects WHICH legs run (so a bogus bill can be left unpaid); it never
 // carries an amount. Every amount is read from chain.
@@ -17,7 +22,7 @@ import { cookies } from "next/headers";
 import { after } from "next/server";
 import { getSessionUser } from "@/lib/session";
 import { verifyWalletUnlock, WALLET_UNLOCK_COOKIE } from "@/lib/session-core";
-import { encodeApprove, encodeClaim, encodeExecuteBatch, encodePayDebt } from "@/lib/registry-calldata";
+import { encodeApprove, encodeExecuteBatch, encodeSettle } from "@/lib/registry-calldata";
 import { executeContractOnArc, InsufficientFundsError } from "@/lib/circle-dcw";
 import {
   REGISTRY_ADDRESS,
@@ -28,7 +33,7 @@ import {
   getUsdcBalanceOnchain,
 } from "@/lib/arc-read";
 import { recordPaidFeedbackSafely } from "@/lib/erc8004";
-import { shouldPayLeg } from "@/lib/treasury";
+import { claimableNow, shouldPayLeg } from "@/lib/treasury";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -86,10 +91,15 @@ export async function POST(request: Request) {
     if (!shouldPayLeg({ splitter, remaining }, me, selected)) return [];
     return [{ billId, amount: remaining }];
   });
+  // claimableNow, not a raw (totalPaid - claimed), because an escrowUntilFull
+  // bill reverts its claim leg until everyone has paid — and settle is atomic,
+  // so one escrowed bill would take the whole batch down. A short escrowed bill
+  // past its deadline has failed and never becomes claimable; its money leaves
+  // through the payers' refund, not through here.
   const claimLegs = collect
     ? createdBills.flatMap((b) => {
         if (!b) return [];
-        const claimable = b.totalPaid - b.claimed;
+        const claimable = claimableNow(b);
         return claimable > 0n ? [{ billId: b.billId, amount: claimable }] : [];
       })
     : [];
@@ -102,23 +112,22 @@ export async function POST(request: Request) {
     );
   }
 
-  // 2. Build the batch. Order matters twice over:
-  //    - Claims go FIRST. They pull escrowed USDC into this wallet, and because
-  //      the batch is atomic that balance is available to the payDebt legs in the
-  //      same transaction. Claiming last means a wallet that is short reverts the
-  //      whole batch — including the claim that would have covered it.
-  //    - The approval must precede the payDebts that spend it.
+  // 2. Build the batch: approve, then one settle carrying every leg. The
+  //    approval must precede the settle that spends it; the claim-before-pay
+  //    ordering is the registry's own, so it no longer has to be arranged here.
   const total = payLegs.reduce((s, l) => s + l.amount, 0n);
   const calls: { to: string; data: `0x${string}` }[] = [];
-  for (const leg of claimLegs) {
-    calls.push({ to: REGISTRY_ADDRESS, data: encodeClaim(leg.billId, leg.amount) });
-  }
   if (total > 0n) {
     calls.push({ to: ARC_USDC_ADDRESS, data: encodeApprove(REGISTRY_ADDRESS, total) });
   }
-  for (const leg of payLegs) {
-    calls.push({ to: REGISTRY_ADDRESS, data: encodePayDebt(leg.billId, leg.amount) });
-  }
+  calls.push({
+    to: REGISTRY_ADDRESS,
+    data: encodeSettle(
+      claimLegs.map((l) => l.billId),
+      payLegs.map((l) => l.billId),
+      payLegs.map((l) => l.amount),
+    ),
+  });
 
   // 2b. Short wallet? Say so now. Circle reports an on-chain revert as a bare
   //     "execution failed", which reads as a bug rather than as an empty wallet.

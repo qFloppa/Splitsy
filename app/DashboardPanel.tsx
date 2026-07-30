@@ -14,7 +14,22 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { ArrowRightLeft, BarChart3, FlaskConical, Info, Landmark, Loader2, RefreshCw, ShieldCheck } from "lucide-react";
+import {
+  ArrowRightLeft,
+  AtSign,
+  BarChart3,
+  CalendarClock,
+  Filter,
+  FlaskConical,
+  Gauge,
+  Info,
+  Landmark,
+  Loader2,
+  RefreshCw,
+  RotateCw,
+  ShieldCheck,
+  Users,
+} from "lucide-react";
 import {
   ChartContainer,
   ChartLegend,
@@ -33,8 +48,8 @@ import {
 } from "@/lib/dashboard-types";
 import { providerDisplay } from "@/lib/provider-display";
 import type { IdentityProvider } from "@/lib/types";
-import AgentEconomyPanel from "./AgentEconomyPanel";
 import { ProviderIcon } from "./ProviderTag";
+import { Panel, TabHero } from "./SpecCard";
 
 type RangeKey = "7d" | "30d" | "90d" | "all";
 // Which of the user's wallet identities the dashboard reports on. "all" unions
@@ -266,33 +281,57 @@ export default function DashboardPanel({
   // No wallet at all (signed out + nothing connected): guide, don't alarm.
   if (noWallet) {
     return (
-      <div className="panel">
-        <div className="flex flex-col items-center gap-3 py-10 text-center">
-          <BarChart3 className="text-[var(--text-muted)]" size={28} />
-          <p className="max-w-sm text-sm text-[var(--text-muted)]">
-            Sign in or connect a non-custodial wallet to see your analytics.
-          </p>
-          <button className="secondary-button" onClick={toggleDemo} type="button">
+      <Panel
+        icon={<BarChart3 size={15} />}
+        note="The dashboard reports on wallets, so it needs to know which ones are yours before it can report anything."
+        step="Signed out"
+        title="Nothing to report yet"
+      >
+        <div className="spec-empty">
+          <BarChart3 size={26} />
+          <span>
+            <strong>Sign in, or connect a wallet.</strong>
+            <br />
+            Either identity works, and if you have both, the dashboard can report on them together or one at a time.
+          </span>
+          <button className="secondary-button mt-1" onClick={toggleDemo} type="button">
             <FlaskConical size={15} /> View sample data
           </button>
         </div>
-      </div>
+      </Panel>
     );
   }
 
   if (error) {
     return (
-      <div className="panel">
-        <div className="flex flex-col items-center gap-3 py-10 text-center">
-          <BarChart3 className="text-[var(--text-muted)]" size={28} />
-          <p className="text-sm text-[var(--text-muted)]">
-            Couldn&apos;t load your analytics{error.includes("401") ? " — sign in to see your dashboard." : "."}
-          </p>
-          <button className="secondary-button" onClick={reload} type="button">
+      <Panel
+        icon={<Info size={15} />}
+        note="Nothing is wrong with your bills — this is the dashboard failing to read them."
+        step="Couldn't load"
+        title="The analytics didn't come back"
+      >
+        <div className="spec-empty">
+          <Info size={26} />
+          <span>
+            {error.includes("401") ? (
+              <>
+                <strong>Your session has expired.</strong>
+                <br />
+                Sign in again and the dashboard will reload.
+              </>
+            ) : (
+              <>
+                <strong>The request failed.</strong>
+                <br />
+                This is usually momentary — trying again is the right first move.
+              </>
+            )}
+          </span>
+          <button className="secondary-button mt-1" onClick={reload} type="button">
             <RefreshCw size={15} /> Try again
           </button>
         </div>
-      </div>
+      </Panel>
     );
   }
 
@@ -301,7 +340,7 @@ export default function DashboardPanel({
   const showEmpty = !data.isDemo && isAllZero(data);
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-5">
       <DashboardHeader
         isDemo={data.isDemo}
         demo={demo}
@@ -311,9 +350,10 @@ export default function DashboardPanel({
         socialProvider={socialProvider}
         socialHandle={socialHandle}
         browserWallet={browserWallet}
+        view={view}
+        onView={setView}
+        treasuryAvailable={Boolean(data.treasury)}
       />
-
-      <ViewToggle view={view} onView={setView} />
 
       {view === "treasury" && data.treasury ? (
         <TreasurySection
@@ -341,7 +381,6 @@ export default function DashboardPanel({
             <ReputationSection data={data} />
             <RecurringSection data={data} />
           </div>
-          <AgentEconomyPanel />
         </>
       )}
     </div>
@@ -384,25 +423,10 @@ function ScopeLabel({
   return <>{SCOPE_LABEL[scope]}</>;
 }
 
-function ViewToggle({ view, onView }: { view: "analytics" | "treasury"; onView: (v: "analytics" | "treasury") => void }) {
-  return (
-    <div className="flex gap-1 rounded-[var(--radius)] border border-[var(--border)] bg-[var(--surface-muted)] p-1 text-sm w-fit">
-      {(["analytics", "treasury"] as const).map((v) => (
-        <button
-          key={v}
-          type="button"
-          onClick={() => onView(v)}
-          className={`rounded-[calc(var(--radius)-4px)] px-3 py-1.5 capitalize ${
-            view === v ? "bg-[var(--surface)] font-semibold" : "text-[var(--text-muted)]"
-          }`}
-        >
-          {v}
-        </button>
-      ))}
-    </div>
-  );
-}
-
+// The dashboard's masthead. The scope picker, the analytics/treasury switch and
+// the sample-data toggle all live inside the hero rather than floating above the
+// cards — they change what every card below reports, so they belong to the tab,
+// not to any one section.
 function DashboardHeader({
   isDemo,
   demo,
@@ -412,6 +436,9 @@ function DashboardHeader({
   socialProvider = null,
   socialHandle = null,
   browserWallet = null,
+  view,
+  onView,
+  treasuryAvailable,
 }: {
   isDemo: boolean;
   demo: boolean;
@@ -421,66 +448,102 @@ function DashboardHeader({
   socialProvider?: IdentityProvider | null;
   socialHandle?: string | null;
   browserWallet?: string | null;
+  view: "analytics" | "treasury";
+  onView: (v: "analytics" | "treasury") => void;
+  treasuryAvailable: boolean;
 }) {
+  const treasury = view === "treasury";
   return (
-    <div className="flex flex-wrap items-center justify-between gap-2">
-      <h2 className="flex items-center gap-2 text-base font-semibold">
-        <span className="text-[var(--accent)]">
-          <BarChart3 size={19} />
-        </span>
-        Analytics
-        {isDemo ? (
-          <span className="status-dot status-progress inline-flex items-center gap-1">
-            <FlaskConical size={12} /> Sample data
-          </span>
-        ) : null}
-      </h2>
-      <div className="flex flex-wrap items-center gap-2">
-        {onScope && !demo ? (
-          <div className="segmented-control text-xs" role="group" aria-label="Wallet identity">
-            {(["all", "social", "wallet"] as Scope[]).map((s) => (
-              <button
-                key={s}
-                className={`tab-button ${scope === s ? "tab-button-active" : ""}`}
-                onClick={() => onScope(s)}
-                type="button"
-              >
-                <ScopeLabel
-                  scope={s}
-                  socialProvider={socialProvider}
-                  socialHandle={socialHandle}
-                  browserWallet={browserWallet}
-                />
-              </button>
-            ))}
-          </div>
-        ) : null}
-        <button className="secondary-button" onClick={onToggleDemo} type="button">
-          <FlaskConical size={15} /> {demo ? "Exit sample data" : "View sample data"}
-        </button>
-      </div>
-    </div>
+    <TabHero
+      actions={
+        <>
+          {/* Which view. Only offered when there is a treasury plan to show —
+              a toggle to an empty view is a dead end. */}
+          {treasuryAvailable ? (
+            <div className="segmented-control" role="group" aria-label="Dashboard view">
+              {(["analytics", "treasury"] as const).map((v) => (
+                <button
+                  className={`tab-button ${view === v ? "tab-button-active" : ""} capitalize`}
+                  key={v}
+                  onClick={() => onView(v)}
+                  type="button"
+                >
+                  {v}
+                </button>
+              ))}
+            </div>
+          ) : null}
+          {onScope && !demo ? (
+            <div className="segmented-control" role="group" aria-label="Wallet identity">
+              {(["all", "social", "wallet"] as Scope[]).map((s) => (
+                <button
+                  className={`tab-button ${scope === s ? "tab-button-active" : ""}`}
+                  key={s}
+                  onClick={() => onScope(s)}
+                  type="button"
+                >
+                  <ScopeLabel
+                    browserWallet={browserWallet}
+                    scope={s}
+                    socialHandle={socialHandle}
+                    socialProvider={socialProvider}
+                  />
+                </button>
+              ))}
+            </div>
+          ) : null}
+          <button className="secondary-button" onClick={onToggleDemo} type="button">
+            <FlaskConical size={15} /> {demo ? "Exit sample data" : "View sample data"}
+          </button>
+          {isDemo ? (
+            <span className="spec-chip spec-chip-warn">
+              <FlaskConical size={12} /> Sample data
+            </span>
+          ) : null}
+        </>
+      }
+      eyebrow={treasury ? "Net settlement" : "Your numbers"}
+      icon={treasury ? <ArrowRightLeft size={13} /> : <BarChart3 size={13} />}
+      legend={
+        treasury
+          ? [
+              { step: "01 · Netting", label: "Who really owes whom", state: "active" },
+              { step: "02 · Legs", label: "The transfers left to make" },
+              { step: "03 · Saving", label: "Payments the netting removes" },
+            ]
+          : [
+              { step: "01 · Totals", label: "Billed, claimable, outstanding", state: "active" },
+              { step: "02 · Activity", label: "Billed vs. settled, weekly" },
+              { step: "03 · Breakdowns", label: "Identity, status, counterparties" },
+              { step: "04 · Behaviour", label: "Speed, reputation, recurring" },
+            ]
+      }
+      lede={
+        treasury
+          ? "Debts between the same people cancel out. This view collapses every open bill into the smallest set of transfers that clears the whole web, then shows you how many payments that saves."
+          : "Read across both of your wallets or one at a time. Every figure is computed from bills already on Arc — nothing here is projected, and every chart can be read as a table if colour is not enough."
+      }
+      title={treasury ? "Settle everything at once" : "Where your money went"}
+    />
   );
 }
 
-function Frame({ className = "", children }: { className?: string; children: ReactNode }) {
-  return (
-    <div className={`rounded-[var(--radius)] border border-[var(--border)] bg-[var(--surface)] p-4 ${className}`}>
-      {children}
-    </div>
-  );
-}
-
-// A chart section with a title and (when `table` is given) a Chart/Table toggle.
-// The table renders the same numbers so identity is never conveyed by color alone.
+// A chart section, built on the same spec card as every other section in the app
+// so a chart reads as part of the page rather than an embedded widget. When
+// `table` is given it gets a Chart/Table toggle, which renders the same numbers
+// so identity is never conveyed by colour alone.
 function ChartCard({
   title,
+  step,
+  icon,
   subtitle,
   action,
   table,
   children,
 }: {
   title: string;
+  step?: string;
+  icon?: ReactNode;
   subtitle?: ReactNode;
   action?: ReactNode;
   table?: ReactNode;
@@ -488,13 +551,9 @@ function ChartCard({
 }) {
   const [showTable, setShowTable] = useState(false);
   return (
-    <Frame>
-      <div className="mb-3 flex flex-wrap items-start justify-between gap-2">
-        <div>
-          <h3 className="text-sm font-semibold">{title}</h3>
-          {subtitle ? <p className="mt-0.5 text-xs text-[var(--text-muted)]">{subtitle}</p> : null}
-        </div>
-        <div className="flex items-center gap-2">
+    <Panel
+      action={
+        <>
           {action}
           {table ? (
             <div className="segmented-control text-xs">
@@ -514,10 +573,15 @@ function ChartCard({
               </button>
             </div>
           ) : null}
-        </div>
-      </div>
+        </>
+      }
+      icon={icon}
+      note={subtitle}
+      step={step}
+      title={title}
+    >
       {showTable && table ? table : children}
-    </Frame>
+    </Panel>
   );
 }
 
@@ -587,30 +651,47 @@ function IdentityChips({
 
 // ── sections ──────────────────────────────────────────────────────────────
 
+// The five headline figures. Deliberately not a chart: each is a single number
+// with no comparison to make, which is the one case a stat tile beats a plot.
+// The sub-line gives each figure the context it needs to be actionable.
 function KpiRow({ data, filtered }: { data: DashboardData; filtered: Filtered }) {
   const k = data.kpis;
-  const tiles: { label: string; value: string }[] = [
-    { label: "Bills created", value: String(k.createdCount) },
-    { label: "Total billed", value: usd(k.createdTotalUsdc) },
-    { label: "Claimable", value: usd(k.claimableUsdc) },
-    { label: "Owed to me", value: usd(k.owedToMeOutstandingUsdc) },
-    { label: "I owe", value: usd(k.iOweOutstandingUsdc) },
+  const tiles: { label: string; value: string; sub: string }[] = [
+    { label: "Bills created", value: String(k.createdCount), sub: "written by you" },
+    { label: "Total billed", value: usd(k.createdTotalUsdc), sub: "across those bills" },
+    { label: "Claimable", value: usd(k.claimableUsdc), sub: "paid in, not collected" },
+    { label: "Owed to me", value: usd(k.owedToMeOutstandingUsdc), sub: "still unpaid" },
+    { label: "I owe", value: usd(k.iOweOutstandingUsdc), sub: "still unsettled" },
   ];
   return (
-    <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
-      {tiles.map((t) => (
-        <Frame key={t.label} className="p-3">
-          <div className="amount-text text-xl font-semibold tabular-nums">{t.value}</div>
-          <div className="mt-0.5 text-xs text-[var(--text-muted)]">{t.label}</div>
-        </Frame>
-      ))}
-      {filtered.bucketsActive ? (
-        <div className="col-span-2 flex items-center text-xs text-[var(--text-muted)] sm:col-span-3 lg:col-span-5">
-          Filtered to selected identities: {usd(filtered.filteredVolumeUsdc)} billed across {filtered.filteredBillCount} bill
-          {filtered.filteredBillCount === 1 ? "" : "s"}.
-        </div>
-      ) : null}
-    </div>
+    <Panel
+      chip={
+        filtered.bucketsActive ? (
+          <span className="spec-chip spec-chip-attn">
+            <span className="spec-dot" />
+            Filtered
+          </span>
+        ) : null
+      }
+      icon={<Landmark size={15} />}
+      note={
+        filtered.bucketsActive
+          ? `Filtered to the selected identities: ${usd(filtered.filteredVolumeUsdc)} billed across ${filtered.filteredBillCount} bill${filtered.filteredBillCount === 1 ? "" : "s"}.`
+          : "Everything you have billed and everything outstanding, in USDC, for the wallets in scope."
+      }
+      step="01 · Totals"
+      title="The headline figures"
+    >
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+        {tiles.map((t) => (
+          <div className="spec-stat" key={t.label}>
+            <div className="spec-stat-value">{t.value}</div>
+            <div className="spec-stat-label">{t.label}</div>
+            <div className="spec-stat-sub">{t.sub}</div>
+          </div>
+        ))}
+      </div>
+    </Panel>
   );
 }
 
@@ -654,8 +735,10 @@ function ActivitySection({
   );
   return (
     <ChartCard
-      title="Activity"
-      subtitle="Billed vs. settled to date, by weekly bucket (USDC)"
+      icon={<BarChart3 size={15} />}
+      step="02 · Activity"
+      subtitle="Billed vs. settled to date, by weekly bucket (USDC). Settled is a subset of billed, so the bands overlap rather than stack."
+      title="Activity over time"
       action={rangeSelector}
       table={table}
     >
@@ -704,7 +787,13 @@ function IdentitySection({
     />
   );
   return (
-    <ChartCard title="By identity" subtitle="Billed volume per identity type — click to filter" table={table}>
+    <ChartCard
+      icon={<AtSign size={15} />}
+      step="03 · Breakdown"
+      subtitle="Billed volume per identity type. Click a bar to filter every figure on this tab."
+      table={table}
+      title="How people were reached"
+    >
       <IdentityChips buckets={buckets} toggleBucket={toggleBucket} />
       {rows.length ? (
         <ChartContainer config={config} className="mt-3 aspect-auto h-[220px] w-full">
@@ -756,7 +845,13 @@ function StatusSection({ data }: { data: DashboardData }) {
     />
   );
   return (
-    <ChartCard title="Status funnel" subtitle="Bill counts by settlement state" table={table}>
+    <ChartCard
+      icon={<Filter size={15} />}
+      step="03 · Breakdown"
+      subtitle="Bill counts by settlement state, from written to fully collected."
+      table={table}
+      title="Where bills stand"
+    >
       <ChartContainer config={config} className="aspect-auto h-[220px] w-full">
         <BarChart data={rows} margin={{ left: 4, right: 8, top: 8 }}>
           <CartesianGrid vertical={false} strokeDasharray="3 3" />
@@ -798,7 +893,13 @@ function CounterpartiesSection({
     />
   );
   return (
-    <ChartCard title="Top counterparties" subtitle="Ranked by billed volume, colored by identity" table={table}>
+    <ChartCard
+      icon={<Users size={15} />}
+      step="03 · Breakdown"
+      subtitle="Ranked by billed volume, coloured by how each person was reached."
+      table={table}
+      title="Who you split with most"
+    >
       <IdentityChips buckets={buckets} toggleBucket={toggleBucket} />
       {rows.length ? (
         <ChartContainer config={config} className="mt-3 aspect-auto h-[240px] w-full">
@@ -833,7 +934,13 @@ function AgingSection({ data }: { data: DashboardData }) {
     <DataTable head={["Age", "Outstanding"]} rows={rows.map((r) => [r.bucket, usd(r.value)])} />
   );
   return (
-    <ChartCard title="Aging" subtitle="Outstanding owed-to-me by age of bill (USDC)" table={table}>
+    <ChartCard
+      icon={<CalendarClock size={15} />}
+      step="03 · Breakdown"
+      subtitle="Outstanding owed-to-me by how long the bill has been open (USDC). The older the bucket, the less likely it lands."
+      table={table}
+      title="How long money has been owed"
+    >
       <ChartContainer config={config} className="aspect-auto h-[220px] w-full">
         <BarChart data={rows} margin={{ left: 4, right: 8, top: 16 }}>
           <CartesianGrid vertical={false} strokeDasharray="3 3" />
@@ -854,21 +961,33 @@ function SettlementRate({ data }: { data: DashboardData }) {
   const settled = data.activity.reduce((s, p) => s + num(p.settledUsdc), 0);
   const rate = created > 0 ? Math.min(1, settled / created) : 0;
   return (
-    <Frame>
-      <div className="mb-2 flex items-center justify-between">
-        <h3 className="text-sm font-semibold">Settlement rate</h3>
-        <span className="text-sm font-semibold tabular-nums">{Math.round(rate * 100)}%</span>
-      </div>
-      <div className="h-3 w-full overflow-hidden rounded-full bg-[var(--surface-muted)]">
+    <Panel
+      chip={<span className="spec-chip">{Math.round(rate * 100)}% settled</span>}
+      icon={<Gauge size={15} />}
+      note="Of everything you have ever billed, the share that has actually been paid in. One meter, because there is only one number to read."
+      step="04 · Behaviour"
+      title="Settlement rate"
+    >
+      {/* A meter, not a chart: role + value so it is announced as a percentage
+          rather than as a decorative bar. */}
+      <div
+        aria-valuemax={100}
+        aria-valuemin={0}
+        aria-valuenow={Math.round(rate * 100)}
+        aria-valuetext={`${Math.round(rate * 100)} percent settled`}
+        className="h-3 w-full overflow-hidden rounded-full bg-[var(--surface-muted)]"
+        role="meter"
+      >
         <div
-          className="h-full rounded-full"
+          className="h-full rounded-full transition-[width] duration-500 ease-out"
           style={{ width: `${rate * 100}%`, backgroundColor: "var(--chart-settled)" }}
         />
       </div>
-      <p className="mt-2 text-xs text-[var(--text-muted)]">
-        {usd(settled)} settled to date of {usd(created)} billed.
+      <p className="spec-hint">
+        <span className="mono font-semibold">{usd(settled)}</span> settled to date of{" "}
+        <span className="mono font-semibold">{usd(created)}</span> billed.
       </p>
-    </Frame>
+    </Panel>
   );
 }
 
@@ -884,7 +1003,13 @@ function ReputationSection({ data }: { data: DashboardData }) {
     </span>
   );
   return (
-    <ChartCard title="Reputation trend" subtitle="On-chain timeliness score over time" action={badge}>
+    <ChartCard
+      action={badge}
+      icon={<ShieldCheck size={15} />}
+      step="04 · Behaviour"
+      subtitle="Your on-chain timeliness score over time — earned by settling before the due date."
+      title="Reputation trend"
+    >
       {rows.length ? (
         <ChartContainer config={config} className="aspect-auto h-[220px] w-full">
           <LineChart data={rows} margin={{ left: 4, right: 8, top: 8 }}>
@@ -903,9 +1028,27 @@ function ReputationSection({ data }: { data: DashboardData }) {
 }
 
 function RecurringSection({ data }: { data: DashboardData }) {
+  const shortfalls = data.recurring.reduce((sum, t) => sum + t.shortfallCount, 0);
   return (
-    <Frame>
-      <h3 className="mb-3 text-sm font-semibold">Recurring health</h3>
+    <Panel
+      chip={
+        shortfalls > 0 ? (
+          <span className="spec-chip spec-chip-warn">
+            <span className="spec-dot" />
+            {shortfalls} shortfall{shortfalls === 1 ? "" : "s"}
+          </span>
+        ) : data.recurring.length > 0 ? (
+          <span className="spec-chip spec-chip-live">
+            <span className="spec-dot" />
+            On track
+          </span>
+        ) : null
+      }
+      icon={<RotateCw size={15} />}
+      note="How far each recurring tab has run, and whether any cycle has come up short — a shortfall means a member's approval or balance did not cover their share."
+      step="04 · Behaviour"
+      title="Recurring health"
+    >
       {data.recurring.length ? (
         <div className="space-y-3">
           {data.recurring.map((t) => {
@@ -918,7 +1061,14 @@ function RecurringSection({ data }: { data: DashboardData }) {
                     {t.settlementCount}/{t.maxSettlements} cycles
                   </span>
                 </div>
-                <div className="mt-2 h-2 w-full overflow-hidden rounded-full bg-[var(--surface)]">
+                <div
+                  aria-valuemax={t.maxSettlements}
+                  aria-valuemin={0}
+                  aria-valuenow={t.settlementCount}
+                  aria-valuetext={`${t.settlementCount} of ${t.maxSettlements} cycles run`}
+                  className="mt-2 h-2 w-full overflow-hidden rounded-full bg-[var(--surface)]"
+                  role="meter"
+                >
                   <div className="h-full rounded-full" style={{ width: `${pct * 100}%`, backgroundColor: "var(--chart-settled)" }} />
                 </div>
                 <div className="mt-2 flex items-center justify-between text-xs text-[var(--text-muted)]">
@@ -936,30 +1086,36 @@ function RecurringSection({ data }: { data: DashboardData }) {
       ) : (
         <EmptyNote>No recurring tabs yet.</EmptyNote>
       )}
-    </Frame>
+    </Panel>
   );
 }
 
 // ── states ──────────────────────────────────────────────────────────────────
 
 function EmptyNote({ children }: { children: ReactNode }) {
-  return <p className="py-6 text-center text-sm text-[var(--text-muted)]">{children}</p>;
+  return <div className="spec-empty">{children}</div>;
 }
 
 function EmptyState({ onDemo }: { onDemo: () => void }) {
   return (
-    <Frame className="p-10">
-      <div className="flex flex-col items-center gap-3 text-center">
-        <BarChart3 className="text-[var(--text-muted)]" size={30} />
-        <h3 className="text-base font-semibold">No analytics yet</h3>
-        <p className="max-w-sm text-sm text-[var(--text-muted)]">
-          Create your first bill to see your billed volume, settlement rate, counterparties, and reputation take shape here.
-        </p>
+    <Panel
+      icon={<BarChart3 size={15} />}
+      note="Nothing has been billed from the wallets in scope yet, so there is nothing honest to plot."
+      step="Nothing yet"
+      title="No analytics yet"
+    >
+      <div className="spec-empty">
+        <BarChart3 size={26} />
+        <span>
+          <strong>Create your first bill.</strong>
+          <br />
+          Billed volume, settlement rate, counterparties and reputation all take shape here once money starts moving.
+        </span>
         <button className="secondary-button mt-1" onClick={onDemo} type="button">
           <FlaskConical size={15} /> View sample data
         </button>
       </div>
-    </Frame>
+    </Panel>
   );
 }
 
@@ -977,8 +1133,8 @@ function EmptyState({ onDemo }: { onDemo: () => void }) {
 // that will move.
 //
 // What batching does buy is transactions: a Circle SCA wallet lands the whole
-// selection in ONE atomic tx, a browser EOA still needs one approve plus one tx
-// per leg.
+// selection in ONE atomic tx, a browser EOA needs one approve plus one settle()
+// — two prompts, whatever the leg count.
 function TreasurySection({
   treasury,
   isDemo,
@@ -1017,10 +1173,12 @@ function TreasurySection({
   // browser EOA), so settling needs an explicit choice of which one pays.
   const needsScopeChoice = bothIdentities && scope === "all";
   const canSettle = hasWork && !isDemo && !needsScopeChoice && (scope === "social" || Boolean(onSettleNet));
-  // Social = Circle SCA → one atomic executeBatch. Wallet = EOA → 1 approve + N.
+  // Social = Circle SCA → one atomic executeBatch. Wallet = EOA → approve +
+  // settle(), which since registry v2 carries every claim and pay leg, so the
+  // count is 2 no matter how many legs (1 when there is nothing to approve).
   const atomic = scope === "social";
   const grossTxCount = 2 * payBillCount + claimBillCount;
-  const settledTxCount = atomic ? 1 : (payBillCount > 0 ? 1 : 0) + payBillCount + claimBillCount;
+  const settledTxCount = atomic ? 1 : payBillCount > 0 ? 2 : 1;
 
   function toggle(counterparty: string) {
     setExcluded((current) => {
@@ -1091,18 +1249,54 @@ function TreasurySection({
   }
 
   return (
-    <div className="space-y-4">
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-        <TreasuryTile label="Owed to me" value={usd(treasury.totalTheyOweMeUsdc)} hint="Others' unpaid shares of bills you created. Only they can pay these." />
-        <TreasuryTile label="I owe" value={usd(treasury.totalIOweThemUsdc)} hint="Your unpaid shares of bills others created. Settling pays these." />
-        <TreasuryTile label="Net position" value={usd(treasury.netUsdc)} emphasis hint="Owed to me minus I owe. A scoreboard of your exposure — no single payment of this size ever happens." />
-        <TreasuryTile label="Claimable now" value={usd(treasury.claimableUsdc)} hint="USDC already escrowed in your bills, waiting for you to pull it out." />
-      </div>
+    <div className="space-y-5">
+      <Panel
+        icon={<ArrowRightLeft size={15} />}
+        note="Your whole position in four figures. The net is exposure, not a payment — no single transfer of that size ever happens, because each bill escrows its own USDC."
+        step="01 · Netting"
+        title="Where you stand overall"
+      >
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+          <TreasuryTile label="Owed to me" value={usd(treasury.totalTheyOweMeUsdc)} hint="Others' unpaid shares of bills you created. Only they can pay these." />
+          <TreasuryTile label="I owe" value={usd(treasury.totalIOweThemUsdc)} hint="Your unpaid shares of bills others created. Settling pays these." />
+          <TreasuryTile label="Net position" value={usd(treasury.netUsdc)} emphasis hint="Owed to me minus I owe. A scoreboard of your exposure — no single payment of this size ever happens." />
+          <TreasuryTile label="Claimable now" value={usd(treasury.claimableUsdc)} hint="USDC already escrowed in your bills, waiting for you to pull it out." />
+        </div>
+      </Panel>
 
-      <div className="panel space-y-3">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <h3 className="flex items-center gap-2 text-sm font-semibold">
-            <Landmark size={16} className="text-[var(--accent)]" /> Net position by counterparty
+      <Panel
+        action={
+          payable.length > 1 ? (
+            <button
+              type="button"
+              className="secondary-button"
+              disabled={busy || isDemo}
+              onClick={() => setExcluded(chosen.length === payable.length ? new Set(payable.map((p) => p.counterparty)) : new Set())}
+            >
+              {chosen.length === payable.length ? "Untick all" : "Tick all"}
+            </button>
+          ) : null
+        }
+        chip={
+          payBillCount > 0 ? (
+            <span className="spec-chip spec-chip-attn">
+              <span className="spec-dot" />
+              {payBillCount} leg{payBillCount === 1 ? "" : "s"} selected
+            </span>
+          ) : null
+        }
+        icon={<Landmark size={15} />}
+        live={payBillCount > 0}
+        note={
+          <>
+            Ticking a counterparty pays <em>your</em> unpaid shares of their bills, in full, one payment per bill. What
+            they owe you is never collected here — only they can pay that. Untick anyone you would rather not pay.
+          </>
+        }
+        step="02 · Legs"
+        title={
+          <span className="inline-flex items-center gap-2">
+            Net position by counterparty
             <InfoTip label="How settling works">
               <span className="block font-semibold text-[var(--text)]">
                 Settling pays your side. It can&rsquo;t collect theirs.
@@ -1125,20 +1319,18 @@ function TreasurySection({
                 Untick anyone you don&rsquo;t want to pay — a bogus bill stays unpaid and the rest still go through.
               </span>
             </InfoTip>
-          </h3>
-          {payable.length > 1 ? (
-            <button
-              type="button"
-              className="text-xs text-[var(--text-muted)] underline underline-offset-2 disabled:opacity-50"
-              disabled={busy || isDemo}
-              onClick={() => setExcluded(chosen.length === payable.length ? new Set(payable.map((p) => p.counterparty)) : new Set())}
-            >
-              {chosen.length === payable.length ? "Untick all" : "Tick all"}
-            </button>
-          ) : null}
-        </div>
+          </span>
+        }
+      >
         {treasury.positions.length === 0 ? (
-          <p className="text-sm text-[var(--text-muted)]">Nothing outstanding — every bill is settled.</p>
+          <div className="spec-empty">
+            <ShieldCheck size={26} />
+            <span>
+              <strong>Nothing outstanding.</strong>
+              <br />
+              Every bill on both sides is settled.
+            </span>
+          </div>
         ) : (
           <ul className="space-y-2">
             {treasury.positions.map((p) => {
@@ -1225,9 +1417,23 @@ function TreasurySection({
             </span>
           </label>
         ) : null}
-      </div>
+      </Panel>
 
-      <div className="panel space-y-3">
+      <Panel
+        chip={
+          hasWork ? (
+            <span className="spec-chip spec-chip-live">
+              <span className="spec-dot" />
+              {settledTxCount} instead of {grossTxCount}
+            </span>
+          ) : null
+        }
+        icon={<ArrowRightLeft size={15} />}
+        live={hasWork}
+        note="Batching removes transactions, not transfers. Every debt is still paid to its own bill on Arc — you just approve it once."
+        step="03 · Settle"
+        title="What one click will do"
+      >
         <p className="text-sm">
           {hasWork ? (
             <>
@@ -1261,26 +1467,26 @@ function TreasurySection({
               </>
             ) : (
               <>
-                <strong className="amount-text">{settledTxCount}</strong> wallet prompts instead of{" "}
-                <strong className="amount-text">{grossTxCount}</strong> — a single USDC approval covers every payment.
+                <strong className="amount-text">{settledTxCount}</strong> wallet prompt
+                {settledTxCount === 1 ? "" : "s"} instead of{" "}
+                <strong className="amount-text">{grossTxCount}</strong> — one USDC approval, then one transaction
+                carrying every payment and collection.
               </>
             )}
           </p>
         ) : null}
-        <p className="text-xs text-[var(--text-muted)]">
-          Each bill escrows its own USDC on Arc, so every debt is still paid to its own bill. Batching removes
-          transactions, not transfers — and it never collects what someone else still owes you.
-        </p>
         {needsScopeChoice ? (
-          <p className="text-xs text-[var(--text-muted)]">Pick one of your two wallets above to choose which one settles.</p>
+          <p className="spec-hint">Pick one of your two wallets above to choose which one settles.</p>
         ) : null}
-        <button type="button" className="primary-button" disabled={!canSettle || busy} onClick={settle}>
-          {busy ? <Loader2 size={15} className="animate-spin" /> : <ArrowRightLeft size={15} />}
-          {busy ? "Settling on Arc…" : actionLabel}
-        </button>
-        {note ? <p className="text-xs text-[var(--text-muted)]">{note}</p> : null}
-        {isDemo ? <p className="text-xs text-[var(--text-muted)]">Sample data — settling is disabled.</p> : null}
-      </div>
+        <div className="mt-4">
+          <button type="button" className="primary-button" disabled={!canSettle || busy} onClick={settle}>
+            {busy ? <Loader2 size={15} className="animate-spin" /> : <ArrowRightLeft size={15} />}
+            {busy ? "Settling on Arc…" : actionLabel}
+          </button>
+        </div>
+        {note ? <p className="spec-hint">{note}</p> : null}
+        {isDemo ? <p className="spec-hint">Sample data — settling is disabled.</p> : null}
+      </Panel>
     </div>
   );
 }
@@ -1288,9 +1494,9 @@ function TreasurySection({
 // Click-or-hover explainer, same primitive as X402Info in HomeClient.
 //
 // It MUST be the portaled Radix tooltip, not an absolutely-positioned child:
-// .panel sets backdrop-filter (globals.css), which makes every panel its own
-// stacking context, so no z-index inside one panel can paint above the next
-// sibling panel. Portalling to the body sidesteps the whole question.
+// .spec-card sets overflow: hidden (globals.css) to clip its header band to the
+// card radius, so any popover rendered as a descendant gets cut off at the card
+// edge. Portalling to the body sidesteps the whole question.
 //
 // `open` is controlled so a tap opens it too — Radix tooltips are hover/focus
 // only, and the copy in here is load-bearing enough that it can't be
@@ -1333,33 +1539,45 @@ function TreasuryTile({
   hint?: string;
 }) {
   return (
-    <div className="panel">
-      <div className="flex items-center gap-1 text-xs text-[var(--text-muted)]">
-        {label}
-        {hint ? <InfoTip label={`What ${label} means`}>{hint}</InfoTip> : null}
+    <div className="spec-stat">
+      <div className="spec-stat-value">{value}</div>
+      <div className="spec-stat-label">
+        <span className="inline-flex items-center gap-1">
+          {label}
+          {hint ? <InfoTip label={`What ${label} means`}>{hint}</InfoTip> : null}
+        </span>
       </div>
-      <div className={`amount-text ${emphasis ? "text-xl font-semibold" : "text-lg"}`}>{value}</div>
+      {/* The net figure is the one people misread, so it says what it is right
+          under the number rather than only behind the info tip. */}
+      {emphasis ? <div className="spec-stat-sub">exposure, not a transfer</div> : null}
     </div>
   );
 }
 
+// Shaped like the real dashboard — hero, then a 5-tile row, then the charts — so
+// the page does not reflow when the data lands.
 function DashboardSkeleton() {
   return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2 text-base font-semibold text-[var(--text-muted)]">
-          <Loader2 className="animate-spin" size={18} /> Loading analytics…
+    <div aria-busy="true" className="space-y-5">
+      <div className="tab-hero">
+        <div className="flex items-center gap-2">
+          <Loader2 className="animate-spin text-[var(--accent)]" size={15} />
+          <span className="tab-eyebrow">Loading your numbers</span>
+        </div>
+        <div className="mt-4 h-9 w-[min(26rem,80%)] animate-pulse rounded-[var(--radius)] bg-[var(--surface-muted)]" />
+        <div className="mt-3 h-4 w-[min(38rem,95%)] animate-pulse rounded-full bg-[var(--surface-muted)]" />
+      </div>
+      <div className="spec-card">
+        <div className="spec-body grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+          {Array.from({ length: 5 }).map((_, i) => (
+            <div key={i} className="h-20 animate-pulse rounded-[var(--radius)] border border-[var(--border)] bg-[var(--surface-muted)]" />
+          ))}
         </div>
       </div>
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
-        {Array.from({ length: 5 }).map((_, i) => (
-          <div key={i} className="h-16 animate-pulse rounded-[var(--radius)] border border-[var(--border)] bg-[var(--surface-muted)]" />
-        ))}
-      </div>
-      <div className="h-[240px] animate-pulse rounded-[var(--radius)] border border-[var(--border)] bg-[var(--surface-muted)]" />
+      <div className="h-[240px] animate-pulse rounded-[calc(var(--radius)+2px)] border border-[var(--border)] bg-[var(--surface-muted)]" />
       <div className="grid gap-4 lg:grid-cols-2">
         {Array.from({ length: 4 }).map((_, i) => (
-          <div key={i} className="h-[220px] animate-pulse rounded-[var(--radius)] border border-[var(--border)] bg-[var(--surface-muted)]" />
+          <div key={i} className="h-[220px] animate-pulse rounded-[calc(var(--radius)+2px)] border border-[var(--border)] bg-[var(--surface-muted)]" />
         ))}
       </div>
     </div>

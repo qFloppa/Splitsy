@@ -19,6 +19,11 @@ const getBillAbi = [
       { name: "totalOwed", type: "uint256" },
       { name: "totalPaid", type: "uint256" },
       { name: "claimed", type: "uint256" },
+      // dueDate/escrowUntilFull are part of getBill since registry v2 — omitting
+      // them made every decode fail, so every publish from the browser-wallet
+      // creation path 502'd and left the bill with no preimage row at all.
+      { name: "dueDate", type: "uint64" },
+      { name: "escrowUntilFull", type: "bool" },
       { name: "participantList", type: "address[]" },
     ],
   },
@@ -66,6 +71,7 @@ export async function POST(request: Request) {
     currency?: unknown;
     total?: unknown;
     participantLabels?: unknown;
+    participantProviders?: unknown;
     receiptHash?: unknown;
     receiptImageBase64?: unknown;
     dueDate?: unknown;
@@ -81,6 +87,7 @@ export async function POST(request: Request) {
     currency,
     total,
     participantLabels,
+    participantProviders,
     receiptHash,
     receiptImageBase64,
     dueDate,
@@ -110,6 +117,15 @@ export async function POST(request: Request) {
     return Response.json({ error: "Invalid due date" }, { status: 400 });
   }
   const normalizedDueDate = typeof dueDate === "number" && dueDate > 0 ? dueDate : undefined;
+  // Display/analytics only (never hashed), so a bad value is dropped rather than
+  // rejected — but a wrong-length array would mis-attribute identities, so it
+  // must line up with the labels it annotates.
+  const providers =
+    Array.isArray(participantProviders) &&
+    participantProviders.length === participantLabels.length &&
+    participantProviders.every((p) => typeof p === "string")
+      ? (participantProviders as string[])
+      : undefined;
   // A committed receiptHash requires the image bytes to store; "" requires none.
   if (Boolean(receiptHash) !== Boolean(receiptImageBase64)) {
     return Response.json({ error: "receiptHash and receiptImageBase64 must be provided together" }, { status: 400 });
@@ -132,7 +148,7 @@ export async function POST(request: Request) {
 
   try {
     await publishOnchainBillPreimage(
-      { registryAddress, billId, merchant, currency, total, participantLabels, receiptHash, dueDate: normalizedDueDate },
+      { registryAddress, billId, merchant, currency, total, participantLabels, participantProviders: providers, receiptHash, dueDate: normalizedDueDate },
       onchainHash,
       receiptBytes,
     );

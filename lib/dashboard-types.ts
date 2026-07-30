@@ -51,12 +51,14 @@ export type TreasuryPlan = {
   claimableUsdc: string;
   // Leg counts drive the transaction comparison. Settling bill-by-bill costs
   // approve + payDebt per debt (2 each) plus one claim each — that is
-  // grossTxCount. What replaces it depends on who signs: a Circle SCA wallet
-  // does the whole thing in ONE atomic executeBatch; a browser EOA still needs
-  // one approve + one tx per leg. The UI computes that per scope from these.
+  // grossTxCount. Since BillSplitRegistry v2 both signers collapse to the same
+  // two transactions (one approve, one settle): the SCA wallet wraps them in an
+  // executeBatch, and a browser EOA — which has no wallet-level batching at all
+  // — sends them back to back. That is batchedTxCount.
   payLegCount: number;
   claimLegCount: number;
   grossTxCount: number;
+  batchedTxCount: number;
 };
 
 // What the user ticked in the treasury view. The client picks *which* legs run;

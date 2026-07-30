@@ -7,6 +7,16 @@ import { arcTestnet } from "viem/chains";
 export const REGISTRY_ADDRESS = (process.env.NEXT_PUBLIC_BILL_SPLIT_REGISTRY_ADDRESS ??
   "0x0000000000000000000000000000000000000000") as `0x${string}`;
 
+// The v1 registry, kept readable so bill history survives the v2 redeploy. Bill
+// ids restart at 1 in v2, so a bare id is only meaningful next to the registry
+// it came from — that is also why reputation rows are keyed by both.
+export const REGISTRY_ADDRESS_V1 = (process.env.BILL_SPLIT_REGISTRY_ADDRESS_V1 ??
+  "0x0000000000000000000000000000000000000000") as `0x${string}`;
+
+export function isV1RegistryConfigured() {
+  return REGISTRY_ADDRESS_V1 !== "0x0000000000000000000000000000000000000000";
+}
+
 const READ_ABI = [
   {
     type: "function",
@@ -19,8 +29,30 @@ const READ_ABI = [
       { name: "totalOwed", type: "uint256" },
       { name: "totalPaid", type: "uint256" },
       { name: "claimed", type: "uint256" },
+      { name: "dueDate", type: "uint64" },
+      { name: "escrowUntilFull", type: "bool" },
       { name: "participantList", type: "address[]" },
     ],
+  },
+  {
+    type: "function",
+    name: "collectible",
+    stateMutability: "view",
+    inputs: [
+      { name: "billId", type: "uint256" },
+      { name: "debtor", type: "address" },
+    ],
+    outputs: [{ name: "", type: "uint256" }],
+  },
+  {
+    type: "function",
+    name: "collectMandate",
+    stateMutability: "view",
+    inputs: [
+      { name: "billId", type: "uint256" },
+      { name: "debtor", type: "address" },
+    ],
+    outputs: [{ name: "", type: "bool" }],
   },
   {
     type: "function",
@@ -72,6 +104,40 @@ const publicClient = createPublicClient({
   }),
 });
 
+// BillSplitRegistry.BillCreated, as an SCP event monitor delivers it. The
+// autopay agent is triggered from this: a bill only becomes autopayable the
+// moment it exists on chain. Returns null when the topics/data are not a
+// BillCreated, so the webhook can ignore every other event it receives.
+const BILL_CREATED_ABI = [
+  {
+    type: "event",
+    name: "BillCreated",
+    anonymous: false,
+    inputs: [
+      { indexed: true, name: "billId", type: "uint256" },
+      { indexed: true, name: "splitter", type: "address" },
+      { indexed: true, name: "metadataHash", type: "bytes32" },
+      { indexed: false, name: "totalOwed", type: "uint256" },
+      { indexed: false, name: "dueDate", type: "uint64" },
+      { indexed: false, name: "escrowUntilFull", type: "bool" },
+    ],
+  },
+] as const;
+
+export function parseBillCreatedLog(topics: string[], data: string): { billId: string; splitter: string } | null {
+  try {
+    const decoded = decodeEventLog({
+      abi: BILL_CREATED_ABI,
+      topics: topics as [signature: `0x${string}`, ...args: `0x${string}`[]],
+      data: (data ?? "0x") as `0x${string}`,
+    });
+    if (decoded.eventName !== "BillCreated") return null;
+    return { billId: decoded.args.billId.toString(), splitter: decoded.args.splitter.toLowerCase() };
+  } catch {
+    return null;
+  }
+}
+
 // USDC balance of an address on Arc. Callers check it before sending, because a
 // transfer that runs out of money reverts and a revert carries no reason string —
 // "insufficient funds" has to be established up front or not at all.
@@ -97,8 +163,32 @@ export async function getBillOnchain(billId: bigint) {
     totalOwed: r[2],
     totalPaid: r[3],
     claimed: r[4],
-    participantList: r[5],
+    dueDate: r[5],
+    escrowUntilFull: r[6],
+    participantList: r[7],
   };
+}
+
+// What collectDebt would actually move for this debtor right now: 0 without a
+// mandate, before the due date, or when their remaining/allowance/balance leave
+// nothing. Lets the dunning agent ask "would this succeed?" without simulating
+// a revert.
+export async function getCollectibleOnchain(billId: bigint, debtor: `0x${string}`): Promise<bigint> {
+  return publicClient.readContract({
+    address: REGISTRY_ADDRESS,
+    abi: READ_ABI,
+    functionName: "collectible",
+    args: [billId, debtor],
+  });
+}
+
+export async function getCollectMandateOnchain(billId: bigint, debtor: `0x${string}`): Promise<boolean> {
+  return publicClient.readContract({
+    address: REGISTRY_ADDRESS,
+    abi: READ_ABI,
+    functionName: "collectMandate",
+    args: [billId, debtor],
+  });
 }
 
 export async function getParticipantOnchain(billId: bigint, addr: `0x${string}`) {
@@ -126,6 +216,8 @@ export type BillOnchain = {
   totalOwed: bigint;
   totalPaid: bigint;
   claimed: bigint;
+  dueDate: bigint; // Unix seconds; 0n = no deadline
+  escrowUntilFull: boolean;
   participantList: readonly `0x${string}`[];
 };
 
@@ -142,7 +234,16 @@ export async function getBillsOnchain(billIds: bigint[]): Promise<(BillOnchain |
   });
   return res.map((r, i) => {
     if (r.status !== "success") return null;
-    const v = r.result as readonly [`0x${string}`, `0x${string}`, bigint, bigint, bigint, readonly `0x${string}`[]];
+    const v = r.result as readonly [
+      `0x${string}`,
+      `0x${string}`,
+      bigint,
+      bigint,
+      bigint,
+      bigint,
+      boolean,
+      readonly `0x${string}`[],
+    ];
     return {
       billId: billIds[i],
       splitter: v[0],
@@ -150,7 +251,9 @@ export async function getBillsOnchain(billIds: bigint[]): Promise<(BillOnchain |
       totalOwed: v[2],
       totalPaid: v[3],
       claimed: v[4],
-      participantList: v[5],
+      dueDate: v[5],
+      escrowUntilFull: v[6],
+      participantList: v[7],
     };
   });
 }

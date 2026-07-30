@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
 // BROWSER / non-custodial payments earn ERC-8004 reputation. Those payments
 // settle on-chain directly and never touch our pay route, so we can't record
 // feedback from a request handler — instead Circle watches BillSplitRegistry
-// for DebtPaid and POSTs each one to our webhook (app/api/webhooks/circle),
+// for DebtPaid and BillCreated and POSTs each one to our webhook (app/api/webhooks/circle),
 // which scores the paid-in-full ones (see lib/erc8004 recordExternalPaidFeedback).
 //
 // Run once, after the webhook URL is registered in the Circle console:
@@ -27,6 +27,9 @@ if (!registry || /^0x0+$/.test(registry)) {
 
 const BLOCKCHAIN = "ARC-TESTNET";
 const DEBT_PAID_SIGNATURE = "DebtPaid(uint256,address,uint256,uint256,uint256)";
+// The autopay agent's trigger: a bill only becomes autopayable once it exists on
+// chain. Same webhook, different branch (see app/api/webhooks/circle).
+const BILL_CREATED_SIGNATURE = "BillCreated(uint256,address,bytes32,uint256,uint64,bool)";
 const BASE = "https://api.circle.com/v1/w3s";
 
 // Only the fields this script reads; Circle returns more.
@@ -69,23 +72,26 @@ if (imported.status >= 300 && imported.json?.code !== undefined) {
 const contractId = imported.json?.data?.contract?.id ?? "(already imported)";
 console.log(`  contract id: ${contractId}`);
 
-// Create the DebtPaid monitor. 201 = created, 200 = already existed.
-console.log(`Creating event monitor for ${DEBT_PAID_SIGNATURE} …`);
-const monitor = await circle("/contracts/monitors", {
-  idempotencyKey: randomUUID(),
-  blockchain: BLOCKCHAIN,
-  contractAddress: registry,
-  eventSignature: DEBT_PAID_SIGNATURE,
-});
-if (monitor.status >= 300) {
-  console.error("Monitor response:", JSON.stringify(monitor.json, null, 2));
-  throw new Error(`Event monitor creation failed (HTTP ${monitor.status}).`);
+// Create the monitors. 201 = created, 200 = already existed.
+for (const eventSignature of [DEBT_PAID_SIGNATURE, BILL_CREATED_SIGNATURE]) {
+  console.log(`Creating event monitor for ${eventSignature} …`);
+  const monitor = await circle("/contracts/monitors", {
+    idempotencyKey: randomUUID(),
+    blockchain: BLOCKCHAIN,
+    contractAddress: registry,
+    eventSignature,
+  });
+  if (monitor.status >= 300) {
+    console.error("Monitor response:", JSON.stringify(monitor.json, null, 2));
+    throw new Error(`Event monitor creation failed (HTTP ${monitor.status}).`);
+  }
+  const mon = monitor.json?.data?.eventMonitor;
+  console.log(`  monitor id: ${mon?.id ?? "(existing)"} — enabled: ${mon?.isEnabled ?? "?"}`);
 }
-const mon = monitor.json?.data?.eventMonitor;
-console.log(`  monitor id: ${mon?.id ?? "(existing)"} — enabled: ${mon?.isEnabled ?? "?"}`);
 
 console.log(
   "\nDone. Make sure your webhook endpoint (app/api/webhooks/circle) is registered\n" +
     "in the Circle console and set to receive Smart Contract Platform (contracts.eventLog)\n" +
-    "notifications. Browser payments that settle a debt in full will now be scored.",
+    "notifications. Browser payments that settle a debt in full will now be scored, and\n" +
+    "each new bill will wake the autopay agent for participants who granted it rules.",
 );

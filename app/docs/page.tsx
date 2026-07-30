@@ -443,6 +443,38 @@ export default function DocsPage() {
               <a href="#payment-reputation">payment reputation</a> grades timeliness against — the creator cannot move
               it after the fact.
             </p>
+
+            <h3 className="docs-subheading">All-or-nothing bills</h3>
+            <p>
+              A bill with a due date can also be created <strong>all or nothing</strong> (
+              <code>escrowUntilFull</code>). On a normal bill each payment is the creator&apos;s the moment it lands —
+              they can claim it straight away. Tick the box and nothing is claimable until{" "}
+              <strong>every</strong> payer has settled. Use it when a partial amount is no good to you: six concert
+              tickets, a group gift, a deposit. $160 does not buy six $40 tickets, and holding four people&apos;s money
+              for a purchase that isn&apos;t happening helps nobody.
+            </p>
+            <Callout title="The deadline does not hand a short bill to its creator">
+              This is the part worth reading twice, because the obvious design is the wrong one. If the bill is still
+              short when the due date passes, it has <strong>failed</strong>: <code>claimable</code> stays 0 forever
+              and each payer calls <code>refund(billId)</code> to take their own contribution back. A deadline that
+              released the pot to the creator instead would let them simply wait it out and keep a partial payment for
+              something that never happened — which is precisely what the payer ticked the box to prevent.
+            </Callout>
+            <p>
+              That is also why an all-or-nothing bill <strong>must</strong> have a due date; the registry rejects the
+              pair at creation otherwise. Without a deadline there is no moment at which a short bill counts as
+              failed, so in a contract with no owner, no pause and no sweep the money could never be released to
+              anyone. With one, every route out is self-service: pay it off and the creator claims, or miss it and the
+              payers withdraw.
+            </p>
+            <p>
+              A refund puts that payer&apos;s share back on the board rather than killing the bill, so a late payer —
+              or an autopay agent calling <code>payDebtFor</code> — can still complete it afterwards, and the creator
+              can still be paid in full. <code>collectDebt</code> also still unlocks at the deadline on these bills,
+              because pulling from debtors who granted a mandate is exactly what can carry a short bill over the line.
+              Anything pulled that doesn&apos;t is refundable to the debtor it came from, so the mandate cannot be used
+              to extract money from a failed bill.
+            </p>
             <p>
               The human-readable values behind that hash — the <strong>preimage</strong> — are published
               off-chain to Supabase so a payer&apos;s browser can recompute the hash and compare. The preimage is

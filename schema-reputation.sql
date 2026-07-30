@@ -45,8 +45,13 @@ create table if not exists reputation_feedback (
   -- block timestamp the score was graded against (not the server clock).
   due_date        bigint not null default 0,
   paid_at         bigint not null default 0,
+  -- Which contract the bill_id belongs to. A bare bill id is only meaningful
+  -- next to its registry: BillSplitRegistry v2 restarts nextBillId at 1, so
+  -- without this column every payment on new bill #1..#N would collide with the
+  -- v1 rows and scoring would silently stop recording — no error, no log.
+  registry_address text not null default '',
   created_at      timestamptz not null default now(),
-  unique (wallet_address, bill_id)   -- one verdict per payer per bill
+  unique (wallet_address, registry_address, bill_id) -- one verdict per payer per bill per registry
 );
 create index if not exists idx_reputation_feedback_wallet on reputation_feedback (wallet_address);
 
@@ -59,3 +64,27 @@ alter table reputation_feedback
   add column if not exists paid_at bigint not null default 0;
 alter table reputation_agents
   alter column agent_id drop not null; -- claim rows (see header comment)
+
+-- --- registry re-key migration (BillSplitRegistry v2) ------------------------
+-- Run once, before pointing the app at the v2 registry.
+--
+-- bill_id is a SHARED namespace: bare numeric ids come from BillSplitRegistry,
+-- while "tab:<id>:cycle:<n>" keys come from RecurringTabFactory. Only the bare
+-- ids were ever exposed to the id-restart collision, but stamping tab rows with
+-- a bill-registry address they have nothing to do with would make every later
+-- query lie — so the two are backfilled to their own contracts.
+alter table reputation_feedback
+  add column if not exists registry_address text not null default '';
+
+update reputation_feedback
+   set registry_address = lower('0x9Cc377C957255582BCa8084a950F52e59fB0a41E') -- RecurringTabFactory
+ where registry_address = '' and bill_id like 'tab:%';
+
+update reputation_feedback
+   set registry_address = lower('0x867051b5F840F045B3c72a091B1b6453c86E120B') -- BillSplitRegistry v1
+ where registry_address = '';
+
+alter table reputation_feedback drop constraint if exists reputation_feedback_wallet_address_bill_id_key;
+alter table reputation_feedback
+  add constraint reputation_feedback_wallet_registry_bill_key
+  unique (wallet_address, registry_address, bill_id);

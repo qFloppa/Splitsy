@@ -38,7 +38,9 @@ export function buildScoutDeps(baseUrl: string): ScanDeps & { address: `0x${stri
     pay: async (path, body) => {
       const result = await gateway.pay(`${baseUrl}${path}`, { method: "POST", body });
       return {
-        result: result.data,
+        // The SDK types the paid endpoint's JSON body as unknown; every caller
+        // in scan.ts narrows the field it reads.
+        result: result.data as Record<string, unknown>,
         // Atomic USDC (6dp) -> dollars. formattedAmount is the SDK's own string
         // form of the same figure; deriving it keeps this a number for the math.
         amountUsd: Number(result.amount) / 1e6,

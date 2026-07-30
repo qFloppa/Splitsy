@@ -6,7 +6,10 @@ import type { ParsedBill } from "../snapsplit.ts";
 // Every outside effect is injected so the decision loop — which spends real
 // money — is testable without a chain, a facilitator, or a model call.
 export type ScanDeps = {
-  pay: (path: string, body: unknown) => Promise<{ result: any; amountUsd: number; tx: string | null }>;
+  pay: (
+    path: string,
+    body: unknown,
+  ) => Promise<{ result: Record<string, unknown>; amountUsd: number; tx: string | null }>;
   parseDirect: (imageBase64: string, mimeType: string, hq?: boolean) => Promise<ParsedBill>;
   spentTodayUsd: () => Promise<number>;
   record: (

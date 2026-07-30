@@ -6,11 +6,19 @@ export default defineConfig({
   solidity: {
     profiles: {
       default: {
-        version: "0.8.28",
+        version: "0.8.36",
+        // Pinned: Arc runs the Cancun instruction set. 0.8.30+ defaults to
+        // `prague`, which would emit opcodes the chain may not accept.
+        settings: {
+          evmVersion: "cancun",
+        },
       },
       production: {
-        version: "0.8.28",
+        version: "0.8.36",
+        // Pinned: Arc runs the Cancun instruction set. 0.8.30+ defaults to
+        // `prague`, which would emit opcodes the chain may not accept.
         settings: {
+          evmVersion: "cancun",
           optimizer: {
             enabled: true,
             runs: 200,

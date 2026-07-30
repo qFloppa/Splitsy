@@ -1,0 +1,10 @@
+{
+  "solc_version": "0.8.36",
+  "compile_force_framework": "hardhat",
+  "hardhat_ignore_compile": false,
+  "filter_paths": "contracts/test/|contracts/mocks/|\\.t\\.sol$|node_modules/",
+  "exclude_informational": false,
+  "exclude_low": false,
+  "exclude_dependencies": true,
+  "solc_args": "--optimize --optimize-runs 200"
+}

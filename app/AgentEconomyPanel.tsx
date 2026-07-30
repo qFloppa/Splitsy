@@ -65,40 +65,42 @@ export default function AgentEconomyPanel() {
   ];
 
   return (
-    <div className="space-y-3">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <h2 className="flex items-center gap-2 text-base font-semibold">
-          <span className="text-[var(--accent)]">
-            <Bot size={19} />
-          </span>
-          Agent economy
-        </h2>
+    <section className="spec-card">
+      <div className="spec-head">
+        <div className="min-w-0">
+          <span className="spec-step">04 · Third-party agent</span>
+          <h3 className="spec-title">Scout&rsquo;s x402 ledger</h3>
+          <p className="spec-note">
+            Scout charges per call over x402 and pays other agents the same way. Its own wallet, its own daily cap —
+            none of your money moves here.
+          </p>
+        </div>
         {stats.agent.address ? (
           <a
-            className="inline-flex items-center gap-1 text-xs text-[var(--text-muted)] underline"
+            className="spec-chip no-underline"
             href={`https://testnet.arcscan.app/address/${stats.agent.address}`}
-            target="_blank"
             rel="noreferrer"
+            target="_blank"
           >
-            Scout {stats.agent.address.slice(0, 6)}…{stats.agent.address.slice(-4)}
-            {stats.agent.tokenId ? ` · ERC-8004 #${stats.agent.tokenId}` : ""}
-            <ExternalLink size={12} />
+            <Bot size={12} />
+            {stats.agent.address.slice(0, 6)}…{stats.agent.address.slice(-4)}
+            {stats.agent.tokenId ? ` · #${stats.agent.tokenId}` : ""}
+            <ExternalLink size={11} />
           </a>
         ) : null}
       </div>
 
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-        {tiles.map((t) => (
-          <div
-            key={t.label}
-            className="rounded-[var(--radius)] border border-[var(--border)] bg-[var(--surface)] p-3"
-          >
-            <div className="amount-text text-xl font-semibold tabular-nums">{t.value}</div>
-            <div className="mt-0.5 text-xs text-[var(--text-muted)]">{t.label}</div>
-            <div className="text-xs text-[var(--text-muted)]">{t.sub}</div>
-          </div>
-        ))}
+      <div className="spec-body">
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+          {tiles.map((t) => (
+            <div className="spec-stat" key={t.label}>
+              <div className="spec-stat-value">{t.value}</div>
+              <div className="spec-stat-label">{t.label}</div>
+              <div className="spec-stat-sub">{t.sub}</div>
+            </div>
+          ))}
+        </div>
       </div>
-    </div>
+    </section>
   );
 }

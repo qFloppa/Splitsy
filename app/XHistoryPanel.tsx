@@ -78,8 +78,8 @@ export default function XHistoryPanel({ onCount }: { onCount?: (n: number) => vo
     <>
       {paid.length > 0 ? (
         <div className="space-y-2">
-          <p className="text-sm font-semibold text-[var(--text-muted)]">
-            Paid bill{paid.length === 1 ? "" : "s"} — settled from your wallet
+          <p className="spec-subhead">
+            Paid — settled from your wallet · {paid.length}
           </p>
           <div className="space-y-2">
             {paid.map((d) => {
@@ -122,8 +122,8 @@ export default function XHistoryPanel({ onCount }: { onCount?: (n: number) => vo
 
       {created.length > 0 ? (
         <div className="space-y-2">
-          <p className="text-sm font-semibold text-[var(--text-muted)]">
-            Bill{created.length === 1 ? "" : "s"} you created — tagged by handle
+          <p className="spec-subhead">
+            You created — tagged by handle · {created.length}
           </p>
           <div className="space-y-2">
             {created.map((b) => {

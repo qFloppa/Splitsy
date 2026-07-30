@@ -3,6 +3,7 @@
 import {
   AlertTriangle,
   ArrowLeftRight,
+  AtSign,
   BadgeDollarSign,
   BookOpen,
   Bot,
@@ -46,7 +47,10 @@ import SignInMenu from "./SignInMenu";
 import XDebtsPanel from "./XDebtsPanel";
 import XHistoryPanel from "./XHistoryPanel";
 import DashboardPanel from "./DashboardPanel";
+import AgentEconomyPanel from "./AgentEconomyPanel";
+import SettlementAgentsPanel from "./SettlementAgentsPanel";
 import { HistoryCard, PaidBillStamp } from "./HistoryCard";
+import { Panel, TabHero } from "./SpecCard";
 import {
   bridgeSourceChains,
   bridgeUsdcToArc,
@@ -73,12 +77,15 @@ import {
   readArcUsdcBalance,
   readBillActivity,
   readBillsForSplitter,
+  settleBills,
   readDebtsForWallet,
   usdcToBillUnits,
   verifyBillPreimage,
   type BillPreimage,
   claimBillFunds,
+  refundBillPayment,
 } from "@/lib/bill-split-contracts";
+import { refundableNow } from "@/lib/treasury";
 import {
   authorizeRecurringPayment,
   approveUsdc,
@@ -120,6 +127,10 @@ function usePersistedExpand(key: string): [boolean | null, (next: boolean) => vo
   useEffect(() => {
     try {
       const saved = window.localStorage.getItem(key);
+      // localStorage is an external store and is unreadable during SSR, so
+      // hydrating from it in an effect is the only way to avoid a server/client
+      // markup mismatch.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       if (saved === "true" || saved === "false") setValue(saved === "true");
     } catch {
       // Keep the auto default.
@@ -156,7 +167,7 @@ type ScoutReport = {
 type OcrState = "idle" | "reading" | "ready" | "error";
 type BillRunState = "idle" | "connecting" | "working" | "success" | "error";
 type RecurringRunState = "idle" | "connecting" | "working" | "error" | "success";
-type AppTab = "bills" | "recurring" | "history" | "dashboard";
+type AppTab = "bills" | "recurring" | "history" | "dashboard" | "agents";
 type RecurringCycle = "test" | "weekly" | "monthly" | "custom";
 type RecurringMemberInput = {
   id: string;
@@ -240,15 +251,19 @@ function bytesToBase64(bytes: Uint8Array): string {
   return btoa(binary);
 }
 
-// A yyyy-mm-dd string from an <input type="date"> → Unix seconds at local
-// midnight of that day, or undefined for empty/invalid input. `new Date("yyyy-
-// mm-dd")` parses as UTC midnight, so we build the date from parts in local time
-// instead — the creator means "due that calendar day where they are".
+// A yyyy-mm-dd string from an <input type="date"> → Unix seconds at the END of
+// that local day, or undefined for empty/invalid input. `new Date("yyyy-mm-dd")`
+// parses as UTC midnight, so we build the date from parts in local time instead
+// — the creator means "due that calendar day where they are".
+//
+// End of day, not midnight, for two reasons: "pay by the 5th" means any time on
+// the 5th, and since v2 the registry stores this and REJECTS a due date already
+// in the past — local midnight today is always in the past.
 function dueDateToUnix(value: string): number | undefined {
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value.trim());
   if (!m) return undefined;
   const [, y, mo, d] = m;
-  const date = new Date(Number(y), Number(mo) - 1, Number(d));
+  const date = new Date(Number(y), Number(mo) - 1, Number(d), 23, 59, 59);
   if (Number.isNaN(date.getTime())) return undefined;
   return Math.floor(date.getTime() / 1000);
 }
@@ -327,7 +342,7 @@ async function scanReceiptTotalUsd(bytes: Uint8Array): Promise<number | null> {
   }
 }
 
-export default function HomeClient({ testCycleEnabled = false }: { testCycleEnabled?: boolean }) {  const [activeTab, setActiveTab] = useState<AppTab>("bills");
+export default function HomeClient({ testCycleEnabled = false }: { testCycleEnabled?: boolean }) {  const [activeTab, setActiveTab] = useState<AppTab>("dashboard");
   const { theme, setTheme } = useTheme();
   const [ocrState, setOcrState] = useState<OcrState>("idle");
   const [error, setError] = useState("");
@@ -351,6 +366,7 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
   // type=date> ("" = no due date). Committed into the on-chain metadata hash and
   // used to grade payment-reputation timeliness; absent leaves scoring unchanged.
   const [dueDateInput, setDueDateInput] = useState("");
+  const [escrowUntilFull, setEscrowUntilFull] = useState(false);
   const [bridgeResults, setBridgeResults] = useState<Record<string, BridgeSummary>>({});
   const [bridgeSession, setBridgeSession] = useState<BrowserWalletSession | null>(null);
   const [recurringCycle, setRecurringCycle] = useState<RecurringCycle>("weekly");
@@ -480,7 +496,16 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
 
   // On-chain debts still owed, and the merged pending count (social + wallet)
   // that the single "Action needed" window heading shows.
-  const activeWalletDebts = registryReadAddress ? debts.filter((debt) => debt.remaining > 0n) : [];
+  //
+  // A refundable debt belongs here even with nothing remaining: the payer who
+  // settled their whole share is exactly the person a failed all-or-nothing bill
+  // owes money back to, and filtering on `remaining > 0` alone would hide them.
+  // Safe to read the clock in render — `debts` starts empty and only fills from
+  // a client effect, so no row exists at hydration time to mismatch.
+  const nowSeconds = BigInt(Math.floor(Date.now() / 1000));
+  const activeWalletDebts = registryReadAddress
+    ? debts.filter((debt) => debt.remaining > 0n || refundableNow(debt, debt.paid, nowSeconds) > 0n)
+    : [];
   const pendingTotal = socialPendingCount + activeWalletDebts.length;
   // Combined $ owed across both systems, for the collapsed summary line.
   const walletPendingUnits = activeWalletDebts.reduce((sum, debt) => sum + debt.remaining, 0n);
@@ -1009,6 +1034,7 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
     setError("");
     setSplitMode("equal");
     setDueDateInput("");
+    setEscrowUntilFull(false);
     setParticipantShareInputs({});
     setSubmittedBillId(null);
     setParticipants([
@@ -1130,7 +1156,11 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
       const addresses: string[] = [];
       const owedAmounts: bigint[] = [];
       const labels: string[] = [];
+      // Index-aligned with labels; the dashboard's identity buckets read these.
+      // Not hashed — display metadata only (see participantProvidersFromSlots).
+      const providers: string[] = [];
       for (const [i, p] of rows.entries()) {
+        providers.push(isAddr(p.walletAddress) ? "wallet" : rowProvider(p));
         if (isAddr(p.walletAddress)) {
           addresses.push(normalizeAddress(p.walletAddress));
           labels.push(p.label.trim() || `Payer ${i + 1}`);
@@ -1182,6 +1212,7 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
             receiptHash,
             receiptImageBase64: receiptCommit ? bytesToBase64(receiptCommit.bytes) : undefined,
             dueDate,
+            escrowUntilFull: Boolean(dueDate) && escrowUntilFull,
           }),
         });
         const data = await res.json();
@@ -1218,6 +1249,11 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
         }),
         participants: addresses.map((a) => normalizeAddress(a)),
         owedAmounts,
+        // Stored on chain since v2, so "collect at the deadline" is a contract
+        // precondition rather than server policy. Escrow is impossible without
+        // it — the registry rejects that pair outright.
+        dueDate: dueDate ? BigInt(dueDate) : 0n,
+        escrowUntilFull: Boolean(dueDate) && escrowUntilFull,
       });
       setSubmittedBillId(result.billId);
       setBillState("success");
@@ -1237,9 +1273,13 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
           registryAddress: BILL_SPLIT_REGISTRY_ADDRESS,
           billId: result.billId.toString(),
           merchant: bill.merchant, currency: bill.currency, total: confirmedUsd,
-          participantLabels: labels, receiptHash, dueDate,
+          participantLabels: labels, participantProviders: providers, receiptHash, dueDate,
           receiptImageBase64: publishedReceipt ? bytesToBase64(publishedReceipt.bytes) : undefined,
         }),
+        // Fire-and-forget, but never silent: a swallowed failure here is how the
+        // whole bill silently lost its details (and its identity attribution).
+      }).then(async (r) => {
+        if (!r.ok) console.error("Publishing the bill preimage failed:", r.status, await r.text());
       }).catch(() => {});
       await refreshBillRegistry(wallet.account);
     } catch (caught) {
@@ -1474,6 +1514,71 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
     }
   }
 
+  // Take your money back out of a failed all-or-nothing bill. One transaction on
+  // both paths — no approval, and no amount, because the registry always returns
+  // the caller's whole contribution. Deliberately not folded into `settle`: this
+  // is rare, and a refund leg that reverted would take an entire batch with it.
+  async function refundOnArc(debt: OwnedBillSplitDebt) {
+    const debtKey = debt.billId.toString();
+    const amountLabel = billUnitsToUsdc(debt.paid);
+
+    const fail = (message: string) => {
+      setBillState("error");
+      setDebtMessages((current) => ({ ...current, [debtKey]: { tone: "error", message } }));
+    };
+
+    const succeed = () => {
+      setBillState("success");
+      setDebtMessages((current) => ({
+        ...current,
+        [debtKey]: { tone: "success", message: `Refunded ${amountLabel} USDC from bill #${debtKey}.` },
+      }));
+    };
+
+    // Circle (DCW) wallet: the server signs, behind the same PIN unlock the pay
+    // flow uses.
+    if (debt.via === "social" && me?.walletAddress) {
+      const pin = await fetch("/api/wallet/pin").then((r) => r.json()).catch(() => ({}));
+      if (!pin.unlocked) {
+        setDebtMessages((current) => ({
+          ...current,
+          [debtKey]: {
+            tone: "neutral",
+            message: "Unlock your wallet (the wallet button in the bottom-right corner), then tap Get my money back again.",
+          },
+        }));
+        return;
+      }
+      try {
+        setBillState("working");
+        const res = await fetch(`/api/onchain-bills/${debtKey}/refund`, { method: "POST" });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          fail(data.error ?? "Refund failed.");
+          return;
+        }
+        succeed();
+        await refreshBillRegistry();
+      } catch (caught) {
+        fail(errorMessage(caught));
+      }
+      return;
+    }
+
+    const wallet = billWallet ?? (await connectBillWallet());
+    if (!wallet) return;
+
+    try {
+      setBillState("working");
+      await ensureBillSplitWalletOnArc(wallet);
+      await refundBillPayment({ ...wallet, billId: debt.billId });
+      succeed();
+      await refreshBillRegistry(wallet.account);
+    } catch (caught) {
+      fail(errorMessage(caught));
+    }
+  }
+
   // "Settle net" from the connected browser wallet: ONE approval for the summed
   // outstanding debt, then one payDebt per bill (escrow binds each debt to its
   // billId — no on-chain netting exists), then claim every funded bill I created.
@@ -1509,20 +1614,21 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
       contextLabel: `${payLegs.length + claimLegs.length} positions`,
       status: "running",
       errorMessage: "",
-      // Steps mirror the legs that will actually run — a collect-only settle
-      // must not show an approval step that never fires. Collect leads, because
-      // that is the order the transactions go out in below.
+      // Steps mirror the transactions that will actually run — which since
+      // registry v2 is at most two: one approval, then one settle carrying every
+      // claim and pay leg. A collect-only settle skips the approval entirely.
       steps: [
         { key: "switch", icon: "switch", label: "Connect to Arc Testnet", hint: "Approve the network switch in your wallet", state: "active" as const },
-        ...(claimLegs.length
-          ? ([{ key: "claim", icon: "claim", label: `Collect ${claimLegs.length} bill${claimLegs.length === 1 ? "" : "s"}`, hint: "Pull already-paid USDC to your wallet", state: "pending" }] satisfies FlowStep[])
-          : []),
         ...(payLegs.length
-          ? ([
-              { key: "approve", icon: "approve", label: "Approve USDC once", hint: "One approval covers every payment below", state: "pending" },
-              { key: "pay", icon: "pay", label: `Pay ${payLegs.length} debt${payLegs.length === 1 ? "" : "s"}`, hint: "One payment per escrowed bill", state: "pending" },
-            ] satisfies FlowStep[])
+          ? ([{ key: "approve", icon: "approve", label: "Approve USDC once", hint: "One approval covers every payment below", state: "pending" }] satisfies FlowStep[])
           : []),
+        {
+          key: "settle",
+          icon: payLegs.length ? "pay" : "claim",
+          label: `Settle ${claimLegs.length + payLegs.length} position${claimLegs.length + payLegs.length === 1 ? "" : "s"}`,
+          hint: "One transaction: collect what you are owed, pay what you owe",
+          state: "pending",
+        },
       ],
     });
 
@@ -1531,26 +1637,24 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
     try {
       setBillState("working");
       await ensureBillSplitWalletOnArc(wallet);
-      advanceFlow("switch", claimLegs.length ? "claim" : "approve");
+      advanceFlow("switch", payLegs.length ? "approve" : "settle");
 
-      // Collect first, pay second — same reason as the atomic Circle batch in
-      // /api/treasury/settle: claimed USDC lands in this wallet and funds the
-      // payments. Claiming last strands the money behind a payment that fails
-      // for want of it. (Unlike the SCA batch these are separate transactions,
-      // so a later failure leaves the collect standing, which is the good half.)
-      for (const bill of claimLegs) {
-        await claimBillFunds({ ...wallet, billId: bill.billId, amount: bill.claimable });
-      }
-
+      // A browser EOA has no wallet-level batching, so before registry v2 this
+      // was one claim per funded bill plus an approve and a payDebt per debt —
+      // N+M+1 wallet prompts. settle() collapses all of it into one call, and
+      // the contract runs the claims before the pays so their proceeds fund the
+      // payments inside the same transaction.
       if (payLegs.length) {
-        advanceFlow("claim", "approve");
         await approveBillRegistry({ ...wallet, amount: total });
-        advanceFlow("approve", "pay");
-
-        for (const debt of payLegs) {
-          await payBillDebtWithMemo({ ...wallet, billId: debt.billId, amount: debt.remaining });
-        }
+        advanceFlow("approve", "settle");
       }
+
+      await settleBills({
+        ...wallet,
+        claimBillIds: claimLegs.map((b) => b.billId),
+        payBillIds: payLegs.map((d) => d.billId),
+        payAmounts: payLegs.map((d) => d.remaining),
+      });
       completeFlow();
 
       setBillState("success");
@@ -1832,7 +1936,7 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
 
   // Testing convenience: load the bundled /bill.jpg sample into the upload box
   // exactly as if the user picked it, so "Scan receipt" works unchanged.
-  async function useSampleBill() {
+  async function loadSampleBill() {
     try {
       const res = await fetch("/bill.jpg");
 
@@ -2511,6 +2615,9 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
                 <TabButton active={activeTab === "dashboard"} onClick={() => switchAppTab("dashboard")}>
                   Dashboard
                 </TabButton>
+                <TabButton active={activeTab === "agents"} onClick={() => switchAppTab("agents")}>
+                  Agents
+                </TabButton>
                 <Link className="tab-button" href="/docs">
                   <BookOpen size={16} />
                   Docs
@@ -2544,24 +2651,43 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
             key="bills"
             transition={{ duration: 0.22, ease: "easeOut" }}
           >
-            {/* One merged "Action needed" window. The wrapper stays mounted even
-                when nothing is pending (no chrome) so XDebtsPanel keeps fetching
-                and can report its social count up for the summed heading. */}
-            <div className={pendingTotal > 0 ? "debt-alert p-4" : undefined}>
-              {pendingTotal > 0 ? (
-                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                  <div>
-                    <p className="text-sm font-semibold text-[var(--accent)]">Action needed</p>
-                    <h3 className="mt-1 text-[clamp(1.35rem,3vw,2.2rem)] font-semibold leading-tight">
-                      You have {pendingTotal} unpaid bill{pendingTotal === 1 ? "" : "s"}
-                    </h3>
-                    <p className="mt-2 text-sm text-[var(--text-muted)]">
-                      {debtsShown
-                        ? "Tagged to your handle or registered to your wallet. Settle each from the matching account."
-                        : `Total $${pendingTotalUsd.toFixed(2)} owed. Expand to settle each from the matching account.`}
-                    </p>
-                  </div>
-                  <div className="flex items-center gap-2">
+            <TabHero
+              eyebrow="Receipt to settlement"
+              icon={<ReceiptText size={13} />}
+              legend={[
+                {
+                  step: "01 · Capture",
+                  label: "Scan the receipt, or type it",
+                  state: showBillEditor ? "done" : "active",
+                },
+                {
+                  step: "02 · Verify",
+                  label: "Check what the scan read",
+                  state: billReadyForSplit ? "done" : showBillEditor ? "active" : undefined,
+                },
+                {
+                  step: "03 · Split",
+                  label: "Shares by handle or wallet",
+                  state: submittedBillId ? "done" : billReadyForSplit ? "active" : undefined,
+                },
+                {
+                  step: "04 · Commit",
+                  label: "One escrow row on Arc",
+                  state: submittedBillId ? "done" : undefined,
+                },
+              ]}
+              lede="Photograph a bill in any language and Splitsy reads the totals, tax and tip. You assign the shares, and one transaction writes the whole split into escrow on Arc — where each payer settles their own share and you claim what comes in."
+              title="Split a bill, keep the receipt"
+            />
+
+            {/* One merged "You owe" card. It stays mounted and is only *hidden*
+                when nothing is pending — never unmounted — so XDebtsPanel keeps
+                fetching and can report its social count up for the summed
+                heading, which is what decides whether this card shows at all. */}
+            <div className={pendingTotal > 0 ? undefined : "hidden"}>
+              <Panel
+                action={
+                  <>
                     {/* Collapse once the list gets long (>3), so many unpaid bills
                         don't stretch the page; a tap pins the choice. Also show
                         the toggle whenever the list is actually collapsed —
@@ -2579,26 +2705,39 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
                         Refresh
                       </button>
                     ) : null}
-                  </div>
+                  </>
+                }
+                chip={
+                  <span className="spec-chip spec-chip-attn">
+                    <span className="spec-dot" />${pendingTotalUsd.toFixed(2)} owed
+                  </span>
+                }
+                icon={<AlertTriangle size={15} />}
+                live
+                note="Tagged to your handle or registered to your wallet. Settle each from the matching account — a handle-tagged bill pays from your Splitsy wallet, a wallet-tagged one from the wallet it was written to."
+                step="Inbox · You owe"
+                title={`${pendingTotal} bill${pendingTotal === 1 ? "" : "s"} waiting on you`}
+              >
+                <div className={`space-y-3${debtsShown ? "" : " hidden"}`}>
+                  <XDebtsPanel onCount={setSocialPendingCount} onTotal={setSocialPendingTotalUsd} />
+                  {registryReadAddress ? (
+                    <WalletDebtRows
+                      activeDebts={activeWalletDebts}
+                      arcUsdcBalances={arcUsdcBalances}
+                      arcUsdcBalanceFlash={arcUsdcBalanceFlash}
+                      bridgeForDebt={bridgeForDebt}
+                      bridgeResults={bridgeResults}
+                      billState={billState}
+                      nowSeconds={nowSeconds}
+                      partialPayments={partialPayments}
+                      payDebtOnArc={payDebtOnArc}
+                      refundOnArc={refundOnArc}
+                      debtMessages={debtMessages}
+                      setPartialPayments={setPartialPayments}
+                    />
+                  ) : null}
                 </div>
-              ) : null}
-              <div className={`${pendingTotal > 0 ? "mt-4 space-y-3" : ""}${debtsShown ? "" : " hidden"}`}>
-                <XDebtsPanel onCount={setSocialPendingCount} onTotal={setSocialPendingTotalUsd} />
-                {registryReadAddress ? (
-                  <WalletDebtRows
-                    activeDebts={activeWalletDebts}
-                    arcUsdcBalances={arcUsdcBalances}
-                    arcUsdcBalanceFlash={arcUsdcBalanceFlash}
-                    bridgeForDebt={bridgeForDebt}
-                    bridgeResults={bridgeResults}
-                    billState={billState}
-                    partialPayments={partialPayments}
-                    payDebtOnArc={payDebtOnArc}
-                    debtMessages={debtMessages}
-                    setPartialPayments={setPartialPayments}
-                  />
-                ) : null}
-              </div>
+              </Panel>
             </div>
             {registryReadAddress ? (
               <ClaimFundsPanel
@@ -2608,6 +2747,7 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
                 claimMessage={claimMessage}
                 claimMessageTone={claimMessageTone}
                 claimSplitterFunds={claimSplitterFunds}
+                nowSeconds={nowSeconds}
                 setClaimAmounts={setClaimAmounts}
               />
             ) : null}
@@ -2619,7 +2759,21 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
               {billState === "success" && billMessage && !billReadyForSplit ? (
                 <Message tone="success">{billMessage}</Message>
               ) : null}
-              <Panel title="Upload bill" icon={<Upload size={19} />}>
+              <Panel
+                chip={
+                  ocrState === "reading" ? (
+                    <span className="spec-chip spec-chip-attn">
+                      <span className="spec-dot" />
+                      Reading
+                    </span>
+                  ) : null
+                }
+                icon={<Upload size={15} />}
+                live={ocrState === "reading"}
+                note="Any language, any currency. The scan reads merchant, totals, tax, tip and line items — nothing is written on chain at this step, so a bad scan costs nothing."
+                step="01 · Capture"
+                title="Upload the bill"
+              >
                 <form className="space-y-4" onSubmit={parseBill}>
                   <label
                     className={`scan-surface upload-focus flex min-h-[28rem] cursor-pointer flex-col items-center justify-center rounded-[var(--radius)] border border-dashed bg-[var(--receipt)] p-6 text-center text-[var(--receipt-text)] transition hover:border-[var(--accent)] sm:min-h-[34rem] ${
@@ -2657,12 +2811,12 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
                               // opening the file picker.
                               event.preventDefault();
                               event.stopPropagation();
-                              void useSampleBill();
+                              void loadSampleBill();
                             }}
                             onKeyDown={(event) => {
                               if (event.key === "Enter" || event.key === " ") {
                                 event.preventDefault();
-                                void useSampleBill();
+                                void loadSampleBill();
                               }
                             }}
                             role="button"
@@ -2706,7 +2860,20 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
                     ref={reviewBillRef}
                     transition={{ duration: 0.26, ease: "easeOut" }}
                   >
-                    <Panel title="Review bill" icon={<ReceiptText size={19} />}>
+                    <Panel
+                      chip={
+                        billIsScanned ? (
+                          <span className="spec-chip">
+                            {originCurrency}
+                            {originCurrency === "USD" ? "" : " → USD"}
+                          </span>
+                        ) : null
+                      }
+                      icon={<ReceiptText size={15} />}
+                      note="Every figure here is editable. Fix anything the scan misread now — from step 03 on, these numbers are what gets committed to Arc and hashed into the bill."
+                      step="02 · Verify"
+                      title={billIsScanned ? "What the scan read" : "Enter the bill"}
+                    >
                       <div className="receipt-card p-4 sm:p-5" ref={receiptPrintRef}>
                         {billIsScanned ? (
                           <>
@@ -2804,8 +2971,6 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
                     transition={{ duration: 0.3, ease: "easeOut" }}
                   >
                     <Panel
-                      title="Review your split"
-                      icon={<WalletCards size={19} />}
                       action={
                         <div className="segmented-control">
                           <ModeButton active={splitMode === "equal"} onClick={() => setSplitMode("equal")}>
@@ -2816,6 +2981,23 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
                           </ModeButton>
                         </div>
                       }
+                      chip={
+                        Math.abs(splitDelta) > 0.009 ? (
+                          <span className="spec-chip spec-chip-warn">
+                            <span className="spec-dot" />${Math.abs(splitDelta).toFixed(2)} off
+                          </span>
+                        ) : (
+                          <span className="spec-chip spec-chip-live">
+                            <span className="spec-dot" />
+                            Balanced
+                          </span>
+                        )
+                      }
+                      icon={<WalletCards size={15} />}
+                      live={Math.abs(splitDelta) <= 0.009}
+                      note="Tag each payer by wallet address, X, Discord, or email — a tagged person gets a Splitsy wallet and can pay without one of their own. Writing to Arc costs one transaction and cannot be edited afterwards."
+                      step="03 · Split & commit"
+                      title="Who owes what"
                     >
                 <div className="route-strip text-sm">
                   <div>
@@ -2910,7 +3092,13 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
                     {dueDateInput ? (
                       <button
                         className="secondary-button"
-                        onClick={() => setDueDateInput("")}
+                        onClick={() => {
+                          setDueDateInput("");
+                          // Escrow without a deadline is an unbounded lock, so
+                          // the contract refuses it — drop the toggle with it
+                          // rather than submit a pair that reverts.
+                          setEscrowUntilFull(false);
+                        }}
                         type="button"
                       >
                         Clear
@@ -2918,6 +3106,23 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
                     ) : null}
                   </div>
                 </div>
+
+                <label className="flex items-start gap-2 text-xs">
+                  <input
+                    checked={escrowUntilFull}
+                    disabled={!dueDateInput}
+                    onChange={(event) => setEscrowUntilFull(event.target.checked)}
+                    type="checkbox"
+                  />
+                  <span className={dueDateInput ? "" : "opacity-50"}>
+                    <span className="font-medium">All or nothing — hold the money until everyone has paid</span>
+                    <span className="mt-0.5 block text-[var(--text-muted)]">
+                      {dueDateInput
+                        ? "You can't collect any of it until every payer has settled. If the bill is still short on the due date, it has failed: you collect nothing and each payer takes their own money back. Use this when a partial amount is no good to you."
+                        : "Set a due date first. Without one there is no moment at which a short bill counts as failed, so the money could never be released to anyone."}
+                    </span>
+                  </span>
+                </label>
 
                 {/* Dual identity (signed in social + connected wallet): the
                     creator picks which wallet writes the bill to Arc and
@@ -2984,11 +3189,25 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
         ) : activeTab === "recurring" ? (
           <motion.div
             animate={{ opacity: 1, y: 0 }}
+            className="space-y-5"
             exit={{ opacity: 0, y: 8 }}
             initial={{ opacity: 0, y: 8 }}
             key="recurring"
             transition={{ duration: 0.22, ease: "easeOut" }}
           >
+          <TabHero
+            eyebrow="Standing splits"
+            icon={<RefreshCw size={13} />}
+            legend={[
+              { step: "01 · Set up", label: "Members, share, cycles", state: walletTabs.length > 0 ? "done" : "active" },
+              { step: "02 · Your tabs", label: "Everything you're on", state: tabState ? "done" : walletTabs.length > 0 ? "active" : undefined },
+              { step: "03 · Where it stands", label: "Approved, funded, due", state: tabState ? "active" : undefined },
+              { step: "04 · Act on it", label: "Approve, collect, withdraw" },
+              { step: "05 · On chain", label: "Every cycle, on Arc" },
+            ]}
+            lede="Rent, a shared subscription, a standing round — anything that recurs. A tab is a contract on Arc that knows who owes what and how often. Members approve their own share once; each cycle collects only what has fallen due, and never a cent more."
+            title="Bills that come back"
+          />
           <RecurringWorkspace
             addRecurringMember={addRecurringMember}
             authorizationAmount={authorizationAmount}
@@ -3036,22 +3255,98 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
         ) : activeTab === "history" ? (
           <motion.div
             animate={{ opacity: 1, y: 0 }}
+            className="space-y-5"
             exit={{ opacity: 0, y: 8 }}
             initial={{ opacity: 0, y: 8 }}
             key="history"
             transition={{ duration: 0.22, ease: "easeOut" }}
           >
-            <Panel title="History" icon={<BadgeDollarSign size={19} />}>
-              <div className="space-y-6">
-                <XHistoryPanel onCount={setSocialHistoryCount} />
-                <HistoryWorkspace debts={debts} splitterBills={splitterBills} />
-                {socialHistoryCount === 0 && walletHistoryEmpty ? (
-                  <p className="text-sm text-[var(--text-muted)]">
-                    No bill history yet. Bills you split, settle, or claim — on-chain or tagged by handle — appear here as records.
-                  </p>
-                ) : null}
-              </div>
-            </Panel>
+            <TabHero
+              eyebrow="The paper trail"
+              icon={<BadgeDollarSign size={13} />}
+              legend={[
+                { step: "01 · By handle", label: "Bills that found you", state: socialHistoryCount > 0 ? "done" : undefined },
+                { step: "02 · By wallet", label: "Rows in the Arc registry", state: walletHistoryEmpty ? undefined : "done" },
+                { step: "Receipts", label: "Each row opens its own tx" },
+              ]}
+              lede="Splitsy reaches people two ways — by handle and by wallet address — so your history arrives in two stacks. Both are kept: the handle-tagged records off chain, the registry rows on Arc, each one expandable down to the transaction that settled it."
+              title="Every bill you've been part of"
+            />
+
+            {/* Both stacks stay mounted regardless of what they hold: XHistoryPanel
+                reports its count up, and that count is what decides whether the
+                shared empty state below is the truth. */}
+            <div className={socialHistoryCount > 0 ? undefined : "hidden"}>
+              <Panel
+                chip={
+                  <span className="spec-chip">
+                    {socialHistoryCount} record{socialHistoryCount === 1 ? "" : "s"}
+                  </span>
+                }
+                icon={<AtSign size={15} />}
+                note="Bills tagged to your X, Discord or email rather than to an address. Settled from the Splitsy wallet that handle owns."
+                step="01 · By handle"
+                title="Tagged to you"
+              >
+                <div className="space-y-4">
+                  <XHistoryPanel onCount={setSocialHistoryCount} />
+                </div>
+              </Panel>
+            </div>
+
+            {walletHistoryEmpty ? null : (
+              <Panel
+                icon={<Landmark size={15} />}
+                note="Rows written to the bill registry on Arc — what you paid, what is still owed to you, and what you have collected. Every figure here was read back off the chain."
+                step="02 · By wallet"
+                title="On the Arc registry"
+              >
+                <div className="space-y-4">
+                  <HistoryWorkspace debts={debts} splitterBills={splitterBills} />
+                </div>
+              </Panel>
+            )}
+
+            {socialHistoryCount === 0 && walletHistoryEmpty ? (
+              <Panel icon={<BadgeDollarSign size={15} />} step="Nothing yet" title="No records so far">
+                <div className="spec-empty">
+                  <ReceiptText size={22} />
+                  <span>
+                    <strong>Nothing has settled yet.</strong>
+                    <br />
+                    Bills you split, settle, or claim — on chain or tagged by handle — land here as records you can
+                    reopen and verify.
+                  </span>
+                </div>
+              </Panel>
+            ) : null}
+          </motion.div>
+        ) : activeTab === "agents" ? (
+          <motion.div
+            animate={{ opacity: 1, y: 0 }}
+            className="space-y-5"
+            exit={{ opacity: 0, y: 8 }}
+            initial={{ opacity: 0, y: 8 }}
+            key="agents"
+            transition={{ duration: 0.22, ease: "easeOut" }}
+          >
+            {/* The hero states what the tab is and which side of a bill each
+                agent works; live state stays down on the card that controls it,
+                where acting on it is one click away. */}
+            <TabHero
+              eyebrow="Autonomous settlement"
+              icon={<Bot size={13} />}
+              legend={[
+                { step: "01 · Debtor side", label: "Autopay, inside your caps" },
+                { step: "02 · Creditor side", label: "Collect mandates, per bill" },
+                { step: "03 · Audit trail", label: "Every decision, every skip" },
+                { step: "04 · Scout", label: "x402 nanopayment ledger" },
+              ]}
+              lede="Two agents work opposite sides of a bill: one pays your share the moment you are billed, one collects what you are owed once a bill falls due. Both run on standing permissions you write here — capped, per bill, revocable, and logged decision by decision."
+              title="Agents that settle while you sleep"
+            />
+            <SettlementAgentsPanel />
+            <AgentEconomyPanel />
           </motion.div>
         ) : (
           <motion.div
@@ -3090,8 +3385,10 @@ function WalletDebtRows({
   arcUsdcBalanceFlash,
   activeDebts,
   debtMessages,
+  nowSeconds,
   partialPayments,
   payDebtOnArc,
+  refundOnArc,
   setPartialPayments,
 }: {
   bridgeForDebt: (debt: BillSplitDebt, debtSourceChain: BridgeSourceChain) => void;
@@ -3103,8 +3400,12 @@ function WalletDebtRows({
   arcUsdcBalanceFlash: boolean;
   activeDebts: OwnedBillSplitDebt[];
   debtMessages: Record<string, { message: string; tone: "error" | "neutral" | "success" }>;
+  // Passed down rather than read here so both the parent's filter and this
+  // component's rendering judge "is it past due" against the same instant.
+  nowSeconds: bigint;
   partialPayments: Record<string, string>;
   payDebtOnArc: (debt: OwnedBillSplitDebt) => void;
+  refundOnArc: (debt: OwnedBillSplitDebt) => void;
   setPartialPayments: (value: Record<string, string>) => void;
 }) {
   const [fallbackBridgeChains, setFallbackBridgeChains] = useState<Record<string, BridgeSourceChain>>({});
@@ -3127,6 +3428,14 @@ function WalletDebtRows({
               // partial-amount input.
               const socialWallet = debt.via === "social";
               const rowBalance = arcUsdcBalances[debt.account.toLowerCase()] ?? null;
+              // All-or-nothing bill that missed its deadline: the creator can
+              // never claim it, and this payer's contribution is theirs to pull
+              // back. Mirrors BillSplitRegistry.refund's preconditions.
+              const refundable = refundableNow(debt, debt.paid, nowSeconds);
+              // Same bill before the deadline: money is committed but not yet
+              // the creator's. Saying so is the point of the toggle.
+              const heldInEscrow =
+                debt.escrowUntilFull && debt.totalPaid < debt.totalOwed && refundable === 0n && debt.paid > 0n;
               // A lone bill is always expanded; otherwise collapsed until opened.
               const expanded = expandedDebts[key] ?? activeDebts.length === 1;
 
@@ -3157,7 +3466,7 @@ function WalletDebtRows({
                   <>
                   <BillVerification billId={debt.billId} metadataHash={debt.metadataHash} />
 
-                  {!socialWallet ? (
+                  {!socialWallet && debt.remaining > 0n ? (
                   <div className="mt-3">
                     <Field
                       label="Payment amount"
@@ -3174,7 +3483,46 @@ function WalletDebtRows({
                     </div>
                   ) : null}
 
-                  {!socialWallet ? (
+                  {heldInEscrow ? (
+                    <p className="mt-3 rounded-[var(--radius)] border border-[var(--border)] bg-[var(--surface-muted)] p-3 text-sm text-[var(--text-muted)]">
+                      This bill holds the money until everyone pays. Your{" "}
+                      <span className="amount-text">${billUnitsToUsdc(debt.paid)}</span> is in the bill, not with the
+                      creator — they can&apos;t collect any of it until the group is paid up. If it&apos;s still short on{" "}
+                      {new Date(Number(debt.dueDate) * 1000).toLocaleDateString()}, you can take yours back.
+                    </p>
+                  ) : null}
+
+                  {refundable > 0n ? (
+                    <div className="mt-3 rounded-[var(--radius)] border border-[var(--border)] bg-[var(--surface-muted)] p-3 text-sm">
+                      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                        <div>
+                          <p className="font-semibold text-[var(--text)]">This bill didn&apos;t come together</p>
+                          <p className="mt-1 text-[var(--text-muted)]">
+                            The group never paid it off and the due date has passed, so the creator can&apos;t collect it.
+                            Your <span className="amount-text">${billUnitsToUsdc(refundable)}</span> goes back to your
+                            wallet.
+                          </p>
+                        </div>
+                        <button
+                          className="chain-button chain-button-active sm:min-w-44"
+                          disabled={billState === "working"}
+                          onClick={() => refundOnArc(debt)}
+                          type="button"
+                        >
+                          {billState === "working" ? (
+                            <span className="inline-flex items-center gap-2">
+                              <Loader2 className="animate-spin" size={15} />
+                              Processing…
+                            </span>
+                          ) : (
+                            "Get my money back"
+                          )}
+                        </button>
+                      </div>
+                    </div>
+                  ) : null}
+
+                  {!socialWallet && debt.remaining > 0n ? (
                   <div className="route-strip mt-3 text-sm">
                     <div>
                       <p className="font-semibold text-[var(--text)]">Pay directly on Arc</p>
@@ -3188,6 +3536,9 @@ function WalletDebtRows({
                   </div>
                   ) : null}
 
+                  {/* Nothing left to pay on a fully-settled share — the row is
+                      only still here because its refund is waiting. */}
+                  {debt.remaining > 0n ? (
                   <div className="mt-3 rounded-[var(--radius)] border border-[var(--border)] bg-[var(--surface-muted)] p-3 text-sm">
                     <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                       <div>
@@ -3250,6 +3601,7 @@ function WalletDebtRows({
                     </div>
                     ) : null}
                   </div>
+                  ) : null}
 
                   {bridgeResult?.explorerUrls.length ? (
                     <div className="mt-3 rounded-[var(--radius)] bg-[var(--surface-muted)] p-3 text-sm">
@@ -3282,6 +3634,7 @@ function ClaimFundsPanel({
   claimMessage,
   claimMessageTone,
   claimSplitterFunds,
+  nowSeconds,
   setClaimAmounts,
 }: {
   splitterBills: OwnedBillSplitDebt[];
@@ -3290,9 +3643,16 @@ function ClaimFundsPanel({
   claimMessage: string;
   claimMessageTone: "error" | "neutral" | "success";
   claimSplitterFunds: (debt: OwnedBillSplitDebt) => void;
+  nowSeconds: bigint;
   setClaimAmounts: (value: Record<string, string>) => void;
 }) {
   const claimableBills = splitterBills.filter((debt) => debt.claimable > 0n);
+  // All-or-nothing bills that missed their deadline. `claimable` is 0 on these
+  // forever, so without a word here they would simply vanish from this panel and
+  // the creator would be left wondering where the money went.
+  const failedBills = splitterBills.filter(
+    (debt) => debt.escrowUntilFull && debt.totalPaid < debt.totalOwed && debt.dueDate !== 0n && nowSeconds >= debt.dueDate,
+  );
   const claimRef = useRef<HTMLDivElement | null>(null);
   // Collapse a long claimable list (>3) behind a summary; a tap pins the choice
   // (persisted across reloads). The toggle also renders whenever the list is
@@ -3311,15 +3671,13 @@ function ClaimFundsPanel({
     });
   }, [claimableBills.length]);
 
-  if (claimableBills.length === 0) {
+  if (claimableBills.length === 0 && failedBills.length === 0) {
     return null;
   }
 
   return (
     <div ref={claimRef}>
       <Panel
-        title="Claim funds"
-        icon={<BadgeDollarSign size={19} />}
         action={
           claimableBills.length > 3 || !shown ? (
             <button className="secondary-button" onClick={() => setExpanded(!shown)} type="button">
@@ -3328,13 +3686,37 @@ function ClaimFundsPanel({
             </button>
           ) : null
         }
+        chip={
+          claimableTotalUnits > 0n ? (
+            <span className="spec-chip spec-chip-live">
+              <span className="spec-dot" />${billUnitsToUsdc(claimableTotalUnits)} ready
+            </span>
+          ) : null
+        }
+        icon={<BadgeDollarSign size={15} />}
+        live={claimableTotalUnits > 0n}
+        note="Money your payers have already settled, sitting in escrow under your name. Claiming moves it to the wallet that created the bill — you can claim part of it and come back for the rest."
+        step="Inbox · Owed to you"
+        title={claimableBills.length > 0 ? "Funds you can collect" : "Nothing to collect"}
       >
         {claimMessage ? (
           <div className="mb-4">
             <Message tone={claimMessageTone}>{claimMessage}</Message>
           </div>
         ) : null}
-        {!shown ? (
+        {failedBills.length ? (
+          <div className="mb-4 rounded-[var(--radius)] border border-[var(--border)] bg-[var(--surface-muted)] p-3 text-sm text-[var(--text-muted)]">
+            <p className="font-semibold text-[var(--text)]">
+              {failedBills.length === 1 ? "One bill didn't come together" : `${failedBills.length} bills didn't come together`}
+            </p>
+            <p className="mt-1">
+              Bill {failedBills.map((debt) => `#${debt.billId.toString()}`).join(", ")} held the money until everyone
+              paid, and the due date passed while still short. There is nothing for you to claim — each payer takes
+              their own share back from here.
+            </p>
+          </div>
+        ) : null}
+        {claimableBills.length === 0 ? null : !shown ? (
           <p className="text-sm text-[var(--text-muted)]">
             {claimableBills.length} bills ready to claim, total{" "}
             <span className="amount-text">${billUnitsToUsdc(claimableTotalUnits)}</span>.
@@ -3412,8 +3794,8 @@ function HistoryWorkspace({
     <>
             {pendingBills.length > 0 ? (
               <div className="space-y-2">
-                <p className="text-sm font-semibold text-[var(--text-muted)]">
-                  Pending bill{pendingBills.length === 1 ? "" : "s"} — awaiting payment from debtors
+                <p className="spec-subhead">
+                  Pending — awaiting payment from debtors · {pendingBills.length}
                 </p>
                 <div className="space-y-2">
                   {pendingBills.map((debt) => {
@@ -3440,8 +3822,8 @@ function HistoryWorkspace({
 
             {paidDebts.length > 0 ? (
               <div className="space-y-2">
-                <p className="text-sm font-semibold text-[var(--text-muted)]">
-                  Paid bill{paidDebts.length === 1 ? "" : "s"} — your settled records
+                <p className="spec-subhead">
+                  Paid — your settled records · {paidDebts.length}
                 </p>
                 <div className="space-y-2">
                   {paidDebts.map((debt) => (
@@ -3463,8 +3845,8 @@ function HistoryWorkspace({
 
             {claimedBills.length > 0 ? (
               <div className="space-y-2">
-                <p className="text-sm font-semibold text-[var(--text-muted)]">
-                  Claimed bill{claimedBills.length === 1 ? "" : "s"} — your collected records
+                <p className="spec-subhead">
+                  Claimed — your collected records · {claimedBills.length}
                 </p>
                 <div className="space-y-2">
                   {claimedBills.map((debt) => (
@@ -3833,7 +4215,24 @@ function RecurringWorkspace({
   return (
     <div className={`grid gap-5 ${showRecurringDetails ? "lg:grid-cols-[0.9fr_1.1fr]" : "lg:grid-cols-1"}`}>
       <div className="space-y-5">
-        <Panel title="Create recurring tab" icon={<Landmark size={19} />}>
+        <Panel
+          chip={
+            scheduleValid ? (
+              <span className="spec-chip">
+                {createCycleCount} × {recurringCycle === "custom" ? `${customCycleDays}d` : recurringCycle}
+              </span>
+            ) : (
+              <span className="spec-chip spec-chip-warn">
+                <span className="spec-dot" />
+                Fix the schedule
+              </span>
+            )
+          }
+          icon={<Landmark size={15} />}
+          note="A tab is its own contract on Arc. It holds the members, the per-cycle share and the number of cycles — nobody is charged until a cycle comes due and each member has approved their own share."
+          step="01 · Set up"
+          title="Open a recurring tab"
+        >
           <div className="space-y-3">
             <div className="rounded-[var(--radius)] border border-[var(--border)] bg-[var(--surface-muted)] p-3 text-sm text-[var(--text-muted)]">
               {createAsSocial
@@ -3971,8 +4370,6 @@ function RecurringWorkspace({
 
         {showRecurringDetails ? (
           <Panel
-            title="Your recurring tabs"
-            icon={<RefreshCw size={19} />}
             action={
               tabRowCount > 3 || !tabsShown ? (
                 <button className="secondary-button" onClick={() => setTabsExpanded(!tabsShown)} type="button">
@@ -3981,6 +4378,17 @@ function RecurringWorkspace({
                 </button>
               ) : null
             }
+            chip={
+              tabRowCount > 0 ? (
+                <span className="spec-chip">
+                  {tabRowCount} tab{tabRowCount === 1 ? "" : "s"}
+                </span>
+              ) : null
+            }
+            icon={<RefreshCw size={15} />}
+            note="Every tab either of your wallets touches — the ones you collect on and the ones you pay into. Pick one to see its cycle and act on it."
+            step="02 · Your tabs"
+            title="Tabs you're on"
           >
             <div className="flex flex-wrap gap-2">
               <button className="secondary-button" disabled={!actingAccount} onClick={refreshRecurringTabsForWallet} type="button">
@@ -4045,7 +4453,31 @@ function RecurringWorkspace({
       {showRecurringDetails && tabState ? (
         <div className="space-y-5">
           <>
-            <Panel title="Active cycle" icon={<ReceiptText size={19} />}>
+            <Panel
+              chip={
+                activeTabComplete ? (
+                  <span className="spec-chip spec-chip-live">
+                    <span className="spec-dot" />
+                    All cycles run
+                  </span>
+                ) : dueAmount > 0n ? (
+                  <span className="spec-chip spec-chip-attn">
+                    <span className="spec-dot" />${unitsToUsdc(dueAmount)} due now
+                  </span>
+                ) : (
+                  <span className="spec-chip">Not due yet</span>
+                )
+              }
+              icon={<ReceiptText size={15} />}
+              live={dueAmount > 0n}
+              note={
+                isRecipient
+                  ? "Where this tab stands cycle by cycle: what each member has approved, what their wallet can cover, and what is collectable right now."
+                  : "Your side of this tab: the share per cycle, what you have approved, and whether your wallet can cover the next collection."
+              }
+              step="03 · Where it stands"
+              title="The active cycle"
+            >
               {actingAccount && visibleMembers.length === 1 && !isRecipient ? (
                 <div className={`relative overflow-hidden rounded-[var(--radius)] border border-[var(--accent)] bg-[var(--accent-soft)] p-4 ${recurringTabPaidForWallet(tabState) ? "paid-off-window" : ""}`}>
                   {(() => {
@@ -4241,7 +4673,16 @@ function RecurringWorkspace({
               )}
             </Panel>
 
-            <Panel title="Actions" icon={<BadgeDollarSign size={19} />}>
+            <Panel
+              icon={<BadgeDollarSign size={15} />}
+              note={
+                isRecipient
+                  ? "Collecting only ever pulls a share that is already due and already approved. Nothing here can take more than that."
+                  : "Approving lets this tab collect your share when a cycle falls due — and only then. The money stays in your wallet until that moment, and you can withdraw the approval whenever you like."
+              }
+              step="04 · Act on it"
+              title={isRecipient ? "Collect what's due" : "Approve or withdraw"}
+            >
               {/* Payer actions (approve/revoke) belong to payers only — hidden
                   on the recipient/settler side, whether single- or dual-role. */}
               {isRecipient ? null : (
@@ -4292,20 +4733,49 @@ function RecurringWorkspace({
               ) : null}
             </Panel>
 
+            {/* Same timeline as the agents' decision log: one mark per thing that
+                actually happened, newest first, each linking to its tx. */}
             {visibleEvents.length > 0 ? (
-              <Panel title="Events" icon={<CheckCircle2 size={19} />}>
-                <div className="space-y-2">
+              <Panel
+                chip={
+                  <span className="spec-chip">
+                    {visibleEvents.length} event{visibleEvents.length === 1 ? "" : "s"}
+                  </span>
+                }
+                icon={<CheckCircle2 size={15} />}
+                note={
+                  isRecipient
+                    ? "Everything this tab has done on Arc. Each row is a transaction you can open and check yourself."
+                    : "Your own activity on this tab. Each row is a transaction you can open and check yourself."
+                }
+                step="05 · On chain"
+                title="What Arc recorded"
+              >
+                <ol>
                   {visibleEvents.slice(0, 5).map((event, index) => (
-                    <a
-                      className="flex items-center justify-between gap-3 rounded-[var(--radius)] border border-[var(--border)] p-3 text-sm hover:bg-[var(--surface-muted)]"
-                      href={`https://testnet.arcscan.app/tx/${event.txHash}`}
+                    <li
+                      className="trail-row trail-done"
                       key={`${event.txHash}-${event.name}-${event.blockNumber.toString()}-${index}`}
                     >
-                      <span className="font-semibold">{event.name}</span>
-                      <span className="font-mono text-xs text-[var(--text-muted)]">{shortAddress(event.txHash)}</span>
-                    </a>
+                      <span className="trail-mark">
+                        <CheckCircle2 size={11} />
+                      </span>
+                      <span className="min-w-0">
+                        <span className="text-sm font-semibold">{event.name}</span>
+                        <span className="spec-hint">Block {event.blockNumber.toString()}</span>
+                      </span>
+                      <a
+                        className="shrink-0 text-right no-underline"
+                        href={`https://testnet.arcscan.app/tx/${event.txHash}`}
+                        rel="noreferrer"
+                        target="_blank"
+                      >
+                        <span className="trail-amount">{shortAddress(event.txHash)}</span>
+                        <span className="spec-hint">View on Arcscan</span>
+                      </a>
+                    </li>
                   ))}
-                </div>
+                </ol>
               </Panel>
             ) : null}
           </>
@@ -4498,31 +4968,6 @@ function fireSuccessConfetti() {
   });
 }
 
-function Panel({
-  title,
-  icon,
-  action,
-  children,
-}: {
-  title: string;
-  icon: ReactNode;
-  action?: ReactNode;
-  children: ReactNode;
-}) {
-  return (
-    <section className="panel">
-      <div className="mb-4 flex items-center justify-between gap-3">
-        <h2 className="flex items-center gap-2 text-base font-semibold">
-          <span className="text-[var(--accent)]">{icon}</span>
-          {title}
-        </h2>
-        {action}
-      </div>
-      {children}
-    </section>
-  );
-}
-
 // Watches Gateway transfer ids until their batch settles, yielding a
 // {transferId -> txHash} map. Batches land in minutes, so this polls slowly and
 // stops as soon as every payment on screen has a hash.
@@ -4540,7 +4985,6 @@ function useBatchSettlement(payments: ScoutReport["payments"]) {
 
     let live = true;
     let pending = new Set(ids);
-    let timer: ReturnType<typeof setInterval>;
 
     const check = async () => {
       const found: Record<string, string> = {};
@@ -4565,8 +5009,9 @@ function useBatchSettlement(payments: ScoutReport["payments"]) {
       if (pending.size === 0) clearInterval(timer); // everything landed — stop polling
     };
 
+    // Declared before the first run so `check` can clear it once everything lands.
+    const timer = setInterval(check, 20_000);
     check();
-    timer = setInterval(check, 20_000);
     return () => {
       live = false;
       clearInterval(timer);
@@ -4753,7 +5198,9 @@ function HandleField({
         ? /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(handle)
         : false;
   const [debounced, setDebounced] = useState(handle);
-  const [avatarOk, setAvatarOk] = useState(false);
+  // The src that actually loaded — comparing it to the current src resets the
+  // avatar on a handle change without an effect.
+  const [loadedSrc, setLoadedSrc] = useState("");
 
   useEffect(() => {
     const timer = setTimeout(() => setDebounced(handle), 400);
@@ -4770,7 +5217,7 @@ function HandleField({
           : ""
       : "";
   // A new handle hasn't resolved yet — fade the old avatar out until onLoad fires.
-  useEffect(() => setAvatarOk(false), [src]);
+  const avatarOk = src !== "" && loadedSrc === src;
 
   const label =
     provider === "wallet"
@@ -4827,8 +5274,8 @@ function HandleField({
             alt={`${debounced} avatar`}
             className={`handle-avatar${avatarOk ? " is-visible" : ""}`}
             height={24}
-            onError={() => setAvatarOk(false)}
-            onLoad={() => setAvatarOk(true)}
+            onError={() => setLoadedSrc("")}
+            onLoad={() => setLoadedSrc(src)}
             src={src}
             width={24}
           />
@@ -4886,7 +5333,8 @@ function BillVerification({ billId, metadataHash }: { billId: bigint; metadataHa
     | { state: "ok" | "altered"; scannedUsd: number; onchainUsd: number }
   >({ state: "idle" });
   const [showDetail, setShowDetail] = useState(false);
-  const [showReceipt, setShowReceipt] = useState(false);
+  // null = follow the audit (altered ⇒ open); an explicit tap overrides it.
+  const [showReceipt, setShowReceipt] = useState<boolean | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -4978,12 +5426,6 @@ function BillVerification({ billId, metadataHash }: { billId: bigint; metadataHa
     };
   }, [billId, metadataHash]);
 
-  // Altered total: the receipt IS the evidence, so open it by default — but leave
-  // the user free to hide it via the toggle.
-  useEffect(() => {
-    if (audit.state === "altered") setShowReceipt(true);
-  }, [audit.state]);
-
   if (status === "loading") {
     return (
       <p className="mt-2 flex items-center gap-1.5 text-xs text-[var(--text-muted)]">
@@ -5007,7 +5449,9 @@ function BillVerification({ billId, metadataHash }: { billId: bigint; metadataHa
   // Green reassurance is only honest when the commitment matches AND the receipt
   // total agrees. An altered total is treated as a red warning, like a mismatch.
   const safe = verified && !altered;
-  const receiptOpen = showReceipt;
+  // Altered total: the receipt IS the evidence, so open it by default — but leave
+  // the user free to hide it via the toggle.
+  const receiptOpen = showReceipt ?? altered;
   const title = altered
     ? `Warning — the total was changed${merchant ? ` — ${merchant}` : ""}`
     : verified
@@ -5098,7 +5542,7 @@ function BillVerification({ billId, metadataHash }: { billId: bigint; metadataHa
         <div className="mt-2">
           <button
             className="inline-flex items-center gap-1 text-[var(--text-muted)] underline underline-offset-2"
-            onClick={() => setShowReceipt((open) => !open)}
+            onClick={() => setShowReceipt(!receiptOpen)}
             type="button"
           >
             <ChevronDown className={`transition-transform ${receiptOpen ? "rotate-180" : ""}`} size={12} />

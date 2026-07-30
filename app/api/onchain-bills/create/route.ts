@@ -26,6 +26,7 @@ export async function POST(request: Request) {
   const body = (await request.json().catch(() => null)) as {
     merchant?: unknown; currency?: unknown; total?: unknown;
     participants?: InRow[]; receiptHash?: unknown; receiptImageBase64?: unknown; dueDate?: unknown;
+    escrowUntilFull?: unknown;
   } | null;
   if (!body || !Array.isArray(body.participants) || body.participants.length === 0) {
     return Response.json({ error: "participants required" }, { status: 400 });
@@ -40,6 +41,12 @@ export async function POST(request: Request) {
   // as "no due date" so a malformed value can't slip into the on-chain hash.
   const dueDate =
     typeof body.dueDate === "number" && Number.isInteger(body.dueDate) && body.dueDate > 0 ? body.dueDate : undefined;
+  // Escrow requires a deadline to release it — the registry rejects the pair
+  // outright, so refuse it here too rather than sending a call that reverts.
+  const escrowUntilFull = body.escrowUntilFull === true && dueDate !== undefined;
+  if (dueDate !== undefined && dueDate <= Math.floor(Date.now() / 1000)) {
+    return Response.json({ error: "The due date must be in the future." }, { status: 400 });
+  }
 
   // Split rows into social (need resolving) and raw-address, remembering order.
   const socialRows: { provider: IdentityProvider; handle: string }[] = [];
@@ -85,7 +92,7 @@ export async function POST(request: Request) {
 
   // Execute createBill from the creator's DCW.
   try {
-    await executeContractOnArc(user.circle_wallet_id, REGISTRY_ADDRESS, encodeCreateBill(metadataHash, addresses, owed));
+    await executeContractOnArc(user.circle_wallet_id, REGISTRY_ADDRESS, encodeCreateBill(metadataHash, addresses, owed, BigInt(dueDate ?? 0), escrowUntilFull));
   } catch (err) {
     if (err instanceof InsufficientFundsError) return Response.json({ error: "insufficient_funds" }, { status: 402 });
     return Response.json({ error: err instanceof Error ? err.message : "createBill failed" }, { status: 502 });

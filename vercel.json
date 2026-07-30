@@ -3,6 +3,10 @@
     {
       "path": "/api/recurring/settle",
       "schedule": "0 0 * * *"
+    },
+    {
+      "path": "/api/agents/dunning",
+      "schedule": "0 12 * * *"
     }
   ]
 }

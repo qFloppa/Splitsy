@@ -10,6 +10,9 @@ export type ReputationAgent = {
 export type ReputationFeedbackRow = {
   wallet_address: string;
   agent_id: string;
+  // The contract bill_id belongs to (lowercase). Bill ids restart at 1 on every
+  // registry redeploy, so an id alone is ambiguous — see schema-reputation.sql.
+  registry_address: string;
   bill_id: string;
   score: number;
   tag: string;
@@ -114,29 +117,37 @@ export async function releaseAgentClaim(walletAddress: string): Promise<void> {
   if (error) throw new Error(`Failed to release agent claim: ${error.message}`);
 }
 
-export async function hasFeedbackForBill(walletAddress: string, billId: string): Promise<boolean> {
+export async function hasFeedbackForBill(
+  walletAddress: string,
+  registryAddress: string,
+  billId: string,
+): Promise<boolean> {
   const client = requireClient();
   const { data, error } = await client
     .from("reputation_feedback")
     .select("id")
     .eq("wallet_address", walletAddress.toLowerCase())
+    .eq("registry_address", registryAddress.toLowerCase())
     .eq("bill_id", billId)
     .maybeSingle();
   if (error) throw new Error(`Failed to read reputation feedback: ${error.message}`);
   return data != null;
 }
 
-// Claim (wallet, bill) for scoring by inserting the fully-graded row with
-// feedback_tx still null; the unique (wallet_address, bill_id) is the lock.
+// Claim (wallet, registry, bill) for scoring by inserting the fully-graded row
+// with feedback_tx still null; the unique key on those three is the lock.
 // true → caller must send giveFeedback then setFeedbackTx (or release on
 // failure). false → another path already recorded or is recording it. The old
 // check-then-insert let the validator double-score raced payments on-chain
 // (the mirror's unique key silently hid the duplicates).
 export async function claimFeedback(row: ReputationFeedbackRow): Promise<boolean> {
   const client = requireClient();
-  const { error } = await client
-    .from("reputation_feedback")
-    .insert({ ...row, wallet_address: row.wallet_address.toLowerCase(), feedback_tx: null });
+  const { error } = await client.from("reputation_feedback").insert({
+    ...row,
+    wallet_address: row.wallet_address.toLowerCase(),
+    registry_address: row.registry_address.toLowerCase(),
+    feedback_tx: null,
+  });
   if (!error) return true;
   if (error.code === "23505") return false;
   throw new Error(`Failed to claim feedback: ${error.message}`);
@@ -144,6 +155,7 @@ export async function claimFeedback(row: ReputationFeedbackRow): Promise<boolean
 
 export async function setFeedbackTx(
   walletAddress: string,
+  registryAddress: string,
   billId: string,
   feedbackTx: string | null,
 ): Promise<void> {
@@ -152,16 +164,22 @@ export async function setFeedbackTx(
     .from("reputation_feedback")
     .update({ feedback_tx: feedbackTx })
     .eq("wallet_address", walletAddress.toLowerCase())
+    .eq("registry_address", registryAddress.toLowerCase())
     .eq("bill_id", billId);
   if (error) throw new Error(`Failed to record feedback tx: ${error.message}`);
 }
 
-export async function releaseFeedbackClaim(walletAddress: string, billId: string): Promise<void> {
+export async function releaseFeedbackClaim(
+  walletAddress: string,
+  registryAddress: string,
+  billId: string,
+): Promise<void> {
   const client = requireClient();
   const { error } = await client
     .from("reputation_feedback")
     .delete()
     .eq("wallet_address", walletAddress.toLowerCase())
+    .eq("registry_address", registryAddress.toLowerCase())
     .eq("bill_id", billId)
     .is("feedback_tx", null);
   if (error) throw new Error(`Failed to release feedback claim: ${error.message}`);

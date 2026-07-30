@@ -149,12 +149,19 @@ export async function GET(request: Request) {
 
   // ── treasury: net position per counterparty ────────────────────────────────
   // Reuses the reads above; the only new I/O is the handle lookup below.
-  const treasuryCreated: TreasuryCreatedBill[] = created.map((b) => ({
-    billId: b.billId.toString(),
-    totalPaid: b.totalPaid,
-    claimed: b.claimed,
-    participants: b.participants,
-  }));
+  const billsById = new Map(bills.filter((b) => b !== null).map((b) => [b.billId.toString(), b]));
+  const treasuryCreated: TreasuryCreatedBill[] = created.map((b) => {
+    const onchain = billsById.get(b.billId.toString());
+    return {
+      billId: b.billId.toString(),
+      totalOwed: b.totalOwed,
+      totalPaid: b.totalPaid,
+      claimed: b.claimed,
+      dueDate: onchain?.dueDate ?? 0n,
+      escrowUntilFull: onchain?.escrowUntilFull ?? false,
+      participants: b.participants,
+    };
+  });
   const treasuryOwed: TreasuryOwedBill[] = owedEntries.flatMap(([idStr], i) => {
     const bill = owedBills[i];
     if (!bill) return []; // unreadable bill — can't name the counterparty, so skip it
@@ -194,6 +201,7 @@ export async function GET(request: Request) {
   }
 
   const treasury = buildTreasury({
+    nowSeconds: BigInt(Math.floor(Date.now() / 1000)),
     myWallets: wallets, // every wallet the viewer controls, else own activity looks like a position
     created: treasuryCreated,
     owed: treasuryOwed,

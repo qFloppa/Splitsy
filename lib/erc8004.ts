@@ -25,13 +25,17 @@
 // Per ERC-8004 an agent's owner cannot score its own agent, so feedback comes
 // from a dedicated validator DCW, and the registrar is a THIRD distinct wallet
 // (it holds externally-paid agents at mint time, so it can't also be the scorer).
-// Each feedback commits feedbackHash = keccak256("splitsy:bill:<id>:<payTx>"),
-// so anyone can re-verify a score against the DebtPaid event it claims to score.
+// Each feedback commits
+// feedbackHash = keccak256("splitsy:<registry>:bill:<id>:<payTx>"), so anyone
+// can re-verify a score against the DebtPaid event it claims to score. The
+// registry address is part of the preimage because bill ids restart at 1 on
+// every redeploy — without it, v2's bill #1 and v1's bill #1 hash identically.
 import { createPublicClient, decodeEventLog, encodeFunctionData, http, keccak256, toHex } from "viem";
 import { arcTestnet } from "viem/chains";
 import { getParticipantOnchain, REGISTRY_ADDRESS } from "./arc-read.ts";
 import { executeContractOnArc, getOrCreateArcWallet } from "./circle-dcw.ts";
 import { getOnchainBillPreimage } from "./onchain-bill-preimage-repo.ts";
+import { RECURRING_TAB_FACTORY_ADDRESS } from "./recurring-read.ts";
 import {
   claimAgentRegistration,
   claimFeedback,
@@ -113,6 +117,25 @@ const DEBT_PAID_ABI = [
 
 export const DEBT_PAID_EVENT_SIGNATURE =
   "DebtPaid(uint256,address,uint256,uint256,uint256)";
+
+// The on-chain commitment a feedback carries: keccak256 of
+// "splitsy:<registry>:<feedbackTag>:<paymentTx>". Exported so the namespacing
+// is directly testable — the registry address is in the preimage because bill
+// ids restart at 1 on every redeploy, so v1 bill #1 and v2 bill #1 would
+// otherwise commit to the identical hash.
+export function feedbackHashFor(
+  registryAddress: string,
+  feedbackTag: string,
+  paymentTxHash: string,
+): `0x${string}` {
+  return keccak256(toHex(`splitsy:${registryAddress.toLowerCase()}:${feedbackTag}:${paymentTxHash}`));
+}
+
+// The mirror's dedupe key for one scored payment. Kept next to the hash so the
+// two can never drift apart on what identifies a payment.
+export function feedbackDedupeKey(registryAddress: string, storageKey: string): string {
+  return `${registryAddress.toLowerCase()}:${storageKey}`;
+}
 
 export type DebtPaidLog = {
   billId: string;
@@ -434,9 +457,14 @@ async function resolveScoringContext(billId: string, paymentTxHash: string, paye
 //   feedbackTag — the human-readable tag2 committed on-chain, also folded into
 //     feedbackHash = keccak256("splitsy:<feedbackTag>:<paymentTxHash>") so any
 //     score stays re-verifiable against the on-chain payment it claims to score.
+//   registryAddress — the contract storageKey belongs to. Bill ids restart at 1
+//     on every registry redeploy, so both the mirror's unique key and the
+//     on-chain feedbackHash are namespaced by it; without that, v2's bill #1
+//     collides with v1's and scoring silently stops recording.
 async function commitFeedback(input: {
   payerAddress: string;
   agentId: string;
+  registryAddress: string;
   storageKey: string;
   feedbackTag: string;
   paymentTxHash: string;
@@ -453,6 +481,7 @@ async function commitFeedback(input: {
   const claimed = await claimFeedback({
     wallet_address: input.payerAddress,
     agent_id: input.agentId,
+    registry_address: input.registryAddress,
     bill_id: input.storageKey,
     score: timing.score,
     tag: timing.tag,
@@ -471,7 +500,7 @@ async function commitFeedback(input: {
 
   try {
     const validator = await getValidatorWallet();
-    const feedbackHash = keccak256(toHex(`splitsy:${input.feedbackTag}:${input.paymentTxHash}`));
+    const feedbackHash = feedbackHashFor(input.registryAddress, input.feedbackTag, input.paymentTxHash);
     const callData = encodeFunctionData({
       abi: ERC8004_ABI,
       functionName: "giveFeedback",
@@ -487,10 +516,10 @@ async function commitFeedback(input: {
       ],
     });
     const tx = await executeContractOnArc(validator.walletId, REPUTATION_REGISTRY, callData);
-    await setFeedbackTx(input.payerAddress, input.storageKey, tx.txHash);
+    await setFeedbackTx(input.payerAddress, input.registryAddress, input.storageKey, tx.txHash);
   } catch (err) {
     // Free the claim so a later replay can score this payment.
-    await releaseFeedbackClaim(input.payerAddress, input.storageKey).catch(() => undefined);
+    await releaseFeedbackClaim(input.payerAddress, input.registryAddress, input.storageKey).catch(() => undefined);
     throw err;
   }
 }
@@ -500,13 +529,15 @@ async function scorePaidInFull(input: {
   agentId: string;
   billId: string;
   paymentTxHash: string;
+  feedbackTag?: string;
 }): Promise<void> {
   const ctx = await resolveScoringContext(input.billId, input.paymentTxHash, input.payerAddress);
   await commitFeedback({
     payerAddress: input.payerAddress,
     agentId: input.agentId,
+    registryAddress: REGISTRY_ADDRESS,
     storageKey: input.billId,
-    feedbackTag: `bill:${input.billId}`,
+    feedbackTag: input.feedbackTag ?? `bill:${input.billId}`,
     paymentTxHash: input.paymentTxHash,
     ctx,
   });
@@ -516,7 +547,7 @@ async function scorePaidInFull(input: {
 // needed (their own DCW signs, since it just paid and holds gas), then score.
 // Idempotent per (payer, bill).
 export async function recordPaidFeedback(input: PaidFeedbackInput): Promise<void> {
-  if (await hasFeedbackForBill(input.payerAddress, input.billId)) return;
+  if (await hasFeedbackForBill(input.payerAddress, REGISTRY_ADDRESS, input.billId)) return;
   const agentId = await ensureAgent(input.payerAddress, input.payerWalletId);
   await scorePaidInFull({
     payerAddress: input.payerAddress,
@@ -540,7 +571,7 @@ export type ExternalPaidFeedbackInput = {
 // the real payer's does, keyed to the DebtPaid it settled. Idempotent per
 // (payer, bill).
 export async function recordExternalPaidFeedback(input: ExternalPaidFeedbackInput): Promise<void> {
-  if (await hasFeedbackForBill(input.payerAddress, input.billId)) {
+  if (await hasFeedbackForBill(input.payerAddress, REGISTRY_ADDRESS, input.billId)) {
     console.log(`reputation[external]: bill ${input.billId} payer ${input.payerAddress} already scored — skip`);
     return;
   }
@@ -604,7 +635,7 @@ export type RecurringPaidFeedbackInput = {
 // deadline" (a clean score) rather than penalizing a member for our read miss.
 export async function recordRecurringPaidFeedback(input: RecurringPaidFeedbackInput): Promise<void> {
   const storageKey = `tab:${input.tabId}:cycle:${input.cycle}`;
-  if (await hasFeedbackForBill(input.memberAddress, storageKey)) {
+  if (await hasFeedbackForBill(input.memberAddress, RECURRING_TAB_FACTORY_ADDRESS, storageKey)) {
     console.log(`reputation[recurring]: ${storageKey} member ${input.memberAddress} already scored — skip`);
     return;
   }
@@ -626,6 +657,9 @@ export async function recordRecurringPaidFeedback(input: RecurringPaidFeedbackIn
   await commitFeedback({
     payerAddress: input.memberAddress,
     agentId,
+    // A tab cycle belongs to the RecurringTabFactory, not the bill registry.
+    // Stamping it with the registry address would make every later query lie.
+    registryAddress: RECURRING_TAB_FACTORY_ADDRESS,
     storageKey,
     feedbackTag: storageKey,
     paymentTxHash: input.settlementTxHash,
