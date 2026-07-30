@@ -167,7 +167,7 @@ type ScoutReport = {
 type OcrState = "idle" | "reading" | "ready" | "error";
 type BillRunState = "idle" | "connecting" | "working" | "success" | "error";
 type RecurringRunState = "idle" | "connecting" | "working" | "error" | "success";
-type AppTab = "bills" | "recurring" | "history" | "dashboard" | "agents";
+type AppTab = "bills" | "recurring" | "dashboard" | "agents";
 type RecurringCycle = "test" | "weekly" | "monthly" | "custom";
 type RecurringMemberInput = {
   id: string;
@@ -2609,9 +2609,6 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
                 <TabButton active={activeTab === "recurring"} onClick={() => switchAppTab("recurring")}>
                   Recurring
                 </TabButton>
-                <TabButton active={activeTab === "history"} onClick={() => switchAppTab("history")}>
-                  History
-                </TabButton>
                 <TabButton active={activeTab === "dashboard"} onClick={() => switchAppTab("dashboard")}>
                   Dashboard
                 </TabButton>
@@ -3252,75 +3249,6 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
             walletTabs={walletTabs}
           />
           </motion.div>
-        ) : activeTab === "history" ? (
-          <motion.div
-            animate={{ opacity: 1, y: 0 }}
-            className="space-y-5"
-            exit={{ opacity: 0, y: 8 }}
-            initial={{ opacity: 0, y: 8 }}
-            key="history"
-            transition={{ duration: 0.22, ease: "easeOut" }}
-          >
-            <TabHero
-              eyebrow="The paper trail"
-              icon={<BadgeDollarSign size={13} />}
-              legend={[
-                { step: "01 · By handle", label: "Bills that found you", state: socialHistoryCount > 0 ? "done" : undefined },
-                { step: "02 · By wallet", label: "Rows in the Arc registry", state: walletHistoryEmpty ? undefined : "done" },
-                { step: "Receipts", label: "Each row opens its own tx" },
-              ]}
-              lede="Splitsy reaches people two ways — by handle and by wallet address — so your history arrives in two stacks. Both are kept: the handle-tagged records off chain, the registry rows on Arc, each one expandable down to the transaction that settled it."
-              title="Every bill you've been part of"
-            />
-
-            {/* Both stacks stay mounted regardless of what they hold: XHistoryPanel
-                reports its count up, and that count is what decides whether the
-                shared empty state below is the truth. */}
-            <div className={socialHistoryCount > 0 ? undefined : "hidden"}>
-              <Panel
-                chip={
-                  <span className="spec-chip">
-                    {socialHistoryCount} record{socialHistoryCount === 1 ? "" : "s"}
-                  </span>
-                }
-                icon={<AtSign size={15} />}
-                note="Bills tagged to your X, Discord or email rather than to an address. Settled from the Splitsy wallet that handle owns."
-                step="01 · By handle"
-                title="Tagged to you"
-              >
-                <div className="space-y-4">
-                  <XHistoryPanel onCount={setSocialHistoryCount} />
-                </div>
-              </Panel>
-            </div>
-
-            {walletHistoryEmpty ? null : (
-              <Panel
-                icon={<Landmark size={15} />}
-                note="Rows written to the bill registry on Arc — what you paid, what is still owed to you, and what you have collected. Every figure here was read back off the chain."
-                step="02 · By wallet"
-                title="On the Arc registry"
-              >
-                <div className="space-y-4">
-                  <HistoryWorkspace debts={debts} splitterBills={splitterBills} />
-                </div>
-              </Panel>
-            )}
-
-            {socialHistoryCount === 0 && walletHistoryEmpty ? (
-              <Panel icon={<BadgeDollarSign size={15} />} step="Nothing yet" title="No records so far">
-                <div className="spec-empty">
-                  <ReceiptText size={22} />
-                  <span>
-                    <strong>Nothing has settled yet.</strong>
-                    <br />
-                    Bills you split, settle, or claim — on chain or tagged by handle — land here as records you can
-                    reopen and verify.
-                  </span>
-                </div>
-              </Panel>
-            ) : null}
-          </motion.div>
         ) : activeTab === "agents" ? (
           <motion.div
             animate={{ opacity: 1, y: 0 }}
@@ -3351,6 +3279,7 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
         ) : (
           <motion.div
             animate={{ opacity: 1, y: 0 }}
+            className="space-y-5"
             exit={{ opacity: 0, y: 8 }}
             initial={{ opacity: 0, y: 8 }}
             key="dashboard"
@@ -3363,6 +3292,55 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
               socialHandle={me?.handle ?? null}
               onSettleNet={connectedWalletAccount ? settleNetWithWallet : undefined}
             />
+
+            {/* The paper trail, moved under the dashboard: both stacks stay
+                mounted regardless of what they hold — XHistoryPanel reports its
+                count up, and that count decides whether the shared empty state
+                below is the truth. */}
+            <div className={socialHistoryCount > 0 ? undefined : "hidden"}>
+              <Panel
+                chip={
+                  <span className="spec-chip">
+                    {socialHistoryCount} record{socialHistoryCount === 1 ? "" : "s"}
+                  </span>
+                }
+                icon={<AtSign size={15} />}
+                note="Bills tagged to your X, Discord or email rather than to an address. Settled from the Splitsy wallet that handle owns."
+                step="05 · By handle"
+                title="Tagged to you"
+              >
+                <div className="space-y-4">
+                  <XHistoryPanel onCount={setSocialHistoryCount} />
+                </div>
+              </Panel>
+            </div>
+
+            {walletHistoryEmpty ? null : (
+              <Panel
+                icon={<Landmark size={15} />}
+                note="Rows written to the bill registry on Arc — what you paid, what is still owed to you, and what you have collected. Every figure here was read back off the chain."
+                step="06 · By wallet"
+                title="On the Arc registry"
+              >
+                <div className="space-y-4">
+                  <HistoryWorkspace debts={debts} splitterBills={splitterBills} />
+                </div>
+              </Panel>
+            )}
+
+            {socialHistoryCount === 0 && walletHistoryEmpty ? (
+              <Panel icon={<BadgeDollarSign size={15} />} step="05 · Records" title="No records so far">
+                <div className="spec-empty">
+                  <ReceiptText size={22} />
+                  <span>
+                    <strong>Nothing has settled yet.</strong>
+                    <br />
+                    Bills you split, settle, or claim — on chain or tagged by handle — land here as records you can
+                    reopen and verify.
+                  </span>
+                </div>
+              </Panel>
+            ) : null}
           </motion.div>
         )}
         </AnimatePresence>
@@ -3789,7 +3767,8 @@ function HistoryWorkspace({
   const claimedBills = splitterBills.filter((debt) => debt.claimable <= 0n && debt.claimed > 0n);
 
   // Headerless wallet history sections; the shared History Panel + empty state
-  // live in the history tab so social and wallet records sit under one card.
+  // live at the foot of the dashboard tab so social and wallet records sit under
+  // one card.
   return (
     <>
             {pendingBills.length > 0 ? (

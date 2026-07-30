@@ -330,8 +330,8 @@ export default function DocsPage() {
             <div className="docs-card-grid two">
               <InfoCard icon={<Send />} title="Direct settlement">
                 To pay, your wallet sends USDC <strong>directly to the creditor&apos;s wallet</strong> on Arc — no escrow contract in
-                the middle. Splitsy initiates the transfer, confirms it, and marks the debt paid. Paid bills move to your History
-                with an explorer link.
+                the middle. Splitsy initiates the transfer, confirms it, and marks the debt paid. Paid bills move to the history
+                at the foot of your Dashboard with an explorer link.
               </InfoCard>
               <InfoCard icon={<WalletCards />} title="Send, receive, and history">
                 Your wallet widget shows your live USDC balance, a copyable receive address, a PIN-gated send form, and a
