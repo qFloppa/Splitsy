@@ -23,6 +23,7 @@ import { getWalletClient } from "wagmi/actions";
 import { createPublicClient, http } from "viem";
 import { arcTestnet } from "viem/chains";
 import { wagmiConfig } from "@/lib/wagmi";
+import { assertReceiptSuccess } from "@/lib/bill-split-contracts";
 import { buildLinkMessage } from "@/lib/agent-link";
 import { encodeApprove, encodeRevokeMandate, encodeSetMandate } from "@/lib/registry-calldata";
 
@@ -284,9 +285,16 @@ export default function SettlementAgentsPanel() {
       const walletClient = await getWalletClient(wagmiConfig, { chainId: arcTestnet.id });
       const publicClient = createPublicClient({ chain: arcTestnet, transport: http() });
       const account = connectedAddress;
-      const send = async (to: `0x${string}`, data: `0x${string}`) => {
+      // viem RESOLVES waitForTransactionReceipt for a reverted transaction — it
+      // does not throw — so the receipt has to be checked or a revert reads as
+      // success. assertReceiptSuccess is the same helper every other browser-
+      // wallet flow in this app routes through (lib/bill-split-contracts.ts).
+      // Throwing here is also what makes the ordering argument above real: a
+      // reverted setMandate must not fall through to approve, or the old, looser
+      // mandate ends up with a freshly topped-up allowance.
+      const send = async (to: `0x${string}`, data: `0x${string}`, action: string) => {
         const hash = await walletClient.sendTransaction({ to, data, account, chain: arcTestnet });
-        await publicClient.waitForTransactionReceipt({ hash });
+        assertReceiptSuccess(await publicClient.waitForTransactionReceipt({ hash }), action);
         return hash;
       };
 
@@ -294,7 +302,7 @@ export default function SettlementAgentsPanel() {
         // One transaction, matching the DCW path. The residual approval is inert:
         // payFor is the only function that can spend it, and it now reverts with
         // NoMandate.
-        await send(mandateAddress as `0x${string}`, encodeRevokeMandate());
+        await send(mandateAddress as `0x${string}`, encodeRevokeMandate(), "Revoking autopay");
       } else {
         const agent = agentChoice === "own" ? ownAgent.trim() : (agentAddress ?? "");
         if (!/^0x[a-fA-F0-9]{40}$/.test(agent)) {
@@ -307,16 +315,25 @@ export default function SettlementAgentsPanel() {
         await send(
           mandateAddress as `0x${string}`,
           encodeSetMandate(agent as `0x${string}`, maxPerBill, maxPerDay, creators),
+          "Setting your mandate",
         );
-        await send(USDC_ADDRESS, encodeApprove(mandateAddress as `0x${string}`, maxPerDay * APPROVAL_DAYS));
+        await send(
+          USDC_ADDRESS,
+          encodeApprove(mandateAddress as `0x${string}`, maxPerDay * APPROVAL_DAYS),
+          "Approving the allowance",
+        );
       }
       setMessageTone("success");
       setMessage(revoke ? "Autopay revoked on chain." : "Mandate armed on chain.");
-      load();
     } catch (err) {
       fail(err instanceof Error ? err.message : "The transaction was not completed.");
     } finally {
       setSaving(false);
+      // In `finally`, not on the success path alone: this is two transactions, so
+      // a rejected `approve` still leaves a LIVE mandate from the first one. Not
+      // refetching there would keep pre-arm facts on screen under an error banner,
+      // hiding the half that took.
+      load();
     }
   }
 
@@ -325,6 +342,13 @@ export default function SettlementAgentsPanel() {
   // one wallet's ceilings while claiming to describe another. An unarmed wallet
   // has no ceilings of its own, so the draft stays — there is nothing truer to
   // show it.
+  //
+  // `enabled` is deliberately NOT reseeded. It is the answer to "can software
+  // move my money right now?", and the browser branch already reads it straight
+  // from `facts.enabled`. Copying an armed browser wallet's `true` into the form
+  // would leave it there when you switch back to an unarmed DCW, lighting the
+  // rail and checking the Switch for a wallet holding no mandate — the one thing
+  // the note at the top of this file says the styling must never do.
   function selectWallet(which: "dcw" | "browser") {
     setArmingWallet(which);
     const address = which === "browser" ? linkedAddress : server?.walletAddress;
@@ -332,7 +356,6 @@ export default function SettlementAgentsPanel() {
     if (grant && next?.enabled) {
       setGrant({
         ...grant,
-        enabled: next.enabled,
         maxPerBillUsdc: next.maxPerBillUsdc,
         maxPerDayUsdc: next.maxPerDayUsdc,
         trustedCreators: next.trustedCreators,
