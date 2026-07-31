@@ -27,7 +27,12 @@
 //   * The spend is recorded BEFORE the money moves and released if the send
 //     fails, because autopay_log is also the idempotency key.
 import { after } from "next/server";
-import { claimAutopayDecision, finalizeAutopayDecision, getAutopayGrant } from "@/lib/agents-repo";
+import {
+  claimAutopayDecision,
+  finalizeAutopayDecision,
+  getAutopayGrant,
+  getGrantsByDebtorAddresses,
+} from "@/lib/agents-repo";
 import {
   getAutopayMandateOnchain,
   getBillOnchain,
@@ -37,6 +42,7 @@ import {
   REGISTRY_ADDRESS,
 } from "@/lib/arc-read";
 import { decideAutopay, type AutopayGrant } from "@/lib/autopay";
+import { reviewBill } from "@/lib/autopay-review";
 import { executeContractOnArc, getOrCreateArcWallet, InsufficientFundsError } from "@/lib/circle-dcw";
 import { getOnchainBillPreimage } from "@/lib/onchain-bill-preimage-repo";
 import { encodePayFor } from "@/lib/registry-calldata";
@@ -72,8 +78,12 @@ export async function POST(request: Request) {
 
   // Resolved once for the whole bill, not per participant: the creator's score
   // and the published preimage are the same facts for every debtor.
-  const [owners, creatorSummary, preimage] = await Promise.all([
+  const [owners, linked, creatorSummary, preimage] = await Promise.all([
     getUsersByWallets([...bill.participantList]),
+    // Browser wallets never appear in `users` — they are linked to an account on
+    // autopay_grants instead (see app/api/agents/link/route.ts). Without this
+    // second lookup an EOA participant is skipped before any rule runs.
+    getGrantsByDebtorAddresses([...bill.participantList]),
     getReputationSummaryForWallets([bill.splitter]),
     getOnchainBillPreimage(REGISTRY_ADDRESS, billId.toString()).catch(() => null),
   ]);
@@ -82,16 +92,18 @@ export async function POST(request: Request) {
   const outcomes: Outcome[] = [];
 
   for (const address of bill.participantList) {
-    const owner = owners.get(address.toLowerCase());
-    // A non-custodial participant has no grant to evaluate — nothing to skip,
-    // nothing to log. They were never in the agent's scope.
-    if (!owner) continue;
+    const key = address.toLowerCase();
+    const userId = owners.get(key)?.id ?? linked.get(key)?.userId;
+    // A participant with neither a Splitsy account nor a linked wallet has no
+    // grant to evaluate — nothing to skip, nothing to log. They were never in
+    // the agent's scope.
+    if (!userId) continue;
 
     const outcome = await settleOne({
       agent,
       billId,
       debtor: address,
-      userId: owner.id,
+      userId,
       splitter: bill.splitter,
       metadataHash: bill.metadataHash,
       preimage,
@@ -129,6 +141,17 @@ async function settleOne(input: {
     // transaction and a log row that says "tx_failed" instead of why.
     getMandateSpendableOnchain(billId, debtor).catch(() => null),
   ]);
+
+  // A mandate naming somebody else's agent is not this agent's business. Return
+  // BEFORE claiming, so no row is written at all: logging `disabled` here would
+  // tell a user who deliberately runs their own Circle Agent Wallet that their
+  // autopay is off, which is the opposite of true.
+  //
+  // Distinct from `mandate === null`, which really does mean autopay is off and
+  // still logs `disabled` below.
+  if (mandate && input.agent && mandate.agent.toLowerCase() !== input.agent.address.toLowerCase()) {
+    return null;
+  }
 
   // No mandate, or one naming somebody else's agent, is nothing for this agent
   // to act on. Passing null makes decideAutopay skip with 'disabled', which is
@@ -176,6 +199,34 @@ async function settleOne(input: {
       txHash: null,
     });
     return { debtor, decision: "skip", reason: "allowance_short", amountUsdc: 0 };
+  }
+
+  // The contents check, last: it is the only step that costs money and latency,
+  // so nothing already rejected by a free rule ever reaches it. Fails closed —
+  // a timeout or a missing key skips rather than pays.
+  if (decision.pay && rules?.requireBillReview !== false && input.preimage) {
+    const verdict = await reviewBill({
+      preimage: input.preimage,
+      shareUsdc: usdc(decision.amount),
+      participantCount: input.preimage.participantLabels.length,
+      creatorScore: input.creatorScore,
+    });
+    if (!verdict.approve) {
+      // The model's own sentence goes straight into the log. No slug: the panel
+      // renders an unmapped reason verbatim, which is what makes this row worth
+      // reading next to "over_bill_cap".
+      await claimAutopayDecision({
+        userId,
+        registryAddress: REGISTRY_ADDRESS,
+        billId: billKey,
+        debtorAddress: debtor,
+        decision: "skip",
+        reason: verdict.reason,
+        amountUsdc: 0,
+        txHash: null,
+      });
+      return { debtor, decision: "skip", reason: verdict.reason, amountUsdc: 0 };
+    }
   }
 
   const amountUsdc = usdc(decision.amount);
