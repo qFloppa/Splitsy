@@ -56,12 +56,17 @@ export async function GET(request: Request) {
       ]);
       if (spendable === 0n) return;
 
-      const score = await getReputationSummaryForWallets([bill.splitter]).catch(() => null);
+      // Deliberately not `.catch`ed, matching app/api/agents/autopay/route.ts. A
+      // reputation outage must 500 this route: `creatorScore: null` already means
+      // "genuinely unrated", and any agent policy that accepts an unrated creator
+      // would then also accept a creator whose real score is 20. Fail closed —
+      // the agent finds no work rather than unverified work.
+      const score = await getReputationSummaryForWallets([bill.splitter]);
       candidates.push({
         billId: billId.toString(),
         spendable,
         creator: bill.splitter,
-        creatorScore: score?.avgScore ?? null,
+        creatorScore: score.avgScore,
         // The same recomputation a payer's browser does: the published details
         // hash to what the chain committed. An agent can refuse on this alone.
         verified: preimage
