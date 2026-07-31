@@ -42,7 +42,7 @@ import {
   REGISTRY_ADDRESS,
 } from "@/lib/arc-read";
 import { decideAutopay, type AutopayGrant } from "@/lib/autopay";
-import { reviewBill } from "@/lib/autopay-review";
+import { REVIEW_UNAVAILABLE, reviewBill } from "@/lib/autopay-review";
 import { executeContractOnArc, getOrCreateArcWallet, InsufficientFundsError } from "@/lib/circle-dcw";
 import { getOnchainBillPreimage } from "@/lib/onchain-bill-preimage-repo";
 import { encodePayFor } from "@/lib/registry-calldata";
@@ -107,6 +107,10 @@ export async function POST(request: Request) {
       splitter: bill.splitter,
       metadataHash: bill.metadataHash,
       preimage,
+      // From chain, not from the preimage: metadataHash commits the joined label
+      // string but never the participant addresses, so a preimage can verify
+      // cleanly while publishing fewer labels than the bill has people.
+      participantCount: bill.participantList.length,
       creatorScore: creatorSummary.avgScore,
     });
     if (outcome) outcomes.push(outcome);
@@ -123,6 +127,7 @@ async function settleOne(input: {
   splitter: `0x${string}`;
   metadataHash: `0x${string}`;
   preimage: Awaited<ReturnType<typeof getOnchainBillPreimage>>;
+  participantCount: number;
   creatorScore: number | null;
 }): Promise<Outcome | null> {
   const { billId, debtor, userId } = input;
@@ -204,11 +209,31 @@ async function settleOne(input: {
   // The contents check, last: it is the only step that costs money and latency,
   // so nothing already rejected by a free rule ever reaches it. Fails closed —
   // a timeout or a missing key skips rather than pays.
-  if (decision.pay && rules?.requireBillReview !== false && input.preimage) {
+  if (decision.pay && rules?.requireBillReview !== false) {
+    // Nothing to review is not permission to skip reviewing. requireVerifiedHash
+    // and requireBillReview are independent: with the hash check off,
+    // decideAutopay no longer returns 'unverifiable', so falling through here
+    // would leave the payment with neither check.
+    if (!input.preimage) {
+      await claimAutopayDecision({
+        userId,
+        registryAddress: REGISTRY_ADDRESS,
+        billId: billKey,
+        debtorAddress: debtor,
+        decision: "skip",
+        reason: REVIEW_UNAVAILABLE,
+        amountUsdc: 0,
+        txHash: null,
+      });
+      return { debtor, decision: "skip", reason: REVIEW_UNAVAILABLE, amountUsdc: 0 };
+    }
+
     const verdict = await reviewBill({
       preimage: input.preimage,
       shareUsdc: usdc(decision.amount),
-      participantCount: input.preimage.participantLabels.length,
+      // The on-chain roster, not the published labels: undercounting inflates
+      // the even split the model compares the share against.
+      participantCount: input.participantCount,
       creatorScore: input.creatorScore,
     });
     if (!verdict.approve) {
