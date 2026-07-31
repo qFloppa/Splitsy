@@ -75,6 +75,10 @@ export async function GET() {
   // for one agent and their browser wallet armed for another, with different
   // ceilings — the mandate is keyed per debtor on chain, so the panel must be
   // able to show two answers rather than implying one setting binds both.
+  //
+  // The `onchain` map below is keyed by LOWERCASE address. A browser wallet
+  // hands you a checksummed one, so lowercase before indexing it or you get
+  // undefined — and with noUncheckedIndexedAccess off, tsc will not say so.
   const wallets = [dcw, eoa].filter((a): a is `0x${string}` => a !== null);
   const [log, ...facts] = await Promise.all([
     listAutopayLog(user.id),
@@ -132,7 +136,11 @@ export async function GET() {
     handle: user.handle,
     provider: user.provider,
     mandateAddress: isMandateConfigured() ? MANDATE_ADDRESS : null,
-    agentAddress: process.env.NEXT_PUBLIC_AUTOPAY_AGENT_ADDRESS ?? null,
+    // Lowercased to match `onchain[a].agentAddress`, which viem returns
+    // EIP-55 checksummed. The panel compares the two to ask "is this mandate
+    // pointing at OUR agent?", and a case-sensitive === would answer no for a
+    // live Splitsy mandate.
+    agentAddress: process.env.NEXT_PUBLIC_AUTOPAY_AGENT_ADDRESS?.toLowerCase() ?? null,
     onchain,
   });
 }
@@ -200,6 +208,17 @@ export async function PUT(request: Request) {
   const debtorAddress = typeof raw.debtorAddress === "string" ? raw.debtorAddress.toLowerCase() : null;
   if (debtorAddress && debtorAddress === existing?.debtorAddress) {
     return Response.json({ ok: true, txHash: null, signWith: "wallet" });
+  }
+  // Named a debtor we do not recognise: refuse rather than fall through. Falling
+  // through would server-sign a standing mandate on the DCW — arming autopay on
+  // a wallet the caller did not select. That is reachable without malice: a
+  // browser wallet can switch accounts at any moment, so the panel may hold 0xB
+  // while the link row still says 0xA. Skip, never substitute.
+  if (debtorAddress) {
+    return Response.json(
+      { error: "That wallet isn't linked to your account. Link it again, then save." },
+      { status: 400 },
+    );
   }
 
   try {
