@@ -43,7 +43,7 @@ export async function getAutopayGrant(userId: string): Promise<AutopayGrantRow |
     require_verified_hash: boolean;
     enabled: boolean;
     debtor_address: string | null;
-    require_bill_review: boolean;
+    require_bill_review: boolean | null;
   };
   return {
     userId: row.user_id,
@@ -54,7 +54,10 @@ export async function getAutopayGrant(userId: string): Promise<AutopayGrantRow |
     minCreatorScore: row.min_creator_score,
     requireVerifiedHash: row.require_verified_hash,
     debtorAddress: row.debtor_address ? row.debtor_address.toLowerCase() : null,
-    requireBillReview: row.require_bill_review,
+    // Fails CLOSED at the read, not at the consumer: if the column was applied
+    // by hand without `not null default true`, PostgREST hands back null, and a
+    // null must read as "review required" — never as "review off".
+    requireBillReview: row.require_bill_review !== false,
   };
 }
 
