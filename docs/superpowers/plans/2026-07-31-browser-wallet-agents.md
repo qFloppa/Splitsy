@@ -241,8 +241,8 @@ git commit -m "feat(agents): link a browser wallet to an autopay grant"
 **Interfaces:**
 - Consumes: `setGrantDebtorAddress(userId, address | null)` from Task 1.
 - Produces:
-  - `buildLinkMessage(address: string, handle: string, isoTimestamp: string): string`
-  - `verifyLinkSignature(input: { address: string; handle: string; message: string; signature: string; nowMs: number }): Promise<{ ok: true } | { ok: false; error: string }>`
+  - `buildLinkMessage(address: string, handle: string, provider: string, isoTimestamp: string): string`
+  - `verifyLinkSignature(input: { address: string; handle: string; provider: string; message: string; signature: string; nowMs: number }): Promise<{ ok: true } | { ok: false; error: string }>`
   - `LINK_MAX_AGE_MS: number`
 
 - [ ] **Step 1: Write the failing test**
@@ -1282,10 +1282,15 @@ Replace the body of `GET` after the session check with:
     log,
     linkedAddress: eoa,
     walletAddress: dcw,
-    // The panel needs this to rebuild the exact bytes the wallet must sign —
-    // buildLinkMessage puts the handle inside the message so a signature taken
-    // for one account cannot link the same wallet to another.
+    // The panel needs BOTH to rebuild the exact bytes the wallet must sign.
+    // buildLinkMessage puts the handle AND the provider inside the message,
+    // because a handle alone is not an account: uniqueness in `users` is
+    // (provider, provider_user_id), and idx_users_provider_handle is NOT unique.
+    // Without the provider, a victim signing a message naming their own handle
+    // could have that signature replayed by the holder of the same handle in
+    // another namespace. Both are lowercased inside buildLinkMessage.
     handle: user.handle,
+    provider: user.provider,
     mandateAddress: isMandateConfigured() ? MANDATE_ADDRESS : null,
     agentAddress: process.env.NEXT_PUBLIC_AUTOPAY_AGENT_ADDRESS ?? null,
     onchain,
@@ -1379,7 +1384,7 @@ and inside the component:
       return;
     }
     try {
-      const message = buildLinkMessage(connectedAddress, handle, new Date().toISOString());
+      const message = buildLinkMessage(connectedAddress, handle, provider, new Date().toISOString());
       const signature = await signMessageAsync({ message });
       const res = await fetch("/api/agents/link", {
         method: "POST",
@@ -1400,7 +1405,7 @@ and inside the component:
   }
 ```
 
-`handle` is the `handle` field returned by `GET /api/agents/grants` (added in Task 7 Step 1). Store it in component state alongside `grant` when `load()` resolves. It must be the session's handle, not anything typed by the user — `verifyLinkSignature` re-derives the message from the server's own copy and rejects a mismatch.
+`handle` and `provider` are the fields returned by `GET /api/agents/grants` (added in Task 7 Step 1). Store both in component state alongside `grant` when `load()` resolves. They must be the session's values, not anything typed by the user — `verifyLinkSignature` re-derives the message from the server's own copy and rejects a mismatch. `buildLinkMessage` lowercases both itself, so pass them through as returned.
 
 - [ ] **Step 3: Add the on-chain arm action**
 
@@ -1560,4 +1565,4 @@ git commit -m "docs(agents): browser-wallet autopay and running your own agent w
 
 **Known gap.** The spec listed a queue test as "only bills with `spendable > 0` are returned"; that assertion lives in `lib/agent-queue.test.ts` against the pure `shapeQueue`, not against the route, because the route needs a live Arc RPC. The route's own coverage is Task 9 Step 5.
 
-**Type consistency.** `AutopayGrantRow` gains `debtorAddress` and `requireBillReview` in Task 1 and is constructed with both in Tasks 1 and 7. `ReviewVerdict` is `{ approve, reason }` in Tasks 3 and 4. `QueueCandidate.spendable` is `bigint` and `QueueEntry.amountUsdc` is `number` in Task 5, and only `QueueEntry` crosses the route boundary. `buildLinkMessage(address, handle, isoTimestamp)` has the same three arguments in Tasks 2 and 8. `AutopayGrant` in `lib/autopay.ts` is not modified by any task.
+**Type consistency.** `AutopayGrantRow` gains `debtorAddress` and `requireBillReview` in Task 1 and is constructed with both in Tasks 1 and 7. `ReviewVerdict` is `{ approve, reason }` in Tasks 3 and 4. `QueueCandidate.spendable` is `bigint` and `QueueEntry.amountUsdc` is `number` in Task 5, and only `QueueEntry` crosses the route boundary. `buildLinkMessage(address, handle, provider, isoTimestamp)` has the same four arguments in Tasks 2 and 8 — `provider` was added during Task 2's review, because a handle alone is not an account identifier in a three-provider identity schema. `AutopayGrant` in `lib/autopay.ts` is not modified by any task.
