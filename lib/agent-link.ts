@@ -14,16 +14,36 @@ import { verifyMessage } from "viem";
 // not a standing credential.
 export const LINK_MAX_AGE_MS = 5 * 60 * 1000;
 
-// The exact bytes the wallet signs. The address and handle are both inside the
-// message, so a signature captured for one account cannot be replayed to link
-// the same wallet to another.
-export function buildLinkMessage(address: string, handle: string, isoTimestamp: string): string {
-  return `Splitsy: link ${address.toLowerCase()} to @${handle} for autopay\n${isoTimestamp}`;
+// The exact bytes the wallet signs. The address AND the full account identity are
+// inside the message, so a signature captured for one account cannot be replayed
+// to link the same wallet to another.
+//
+// The provider is in here because a handle alone does not identify an account:
+// uniqueness in `users` is (provider, provider_user_id) — see
+// schema-generic-identity.sql — while handle carries only a NON-unique
+// provider-scoped index. So @ada on x and @ada on discord are different people,
+// and without the provider a victim could be phished into signing a message
+// naming their own handle and their own address, which the holder of the same
+// handle in another namespace could then replay to link the victim's wallet to
+// THEIR account.
+//
+// Both are lowercased: every handle lookup in this schema is case-insensitive by
+// construction (lower(handle), lower(debtor_handle)), so `users.handle` may still
+// carry a provider's display casing. Signing the raw casing would make the link
+// fail for anyone whose client did not reproduce it exactly.
+export function buildLinkMessage(
+  address: string,
+  handle: string,
+  provider: string,
+  isoTimestamp: string,
+): string {
+  return `Splitsy: link ${address.toLowerCase()} to @${handle.toLowerCase()} on ${provider.toLowerCase()} for autopay\n${isoTimestamp}`;
 }
 
 export async function verifyLinkSignature(input: {
   address: string;
   handle: string;
+  provider: string;
   message: string;
   signature: string;
   nowMs: number;
@@ -32,7 +52,7 @@ export async function verifyLinkSignature(input: {
   // body's copy. Otherwise a valid signature over some other text would pass.
   const lines = input.message.split("\n");
   const isoTimestamp = lines[1] ?? "";
-  const expected = buildLinkMessage(input.address, input.handle, isoTimestamp);
+  const expected = buildLinkMessage(input.address, input.handle, input.provider, isoTimestamp);
   if (expected !== input.message) {
     return { ok: false, error: "That signature was not for this account and wallet." };
   }

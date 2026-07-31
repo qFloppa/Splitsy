@@ -37,9 +37,12 @@ export async function POST(request: Request) {
     return Response.json({ error: "Expected a 0x wallet address." }, { status: 400 });
   }
 
+  // handle AND provider both come from the session, never the body: a handle is
+  // only unique within its provider namespace, so the pair is the account.
   const verdict = await verifyLinkSignature({
     address,
     handle: user.handle,
+    provider: user.provider,
     message,
     signature,
     nowMs: Date.now(),
