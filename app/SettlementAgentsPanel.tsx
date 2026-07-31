@@ -10,12 +10,14 @@
 // The "armed" styling on section 01 is load-bearing, not decorative: the lit
 // rail and warmed header appear only while the agent is actually permitted to
 // spend, so the page always answers "can software move my money right now?"
-// from across the room.
+// from across the room. That answer is read from the chain, never from a local
+// flag: the caps in section 01 are enforced by AutopayMandate.sol, and saving
+// them signs a transaction from the user's own wallet.
 //
 // Distinct from app/AgentEconomyPanel.tsx, which is Scout's x402 nanopayment
 // ledger. Same design tokens, different agents.
 import { useCallback, useEffect, useState } from "react";
-import { Ban, CalendarClock, Check, Loader2, ShieldCheck, X } from "lucide-react";
+import { Ban, CalendarClock, Check, Link2, Loader2, ShieldCheck, X } from "lucide-react";
 
 type Grant = {
   enabled: boolean;
@@ -44,6 +46,15 @@ type MandateBill = {
   authorized: boolean;
 };
 
+// What the chain says, as opposed to what this form says. Rendered next to the
+// caps so the two can be compared without leaving the page.
+type Onchain = {
+  mandateAddress: string | null;
+  agentAddress: string | null;
+  allowanceUsdc: number;
+  spentTodayUsdc: number;
+};
+
 // Every skip reason decideAutopay can return, in the user's words. An unmapped
 // reason falls back to the raw slug rather than being hidden — a decision the
 // user cannot read is worse than an ugly one.
@@ -57,6 +68,7 @@ const REASONS: Record<string, string> = {
   low_creator_score: "Creator's score is below your floor",
   hash_mismatch: "Bill details did not match the chain",
   unverifiable: "No published details to verify",
+  allowance_short: "Your approved allowance or balance ran out — press Save to top it up",
   agent_out_of_funds: "The agent wallet is empty",
   agent_wallet_unavailable: "The agent wallet is unavailable",
   tx_failed: "The payment transaction failed",
@@ -64,6 +76,7 @@ const REASONS: Record<string, string> = {
 
 export default function SettlementAgentsPanel() {
   const [grant, setGrant] = useState<Grant | null>(null);
+  const [onchain, setOnchain] = useState<Onchain | null>(null);
   const [log, setLog] = useState<LogEntry[]>([]);
   const [mandates, setMandates] = useState<MandateBill[]>([]);
   const [saving, setSaving] = useState(false);
@@ -83,6 +96,7 @@ export default function SettlementAgentsPanel() {
       .then((d) => {
         if (!d) return;
         setGrant(d.grant as Grant);
+        setOnchain((d.onchain ?? null) as Onchain | null);
         setLog((d.log ?? []) as LogEntry[]);
       })
       .catch(() => {});
@@ -115,12 +129,22 @@ export default function SettlementAgentsPanel() {
       });
       const body = await res.json().catch(() => ({}));
       if (!res.ok) {
-        fail(body.error ?? "Could not save your rules.");
-        load(); // pull the server's truth back rather than leaving a lie on screen
+        fail(
+          body.error === "insufficient_funds"
+            ? "Your wallet needs a little test USDC to cover the gas for signing this mandate."
+            : (body.error ?? "Could not save your rules."),
+        );
+        load(); // pull the chain's truth back rather than leaving a lie on screen
         return;
       }
       setMessageTone("success");
-      setMessage("Rules saved.");
+      // A caps change is a transaction; a score-floor change is not. Saying
+      // which happened is the difference between "we stored your preference"
+      // and "the chain now enforces this".
+      setMessage(body.txHash ? "Mandate signed on chain." : "Rules saved.");
+      // The caps just moved on chain, so the allowance and today's spend moved
+      // with them. Never show those from memory.
+      if (body.txHash) load();
     } finally {
       setSaving(false);
     }
@@ -210,9 +234,13 @@ export default function SettlementAgentsPanel() {
           <div className="min-w-0">
             <span className="spec-step">01 · Debtor side</span>
             <h3 className="spec-title">Autopay my share</h3>
+            {/* The old copy said the agent paid "from its own wallet". It does
+                not any more, and the difference is the entire security story:
+                the agent moves YOUR money, under a mandate a contract enforces,
+                which is why the ceilings below are worth reading. */}
             <p className="spec-note">
-              When someone bills you, the agent pays from its own wallet — but only inside every rule below. Every
-              rule is a ceiling, never a target.
+              When someone bills you, the agent pays from <strong>your</strong> wallet — but only inside the ceilings
+              below, and those ceilings are held by a contract, not by us. Every rule is a ceiling, never a target.
             </p>
           </div>
           {/* The chip is the state, the switch is the control — no second
@@ -300,10 +328,51 @@ export default function SettlementAgentsPanel() {
             />
             <span className="spec-hint">
               {grant.trustedCreators.length === 0
-                ? "Empty means any creator can trigger autopay, within the ceilings above."
-                : `${grant.trustedCreators.length} address${grant.trustedCreators.length === 1 ? "" : "es"} — no one else can trigger autopay.`}
+                ? "Empty means any creator can trigger autopay, within the ceilings above. Up to 10 addresses."
+                : `${grant.trustedCreators.length} address${grant.trustedCreators.length === 1 ? "" : "es"}, stored on chain — no one else can trigger autopay.`}
             </span>
           </label>
+
+          {/* The proof, not a reassurance. Everything here is read back off the
+              chain after the mandate is signed, so a claim in the copy above
+              that the contract does not actually hold shows up as a mismatch
+              right underneath it. */}
+          {onchain?.mandateAddress && grant.enabled ? (
+            <div className="spec-row spec-row-on">
+              <div className="min-w-0">
+                <span className="inline-flex items-center gap-1.5 text-sm font-semibold">
+                  <Link2 size={14} /> Enforced on chain
+                </span>
+                <span className="spec-hint">
+                  The ceilings above are held by{" "}
+                  <a
+                    className="underline underline-offset-2"
+                    href={`https://testnet.arcscan.app/address/${onchain.mandateAddress}`}
+                    rel="noreferrer"
+                    target="_blank"
+                  >
+                    a contract
+                  </a>
+                  , not by this app. Anyone can call it; only{" "}
+                  <span className="mono">
+                    {onchain.agentAddress
+                      ? `${onchain.agentAddress.slice(0, 6)}…${onchain.agentAddress.slice(-4)}`
+                      : "the named agent"}
+                  </span>{" "}
+                  can spend under it, and nobody can exceed these numbers.
+                </span>
+              </div>
+              <span className="shrink-0 text-right">
+                <span className="trail-amount">{onchain.allowanceUsdc.toFixed(2)} USDC</span>
+                {/* The one bound that is not in the form: the total this mandate
+                    may ever pull from you. It runs down as the agent spends and
+                    is topped back up whenever you save a change. */}
+                <span className="spec-hint">
+                  approved in total · {onchain.spentTodayUsdc.toFixed(2)} spent today
+                </span>
+              </span>
+            </div>
+          ) : null}
 
           <div className={`spec-row ${grant.requireVerifiedHash ? "spec-row-on" : ""}`}>
             <div className="min-w-0">

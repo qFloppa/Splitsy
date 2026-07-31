@@ -120,6 +120,35 @@ export const RECURRING_TAB_CALL_ABI = [
   { type: "function", name: "claim", stateMutability: "nonpayable", inputs: [], outputs: [] },
 ] as const;
 
+// AutopayMandate — the on-chain spending permission that sits in front of the
+// registry. The debtor writes it from their own wallet; the agent can only ever
+// call payFor, and only for a debtor who named it.
+export const MANDATE_CALL_ABI = [
+  {
+    type: "function",
+    name: "setMandate",
+    stateMutability: "nonpayable",
+    inputs: [
+      { internalType: "address", name: "agent", type: "address" },
+      { internalType: "uint96", name: "maxPerBill", type: "uint96" },
+      { internalType: "uint128", name: "maxPerDay", type: "uint128" },
+      { internalType: "address[]", name: "creators", type: "address[]" },
+    ],
+    outputs: [],
+  },
+  { type: "function", name: "revokeMandate", stateMutability: "nonpayable", inputs: [], outputs: [] },
+  {
+    type: "function",
+    name: "payFor",
+    stateMutability: "nonpayable",
+    inputs: [
+      { internalType: "uint256", name: "billId", type: "uint256" },
+      { internalType: "address", name: "debtor", type: "address" },
+    ],
+    outputs: [],
+  },
+] as const;
+
 export const ERC20_APPROVE_ABI = [
   {
     type: "function",
@@ -203,6 +232,38 @@ export function encodeRefund(billId: bigint): `0x${string}` {
 
 export function encodeApprove(spender: `0x${string}`, amount: bigint): `0x${string}` {
   return encodeFunctionData({ abi: ERC20_APPROVE_ABI, functionName: "approve", args: [spender, amount] });
+}
+
+// Written by the DEBTOR, for themselves — the contract keys the mandate on
+// msg.sender, so there is no debtor parameter to get wrong. Amounts are USDC
+// base units. An empty `creators` means "any creator", matching the off-chain
+// rule; the contract caps the list at MAX_ALLOWED_CREATORS (10).
+export function encodeSetMandate(
+  agent: `0x${string}`,
+  maxPerBill: bigint,
+  maxPerDay: bigint,
+  creators: `0x${string}`[],
+): `0x${string}` {
+  return encodeFunctionData({
+    abi: MANDATE_CALL_ABI,
+    functionName: "setMandate",
+    args: [agent, maxPerBill, maxPerDay, creators],
+  });
+}
+
+// The kill switch. Zeroes the agent and the day's spend in one call, and can
+// never revert for a live mandate — a consent that cannot be withdrawn is not
+// consent.
+export function encodeRevokeMandate(): `0x${string}` {
+  return encodeFunctionData({ abi: MANDATE_CALL_ABI, functionName: "revokeMandate", args: [] });
+}
+
+// The agent's only move. No amount: the contract reads the debtor's full
+// remaining share itself, so the agent cannot pick a figure, cannot split one
+// share into several sub-cap pulls, and cannot aim this at a different bill's
+// money.
+export function encodePayFor(billId: bigint, debtor: `0x${string}`): `0x${string}` {
+  return encodeFunctionData({ abi: MANDATE_CALL_ABI, functionName: "payFor", args: [billId, debtor] });
 }
 
 export function encodeCreateTab(

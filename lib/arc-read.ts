@@ -17,6 +17,16 @@ export function isV1RegistryConfigured() {
   return REGISTRY_ADDRESS_V1 !== "0x0000000000000000000000000000000000000000";
 }
 
+// AutopayMandate: the on-chain spending permission that sits in FRONT of the
+// registry. Unset means autopay simply has no on-chain grant to read, which
+// reads as "off" everywhere — never as "unlimited".
+export const MANDATE_ADDRESS = (process.env.NEXT_PUBLIC_AUTOPAY_MANDATE_ADDRESS ??
+  "0x0000000000000000000000000000000000000000") as `0x${string}`;
+
+export function isMandateConfigured() {
+  return MANDATE_ADDRESS !== "0x0000000000000000000000000000000000000000";
+}
+
 const READ_ABI = [
   {
     type: "function",
@@ -138,6 +148,101 @@ export function parseBillCreatedLog(topics: string[], data: string): { billId: s
   }
 }
 
+const MANDATE_READ_ABI = [
+  {
+    type: "function",
+    name: "mandates",
+    stateMutability: "view",
+    inputs: [{ name: "debtor", type: "address" }],
+    outputs: [
+      { name: "agent", type: "address" },
+      { name: "maxPerBill", type: "uint96" },
+      { name: "maxPerDay", type: "uint128" },
+      { name: "spent", type: "uint128" },
+      { name: "lastSpendAt", type: "uint64" },
+    ],
+  },
+  {
+    type: "function",
+    name: "allowedCreators",
+    stateMutability: "view",
+    inputs: [{ name: "debtor", type: "address" }],
+    outputs: [{ name: "", type: "address[]" }],
+  },
+  {
+    type: "function",
+    name: "dailyHeadroom",
+    stateMutability: "view",
+    inputs: [{ name: "debtor", type: "address" }],
+    outputs: [{ name: "", type: "uint256" }],
+  },
+  {
+    type: "function",
+    name: "spendable",
+    stateMutability: "view",
+    inputs: [
+      { name: "billId", type: "uint256" },
+      { name: "debtor", type: "address" },
+    ],
+    outputs: [{ name: "", type: "uint256" }],
+  },
+] as const;
+
+export type AutopayMandateOnchain = {
+  agent: `0x${string}`;
+  maxPerBill: bigint; // USDC base units
+  maxPerDay: bigint;
+  headroom: bigint; // room left in the token bucket right now
+  allowedCreators: `0x${string}`[]; // EMPTY = any creator
+};
+
+const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
+
+// The debtor's live on-chain mandate, or null when there isn't one. This is the
+// ONLY source of truth for the caps and the creator allowlist — the Postgres
+// columns are a display mirror. `headroom` is read rather than derived so the
+// contract's own token-bucket refill is what the agent pre-flights against.
+//
+// One multicall: three reads that are always wanted together, and a mandate
+// stitched from three separate round trips could straddle a settings change.
+export async function getAutopayMandateOnchain(debtor: `0x${string}`): Promise<AutopayMandateOnchain | null> {
+  if (!isMandateConfigured()) return null;
+
+  const [mandate, creators, headroom] = await publicClient.multicall({
+    allowFailure: false,
+    contracts: [
+      { address: MANDATE_ADDRESS, abi: MANDATE_READ_ABI, functionName: "mandates", args: [debtor] },
+      { address: MANDATE_ADDRESS, abi: MANDATE_READ_ABI, functionName: "allowedCreators", args: [debtor] },
+      { address: MANDATE_ADDRESS, abi: MANDATE_READ_ABI, functionName: "dailyHeadroom", args: [debtor] },
+    ],
+  });
+
+  // agent == 0 is the contract's own "autopay is off". There is no separate
+  // enabled flag to disagree with it.
+  if (mandate[0] === ZERO_ADDRESS) return null;
+
+  return {
+    agent: mandate[0],
+    maxPerBill: mandate[1],
+    maxPerDay: mandate[2],
+    headroom,
+    allowedCreators: [...creators],
+  };
+}
+
+// What payFor would move right now, 0 if any rule blocks it — including the
+// debtor's USDC approval and balance. Lets the agent decline before paying gas
+// to discover a revert, the same job collectible() does for the creditor pull.
+export async function getMandateSpendableOnchain(billId: bigint, debtor: `0x${string}`): Promise<bigint> {
+  if (!isMandateConfigured()) return 0n;
+  return publicClient.readContract({
+    address: MANDATE_ADDRESS,
+    abi: MANDATE_READ_ABI,
+    functionName: "spendable",
+    args: [billId, debtor],
+  });
+}
+
 // USDC balance of an address on Arc. Callers check it before sending, because a
 // transfer that runs out of money reverts and a revert carries no reason string —
 // "insufficient funds" has to be established up front or not at all.
@@ -147,6 +252,18 @@ export async function getUsdcBalanceOnchain(addr: `0x${string}`): Promise<bigint
     abi: [parseAbiItem("function balanceOf(address owner) view returns (uint256)")],
     functionName: "balanceOf",
     args: [addr],
+  });
+}
+
+// How much of `owner`'s USDC `spender` may still pull. The mandate's caps bound
+// each pull; this bounds the total exposure across all of them, and it is the
+// one bound the user can withdraw without touching this app.
+export async function getUsdcAllowanceOnchain(owner: `0x${string}`, spender: `0x${string}`): Promise<bigint> {
+  return publicClient.readContract({
+    address: (process.env.ARC_TESTNET_USDC_ADDRESS ?? "0x3600000000000000000000000000000000000000") as `0x${string}`,
+    abi: [parseAbiItem("function allowance(address owner, address spender) view returns (uint256)")],
+    functionName: "allowance",
+    args: [owner, spender],
   });
 }
 

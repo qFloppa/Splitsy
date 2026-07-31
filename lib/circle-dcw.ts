@@ -25,6 +25,13 @@ export type ArcWallet = { address: string; walletId: string };
 // own gas (USDC on Arc) at the MEDIUM fee level.
 // ponytail: no Gas Station paymaster — add a policy + sponsor gas if we want
 // truly gasless payments; for now the debtor's wallet needs a little USDC for gas.
+// Since the on-chain autopay mandate landed, the AGENT wallet needs gas only —
+// never a float. Bill money comes from the debtor under AutopayMandate, so the
+// worst a starved agent wallet can do is fail to act. Arc Testnet is documented
+// as shipping a preconfigured Gas Station policy for developer-controlled SCA
+// wallets, which would remove even that; UNVERIFIED here — confirm a sponsored
+// transaction actually appears under the policy in the Circle console before
+// relying on it, and keep a couple of test USDC on the agent until you have.
 export async function transferUsdcOnArc(
   fromWalletId: string,
   toAddress: string,
