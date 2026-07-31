@@ -67,41 +67,73 @@ export async function GET() {
   const user = await getSessionUser();
   if (!user) return Response.json({ error: "Not signed in" }, { status: 401 });
 
-  const wallet = user.wallet_address as `0x${string}` | null;
+  const rules = await getAutopayGrant(user.id);
+  const dcw = user.wallet_address ? (user.wallet_address.toLowerCase() as `0x${string}`) : null;
+  const eoa = rules?.debtorAddress ? (rules.debtorAddress as `0x${string}`) : null;
 
-  const [rules, log, mandate, allowance] = await Promise.all([
-    getAutopayGrant(user.id),
+  // Read both wallets in one pass. A person can have the Splitsy wallet armed
+  // for one agent and their browser wallet armed for another, with different
+  // ceilings — the mandate is keyed per debtor on chain, so the panel must be
+  // able to show two answers rather than implying one setting binds both.
+  const wallets = [dcw, eoa].filter((a): a is `0x${string}` => a !== null);
+  const [log, ...facts] = await Promise.all([
     listAutopayLog(user.id),
-    wallet ? getAutopayMandateOnchain(wallet).catch(() => null) : null,
-    wallet && isMandateConfigured() ? getUsdcAllowanceOnchain(wallet, MANDATE_ADDRESS).catch(() => 0n) : 0n,
+    ...wallets.map(async (address) => {
+      const [mandate, allowance] = await Promise.all([
+        getAutopayMandateOnchain(address).catch(() => null),
+        isMandateConfigured()
+          ? getUsdcAllowanceOnchain(address, MANDATE_ADDRESS).catch(() => 0n)
+          : Promise.resolve(0n),
+      ]);
+      return [
+        address,
+        {
+          agentAddress: mandate?.agent ?? null,
+          enabled: mandate !== null,
+          maxPerBillUsdc: mandate ? toUsdc(mandate.maxPerBill) : 0,
+          maxPerDayUsdc: mandate ? toUsdc(mandate.maxPerDay) : 0,
+          trustedCreators: mandate ? mandate.allowedCreators.map((a) => a.toLowerCase()) : [],
+          allowanceUsdc: toUsdc(allowance ?? 0n),
+          spentTodayUsdc: mandate ? toUsdc(mandate.maxPerDay - mandate.headroom) : 0,
+        },
+      ] as const;
+    }),
   ]);
 
-  // Chain first for everything the chain owns. Falling back to the Postgres
-  // mirror when there is no mandate is what lets the form show the numbers a
-  // user typed but has not yet signed — but `enabled` is never mirrored: it
-  // comes from the chain alone, because it is the answer to "can software move
-  // my money right now?" and that answer must not come from a cache.
-  const grant: AutopayGrant = {
-    enabled: mandate !== null,
-    maxPerBillUsdc: mandate ? toUsdc(mandate.maxPerBill) : (rules?.maxPerBillUsdc ?? DEFAULT_GRANT.maxPerBillUsdc),
-    maxPerDayUsdc: mandate ? toUsdc(mandate.maxPerDay) : (rules?.maxPerDayUsdc ?? DEFAULT_GRANT.maxPerDayUsdc),
-    trustedCreators: mandate ? mandate.allowedCreators.map((a) => a.toLowerCase()) : (rules?.trustedCreators ?? []),
+  const onchain = Object.fromEntries(facts);
+  const dcwFacts = dcw ? onchain[dcw] : null;
+
+  // The form's own values still come from the DCW's mandate when there is one,
+  // falling back to the Postgres mirror so a user sees the numbers they typed
+  // but have not yet signed. `enabled` is never mirrored: it is the answer to
+  // "can software move my money right now?" and must come from the chain alone.
+  const grant: AutopayGrant & { requireBillReview: boolean } = {
+    enabled: dcwFacts?.enabled ?? false,
+    maxPerBillUsdc: dcwFacts?.enabled ? dcwFacts.maxPerBillUsdc : (rules?.maxPerBillUsdc ?? DEFAULT_GRANT.maxPerBillUsdc),
+    maxPerDayUsdc: dcwFacts?.enabled ? dcwFacts.maxPerDayUsdc : (rules?.maxPerDayUsdc ?? DEFAULT_GRANT.maxPerDayUsdc),
+    trustedCreators: dcwFacts?.enabled ? dcwFacts.trustedCreators : (rules?.trustedCreators ?? []),
     minCreatorScore: rules?.minCreatorScore ?? DEFAULT_GRANT.minCreatorScore,
     requireVerifiedHash: rules?.requireVerifiedHash ?? DEFAULT_GRANT.requireVerifiedHash,
+    requireBillReview: rules?.requireBillReview ?? true,
   };
 
   return Response.json({
     grant,
     log,
-    // The evidence, for a panel whose whole job is to show what is authorized:
-    // where the mandate lives, how much of this wallet it may ever pull in
-    // total, and how much of today's ceiling is already gone.
-    onchain: {
-      mandateAddress: isMandateConfigured() ? MANDATE_ADDRESS : null,
-      agentAddress: mandate?.agent ?? null,
-      allowanceUsdc: toUsdc(allowance ?? 0n),
-      spentTodayUsdc: mandate ? toUsdc(mandate.maxPerDay - mandate.headroom) : 0,
-    },
+    linkedAddress: eoa,
+    walletAddress: dcw,
+    // The panel needs BOTH to rebuild the exact bytes the wallet must sign.
+    // buildLinkMessage puts the handle AND the provider inside the message,
+    // because a handle alone is not an account: uniqueness in `users` is
+    // (provider, provider_user_id), and idx_users_provider_handle is NOT unique.
+    // Without the provider, a victim signing a message naming their own handle
+    // could have that signature replayed by the holder of the same handle in
+    // another namespace. Both are lowercased inside buildLinkMessage.
+    handle: user.handle,
+    provider: user.provider,
+    mandateAddress: isMandateConfigured() ? MANDATE_ADDRESS : null,
+    agentAddress: process.env.NEXT_PUBLIC_AUTOPAY_AGENT_ADDRESS ?? null,
+    onchain,
   });
 }
 
@@ -162,9 +194,17 @@ export async function PUT(request: Request) {
     requireBillReview: raw.requireBillReview !== false,
   });
 
+  // A browser wallet signs its own mandate: the server holds no key for it, so
+  // there is nothing to sign here and saying so is not an error. The panel
+  // follows up with setMandate then approve from the wallet itself.
+  const debtorAddress = typeof raw.debtorAddress === "string" ? raw.debtorAddress.toLowerCase() : null;
+  if (debtorAddress && debtorAddress === existing?.debtorAddress) {
+    return Response.json({ ok: true, txHash: null, signWith: "wallet" });
+  }
+
   try {
     const txHash = await syncMandateOnchain(user, { enabled, maxPerBillUsdc, maxPerDayUsdc, trustedCreators });
-    return Response.json({ ok: true, txHash });
+    return Response.json({ ok: true, txHash, signWith: "dcw" });
   } catch (err) {
     if (err instanceof InsufficientFundsError) {
       return Response.json({ error: "insufficient_funds" }, { status: 402 });
