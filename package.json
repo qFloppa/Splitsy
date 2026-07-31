@@ -8,6 +8,7 @@
     "build": "next build",
     "deploy:arc:bill-registry": "node --env-file=.env.local ./node_modules/hardhat/dist/src/cli.js run --network arcTestnet scripts/deploy-bill-split-registry.ts",
     "deploy:arc:factory": "node --env-file=.env.local ./node_modules/hardhat/dist/src/cli.js run --network arcTestnet scripts/deploy-recurring-tab-factory.ts",
+    "deploy:arc:autopay-mandate": "node --env-file=.env.local ./node_modules/hardhat/dist/src/cli.js run --network arcTestnet scripts/deploy-autopay-mandate.ts",
     "scout:setup": "node --experimental-strip-types --env-file=.env.local scripts/scout-setup.ts",
     "test:contracts": "hardhat test",
     "audit:contracts": "slither . --config-file slither.config.json",
