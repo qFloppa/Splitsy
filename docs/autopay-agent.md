@@ -158,8 +158,16 @@ Copy the address of the agent wallet you want to spend under your mandate.
 
 ### 3. Name it in the mandate
 
-Settlement agents panel → **Agent** → **My own agent wallet**, paste the address
-into **Agent wallet address**, then **Arm on chain**.
+**This only takes effect from the browser-wallet path.** Select **Pay from** →
+**Browser wallet** first. The **Agent** selector is also visible while the
+Splitsy-managed wallet is selected, but it has no effect there: that path saves
+through the server, which resolves the agent from
+`NEXT_PUBLIC_AUTOPAY_AGENT_ADDRESS` or Splitsy's own DCW and never reads the
+address you typed. You would select "My own agent wallet", save, get no error,
+and still have Splitsy's agent named on chain.
+
+With the browser wallet selected: **Agent** → **My own agent wallet**, paste the
+address into **Agent wallet address**, then **Arm on chain**.
 
 That address goes straight into `setMandate`'s first argument. There is no
 server-side validation of it beyond the `0x…` shape, and there cannot be — the
@@ -225,6 +233,9 @@ circle wallet execute "payFor(uint256,address)" <billId> <yourWalletAddress> \
   --address <yourAgentWalletAddress>
 ```
 
+See [Open questions](#open-questions--unverified) below: this command's argument
+encoding has not been exercised against the CLI.
+
 ---
 
 ## Spend Policy Is Not In Play On Testnet
@@ -233,10 +244,13 @@ circle wallet execute "payFor(uint256,address)" <billId> <yourWalletAddress> \
 Circle-side spend policy on your agent wallet at all, so `AutopayMandate` is the
 **sole** enforcement of what your agent may spend.
 
-That is the stronger claim anyway — the caps are on chain, public, and revocable
-by you at any moment with `revokeMandate()`, whether or not Splitsy's servers
-are reachable — but it should be stated rather than glossed. If you were
-expecting a second, Circle-side belt on testnet, there isn't one.
+That is the stronger claim anyway — the caps are on chain, public, and, **for a
+wallet you hold the key for**, revocable by you at any moment with
+`revokeMandate()` whether or not Splitsy's servers are reachable. (A mandate on
+the Splitsy-managed wallet is not: `revokeMandate()` must come from the debtor
+address, and that key is Circle-held, so revoking it goes through Splitsy.) It
+should be stated rather than glossed: if you were expecting a second,
+Circle-side belt on testnet, there isn't one.
 
 See [Open questions](#open-questions--unverified) below: this specific claim has
 not been executed against the CLI.
