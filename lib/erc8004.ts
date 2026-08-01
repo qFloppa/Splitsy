@@ -201,6 +201,8 @@ async function uploadAgentImage(walletAddress: string, registeredAt: Date): Prom
   }
 }
 
+export type AgentType = "splitsy-payer" | "splitsy-user-agent" | "splitsy-settler" | "splitsy-auditor";
+
 // Upload ERC-8004 agent metadata to IPFS via Pinata. Returns ipfs:// URI or
 // falls back to data: URI if Pinata is unconfigured (reputation still works,
 // just without discoverable off-chain metadata). Exported for the one-off
@@ -210,7 +212,7 @@ export async function uploadMetadataToIPFS(
   registeredAt?: Date,
   // The ERC-8004 metadata's agent_type. Defaults to the payer identity every
   // existing caller mints; the agent economy passes 'splitsy-user-agent'.
-  agentType: "splitsy-payer" | "splitsy-user-agent" | "splitsy-settler" | "splitsy-auditor" = "splitsy-payer",
+  agentType: AgentType = "splitsy-payer",
 ): Promise<string> {
   if (!PINATA_JWT) {
     const fallback = {
@@ -312,10 +314,16 @@ async function getRegistrarWallet() {
 // fresh NFT is transferred on to the payer, so every payer ends up owning
 // their own identity NFT. The transfer is best-effort: a failure leaves the
 // NFT with the registrar but never blocks scoring.
+//
+// agentType rides last and defaults, so the two payer call sites below stay as
+// they were. It exists because the minted metadata is immutable: an agent that
+// registers as the wrong type is wrong on chain forever, and the user agents
+// are not payers.
 export async function ensureAgent(
   walletAddress: string,
   circleWalletId: string,
   minterAddress?: string,
+  agentType: AgentType = "splitsy-payer",
 ): Promise<string> {
   const existing = await getAgentByWallet(walletAddress);
   if (existing?.agent_id) return existing.agent_id;
@@ -327,7 +335,7 @@ export async function ensureAgent(
   let agentId: string;
   let registerTx: string;
   try {
-    const metadataURI = await uploadMetadataToIPFS(walletAddress);
+    const metadataURI = await uploadMetadataToIPFS(walletAddress, undefined, agentType);
     const callData = encodeFunctionData({
       abi: ERC8004_ABI,
       functionName: "register",

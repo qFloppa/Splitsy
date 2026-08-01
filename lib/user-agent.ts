@@ -28,6 +28,7 @@ const publicClient = createPublicClient({ chain: arcTestnet, transport: http(ARC
 // Just the two ERC-721 calls this file needs. Not imported from erc8004.ts's
 // ERC8004_ABI because that one is not exported; two fragments are cheaper than
 // widening another module's public surface for them.
+// ponytail: these two fragments duplicate erc8004.ts's unexported ERC8004_ABI and drift if the registry ABI changes — export ERC8004_ABI and import it when that bites
 const NFT_ABI = [
   {
     type: "function",
@@ -85,6 +86,7 @@ export async function getAgentBalanceUsdc(address: `0x${string}`): Promise<bigin
 
 // A week of fees and shares at the amount being spent right now, so the next
 // hundred settlements do not each pay for their own approval.
+// ponytail: 100x the amount in hand is a guess at "a week" — meter real settlement volume and set it from that, or approve the exact amount every time if a standing allowance ever needs justifying
 const APPROVAL_MULTIPLE = 100n;
 
 // Lazy, self-healing USDC approval.
@@ -100,6 +102,15 @@ const APPROVAL_MULTIPLE = 100n;
 //   * AgenticCommerce — fund() pulls the job fee into escrow.
 //   * BillSplitRegistry — payDebtFor does safeTransferFrom(msg.sender, …) in
 //     Funded mode. The spec's §4 named only the first; this is the second.
+//
+// A RETURN FROM THIS FUNCTION MEANS THE ALLOWANCE IS ON CHAIN. Nothing weaker
+// is safe to hand a caller: the next thing they do is fund() or payDebtFor,
+// which pulls against it, and a pull against an allowance that never mined
+// fails after the job has already been created and priced. So every outcome
+// that is not a terminal success throws — including the quiet one, where
+// executeContractOnArc's ~60s poll times out and it RETURNS "PENDING" rather
+// than raising. Both Task 7 call sites already sit inside a try that turns a
+// throw into a skipped settlement, which is the outcome we want.
 export async function ensureAgentAllowance(
   agent: UserAgent,
   spender: `0x${string}`,
@@ -107,7 +118,14 @@ export async function ensureAgentAllowance(
 ): Promise<void> {
   const allowance = await getUsdcAllowanceOnchain(agent.address, spender);
   if (allowance >= need) return;
-  await executeContractOnArc(agent.walletId, ARC_USDC_ADDRESS, encodeApprove(spender, need * APPROVAL_MULTIPLE));
+  const tx = await executeContractOnArc(
+    agent.walletId,
+    ARC_USDC_ADDRESS,
+    encodeApprove(spender, need * APPROVAL_MULTIPLE),
+  );
+  if (tx.state !== "COMPLETE" && tx.state !== "CONFIRMED") {
+    throw new Error(`agent USDC approval for ${spender} is ${tx.state} — allowance unconfirmed (tx ${tx.id})`);
+  }
 }
 
 // The agent's ERC-8004 identity, minted once and then owned by the USER.
@@ -119,18 +137,22 @@ export async function ensureAgentAllowance(
 // The transfer to the user's wallet is best-effort and deliberately so — a
 // failed transfer leaves the NFT with the agent, which is a cosmetic loss, and
 // must never block a settlement. Same posture as ensureAgent's own transfer.
+// ponytail: nothing ever retries the handover, so a failed transfer strands the NFT at the agent forever — sweep unowned identities from a cron or the agent settings route if that starts happening
 export async function ensureUserAgentIdentity(
   agent: UserAgent,
   ownerWallet: string | null,
 ): Promise<string | null> {
   try {
-    const agentId = await ensureAgent(agent.address, agent.walletId);
+    const agentId = await ensureAgent(agent.address, agent.walletId, undefined, "splitsy-user-agent");
     if (!ownerWallet || ownerWallet.toLowerCase() === agent.address.toLowerCase()) return agentId;
 
     // Already handed over on an earlier run? ensureAgent is idempotent but the
     // transfer is not, so ask the registry who owns it before sending again.
+    // An unreadable owner is a skip, not a licence to send: if the NFT is in
+    // fact already there the transfer reverts, and we would have spent the
+    // agent's USDC on gas to report a failure for an identity that is correct.
     const owner = await currentOwner(BigInt(agentId));
-    if (owner && owner.toLowerCase() === ownerWallet.toLowerCase()) return agentId;
+    if (!owner || owner.toLowerCase() === ownerWallet.toLowerCase()) return agentId;
 
     await executeContractOnArc(
       agent.walletId,

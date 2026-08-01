@@ -1,0 +1,59 @@
+// getOrCreateUserAgent's cache branch is the one thing in this module that can
+// be pinned without a network: a users row carrying BOTH agent columns is
+// answered from the row, and anything less falls through to Circle. That "&&"
+// is load-bearing — a half-written row (address saved, wallet id lost) would
+// otherwise hand a caller a walletId of null and fail deep inside a signature.
+//
+// The fall-through cases are made offline by unsetting the Circle credentials,
+// so they run the same way on a developer machine that has them and in CI that
+// does not: getConfig() returns null, getOrCreateArcWallet returns null before
+// it opens a socket, and the Supabase cache write is never reached either.
+// Everything else here — the allowance, the identity mint — is genuinely
+// network-bound and has no seam; those are not tested rather than mocked.
+import test from "node:test";
+import assert from "node:assert/strict";
+import { getOrCreateUserAgent } from "./user-agent.ts";
+
+const CIRCLE_VARS = ["CIRCLE_API_KEY", "CIRCLE_ENTITY_SECRET", "CIRCLE_WALLET_SET_ID"] as const;
+const original = CIRCLE_VARS.map((k) => [k, process.env[k]] as const);
+
+test.before(() => {
+  for (const k of CIRCLE_VARS) delete process.env[k];
+});
+
+test.after(() => {
+  for (const [k, v] of original) {
+    if (v === undefined) delete process.env[k];
+    else process.env[k] = v;
+  }
+});
+
+test("a fully cached row is answered from the row, without Circle", async () => {
+  const agent = await getOrCreateUserAgent({
+    id: "user-1",
+    agent_wallet_address: "0xabc0000000000000000000000000000000000001",
+    agent_wallet_id: "wallet-1",
+  });
+  assert.deepEqual(agent, { address: "0xabc0000000000000000000000000000000000001", walletId: "wallet-1" });
+});
+
+test("a half-written row falls through instead of returning a null walletId", async () => {
+  const missingId = await getOrCreateUserAgent({
+    id: "user-2",
+    agent_wallet_address: "0xabc0000000000000000000000000000000000002",
+    agent_wallet_id: null,
+  });
+  assert.equal(missingId, null, "address without wallet id must not be served from cache");
+
+  const missingAddress = await getOrCreateUserAgent({
+    id: "user-3",
+    agent_wallet_address: null,
+    agent_wallet_id: "wallet-3",
+  });
+  assert.equal(missingAddress, null, "wallet id without address must not be served from cache");
+});
+
+test("an empty row with Circle unconfigured is a null, not a throw", async () => {
+  const agent = await getOrCreateUserAgent({ id: "user-4", agent_wallet_address: null, agent_wallet_id: null });
+  assert.equal(agent, null);
+});
