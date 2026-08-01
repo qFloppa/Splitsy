@@ -20,7 +20,7 @@
     "test:landing": "node --test --experimental-strip-types lib/landing-ledger.test.ts",
     "test:dashboard-create": "node --test --experimental-strip-types app/api/onchain-bills/create/route.test.ts",
     "test:docs-search": "node --test --experimental-strip-types app/docs/search-score.test.ts",
-    "test:agents": "node --test --experimental-strip-types lib/autopay.test.ts lib/dunning.test.ts lib/agent-link.test.ts lib/autopay-review.test.ts lib/agent-queue.test.ts",
+    "test:agents": "node --test --experimental-strip-types lib/autopay.test.ts lib/dunning.test.ts lib/agent-link.test.ts lib/autopay-review.test.ts lib/agent-queue.test.ts lib/erc8183.test.ts",
     "start": "next start",
     "lint": "eslint"
   },
