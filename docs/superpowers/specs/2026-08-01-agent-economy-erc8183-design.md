@@ -138,6 +138,46 @@ contract.
 Recommended starting balance shown in the UI: **2 USDC** for Mandate mode (gas +
 fees only), **20 USDC** for Funded mode (gas + fees + bill money).
 
+### One agent per account, not per wallet
+
+The agent's `refId` is `agent:<userId>`. It is keyed to the **account**, so a user
+who signs in socially *and* links a browser wallet gets **one** agent, one balance
+and one identity NFT covering both. They fund it once.
+
+This needs no new code. `app/api/agents/autopay/route.ts` already resolves a bill
+participant to a `userId` down two paths — `getUsersByWallets` for Circle DCW
+addresses and `getGrantsByDebtorAddresses` for linked browser wallets — and both
+land on the same id. Keying the agent by `userId` inherits that for free.
+
+Linking is already built and already optional: `POST /api/agents/link` takes a
+`personal_sign` proving control of the address, and a partial unique index on
+`autopay_grants.debtor_address` refuses a wallet already claimed by another account.
+Not linking is a supported choice; it simply means that wallet has no agent and
+autopay never sees it. One browser wallet per account — `autopay_grants` is keyed on
+`user_id` with a single `debtor_address` column — which is a limit worth knowing but
+not worth lifting for this design.
+
+**Unlinking is the gap.** `DELETE /api/agents/link` exists and works, but nothing in
+`app/` calls it — there is no `DELETE` request in the entire client. Once a user
+links, they cannot unlink. This design adds the button, because with money now
+sitting in an agent a user must be able to walk the link back.
+
+The button needs a warning next to it, because unlinking does less than people
+expect:
+
+| On unlink | Effect |
+|---|---|
+| autopay for that browser wallet | **stops** — no `userId`, so the route skips the participant |
+| the on-chain mandate on that wallet | **survives** — `revokeMandate()` is a separate transaction the user must send |
+| the USDC approval to the mandate contract | **survives**, and is inert only for as long as the mandate is revoked |
+| the agent, its balance, its identity NFT | **untouched** — they belong to the account |
+
+The surviving mandate is not new behaviour; it was simply unreachable before. The
+UI must offer **Revoke first, then unlink** as the ordered pair, and must not
+present unlink alone as "turning it off". Unlink is never gated behind the
+wallet-unlock cookie, matching the existing rule that tightening must never be
+harder than loosening.
+
 ## 5. Two money modes
 
 The user picks where **bill money** comes from. Both modes need the funded agent
@@ -364,7 +404,7 @@ repo's existing additive-script convention.
 | `lib/x402/seller.ts` | optional `payTo` parameter |
 | `lib/x402/pricing.ts` | add `/api/agents/review: "$0.002"` |
 | `lib/agents-repo.ts` | write `job_id`, `job_status`, `fee_usdc`; read/write `money_mode` |
-| `app/…` settlement-agents panel | mode picker, agent card, fund flow, job list |
+| `app/…` settlement-agents panel | mode picker, agent card, fund flow, job list, **Unlink button** wired to the existing `DELETE /api/agents/link` |
 | `docs/autopay-agent.md` | point at the new agent address and the new funding requirement |
 
 ## 10. UI
@@ -376,6 +416,12 @@ One new card in the existing settlement-agents panel: **Your agent**.
 - USDC balance, and a **Fund** button
 - the money-mode picker (Mandate / Funded), with the one-sentence warning from §5
 - its jobs: bill, fee, status chip, and every transaction hash
+- one line stating that this agent covers **both** the Splitsy wallet and the linked
+  browser wallet, so nobody funds twice looking for a second one
+
+In the existing **Pay from** row, next to the linked address: an **Unlink** button,
+with the warning table from §4 collapsed behind it. It is enabled whenever a wallet
+is linked, and it never asks for the wallet-unlock cookie.
 
 The existing decision log stays where it is. A `pay` row now also shows its job id
 and status; a `skip` row is unchanged and still shows the model's own sentence
@@ -435,6 +481,20 @@ scored to the user and not to the agent, and the job completed.
 Create an incoherent bill. Expect: `review_unavailable` or the model's sentence in
 the log, **no job created at all**, and one `spent` row in `x402_payments` — the
 review was bought and its answer was no.
+
+**Q8 — One agent covers both wallets.**
+Sign in socially, link a browser wallet, fund the agent once. Bill the **DCW**
+address, then bill the **browser wallet** address. Expect both settled by the *same*
+agent address, out of the *same* balance, with two `pay` rows under one `user_id`.
+*If a second agent appears,* the `refId` is being derived from a wallet somewhere
+instead of from `userId`.
+
+**Q9 — Unlink.**
+With a live mandate on the linked wallet, press Unlink. Expect: the wallet
+disappears from **Pay from**, a later bill to that address produces **no log row at
+all** (the participant is no longer resolvable to an account), the agent's balance is
+unchanged, and `AutopayMandate.mandates(thatWallet).agent` is still the Settler —
+proving the warning in §4 is accurate and not hypothetical.
 
 ## 13. Deliberately not doing
 
