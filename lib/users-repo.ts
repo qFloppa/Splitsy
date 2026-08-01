@@ -1,5 +1,5 @@
-import { createSupabaseServerClient } from "@/lib/supabase";
-import type { AppUser, IdentityProvider } from "@/lib/types";
+import { createSupabaseServerClient } from "./supabase.ts";
+import type { AppUser, IdentityProvider } from "./types.ts";
 
 export type ProviderProfileInput = {
   provider: IdentityProvider;
