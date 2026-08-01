@@ -94,6 +94,9 @@ export function decideAutopay(input: AutopayInput): AutopayDecision {
 // AutopayMandate.mandates(debtor), as lib/arc-read.ts returns it. Null = the
 // user has written no mandate on this wallet.
 export type MandateFacts = {
+  // Whose agent the mandate names. buildGrant does NOT check it against the
+  // caller's agent — the caller must, or one user's agent will spend on another
+  // user's mandate.
   agent: string;
   maxPerBill: bigint; // USDC base units
   maxPerDay: bigint; // USDC base units
@@ -123,6 +126,8 @@ export type MirrorRules = {
 //               the Postgres mirror and are enforced HERE. That is a genuine
 //               weakening and the UI has to say so: in this mode the only
 //               ceiling the chain enforces is the agent's own balance.
+//               ponytail: funded mode enforces caps server-side; upgrade path
+//               is a mandate.
 //
 // The two rules a contract can never evaluate — the ERC-8004 score floor and
 // the verified-hash check — come from Postgres in BOTH modes, because Postgres

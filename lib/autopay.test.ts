@@ -203,6 +203,25 @@ test("buildGrant('funded') needs no mandate on chain", () => {
   assert.equal(grant.maxPerBillUsdc, 5);
 });
 
+// The mirror is the only home of the hash rule, so it has to be readable in both
+// directions. Asserting only the `true` case would pass just as happily against
+// an implementation that hardcoded `true` and never looked at the row — and a
+// user who switched verification off would keep getting `unverifiable` skips.
+test("buildGrant reads requireVerifiedHash from the mirror rather than assuming it", () => {
+  const grant = buildGrant("funded", MANDATE, { ...MIRROR, requireVerifiedHash: false });
+  assert.ok(grant);
+  assert.equal(grant.requireVerifiedHash, false);
+});
+
+// Deliberate, not an oversight: in mandate mode the contract is the authority, so
+// the mirror's on/off switch is not consulted and revoking means revoking the
+// mandate. This pins the semantic that app/api/agents/autopay/route.ts already
+// ships — it sets `enabled: true` whenever the mandate is this agent's, and uses
+// the row only for the two rules a contract cannot evaluate.
+test("buildGrant('mandate') ignores the mirror's enabled flag — the chain is the authority", () => {
+  assert.ok(buildGrant("mandate", MANDATE, { ...MIRROR, enabled: false }));
+});
+
 test("buildGrant('funded') is null when autopay is switched off in the mirror", () => {
   assert.equal(buildGrant("funded", MANDATE, { ...MIRROR, enabled: false }), null);
   assert.equal(buildGrant("funded", MANDATE, null), null);
