@@ -23,6 +23,16 @@ interface IERC20 {
   /// @return balance Token balance held.
   function balanceOf(address account) external view returns (uint256 balance);
 
+  /// @notice Approves `spender` to pull up to `amount` of the caller's tokens.
+  /// @dev Used only by {AutopayMandate}'s constructor, which sets its one
+  ///      standing allowance to the registry. {BillSplitRegistry} never calls
+  ///      this — it is the spender, never the owner — so adding it here changes
+  ///      nothing about the registry's behaviour.
+  /// @param spender Account permitted to spend the caller's tokens.
+  /// @param amount Allowance to set.
+  /// @return success Whether the approval succeeded.
+  function approve(address spender, uint256 amount) external returns (bool success);
+
   /// @notice Moves `amount` tokens from the caller to `to`.
   /// @dev Always invoked through {SafeERC20.safeTransfer}.
   /// @param to Recipient of the tokens.

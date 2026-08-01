@@ -372,7 +372,7 @@ export async function createBillSplit({
   return { hash, ...created };
 }
 
-function assertReceiptSuccess(receipt: TransactionReceipt, action: string): TransactionReceipt {
+export function assertReceiptSuccess(receipt: TransactionReceipt, action: string): TransactionReceipt {
   if (receipt.status !== "success") {
     throw new Error(`${action} failed: the transaction reverted on Arc and no funds were moved.`);
   }
