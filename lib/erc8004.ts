@@ -205,12 +205,18 @@ async function uploadAgentImage(walletAddress: string, registeredAt: Date): Prom
 // falls back to data: URI if Pinata is unconfigured (reputation still works,
 // just without discoverable off-chain metadata). Exported for the one-off
 // scripts/reputation-backfill.ts, which re-points existing agents at it.
-export async function uploadMetadataToIPFS(walletAddress: string, registeredAt?: Date): Promise<string> {
+export async function uploadMetadataToIPFS(
+  walletAddress: string,
+  registeredAt?: Date,
+  // The ERC-8004 metadata's agent_type. Defaults to the payer identity every
+  // existing caller mints; the agent economy passes 'splitsy-user-agent'.
+  agentType: "splitsy-payer" | "splitsy-user-agent" | "splitsy-settler" | "splitsy-auditor" = "splitsy-payer",
+): Promise<string> {
   if (!PINATA_JWT) {
     const fallback = {
       name: "Splitsy payer",
       description: "Payment reputation agent for Splitsy bill-splitting app",
-      agent_type: "splitsy-payer",
+      agent_type: agentType,
       version: "1",
       wallet: walletAddress,
     };
@@ -223,7 +229,7 @@ export async function uploadMetadataToIPFS(walletAddress: string, registeredAt?:
     name: `Splitsy Payer ${walletAddress.slice(0, 6)}…${walletAddress.slice(-4)}`,
     description: "Payment reputation agent for Splitsy bill-splitting app on Arc Testnet",
     ...(imageURI ? { image: imageURI } : {}),
-    agent_type: "splitsy-payer",
+    agent_type: agentType,
     version: "1",
     wallet: walletAddress,
     created_at: stampedAt.toISOString(),
@@ -256,7 +262,7 @@ export async function uploadMetadataToIPFS(walletAddress: string, registeredAt?:
     const fallback = {
       name: "Splitsy payer",
       description: "Payment reputation agent for Splitsy",
-      agent_type: "splitsy-payer",
+      agent_type: agentType,
       version: "1",
       wallet: walletAddress,
     };
