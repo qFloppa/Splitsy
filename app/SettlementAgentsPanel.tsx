@@ -919,24 +919,29 @@ export default function SettlementAgentsPanel() {
 // A switch drawn from a real checkbox: the input keeps the native keyboard and
 // screen-reader behaviour (space toggles, state is announced), and the track and
 // knob are pure CSS off `peer-checked`. No JS state, nothing to desync.
-function Switch({
+export function Switch({
   checked,
+  disabled,
   onChange,
   size = "sm",
   srLabel,
 }: {
   checked: boolean;
+  disabled?: boolean;
   onChange: (value: boolean) => void;
   size?: "sm" | "lg";
   srLabel: string;
 }) {
   const lg = size === "lg";
   return (
-    <label className="inline-flex shrink-0 cursor-pointer select-none items-center gap-2">
+    <label
+      className={`inline-flex shrink-0 select-none items-center gap-2 ${disabled ? "cursor-not-allowed opacity-50" : "cursor-pointer"}`}
+    >
       <input
         aria-label={srLabel}
         checked={checked}
         className="peer sr-only"
+        disabled={disabled}
         onChange={(e) => onChange(e.target.checked)}
         type="checkbox"
       />

@@ -16,6 +16,7 @@ import {
   Info,
   Landmark,
   Loader2,
+  Lock,
   Mail,
   Moon,
   Plus,
@@ -48,7 +49,7 @@ import XDebtsPanel from "./XDebtsPanel";
 import XHistoryPanel from "./XHistoryPanel";
 import DashboardPanel from "./DashboardPanel";
 import AgentEconomyPanel from "./AgentEconomyPanel";
-import SettlementAgentsPanel from "./SettlementAgentsPanel";
+import SettlementAgentsPanel, { Switch } from "./SettlementAgentsPanel";
 import { HistoryCard, PaidBillStamp } from "./HistoryCard";
 import { Panel, TabHero } from "./SpecCard";
 import {
@@ -2767,7 +2768,6 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
                 }
                 icon={<Upload size={15} />}
                 live={ocrState === "reading"}
-                note="Any language, any currency. The scan reads merchant, totals, tax, tip and line items — nothing is written on chain at this step, so a bad scan costs nothing."
                 step="01 · Capture"
                 title="Upload the bill"
               >
@@ -3104,22 +3104,32 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
                   </div>
                 </div>
 
-                <label className="flex items-start gap-2 text-xs">
-                  <input
+                <div
+                  className={`mt-4 flex flex-col gap-3 rounded-[var(--radius)] border p-3 text-sm sm:flex-row sm:items-start sm:justify-between ${
+                    escrowUntilFull
+                      ? "border-[var(--accent)] bg-[var(--accent-soft)]"
+                      : "border-[var(--border)] bg-[var(--surface-muted)]"
+                  }`}
+                >
+                  <div>
+                    <p className="flex items-center gap-1.5 font-semibold text-[var(--text)]">
+                      <Lock size={14} />
+                      All or nothing
+                      <span className="font-normal text-[var(--text-muted)]">(escrow)</span>
+                    </p>
+                    <p className="mt-1 max-w-xl leading-6 text-[var(--text-muted)]">
+                      {dueDateInput
+                        ? "Hold the money until everyone has paid. You can't collect any of it until every payer has settled. If the bill is still short on the due date, it has failed: you collect nothing and each payer takes their own money back. Use this when a partial amount is no good to you."
+                        : "Set a due date first. Without one there is no moment at which a short bill counts as failed, so the money could never be released to anyone."}
+                    </p>
+                  </div>
+                  <Switch
                     checked={escrowUntilFull}
                     disabled={!dueDateInput}
-                    onChange={(event) => setEscrowUntilFull(event.target.checked)}
-                    type="checkbox"
+                    onChange={setEscrowUntilFull}
+                    srLabel="All or nothing — hold the money until everyone has paid"
                   />
-                  <span className={dueDateInput ? "" : "opacity-50"}>
-                    <span className="font-medium">All or nothing — hold the money until everyone has paid</span>
-                    <span className="mt-0.5 block text-[var(--text-muted)]">
-                      {dueDateInput
-                        ? "You can't collect any of it until every payer has settled. If the bill is still short on the due date, it has failed: you collect nothing and each payer takes their own money back. Use this when a partial amount is no good to you."
-                        : "Set a due date first. Without one there is no moment at which a short bill counts as failed, so the money could never be released to anyone."}
-                    </span>
-                  </span>
-                </label>
+                </div>
 
                 {/* Dual identity (signed in social + connected wallet): the
                     creator picks which wallet writes the bill to Arc and
