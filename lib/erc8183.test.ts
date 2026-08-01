@@ -27,6 +27,7 @@ const {
 
 const PROVIDER = "0x1111111111111111111111111111111111111111" as const;
 const EVALUATOR = "0x2222222222222222222222222222222222222222" as const;
+const CLIENT = "0x3333333333333333333333333333333333333333" as const;
 const ZERO = "0x0000000000000000000000000000000000000000";
 
 const decode = (data: `0x${string}`) => decodeFunctionData({ abi: JOB_ABI, data });
@@ -94,14 +95,16 @@ test("jobIdFromLogs reads the id from a JobCreated log and ignores foreign logs"
     [{ type: "address" }, { type: "uint256" }, { type: "address" }],
     [EVALUATOR, 1_800_000_000n, ZERO],
   );
+  // Indexed order is (jobId, client, provider) — topics[2] is the CLIENT.
+  const topicsFor = (jobIdHex: string) => [jobCreatedTopic, pad(jobIdHex), pad(CLIENT.slice(2)), pad(PROVIDER.slice(2))];
   const logs = [
-    // Another contract's log in the same bundled transaction — must be skipped.
-    { address: "0x9999999999999999999999999999999999999999", topics: [jobCreatedTopic, pad("7b")], data: "0x" },
-    {
-      address: "0x0747EEf0706327138c69792bF28Cd525089e4583",
-      topics: [jobCreatedTopic, pad("1c8"), pad(PROVIDER.slice(2)), pad(EVALUATOR.slice(2))],
-      data: jobCreatedData,
-    },
+    // Another AgenticCommerce deployment's log, in the same ERC-4337 bundle.
+    // Deliberately WELL-FORMED and first in the array: a malformed one would be
+    // thrown out by decodeEventLog and swallowed by the catch, so it would pass
+    // whether or not the address filter existed — pinning nothing. This one
+    // decodes cleanly to 291n, so deleting the filter makes this test fail.
+    { address: "0x9999999999999999999999999999999999999999", topics: topicsFor("123"), data: jobCreatedData },
+    { address: AGENTIC_COMMERCE, topics: topicsFor("1c8"), data: jobCreatedData },
   ];
   assert.equal(jobIdFromLogs(logs), 456n);
 });

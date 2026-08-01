@@ -195,6 +195,10 @@ export function jobIdFromLogs(
       });
       if (decoded.eventName === "JobCreated") return decoded.args.jobId;
     } catch {
+      // ponytail: a decode failure is indistinguishable from "this receipt has
+      // no JobCreated" — both end up as null, so real ABI drift would look like
+      // an ordinary miss. Fine while nothing can act on the difference; if that
+      // changes, collect the decode errors and let the caller report which it was.
       continue;
     }
   }
