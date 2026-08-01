@@ -1,10 +1,14 @@
 // Supabase access for the two settlement agents (see schema-agents.sql).
 // Mirrors lib/reputation-repo.ts: thin, typed, no business logic — the rules
 // live in lib/autopay.ts and lib/dunning.ts, which stay pure.
-import type { AutopayDecision, AutopayGrant } from "./autopay.ts";
+import type { AutopayDecision, AutopayGrant, MoneyMode } from "./autopay.ts";
 import { REVIEW_UNAVAILABLE } from "./autopay-review.ts";
 import type { DunningAction } from "./dunning.ts";
 import { createSupabaseServerClient } from "./supabase.ts";
+
+// Re-exported so consumers of the repo layer do not have to reach past it for
+// the shape of a column it already hands them.
+export type { MoneyMode };
 
 export type AutopayGrantRow = AutopayGrant & {
   userId: string;
@@ -15,6 +19,9 @@ export type AutopayGrantRow = AutopayGrant & {
   // Also outside AutopayGrant: the model review runs AFTER decideAutopay
   // returns `pay`, so the pure decision core never sees this flag.
   requireBillReview: boolean;
+  // Outside AutopayGrant for the same reason as the two above: decideAutopay
+  // never sees the mode. buildGrant reads it to choose which caps to hand over.
+  moneyMode: MoneyMode;
 };
 
 function requireClient() {
@@ -29,7 +36,7 @@ export async function getAutopayGrant(userId: string): Promise<AutopayGrantRow |
   const client = requireClient();
   const { data, error } = await client
     .from("autopay_grants")
-    .select("user_id, max_per_bill_usdc, max_per_day_usdc, trusted_creators, min_creator_score, require_verified_hash, enabled, debtor_address, require_bill_review")
+    .select("user_id, max_per_bill_usdc, max_per_day_usdc, trusted_creators, min_creator_score, require_verified_hash, enabled, debtor_address, require_bill_review, money_mode")
     .eq("user_id", userId)
     .maybeSingle();
   if (error) throw new Error(`Failed to read autopay grant: ${error.message}`);
@@ -45,6 +52,7 @@ export async function getAutopayGrant(userId: string): Promise<AutopayGrantRow |
     enabled: boolean;
     debtor_address: string | null;
     require_bill_review: boolean | null;
+    money_mode: string | null;
   };
   return {
     userId: row.user_id,
@@ -59,6 +67,10 @@ export async function getAutopayGrant(userId: string): Promise<AutopayGrantRow |
     // by hand without `not null default true`, PostgREST hands back null, and a
     // null must read as "review required" — never as "review off".
     requireBillReview: row.require_bill_review !== false,
+    // An unrecognised or absent value reads as 'mandate' — the mode where the
+    // CHAIN enforces the caps. A missing column must never silently move a user
+    // into the mode where only this server says no.
+    moneyMode: row.money_mode === "funded" ? "funded" : "mandate",
   };
 }
 
@@ -73,6 +85,7 @@ export async function upsertAutopayGrant(grant: AutopayGrantRow): Promise<void> 
       min_creator_score: grant.minCreatorScore,
       require_verified_hash: grant.requireVerifiedHash,
       require_bill_review: grant.requireBillReview,
+      money_mode: grant.moneyMode,
       enabled: grant.enabled,
       updated_at: new Date().toISOString(),
     },
@@ -133,6 +146,12 @@ export type AutopayLogRow = {
   reason: string;
   amountUsdc: number;
   txHash: string | null;
+  // The job this decision opened, once it exists. Null at claim time: the claim
+  // is taken BEFORE createJob, which is what stops a redelivered webhook from
+  // opening a second job for the same share.
+  jobId?: string | null;
+  jobStatus?: string | null;
+  feeUsdc?: number;
 };
 
 // Claim (registry, bill, debtor) BEFORE spending, by inserting the log row.
@@ -153,6 +172,9 @@ export async function claimAutopayDecision(row: AutopayLogRow): Promise<boolean>
     reason: row.reason,
     amount_usdc: row.amountUsdc,
     tx_hash: row.txHash,
+    job_id: row.jobId ?? null,
+    job_status: row.jobStatus ?? null,
+    fee_usdc: row.feeUsdc ?? 0,
   });
   if (!error) return true;
   if (error.code === "23505") return reclaimUndecided(client, row);
@@ -189,6 +211,9 @@ async function reclaimUndecided(
       reason: row.reason,
       amount_usdc: row.amountUsdc,
       tx_hash: row.txHash,
+      job_id: row.jobId ?? null,
+      job_status: row.jobStatus ?? null,
+      fee_usdc: row.feeUsdc ?? 0,
     })
     .eq("registry_address", row.registryAddress.toLowerCase())
     .eq("bill_id", row.billId)
@@ -203,7 +228,15 @@ export async function finalizeAutopayDecision(
   registryAddress: string,
   billId: string,
   debtorAddress: string,
-  patch: { decision?: "pay" | "skip"; reason?: string; amountUsdc?: number; txHash?: string | null },
+  patch: {
+    decision?: "pay" | "skip";
+    reason?: string;
+    amountUsdc?: number;
+    txHash?: string | null;
+    jobId?: string | null;
+    jobStatus?: string | null;
+    feeUsdc?: number;
+  },
 ): Promise<void> {
   const client = requireClient();
   const { error } = await client
@@ -213,6 +246,9 @@ export async function finalizeAutopayDecision(
       ...(patch.reason !== undefined ? { reason: patch.reason } : {}),
       ...(patch.amountUsdc !== undefined ? { amount_usdc: patch.amountUsdc } : {}),
       ...(patch.txHash !== undefined ? { tx_hash: patch.txHash } : {}),
+      ...(patch.jobId !== undefined ? { job_id: patch.jobId } : {}),
+      ...(patch.jobStatus !== undefined ? { job_status: patch.jobStatus } : {}),
+      ...(patch.feeUsdc !== undefined ? { fee_usdc: patch.feeUsdc } : {}),
     })
     .eq("registry_address", registryAddress.toLowerCase())
     .eq("bill_id", billId)
@@ -220,19 +256,25 @@ export async function finalizeAutopayDecision(
   if (error) throw new Error(`Failed to finalize autopay decision: ${error.message}`);
 }
 
-// The rolling-window spend used to be summed from this log. It is now read from
-// AutopayMandate's token bucket (lib/arc-read.ts, getAutopayMandateOnchain), so
-// the figure the agent reasons about is the same one that will revert it. The
-// sum-from-the-log version is gone rather than kept "just in case": two answers
-// to "how much has been spent today" is one answer too many.
+// The rolling-window spend used to be summed from this log. For MANDATE mode it
+// is now read from AutopayMandate's token bucket (lib/arc-read.ts,
+// getAutopayMandateOnchain), so the figure the agent reasons about is the same
+// one that will revert it. Keeping a second log-derived answer for that mode
+// would be one answer too many. Funded mode has no bucket at all, which is why
+// sumAutopaySpentTodayUsdc below exists for it and only for it.
 
-export type AutopayLogEntry = AutopayLogRow & { createdAt: string };
+export type AutopayLogEntry = AutopayLogRow & {
+  createdAt: string;
+  jobId: string | null;
+  jobStatus: string | null;
+  feeUsdc: number;
+};
 
 export async function listAutopayLog(userId: string, limit = 50): Promise<AutopayLogEntry[]> {
   const client = requireClient();
   const { data, error } = await client
     .from("autopay_log")
-    .select("user_id, registry_address, bill_id, debtor_address, decision, reason, amount_usdc, tx_hash, created_at")
+    .select("user_id, registry_address, bill_id, debtor_address, decision, reason, amount_usdc, tx_hash, created_at, job_id, job_status, fee_usdc")
     .eq("user_id", userId)
     .order("created_at", { ascending: false })
     .limit(limit);
@@ -249,8 +291,38 @@ export async function listAutopayLog(userId: string, limit = 50): Promise<Autopa
       amountUsdc: Number(row.amount_usdc),
       txHash: (row.tx_hash as string | null) ?? null,
       createdAt: String(row.created_at),
+      jobId: (row.job_id as string | null) ?? null,
+      jobStatus: (row.job_status as string | null) ?? null,
+      feeUsdc: Number(row.fee_usdc ?? 0),
     };
   });
+}
+
+// The rolling daily spend for FUNDED mode only.
+//
+// Mandate mode reads this from AutopayMandate's token bucket (lib/arc-read.ts),
+// because there the contract is the thing that will revert. Funded mode has no
+// bucket — the mandate is not in the path — so the log is the only record of
+// what this agent has already spent for this user. Each mode has exactly one
+// source; this is not the two-answers problem the bucket comment warns about.
+//
+// A read failure returns Infinity, matching sumSpentTodayUsd in
+// lib/x402/payments-repo.ts: an unreadable ledger must look like "cap
+// exhausted", never like "nothing spent yet".
+export async function sumAutopaySpentTodayUsdc(userId: string): Promise<number> {
+  const client = requireClient();
+  const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+  const { data, error } = await client
+    .from("autopay_log")
+    .select("amount_usdc")
+    .eq("user_id", userId)
+    .eq("decision", "pay")
+    .gte("created_at", since);
+  if (error || !data) {
+    console.error("[autopay] sumAutopaySpentTodayUsdc failed, treating the cap as spent:", error?.message);
+    return Number.POSITIVE_INFINITY;
+  }
+  return data.reduce((sum, r) => sum + Number((r as { amount_usdc: string | number }).amount_usdc), 0);
 }
 
 // --- dunning ---------------------------------------------------------------

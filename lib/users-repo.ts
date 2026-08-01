@@ -53,6 +53,20 @@ export async function setUserWallet(id: string, walletAddress: string, circleWal
   }
 }
 
+// The account's agent wallet, cached so it is not re-derived from Circle on
+// every request. One per ACCOUNT, never per wallet: a user who signs in
+// socially AND links a browser wallet has one agent covering both.
+export async function setUserAgentWallet(id: string, address: string, walletId: string): Promise<void> {
+  const client = requireClient();
+  const { error } = await client
+    .from("users")
+    .update({ agent_wallet_address: address.toLowerCase(), agent_wallet_id: walletId })
+    .eq("id", id);
+  if (error) {
+    throw new Error(`Failed to save agent wallet: ${error.message}`);
+  }
+}
+
 export async function setUserPin(id: string, pinHash: string): Promise<void> {
   const client = requireClient();
   const { error } = await client.from("users").update({ pin_hash: pinHash }).eq("id", id);

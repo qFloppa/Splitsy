@@ -208,6 +208,9 @@ export async function PUT(request: Request) {
     requireVerifiedHash: raw.requireVerifiedHash !== false,
     debtorAddress: existing?.debtorAddress ?? null,
     requireBillReview: raw.requireBillReview !== false,
+    // ponytail: preserved, not read from the body yet — the money mode has no UI
+    // and no validation here. Task 8 takes it from `raw` at this trust boundary.
+    moneyMode: existing?.moneyMode ?? "mandate",
   });
 
   // A browser wallet signs its own mandate: the server holds no key for it, so

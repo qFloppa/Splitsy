@@ -21,6 +21,10 @@ export type AutopayGrant = {
   requireVerifiedHash: boolean;
 };
 
+// Where BILL money comes from. Not where the FEE comes from — the job fee is
+// always the user's agent's, in both modes.
+export type MoneyMode = "mandate" | "funded";
+
 export type AutopayInput = {
   grant: AutopayGrant | null;
   remaining: bigint; // the debtor's unpaid share, USDC base units, read from chain

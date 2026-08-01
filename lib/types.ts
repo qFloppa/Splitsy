@@ -42,6 +42,8 @@ export type AppUser = {
   avatar_url: string | null;
   wallet_address: string | null;
   circle_wallet_id: string | null;
+  agent_wallet_address: string | null;
+  agent_wallet_id: string | null;
   pin_hash: string | null;
   created_at: string;
 };
