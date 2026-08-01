@@ -55,10 +55,19 @@ const [gas, usdc] = await Promise.all([
 console.log("Native (gas):", formatUnits(gas, 18));
 console.log("USDC (ERC-20):", formatUnits(usdc, 6));
 
-if (gas === 0n) {
-  console.log("\nNot funded yet. Send Arc Testnet USDC to the address above");
+// Stop only when BOTH balances are empty. If Q4's answer turns out to be "yes,
+// ERC-20 USDC alone pays gas", a zero native balance is not a blocker, and
+// exiting on it would contradict the non-zero USDC figure printed one line up.
+// SETTLER_FORCE=1 pushes past this either way.
+if (gas === 0n && usdc === 0n && !process.env.SETTLER_FORCE) {
+  console.log("\nNot funded yet: native (gas) and USDC (ERC-20) are both zero.");
+  console.log("Send Arc Testnet USDC to the address above");
   console.log("(faucet: https://faucet.circle.com/), then re-run this script.");
   process.exit(0);
+}
+if (gas === 0n) {
+  console.log("\nNote: native (gas) balance is zero — only the ERC-20 USDC balance is funded.");
+  console.log("If the register tx below fails on gas, that answers spec §12 Q4: Arc needs a native balance.");
 }
 
 const wallet = createWalletClient({ account, chain: arcTestnet, transport: http(ARC_TESTNET_RPC) });
