@@ -306,7 +306,14 @@ export default function SettlementAgentsPanel() {
       } else {
         const agent = agentChoice === "own" ? ownAgent.trim() : (agentAddress ?? "");
         if (!/^0x[a-fA-F0-9]{40}$/.test(agent)) {
-          fail("Enter the address of the agent wallet that may spend for you.");
+          // Two unrelated failures behind one regex. Telling someone who chose
+          // Splitsy's agent to "enter an address" points them at a field they
+          // never filled in and cannot fill in without changing their answer.
+          fail(
+            agentChoice === "own"
+              ? "Enter the address of the agent wallet that may spend for you."
+              : "Splitsy's agent wallet isn't available right now, so there is no address to name in the mandate. Reload the page, or point this at your own agent wallet.",
+          );
           return;
         }
         const creators = next.trustedCreators.map((a) => a as `0x${string}`);

@@ -136,11 +136,19 @@ export async function GET() {
     handle: user.handle,
     provider: user.provider,
     mandateAddress: isMandateConfigured() ? MANDATE_ADDRESS : null,
-    // Lowercased to match `onchain[a].agentAddress`, which viem returns
-    // EIP-55 checksummed. The panel compares the two to ask "is this mandate
-    // pointing at OUR agent?", and a case-sensitive === would answer no for a
-    // live Splitsy mandate.
-    agentAddress: process.env.NEXT_PUBLIC_AUTOPAY_AGENT_ADDRESS?.toLowerCase() ?? null,
+    // The SAME resolver the DCW path signs with, not a bare read of the env var.
+    // A browser wallet signs its own mandate, so this response is the only place
+    // it can learn which agent to name — and reading the env var alone made that
+    // null in every deployment that never set one, which is all of them: the
+    // agent's wallet is lazily created under a fixed refId, not configured. The
+    // DCW path resolved it server-side and worked; the browser path got "" and
+    // failed the address check in armOnChain.
+    //
+    // Lowercased to match `onchain[a].agentAddress`, which viem returns EIP-55
+    // checksummed. The panel compares the two to ask "is this mandate pointing at
+    // OUR agent?", and a case-sensitive === would answer no for a live Splitsy
+    // mandate.
+    agentAddress: (await resolveAgentAddress().catch(() => null))?.toLowerCase() ?? null,
     onchain,
   });
 }
