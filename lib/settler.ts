@@ -10,7 +10,7 @@
 // It earns: the job fee lands here when the Auditor completes a job, and the
 // review it buys is paid out of that income.
 import { GatewayClient } from "@circle-fin/x402-batching/client";
-import { createPublicClient, createWalletClient, http } from "viem";
+import { createPublicClient, createWalletClient, http, type TransactionReceipt } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { arcTestnet } from "viem/chains";
 import { ARC_TESTNET_RPC } from "./x402/constants.ts";
@@ -55,18 +55,31 @@ const publicClient = createPublicClient({ chain: arcTestnet, transport: http(ARC
 // So every throw past the send carries the hash: a caller must resolve it with
 // settlerReceipt() before retrying, because a blind retry double-settles.
 // Only a throw from the send itself means nothing was broadcast.
+//
+// The `settlement` tag is the discriminator, because nothing else here is one:
+// a config throw carries no cause, and viem forwards the native cause on a
+// failed send, so "has a cause" cannot tell an unconfirmed tx from one that
+// never left. Callers switch on the tag and treat its absence as never-sent:
+//   if (err?.settlement === "indeterminate") await settlerReceipt(err.txHash);
+// Undefined on both never-broadcast paths is the safe default — it is the only
+// answer that never invents a settlement.
 // ponytail: viem re-fetches the nonce per send, so two overlapping settlements can claim the same one — wrap the account in viem's createNonceManager if deliveries ever run concurrently
 export async function settlerWrite(to: `0x${string}`, data: `0x${string}`): Promise<`0x${string}`> {
   const { account } = getSettler();
   const wallet = createWalletClient({ account, chain: arcTestnet, transport: http(ARC_TESTNET_RPC) });
   const hash = await wallet.sendTransaction({ to, data });
-  let receipt;
+  let receipt: TransactionReceipt | undefined;
   try {
     receipt = await publicClient.waitForTransactionReceipt({ hash });
   } catch (err) {
-    throw new Error(`settler tx indeterminate — broadcast but unconfirmed: ${hash}`, { cause: err });
+    throw Object.assign(new Error(`settler tx indeterminate — broadcast but unconfirmed: ${hash}`, { cause: err }), {
+      txHash: hash,
+      settlement: "indeterminate" as const,
+    });
   }
-  if (receipt.status !== "success") throw new Error(`settler tx reverted: ${hash}`);
+  if (receipt.status !== "success") {
+    throw Object.assign(new Error(`settler tx reverted: ${hash}`), { txHash: hash, settlement: "reverted" as const });
+  }
   return hash;
 }
 
