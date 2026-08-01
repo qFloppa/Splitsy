@@ -1,5 +1,8 @@
+import { after } from "next/server";
 import { createPublicClient, http } from "viem";
 import { arcTestnet } from "viem/chains";
+import { REGISTRY_ADDRESS } from "@/lib/arc-read";
+import { triggerAutopay } from "@/lib/autopay-trigger";
 import { getOnchainBillPreimage, publishOnchainBillPreimage } from "@/lib/onchain-bill-preimage-repo";
 
 export const runtime = "nodejs";
@@ -157,6 +160,17 @@ export async function POST(request: Request) {
     const message = err instanceof Error ? err.message : "Failed to publish";
     const status = message.includes("does not match") ? 409 : 500;
     return Response.json({ error: message }, { status });
+  }
+
+  // The browser-wallet creation path lands here, and only here does the bill
+  // become verifiable — the BillCreated webhook woke the agent before this row
+  // existed and it skipped as `unverifiable`. Wake it again now that it can
+  // actually check. Guarded on the registry the agent reads: it resolves the
+  // bill by id alone, so a preimage for the legacy registry would send it to
+  // decide on a different bill wearing the same number.
+  if (registryAddress.toLowerCase() === REGISTRY_ADDRESS.toLowerCase()) {
+    const origin = new URL(request.url).origin;
+    after(() => triggerAutopay(origin, billId));
   }
   return Response.json({ ok: true });
 }

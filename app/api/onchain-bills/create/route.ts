@@ -1,4 +1,6 @@
+import { after } from "next/server";
 import { getSessionUser } from "@/lib/session";
+import { triggerAutopay } from "@/lib/autopay-trigger";
 import { resolveParticipants } from "@/lib/wallet-resolve";
 import { billMetadataHash } from "@/lib/bill-metadata";
 import { encodeCreateBill } from "@/lib/registry-calldata";
@@ -126,6 +128,12 @@ export async function POST(request: Request) {
       metadataHash,
       receiptBytes,
     );
+    // Only now can the agent check what it is about to pay for. The BillCreated
+    // webhook already woke it a moment ago and it skipped for want of this row;
+    // this second wake is the one that can actually verify. Inside the try, so a
+    // failed publish leaves that honest `unverifiable` skip standing.
+    const origin = new URL(request.url).origin;
+    after(() => triggerAutopay(origin, billId.toString()));
   } catch (err) {
     console.error("Preimage publish failed (bill still created):", err);
   }
