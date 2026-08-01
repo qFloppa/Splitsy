@@ -90,7 +90,18 @@ export function withGateway(
     // request, not crash the route's whole module at import.
     const sellerAddress = payTo ? await payTo().catch(() => null) : process.env.SELLER_ADDRESS;
     if (!sellerAddress) {
-      return Response.json({ error: "Missing SELLER_ADDRESS on the server." }, { status: 500 });
+      // Both mean "nobody to pay", but they are different things to go and fix, so
+      // the message has to say which. A route with a resolver reads no
+      // SELLER_ADDRESS at all, and naming it there sends whoever is on call to
+      // check an env var that has no bearing on the failure.
+      return Response.json(
+        {
+          error: payTo
+            ? `Could not resolve a payee address for ${endpoint}.`
+            : "Missing SELLER_ADDRESS on the server.",
+        },
+        { status: 500 },
+      );
     }
     const requirements = requirementsFor(price, sellerAddress, await gatewayTerms());
 

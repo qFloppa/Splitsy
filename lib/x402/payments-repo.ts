@@ -50,12 +50,24 @@ export async function sumSpentTodayUsd(): Promise<number> {
   return data.reduce((sum, r) => sum + Number(r.amount_usdc), 0);
 }
 
+// Endpoints where both the buyer and the seller are Splitsy's own agents. The
+// rows are real payments with a real Gateway tx, but the money never crossed the
+// app's boundary: the Auditor's review fee is paid by the Settler out of income
+// Splitsy already had. Counting it would add to "earned" money nobody outside
+// paid, and once the matching 'spent' row lands it would inflate both totals from
+// a single internal transfer.
+// ponytail: one internal endpoint, matched by literal. Make it a column on x402_payments when a second internal trade appears.
+const INTERNAL_ENDPOINTS = ["/api/agents/review"];
+
 /**
  * The cumulative x402 ledger, or null when there is no database to read it
  * from. The distinction is not pedantic: these figures are shown as real money
  * on a public page, and "nothing has settled yet" and "we cannot see the
  * ledger" are different claims. Returning zeros for the second would let an
  * unconfigured deploy present fabricated figures as a live reading.
+ *
+ * Internal agent-to-agent trades are excluded, so "earned" stays a true claim
+ * about money that came from outside Splitsy.
  */
 export async function getAgentStats(): Promise<{
   earnedUsd: number;
@@ -65,12 +77,16 @@ export async function getAgentStats(): Promise<{
 } | null> {
   const supabase = createSupabaseServerClient();
   if (!supabase) return null;
-  const { data, error } = await supabase.from("x402_payments").select("direction, amount_usdc");
+  const { data, error } = await supabase
+    .from("x402_payments")
+    .select("direction, amount_usdc, endpoint");
   if (error || !data) {
     console.error("[x402] getAgentStats failed, reporting no reading:", error?.message);
     return null;
   }
-  const rows = data as Array<{ direction: X402Direction; amount_usdc: string }>;
+  const rows = (
+    data as Array<{ direction: X402Direction; amount_usdc: string; endpoint: string }>
+  ).filter((r) => !INTERNAL_ENDPOINTS.includes(r.endpoint));
   const sum = (d: X402Direction) =>
     rows.filter((r) => r.direction === d).reduce((s, r) => s + Number(r.amount_usdc), 0);
   return {
