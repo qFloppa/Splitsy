@@ -3,6 +3,7 @@ import { verifyCircleSignature, type CircleNotification } from "@/lib/circle-web
 import { confirmDebtPaidByTxId, revertDebtByTxId, recordWebhookEvent } from "@/lib/bills-repo";
 import { parseDebtPaidLog, recordExternalPaidFeedbackSafely } from "@/lib/erc8004";
 import { parseBillCreatedLog } from "@/lib/arc-read";
+import { triggerAutopay } from "@/lib/autopay-trigger";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -92,12 +93,12 @@ export async function POST(request: Request) {
       );
     }
 
-    // Second monitor on the same registry: BillCreated is what wakes the
-    // debtor-side autopay agent. Handing it off over HTTP rather than importing
-    // the logic keeps the agent behind its own Bearer check — it spends money,
-    // so it must stay independently authorized even when we are the caller.
-    // In after() so a slow fan-out of on-chain payments never holds this ack
-    // open; Circle retries anything that times out.
+    // Second monitor on the same registry: BillCreated is ONE of the two things
+    // that wake the debtor-side autopay agent. The other is whichever route
+    // publishes the bill's preimage — this event arrives before that row exists,
+    // so on its own it made the agent skip every bill as `unverifiable`. See
+    // lib/autopay-trigger.ts. In after() so a slow fan-out of on-chain payments
+    // never holds this ack open; Circle retries anything that times out.
     const created = parseBillCreatedLog(event.notification.topics ?? [], event.notification.data ?? "0x");
     if (created) {
       const origin = new URL(request.url).origin;
@@ -106,27 +107,6 @@ export async function POST(request: Request) {
   }
 
   return Response.json({ ok: true });
-}
-
-// Fire-and-forget: autopay declining, or being unconfigured, must never turn a
-// delivered webhook into a retry. Every decision it makes is logged on its side.
-async function triggerAutopay(origin: string, billId: string) {
-  const secret = process.env.AGENT_SECRET ?? process.env.CRON_SECRET;
-  if (!secret) {
-    console.log(`autopay webhook: no AGENT_SECRET/CRON_SECRET — skipping bill ${billId}`);
-    return;
-  }
-  try {
-    const res = await fetch(`${origin}/api/agents/autopay`, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${secret}`, "Content-Type": "application/json" },
-      cache: "no-store",
-      body: JSON.stringify({ billId }),
-    });
-    console.log(`autopay webhook: bill ${billId} -> ${res.status}`);
-  } catch (err) {
-    console.error(`autopay webhook: bill ${billId} failed:`, err instanceof Error ? err.message : err);
-  }
 }
 
 // Lets you sanity-check the deployed URL in a browser before registering it.

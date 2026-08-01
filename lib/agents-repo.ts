@@ -1,7 +1,8 @@
 // Supabase access for the two settlement agents (see schema-agents.sql).
 // Mirrors lib/reputation-repo.ts: thin, typed, no business logic — the rules
 // live in lib/autopay.ts and lib/dunning.ts, which stay pure.
-import type { AutopayGrant } from "./autopay.ts";
+import type { AutopayDecision, AutopayGrant } from "./autopay.ts";
+import { REVIEW_UNAVAILABLE } from "./autopay-review.ts";
 import type { DunningAction } from "./dunning.ts";
 import { createSupabaseServerClient } from "./supabase.ts";
 
@@ -154,8 +155,48 @@ export async function claimAutopayDecision(row: AutopayLogRow): Promise<boolean>
     tx_hash: row.txHash,
   });
   if (!error) return true;
-  if (error.code === "23505") return false;
+  if (error.code === "23505") return reclaimUndecided(client, row);
   throw new Error(`Failed to claim autopay decision: ${error.message}`);
+}
+
+// The two skips that mean "the agent never got to judge this bill", as opposed
+// to "the agent judged it and said no". Both are taken when the preimage row is
+// missing — which, for a bill created through Splitsy, usually means it had not
+// been published YET rather than never (lib/autopay-trigger.ts explains why the
+// BillCreated event outruns the publish).
+//
+// Both spelled from their source of truth rather than as loose strings: this
+// list going stale is the only way the fix silently stops working, and a rename
+// on either side should break the build instead of the behaviour.
+const UNDECIDED: string[] = ["unverifiable" satisfies AutopayDecision["reason"], REVIEW_UNAVAILABLE];
+
+// The loser of the claim race gets one chance to overturn the winner, but only
+// if the winner never actually reached a decision. Anything else — a real skip,
+// or a pay — stands, which is what keeps this an idempotency key: a redelivered
+// webhook still cannot pay twice.
+//
+// The `in(reason)` predicate is what makes it safe under concurrency. Postgres
+// re-evaluates it against the updated row version, so if two runs overturn the
+// same row at once the second matches nothing and loses.
+async function reclaimUndecided(
+  client: ReturnType<typeof requireClient>,
+  row: AutopayLogRow,
+): Promise<boolean> {
+  const { data, error } = await client
+    .from("autopay_log")
+    .update({
+      decision: row.decision,
+      reason: row.reason,
+      amount_usdc: row.amountUsdc,
+      tx_hash: row.txHash,
+    })
+    .eq("registry_address", row.registryAddress.toLowerCase())
+    .eq("bill_id", row.billId)
+    .eq("debtor_address", row.debtorAddress.toLowerCase())
+    .in("reason", UNDECIDED)
+    .select("id");
+  if (error) throw new Error(`Failed to re-decide autopay row: ${error.message}`);
+  return (data?.length ?? 0) > 0;
 }
 
 export async function finalizeAutopayDecision(
