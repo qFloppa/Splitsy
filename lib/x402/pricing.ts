@@ -6,6 +6,10 @@
 export const PRICES = {
   "/api/ocr": "$0.005",
   "/api/fx": "$0.001",
+  // The Auditor's bill review, bought by the Settler out of its job-fee income
+  // before every settlement. Priced well under the $0.01 job fee so the Settler
+  // is still ahead on a job it completes.
+  "/api/agents/review": "$0.002",
 } as const;
 
 export type PaidEndpoint = keyof typeof PRICES;

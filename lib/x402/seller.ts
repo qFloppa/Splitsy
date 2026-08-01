@@ -80,11 +80,15 @@ export function withGateway(
   handler: (req: Request) => Promise<Response>,
   price: string,
   endpoint: string,
+  // Who gets paid. Defaults to the treasury (SELLER_ADDRESS), which is what
+  // /api/ocr and /api/fx want. A resolver rather than a string because the
+  // Auditor's address is a lazily-created Circle wallet, not an env var.
+  payTo?: () => Promise<string | null>,
 ) {
   return async (req: Request): Promise<Response> => {
-    // Read at call time, not module load: an unset SELLER_ADDRESS must fail this
+    // Read at call time, not module load: an unset seller must fail this
     // request, not crash the route's whole module at import.
-    const sellerAddress = process.env.SELLER_ADDRESS;
+    const sellerAddress = payTo ? await payTo().catch(() => null) : process.env.SELLER_ADDRESS;
     if (!sellerAddress) {
       return Response.json({ error: "Missing SELLER_ADDRESS on the server." }, { status: 500 });
     }
