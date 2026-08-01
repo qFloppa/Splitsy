@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { decideAutopay, type AutopayGrant, type AutopayInput } from "./autopay.ts";
+import { buildGrant, decideAutopay, type AutopayGrant, type AutopayInput } from "./autopay.ts";
 import { billMetadataHash, type BillPreimage } from "./bill-metadata.ts";
 
 const CREATOR = "0xAbC0000000000000000000000000000000000001";
@@ -146,4 +146,79 @@ test("a zero daily cap blocks everything", () => {
   const d = decideAutopay(input({ grant: { ...GRANT, maxPerDayUsdc: 0 } }));
   assert.equal(d.pay, false);
   assert.equal(d.reason, "over_daily_cap");
+});
+
+// --- buildGrant --------------------------------------------------------------
+
+const MANDATE = {
+  agent: "0xAgent",
+  maxPerBill: 25_000_000n, // 25 USDC
+  maxPerDay: 60_000_000n, // 60 USDC
+  allowedCreators: ["0xCreatorOnChain"],
+};
+
+const MIRROR = {
+  enabled: true,
+  maxPerBillUsdc: 5,
+  maxPerDayUsdc: 9,
+  trustedCreators: ["0xcreatorinpostgres"],
+  minCreatorScore: 70,
+  requireVerifiedHash: true,
+};
+
+test("buildGrant('mandate') takes the caps from the chain and ignores the mirror's", () => {
+  const grant = buildGrant("mandate", MANDATE, MIRROR);
+  assert.ok(grant);
+  assert.equal(grant.enabled, true);
+  assert.equal(grant.maxPerBillUsdc, 25);
+  assert.equal(grant.maxPerDayUsdc, 60);
+  assert.deepEqual(grant.trustedCreators, ["0xCreatorOnChain"]);
+  // The two rules the chain cannot evaluate still come from Postgres.
+  assert.equal(grant.minCreatorScore, 70);
+  assert.equal(grant.requireVerifiedHash, true);
+});
+
+test("buildGrant('mandate') is null when there is no mandate on chain", () => {
+  assert.equal(buildGrant("mandate", null, MIRROR), null);
+});
+
+test("buildGrant('mandate') works with no Postgres row at all, failing closed on the hash", () => {
+  const grant = buildGrant("mandate", MANDATE, null);
+  assert.ok(grant);
+  assert.equal(grant.minCreatorScore, 0);
+  assert.equal(grant.requireVerifiedHash, true);
+});
+
+test("buildGrant('funded') takes the caps from the mirror and ignores the chain's", () => {
+  const grant = buildGrant("funded", MANDATE, MIRROR);
+  assert.ok(grant);
+  assert.equal(grant.maxPerBillUsdc, 5);
+  assert.equal(grant.maxPerDayUsdc, 9);
+  assert.deepEqual(grant.trustedCreators, ["0xcreatorinpostgres"]);
+});
+
+test("buildGrant('funded') needs no mandate on chain", () => {
+  const grant = buildGrant("funded", null, MIRROR);
+  assert.ok(grant);
+  assert.equal(grant.maxPerBillUsdc, 5);
+});
+
+test("buildGrant('funded') is null when autopay is switched off in the mirror", () => {
+  assert.equal(buildGrant("funded", MANDATE, { ...MIRROR, enabled: false }), null);
+  assert.equal(buildGrant("funded", MANDATE, null), null);
+});
+
+test("funded caps still bind: decideAutopay refuses a share above the mirror's per-bill cap", () => {
+  const grant = buildGrant("funded", null, MIRROR);
+  const decision = decideAutopay({
+    grant,
+    remaining: 6_000_000n, // 6 USDC against a 5 USDC mirror cap
+    creator: "0xcreatorinpostgres",
+    creatorScore: 90,
+    spentTodayUsdc: 0,
+    onchainMetadataHash: "0x00",
+    preimage: null,
+  });
+  assert.equal(decision.pay, false);
+  assert.equal(decision.reason, "over_bill_cap");
 });

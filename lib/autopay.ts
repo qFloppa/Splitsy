@@ -90,3 +90,67 @@ export function decideAutopay(input: AutopayInput): AutopayDecision {
 
   return { pay: true, amount: input.remaining, reason: "ok" };
 }
+
+// AutopayMandate.mandates(debtor), as lib/arc-read.ts returns it. Null = the
+// user has written no mandate on this wallet.
+export type MandateFacts = {
+  agent: string;
+  maxPerBill: bigint; // USDC base units
+  maxPerDay: bigint; // USDC base units
+  allowedCreators: string[];
+} | null;
+
+// The autopay_grants row. Null = the user has never touched autopay.
+export type MirrorRules = {
+  enabled: boolean;
+  maxPerBillUsdc: number;
+  maxPerDayUsdc: number;
+  trustedCreators: string[];
+  minCreatorScore: number;
+  requireVerifiedHash: boolean;
+} | null;
+
+// The ONE new branch in the agent-economy design, and it is a pure function so
+// it can be tested without a network.
+//
+// decideAutopay does not learn about modes — its signature and its purity are
+// load-bearing. Only its INPUT changes, and this is what chooses the input:
+//
+//   'mandate' — the caps come from AutopayMandate, the contract that will
+//               revert on its own numbers regardless of what this server
+//               believes. No mandate means no permission: null.
+//   'funded'  — the mandate is not in the path at all, so the caps come from
+//               the Postgres mirror and are enforced HERE. That is a genuine
+//               weakening and the UI has to say so: in this mode the only
+//               ceiling the chain enforces is the agent's own balance.
+//
+// The two rules a contract can never evaluate — the ERC-8004 score floor and
+// the verified-hash check — come from Postgres in BOTH modes, because Postgres
+// is their only home. Both default to the closed direction when the row is
+// missing: score floor off, hash check ON.
+export function buildGrant(mode: MoneyMode, mandate: MandateFacts, rules: MirrorRules): AutopayGrant | null {
+  const minCreatorScore = rules?.minCreatorScore ?? 0;
+  const requireVerifiedHash = rules?.requireVerifiedHash ?? true;
+
+  if (mode === "funded") {
+    if (!rules || !rules.enabled) return null;
+    return {
+      enabled: true,
+      maxPerBillUsdc: rules.maxPerBillUsdc,
+      maxPerDayUsdc: rules.maxPerDayUsdc,
+      trustedCreators: rules.trustedCreators,
+      minCreatorScore,
+      requireVerifiedHash,
+    };
+  }
+
+  if (!mandate) return null;
+  return {
+    enabled: true,
+    maxPerBillUsdc: toUsdc(mandate.maxPerBill),
+    maxPerDayUsdc: toUsdc(mandate.maxPerDay),
+    trustedCreators: mandate.allowedCreators,
+    minCreatorScore,
+    requireVerifiedHash,
+  };
+}
