@@ -67,7 +67,14 @@ import {
   MANDATE_ADDRESS,
   REGISTRY_ADDRESS,
 } from "@/lib/arc-read";
-import { buildGrant, decideAutopay, type MoneyMode } from "@/lib/autopay";
+import {
+  buildGrant,
+  decideAutopay,
+  settlementRowFor,
+  type FailureKind,
+  type MoneyMode,
+  type SettlementProgress,
+} from "@/lib/autopay";
 import { REVIEW_UNAVAILABLE, type ReviewInput, type ReviewVerdict } from "@/lib/autopay-review";
 import { executeContractOnArc, getOrCreateArcWallet, InsufficientFundsError } from "@/lib/circle-dcw";
 import {
@@ -88,6 +95,7 @@ import { getReputationSummaryForWallets } from "@/lib/reputation-repo";
 import {
   ensureSettlerGatewayBalance,
   getSettler,
+  isIndeterminate,
   isSettlerConfigured,
   settlerReceipt,
   settlerWrite,
@@ -98,6 +106,23 @@ import { recordPayment } from "@/lib/x402/payments-repo";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+
+// The ceremony is long and it runs once PER PARTICIPANT, serially. A platform
+// timeout mid-ceremony is the worst outcome this route has: the claim row is
+// already written 'pay' with a null tx_hash, nothing rolls it back, and
+// reclaimUndecided cannot overturn it because 'ok' is not in its UNDECIDED list
+// — so the log would permanently claim money moved when it may not have.
+//
+// Sized to let ONE participant finish rather than to fit a whole bill. The
+// per-participant worst case is six Circle calls at their ~60s poll cap
+// (createJob, two lazy approvals, fund, payDebtFor, complete) plus two
+// settlerWrites at the 60s ceiling lib/settler.ts now sets, plus one 30s
+// receipt wait — about 510s, and Mandate mode trades a Circle call for a
+// settlerWrite rather than adding one. Bills with more participants than fit are
+// cut off BETWEEN participants, where the loop is safe: each has its own claim
+// row, and the ones never reached were never claimed.
+// ponytail: a killed request still strands its in-flight participant's row as a 'pay' with no tx_hash — the durable fix is a reconciliation sweep over rows older than N minutes in that state, which no cron owns yet
+export const maxDuration = 600;
 
 const usdc = (units: bigint) => Number(units) / 1e6;
 
@@ -176,13 +201,20 @@ export async function POST(request: Request) {
   return Response.json({ ok: true, billId: billId.toString(), outcomes });
 }
 
-const FEE_USDC = Number(process.env.SETTLEMENT_FEE_USDC ?? "0.01");
+// Read defensively rather than trusted: BigInt(NaN) is a RangeError, and at
+// module scope that takes the whole route down at import — every webhook 500s
+// on a typo in one env var. Every other broken config in this file reads as
+// "autopay off", so an unparseable fee falls back to the default instead.
+const FEE_ENV = Number(process.env.SETTLEMENT_FEE_USDC ?? "0.01");
+const FEE_USDC = Number.isFinite(FEE_ENV) && FEE_ENV >= 0 ? FEE_ENV : 0.01;
 const FEE_UNITS = BigInt(Math.round(FEE_USDC * 1_000_000));
 
-// The agent must be able to cover the fee AND its own gas for six
-// transactions. Arc charges gas in USDC and a settlement is the most gas this
-// agent ever spends in one go, so the headroom is deliberate rather than tight:
-// an agent that runs dry mid-ceremony strands an escrowed fee.
+// The agent must be able to cover the fee AND its own gas. It signs five of the
+// eight transactions a settlement can involve — createJob, fund, up to two lazy
+// approvals, and payDebtFor in Funded mode — while the Settler and the Auditor
+// pay for their own out of their own balances. Arc charges gas in USDC and this
+// is the most an agent ever spends in one go, so the headroom is deliberate
+// rather than tight: an agent that runs dry mid-ceremony strands an escrowed fee.
 const GAS_HEADROOM_UNITS = 200_000n; // 0.20 USDC
 
 const JOB_TTL_SECONDS = 3600n;
@@ -367,6 +399,11 @@ async function settleOne(input: {
     return { debtor, decision: "skip", reason: "agent_unfunded", amountUsdc: 0 };
   }
 
+  // How far the settlement got, filled in by runJob as it goes. Read only on
+  // failure, and the only thing standing between a settlement that landed and a
+  // log row claiming nothing was spent.
+  const progress: SettlementProgress = { settlementTx: null, broadcast: false };
+
   try {
     const { jobId, settlementTx } = await runJob({
       agent,
@@ -375,6 +412,7 @@ async function settleOne(input: {
       debtor,
       mode,
       amount: decision.amount,
+      progress,
     });
     await finalizeAutopayDecision(REGISTRY_ADDRESS, billKey, debtor, {
       txHash: settlementTx,
@@ -392,14 +430,28 @@ async function settleOne(input: {
     return { debtor, decision: "pay", reason: decision.reason, amountUsdc, txHash: settlementTx };
   } catch (err) {
     // The daily budget needs no rolling back — the token bucket only advances
-    // inside a payFor that succeeded. What does need correcting is the log: a
-    // 'pay' row for money that did not move would be a lie in the one record the
-    // user is asked to trust.
-    const reason =
-      err instanceof InsufficientFundsError ? "agent_unfunded" : err instanceof JobError ? "job_failed" : "tx_failed";
-    await releaseSpend(billKey, debtor, reason);
+    // inside a payFor that succeeded. What does need correcting is the log, and
+    // in BOTH directions: a 'pay' row for money that did not move is a lie, and
+    // so is a zero-amount 'skip' for money that did. settlementRowFor decides
+    // which, off how far runJob actually got.
+    const kind: FailureKind =
+      err instanceof InsufficientFundsError
+        ? "insufficient_funds"
+        : err instanceof WalletUnavailableError
+          ? "wallet_unavailable"
+          : err instanceof JobError
+            ? "job"
+            : "other";
+    const row = settlementRowFor(progress, kind, amountUsdc);
+    await finalizeAutopayDecision(REGISTRY_ADDRESS, billKey, debtor, row).catch(() => undefined);
     console.error(`autopay: bill ${billKey} for ${debtor} failed:`, err instanceof Error ? err.message : err);
-    return { debtor, decision: "skip", reason, amountUsdc: 0 };
+    return {
+      debtor,
+      decision: row.decision,
+      reason: row.reason,
+      amountUsdc: row.amountUsdc,
+      txHash: row.txHash ?? undefined,
+    };
   }
 }
 
@@ -411,6 +463,17 @@ class JobError extends Error {
   constructor(step: string, cause: unknown) {
     super(`job ${step}: ${cause instanceof Error ? cause.message : String(cause)}`);
     this.name = "JobError";
+  }
+}
+
+// A role in the ceremony has no wallet at all. Same fact as a missing Settler or
+// a missing user agent, so it carries their slug out of runJob rather than being
+// flattened into 'job_failed', which would send the operator hunting for a
+// reverted transaction that never existed.
+class WalletUnavailableError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "WalletUnavailableError";
   }
 }
 
@@ -430,10 +493,13 @@ async function runJob(input: {
   debtor: `0x${string}`;
   mode: MoneyMode;
   amount: bigint;
+  progress: SettlementProgress;
 }): Promise<{ jobId: bigint; settlementTx: `0x${string}` }> {
-  const { agent, settler, billId, debtor } = input;
+  const { agent, settler, billId, debtor, progress } = input;
+  // Its absence is the same fact as a missing Settler — a role in the ceremony
+  // has no wallet — so it gets the same slug rather than the vaguer 'job_failed'.
   const auditor = await getOrCreateArcWallet("splitsy", "auditor");
-  if (!auditor) throw new JobError("evaluator", "the Auditor wallet is unavailable");
+  if (!auditor) throw new WalletUnavailableError("the Auditor wallet is unavailable");
 
   const expiredAt = BigInt(Math.floor(Date.now() / 1000)) + JOB_TTL_SECONDS;
   const description = `Splitsy: settle bill ${billId} share for ${debtor}`;
@@ -454,6 +520,10 @@ async function runJob(input: {
     if (id === null) throw new Error("createJob receipt has no JobCreated log");
     jobId = id;
   } catch (err) {
+    // An agent too poor to open a job is 'agent_unfunded', not 'job_failed' —
+    // that is the case the slug was introduced for, and wrapping it here would
+    // hide it from the instanceof test in settleOne's catch.
+    if (err instanceof InsufficientFundsError) throw err;
     throw new JobError("createJob", err);
   }
 
@@ -470,37 +540,50 @@ async function runJob(input: {
     await ensureAgentAllowance(agent, AGENTIC_COMMERCE_ADDRESS, FEE_UNITS);
     await executeContractOnArc(agent.walletId, AGENTIC_COMMERCE_ADDRESS, encodeFund(jobId));
   } catch (err) {
+    if (err instanceof InsufficientFundsError) throw err;
     throw new JobError("fund", err);
   }
 
   // 4. settle — the only step that moves BILL money, and the only one that
   //    differs between the two modes.
+  //
+  //    Deliberately NOT wrapped in a JobError: the bill money failing is a
+  //    different problem from the ceremony failing, and InsufficientFundsError
+  //    must reach settleOne intact so it can be logged as 'agent_unfunded'.
+  //
+  //    Everything from here on records its progress on `input.progress`, which
+  //    the caller reads on failure. Once the send is away the money may move
+  //    whatever this function throws, and a row that fails to say so hands the
+  //    user back a daily cap they have already spent.
   let settlementTx: `0x${string}`;
-  try {
-    if (input.mode === "funded") {
-      // The agent pays out of its own balance. payDebtFor credits the DEBTOR
-      // and emits DebtPaid naming them as payer, so reputation still flows to
-      // the user rather than to their agent.
-      await ensureAgentAllowance(agent, REGISTRY_ADDRESS, input.amount);
-      const tx = await executeContractOnArc(
-        agent.walletId,
-        REGISTRY_ADDRESS,
-        encodePayDebtFor(billId, debtor, input.amount),
-      );
-      if (!tx.txHash) throw new Error("payDebtFor is still pending — no tx hash");
-      settlementTx = tx.txHash as `0x${string}`;
-    } else {
-      // One call, carrying no amount: the mandate reads the debtor's full
-      // remaining share itself and re-checks every cap on chain. Whatever this
-      // route decided, the contract decides again.
+  if (input.mode === "funded") {
+    // The agent pays out of its own balance. payDebtFor credits the DEBTOR
+    // and emits DebtPaid naming them as payer, so reputation still flows to
+    // the user rather than to their agent.
+    await ensureAgentAllowance(agent, REGISTRY_ADDRESS, input.amount);
+    progress.broadcast = true;
+    const tx = await executeContractOnArc(agent.walletId, REGISTRY_ADDRESS, encodePayDebtFor(billId, debtor, input.amount));
+    // PENDING past Circle's ~60s poll, with no hash to show for it. The
+    // transaction is real and may mine seconds from now, so this is an
+    // unconfirmed settlement rather than a clean failure — `broadcast` above is
+    // what makes the caller log it as one.
+    if (!tx.txHash) throw new Error("payDebtFor is still pending — no tx hash");
+    settlementTx = tx.txHash as `0x${string}`;
+  } else {
+    // One call, carrying no amount: the mandate reads the debtor's full
+    // remaining share itself and re-checks every cap on chain. Whatever this
+    // route decided, the contract decides again.
+    try {
+      progress.broadcast = true;
       settlementTx = await settlerWrite(MANDATE_ADDRESS, encodePayFor(billId, debtor));
+    } catch (err) {
+      // A reverted payFor moved nothing and never will, so it must NOT count
+      // against the day. Only an indeterminate one stays broadcast.
+      if (!isIndeterminate(err)) progress.broadcast = false;
+      throw err;
     }
-  } catch (err) {
-    // NOT a JobError: the bill money failing is a different problem from the
-    // ceremony failing, and InsufficientFundsError must reach the caller intact
-    // so it can be logged as 'agent_unfunded'.
-    throw err;
   }
+  progress.settlementTx = settlementTx;
 
   // 5. submit — the deliverable IS the settlement transaction, hashed, so
   //    anyone holding the tx hash can recompute it and check the job.
@@ -543,9 +626,11 @@ async function buyReview(baseUrl: string, body: ReviewInput): Promise<ReviewVerd
     await ensureSettlerGatewayBalance();
     const { gateway } = getSettler();
     const result = await gateway.pay(`${baseUrl}/api/agents/review`, { method: "POST", body });
-    const data = result.data as { approve?: unknown; reason?: unknown };
-    if (typeof data?.approve !== "boolean") return { approve: false, reason: REVIEW_UNAVAILABLE };
 
+    // Recorded BEFORE the body is inspected, because by this line the money is
+    // already gone: Gateway settled the payment to get the response at all. An
+    // unreadable verdict still costs the Settler its fee, and a spend the
+    // ledger never saw is the one kind of error the x402 books cannot survive.
     after(() =>
       recordPayment({
         direction: "spent",
@@ -555,6 +640,9 @@ async function buyReview(baseUrl: string, body: ReviewInput): Promise<ReviewVerd
         gatewayTx: result.transaction || null,
       }),
     );
+
+    const data = result.data as { approve?: unknown; reason?: unknown };
+    if (typeof data?.approve !== "boolean") return { approve: false, reason: REVIEW_UNAVAILABLE };
 
     const reason = typeof data.reason === "string" && data.reason.trim() ? data.reason.trim() : "";
     return data.approve

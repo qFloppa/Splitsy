@@ -59,13 +59,9 @@ const publicClient = createPublicClient({ chain: arcTestnet, transport: http(ARC
 // The `settlement` tag is the discriminator, because nothing else here is one:
 // a config throw carries no cause, and viem forwards the native cause on a
 // failed send, so "has a cause" cannot tell an unconfirmed tx from one that
-// never left. Callers switch on the tag and treat its absence as never-sent:
-//   if (err?.settlement === "indeterminate") await settlerReceipt(err.txHash);
-// and settlerReceipt THROWING is not permission to resend either — a tx that
-// has still not mined is still indeterminate, so only a receipt in hand ever
-// resolves one.
-// Undefined on both never-broadcast paths is the safe default — it is the only
-// answer that never invents a settlement.
+// never left. Callers switch on the tag through isIndeterminate() below and
+// treat its absence as never-sent. Undefined on both never-broadcast paths is
+// the safe default — it is the only answer that never invents a settlement.
 // ponytail: viem re-fetches the nonce per send, so two overlapping settlements can claim the same one — wrap the account in viem's createNonceManager if deliveries ever run concurrently
 export async function settlerWrite(to: `0x${string}`, data: `0x${string}`): Promise<`0x${string}`> {
   const { account } = getSettler();
@@ -73,7 +69,12 @@ export async function settlerWrite(to: `0x${string}`, data: `0x${string}`): Prom
   const hash = await wallet.sendTransaction({ to, data });
   let receipt: TransactionReceipt | undefined;
   try {
-    receipt = await publicClient.waitForTransactionReceipt({ hash });
+    // Bounded far below viem's 180s default. Three of these run serially inside
+    // one webhook that also makes six Circle calls, and the caller cannot afford
+    // to spend nine minutes discovering that Arc is wedged. Timing out sooner
+    // means MORE indeterminate throws, which is fine: the caller accounts for
+    // one correctly, and it cannot account for a request the platform killed.
+    receipt = await publicClient.waitForTransactionReceipt({ hash, timeout: 60_000 });
   } catch (err) {
     throw Object.assign(new Error(`settler tx indeterminate — broadcast but unconfirmed: ${hash}`, { cause: err }), {
       txHash: hash,
@@ -85,6 +86,19 @@ export async function settlerWrite(to: `0x${string}`, data: `0x${string}`): Prom
   }
   return hash;
 }
+
+// The tag above, read as a type guard rather than as a bare string literal at
+// each call site.
+//
+// NOT a licence to resend — nothing in this codebase retries a settlement, and
+// the autopay_log claim row is what makes that structurally true. What callers
+// actually need it for is ACCOUNTING: 'indeterminate' means the payFor was
+// broadcast and may still mine, so the money must be counted as spent, while
+// 'reverted' and an unsent tx mean it definitely was not. Those are opposite
+// rows in the log, and a mistyped literal would quietly pick the wrong one and
+// hand a user back a daily cap they had already spent.
+export const isIndeterminate = (e: unknown): e is { txHash: `0x${string}` } =>
+  (e as { settlement?: string })?.settlement === "indeterminate";
 
 // The receipt for a transaction this process did not necessarily send — in
 // practice the user's agent's createJob, whose logs carry the job id.

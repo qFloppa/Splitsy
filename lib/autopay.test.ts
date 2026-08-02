@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { buildGrant, decideAutopay, type AutopayGrant, type AutopayInput } from "./autopay.ts";
+import { buildGrant, decideAutopay, settlementRowFor, type AutopayGrant, type AutopayInput } from "./autopay.ts";
 import { billMetadataHash, type BillPreimage } from "./bill-metadata.ts";
 
 const CREATOR = "0xAbC0000000000000000000000000000000000001";
@@ -240,4 +240,54 @@ test("funded caps still bind: decideAutopay refuses a share above the mirror's p
   });
   assert.equal(decision.pay, false);
   assert.equal(decision.reason, "over_bill_cap");
+});
+
+// --- settlementRowFor -------------------------------------------------------
+// The failure-accounting fork. These exist because getting it wrong is an
+// overspend, not a cosmetic log bug: sumAutopaySpentTodayUsdc only sums rows
+// with decision='pay', and in Funded mode that sum IS the daily cap.
+
+const MOVED = { settlementTx: "0xfeed", broadcast: true };
+const BROADCAST = { settlementTx: null, broadcast: true };
+const NOTHING = { settlementTx: null, broadcast: false };
+
+test("a settlement that landed is logged as a spend even though the ceremony broke", () => {
+  const row = settlementRowFor(MOVED, "job", 8);
+  assert.equal(row.decision, "pay", "a zero-amount skip here refunds the day's cap for money that moved");
+  assert.equal(row.amountUsdc, 8);
+  assert.equal(row.txHash, "0xfeed", "the hash is the evidence the debt is settled");
+  assert.equal(row.jobStatus, "settled_incomplete");
+  assert.equal(row.reason, "job_failed");
+});
+
+test("the exact overspend: two 8 USDC settlements that both broke still total 16 against the cap", () => {
+  // Bill A settles, complete() reverts. Bill B arrives ten minutes later.
+  // sumAutopaySpentTodayUsdc counts decision='pay' rows only, so if A were a
+  // skip the day would read 0 spent and B would pay against a 10 USDC cap.
+  const rows = [settlementRowFor(MOVED, "job", 8), settlementRowFor(MOVED, "job", 8)];
+  const countedByTheCap = rows.filter((r) => r.decision === "pay").reduce((sum, r) => sum + r.amountUsdc, 0);
+  assert.equal(countedByTheCap, 16);
+});
+
+test("a broadcast-but-unconfirmed settlement counts as spent, and says so", () => {
+  const row = settlementRowFor(BROADCAST, "other", 8);
+  assert.equal(row.decision, "pay", "it may still mine — the cap must fail closed");
+  assert.equal(row.amountUsdc, 8);
+  assert.equal(row.txHash, null, "no hash to record, which is what a sweep looks for");
+  assert.equal(row.jobStatus, "settlement_unconfirmed");
+});
+
+test("a ceremony that broke before the money moved is a real skip", () => {
+  const row = settlementRowFor(NOTHING, "job", 8);
+  assert.equal(row.decision, "skip");
+  assert.equal(row.amountUsdc, 0, "nothing moved, so nothing may be charged against the cap");
+  assert.equal(row.txHash, null);
+  assert.equal(row.jobStatus, "failed");
+});
+
+test("each failure kind keeps its own slug, so the user is told what to fix", () => {
+  assert.equal(settlementRowFor(NOTHING, "insufficient_funds", 8).reason, "agent_unfunded");
+  assert.equal(settlementRowFor(NOTHING, "wallet_unavailable", 8).reason, "agent_wallet_unavailable");
+  assert.equal(settlementRowFor(NOTHING, "job", 8).reason, "job_failed");
+  assert.equal(settlementRowFor(NOTHING, "other", 8).reason, "tx_failed");
 });

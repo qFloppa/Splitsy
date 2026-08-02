@@ -159,3 +159,74 @@ export function buildGrant(mode: MoneyMode, mandate: MandateFacts, rules: Mirror
     requireVerifiedHash,
   };
 }
+
+// How far the settlement got before the ceremony threw. The route fills this in
+// as it goes, because only the route can see it: a hash in hand means the send
+// was accepted, and `broadcast` means it left but nothing confirmed it.
+export type SettlementProgress = {
+  settlementTx: string | null;
+  broadcast: boolean;
+};
+
+// What went wrong, classified by the route so this module never has to import
+// the Circle SDK's error classes to ask.
+export type FailureKind = "insufficient_funds" | "wallet_unavailable" | "job" | "other";
+
+// The autopay_log row a failed ceremony should leave behind.
+export type SettlementRow = {
+  decision: "pay" | "skip";
+  reason: string;
+  amountUsdc: number;
+  txHash: string | null;
+  jobStatus: string;
+};
+
+// The one question a failed settlement has to answer: DID THE MONEY MOVE?
+//
+// Getting it wrong in the cheap-looking direction is a real overspend. A row
+// written 'skip' with amount 0 is invisible to sumAutopaySpentTodayUsdc, which
+// only sums decision='pay' — so in Funded mode, where the log is the ONLY record
+// of the day's spend, a settlement that succeeded on chain but broke afterwards
+// would silently hand the user their whole daily cap back. Two 8 USDC bills
+// against a 10 USDC cap both pay, and 16 USDC is gone.
+//
+// So the rule is: anything that might have moved money is logged 'pay' for the
+// full amount. That direction is fail-closed — it can cost a user headroom they
+// were entitled to, which is recoverable, rather than spending money they had
+// already capped, which is not.
+//
+// `reason` stays the failure slug in every case, including the 'pay' ones. The
+// row is meant to be read as "this is what we must assume was spent, and this is
+// what went wrong"; jobStatus carries which of those two things happened.
+export function settlementRowFor(
+  progress: SettlementProgress,
+  kind: FailureKind,
+  amountUsdc: number,
+): SettlementRow {
+  const reason =
+    kind === "insufficient_funds"
+      ? "agent_unfunded"
+      : kind === "wallet_unavailable"
+        ? "agent_wallet_unavailable"
+        : kind === "job"
+          ? "job_failed"
+          : "tx_failed";
+
+  // The settlement landed and something after it broke — submit or complete.
+  // The debt is paid; only the escrow ceremony is unfinished.
+  if (progress.settlementTx) {
+    return { decision: "pay", reason, amountUsdc, txHash: progress.settlementTx, jobStatus: "settled_incomplete" };
+  }
+
+  // Sent, but nothing ever confirmed it: Circle's poll timed out with no hash,
+  // or settlerWrite went indeterminate. It may still mine, so it must count
+  // against the cap. No hash to record, which is exactly what makes this row
+  // the one a reconciliation sweep has to revisit.
+  if (progress.broadcast) {
+    return { decision: "pay", reason, amountUsdc, txHash: null, jobStatus: "settlement_unconfirmed" };
+  }
+
+  // Nothing was ever broadcast — the ceremony broke before step 4, or the send
+  // itself was rejected. No money moved and none can.
+  return { decision: "skip", reason, amountUsdc: 0, txHash: null, jobStatus: "failed" };
+}
