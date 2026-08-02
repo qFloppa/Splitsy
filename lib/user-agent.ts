@@ -115,6 +115,7 @@ export async function ensureAgentAllowance(
   agent: UserAgent,
   spender: `0x${string}`,
   need: bigint,
+  pollMs?: number,
 ): Promise<void> {
   const allowance = await getUsdcAllowanceOnchain(agent.address, spender);
   if (allowance >= need) return;
@@ -122,6 +123,7 @@ export async function ensureAgentAllowance(
     agent.walletId,
     ARC_USDC_ADDRESS,
     encodeApprove(spender, need * APPROVAL_MULTIPLE),
+    pollMs,
   );
   if (tx.state !== "COMPLETE" && tx.state !== "CONFIRMED") {
     throw new Error(`agent USDC approval for ${spender} is ${tx.state} — allowance unconfirmed (tx ${tx.id})`);

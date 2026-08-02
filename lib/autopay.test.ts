@@ -247,9 +247,9 @@ test("funded caps still bind: decideAutopay refuses a share above the mirror's p
 // overspend, not a cosmetic log bug: sumAutopaySpentTodayUsdc only sums rows
 // with decision='pay', and in Funded mode that sum IS the daily cap.
 
-const MOVED = { settlementTx: "0xfeed", broadcast: true };
-const BROADCAST = { settlementTx: null, broadcast: true };
-const NOTHING = { settlementTx: null, broadcast: false };
+const MOVED = { settlementTx: "0xfeed", broadcast: true, jobId: "12345" };
+const BROADCAST = { settlementTx: null, broadcast: true, jobId: "12345" };
+const NOTHING = { settlementTx: null, broadcast: false, jobId: null };
 
 test("a settlement that landed is logged as a spend even though the ceremony broke", () => {
   const row = settlementRowFor(MOVED, "job", 8);
@@ -260,13 +260,34 @@ test("a settlement that landed is logged as a spend even though the ceremony bro
   assert.equal(row.reason, "job_failed");
 });
 
-test("the exact overspend: two 8 USDC settlements that both broke still total 16 against the cap", () => {
-  // Bill A settles, complete() reverts. Bill B arrives ten minutes later.
-  // sumAutopaySpentTodayUsdc counts decision='pay' rows only, so if A were a
-  // skip the day would read 0 spent and B would pay against a 10 USDC cap.
-  const rows = [settlementRowFor(MOVED, "job", 8), settlementRowFor(MOVED, "job", 8)];
+// Replaces a "two 8 USDC settlements total 16" test that called settlementRowFor
+// with the same arguments as the test above and summed the results — it could
+// not fail unless that one did. The arithmetic was never the risk; MIXING the
+// three branches is, because only two of them may be charged.
+test("the exact overspend: only the branches that moved money are charged to the day", () => {
+  // Bill A settles and complete() reverts; bill B is broadcast but never
+  // confirms; bill C breaks before step 4. sumAutopaySpentTodayUsdc counts
+  // decision='pay' rows only, so A and B must land in the sum against a 10 USDC
+  // cap and C must not — charging C would refuse the user's next real bill.
+  const rows = [
+    settlementRowFor(MOVED, "job", 8),
+    settlementRowFor(BROADCAST, "other", 8),
+    settlementRowFor(NOTHING, "job", 8),
+  ];
   const countedByTheCap = rows.filter((r) => r.decision === "pay").reduce((sum, r) => sum + r.amountUsdc, 0);
-  assert.equal(countedByTheCap, 16);
+  assert.equal(countedByTheCap, 16, "a broadcast settlement counts and a never-sent one does not");
+});
+
+// A settled_incomplete row names a job an operator has to complete or expire by
+// hand, so dropping the id turns an actionable row into a problem nobody can
+// find. Asserted on every branch because the failure rows are exactly the ones
+// that carry it.
+test("every failure row carries the job it left behind", () => {
+  assert.equal(settlementRowFor(MOVED, "job", 8).jobId, "12345");
+  assert.equal(settlementRowFor(BROADCAST, "other", 8).jobId, "12345");
+  // Null rather than absent: the ceremony broke before createJob returned an id,
+  // so there is genuinely no job to point at.
+  assert.equal(settlementRowFor(NOTHING, "job", 8).jobId, null);
 });
 
 test("a broadcast-but-unconfirmed settlement counts as spent, and says so", () => {

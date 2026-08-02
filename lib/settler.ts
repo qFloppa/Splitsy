@@ -63,18 +63,17 @@ const publicClient = createPublicClient({ chain: arcTestnet, transport: http(ARC
 // treat its absence as never-sent. Undefined on both never-broadcast paths is
 // the safe default — it is the only answer that never invents a settlement.
 // ponytail: viem re-fetches the nonce per send, so two overlapping settlements can claim the same one — wrap the account in viem's createNonceManager if deliveries ever run concurrently
-export async function settlerWrite(to: `0x${string}`, data: `0x${string}`): Promise<`0x${string}`> {
+export async function settlerWrite(to: `0x${string}`, data: `0x${string}`, timeout = 60_000): Promise<`0x${string}`> {
   const { account } = getSettler();
   const wallet = createWalletClient({ account, chain: arcTestnet, transport: http(ARC_TESTNET_RPC) });
   const hash = await wallet.sendTransaction({ to, data });
   let receipt: TransactionReceipt | undefined;
   try {
-    // Bounded far below viem's 180s default. Three of these run serially inside
-    // one webhook that also makes six Circle calls, and the caller cannot afford
-    // to spend nine minutes discovering that Arc is wedged. Timing out sooner
-    // means MORE indeterminate throws, which is fine: the caller accounts for
-    // one correctly, and it cannot account for a request the platform killed.
-    receipt = await publicClient.waitForTransactionReceipt({ hash, timeout: 60_000 });
+    // Bounded far below viem's 180s default, and tighter still for callers on a
+    // platform deadline. Timing out sooner means MORE indeterminate throws,
+    // which is fine: the caller accounts for one correctly, and it cannot
+    // account for a request the platform killed mid-wait.
+    receipt = await publicClient.waitForTransactionReceipt({ hash, timeout });
   } catch (err) {
     throw Object.assign(new Error(`settler tx indeterminate — broadcast but unconfirmed: ${hash}`, { cause: err }), {
       txHash: hash,
@@ -113,8 +112,8 @@ export const isIndeterminate = (e: unknown): e is { txHash: `0x${string}` } =>
 // A THROW HERE IS "STILL UNCONFIRMED", NEVER "DIDN'T HAPPEN" — the same reading
 // settlerWrite's indeterminate tag demands, and for the same reason: resending
 // on it double-settles.
-export async function settlerReceipt(txHash: `0x${string}`) {
-  return publicClient.waitForTransactionReceipt({ hash: txHash, timeout: 30_000 });
+export async function settlerReceipt(txHash: `0x${string}`, timeout = 30_000) {
+  return publicClient.waitForTransactionReceipt({ hash: txHash, timeout });
 }
 
 const REDEPOSIT_THRESHOLD = 100_000n; // 0.1 USDC atomic — 50 reviews at $0.002

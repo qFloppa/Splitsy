@@ -74,10 +74,16 @@ export async function transferUsdcOnArc(
 // We poll to a terminal state because callers need the result: bill creation
 // needs the BillCreated billId (read from chain afterward), and pay/claim need
 // to know the tx didn't revert. The wallet pays its own gas in USDC at MEDIUM.
+//
+// pollMs bounds the wait, defaulting to the 60s every existing caller was
+// written against. It exists for callers under a platform deadline, where
+// waiting longer than the request can live turns a slow settlement into a
+// killed one — and a killed request cannot write the row that says what it did.
 export async function executeContractOnArc(
   walletId: string,
   contractAddress: string,
   callData: `0x${string}`,
+  pollMs = 60_000,
 ): Promise<{ id: string; state: string; txHash: string | null }> {
   const config = getConfig();
   if (!config) throw new Error("Circle is not configured");
@@ -106,20 +112,45 @@ export async function executeContractOnArc(
   const id = created.data?.id;
   if (!id) throw new Error("Circle contract execution returned no transaction id");
 
-  // Poll to a terminal state (~60s cap). Arc settles fast on testnet.
+  // Poll to a terminal state. Arc settles fast on testnet, so the default cap is
+  // generous rather than expected; callers on a platform deadline pass a tighter
+  // one (see app/api/agents/autopay/route.ts, which fits six of these plus three
+  // chain waits inside Vercel's 300s ceiling).
   const terminalOk = new Set(["COMPLETE", "CONFIRMED"]);
   const terminalBad = new Set(["FAILED", "DENIED", "CANCELLED"]);
-  for (let i = 0; i < 30; i++) {
-    const tx = await config.client.getTransaction({ id });
+  for (let i = 0; i < Math.max(1, Math.ceil(pollMs / 2000)); i++) {
+    let tx;
+    try {
+      tx = await config.client.getTransaction({ id });
+    } catch (err) {
+      // PAST THE POINT OF NO RETURN. Circle accepted the transaction — it has an
+      // id — so it is very likely to mine no matter what this poll saw. Only
+      // throws from here carry the tag: a caller settling money has to count
+      // this as spent, whereas everything above genuinely moved nothing.
+      throw Object.assign(err as Error, { broadcast: true as const });
+    }
     const state = tx.data?.transaction?.state ?? "";
     const txHash = tx.data?.transaction?.txHash ?? null;
     if (terminalOk.has(state)) return { id, state, txHash };
+    // Deliberately UNTAGGED. DENIED and CANCELLED never reached the chain, and a
+    // FAILED transaction reverted — it burned gas but moved no USDC. All three
+    // mean the money did not move and never will.
     if (terminalBad.has(state)) throw new Error(`Contract execution ${state.toLowerCase()}`);
     await new Promise((r) => setTimeout(r, 2000));
   }
   // Still pending after the cap — return what we have; the caller decides.
   return { id, state: "PENDING", txHash: null };
 }
+
+// Whether a throw from executeContractOnArc happened AFTER Circle accepted the
+// transaction, so the caller must assume it may still mine.
+//
+// Read through a predicate rather than as a bare property test at each call
+// site, for the same reason as lib/settler.ts's isIndeterminate: this decides
+// whether a settlement is logged as spent, and a typo would silently pick the
+// wrong row. Absence means never-broadcast, which is the safe default — it is
+// the only answer that never invents a settlement.
+export const isBroadcast = (e: unknown): boolean => (e as { broadcast?: boolean })?.broadcast === true;
 
 export class InsufficientFundsError extends Error {
   constructor() {

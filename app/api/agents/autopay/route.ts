@@ -76,7 +76,12 @@ import {
   type SettlementProgress,
 } from "@/lib/autopay";
 import { REVIEW_UNAVAILABLE, type ReviewInput, type ReviewVerdict } from "@/lib/autopay-review";
-import { executeContractOnArc, getOrCreateArcWallet, InsufficientFundsError } from "@/lib/circle-dcw";
+import {
+  executeContractOnArc,
+  getOrCreateArcWallet,
+  InsufficientFundsError,
+  isBroadcast,
+} from "@/lib/circle-dcw";
 import {
   AGENTIC_COMMERCE_ADDRESS,
   COMPLETE_REASON,
@@ -113,16 +118,26 @@ export const dynamic = "force-dynamic";
 // reclaimUndecided cannot overturn it because 'ok' is not in its UNDECIDED list
 // — so the log would permanently claim money moved when it may not have.
 //
-// Sized to let ONE participant finish rather than to fit a whole bill. The
-// per-participant worst case is six Circle calls at their ~60s poll cap
-// (createJob, two lazy approvals, fund, payDebtFor, complete) plus two
-// settlerWrites at the 60s ceiling lib/settler.ts now sets, plus one 30s
-// receipt wait — about 510s, and Mandate mode trades a Circle call for a
-// settlerWrite rather than adding one. Bills with more participants than fit are
-// cut off BETWEEN participants, where the loop is safe: each has its own claim
-// row, and the ones never reached were never claimed.
-// ponytail: a killed request still strands its in-flight participant's row as a 'pay' with no tx_hash — the durable fix is a reconciliation sweep over rows older than N minutes in that state, which no cron owns yet
-export const maxDuration = 600;
+// 300 is Vercel Hobby's hard ceiling, and it is a BUILD-TIME limit: a larger
+// number here does not get clamped, it fails the whole app's deployment. So the
+// ceremony is timed to fit INSIDE it rather than the reverse — see
+// CEREMONY_POLL_MS. One participant's worst case is now ~205s: six Circle polls
+// at 25s, two settlerWrites at 20s, one 15s receipt wait, plus the pre-claim
+// buyReview round trip.
+//
+// A bill whose participants do not all fit is cut off mid-ceremony, and that IS
+// the stranded-row case above — the budget buys one clean participant, not
+// safety for the rest. Only the sweep below fixes that properly.
+// ponytail: a killed request strands its in-flight participant's row as a 'pay' with no tx_hash, and a bill with more participants than fit in 300s will strand one every delivery — the durable fix is a reconciliation sweep over rows older than N minutes in that state, which no cron owns yet
+export const maxDuration = 300;
+
+// Every Circle poll and chain wait inside the ceremony is bounded by these
+// rather than by their library defaults, which total ~510s against a 300s
+// deadline. Being cut short is not a lost settlement: an unresolved send is
+// logged 'pay'/settlement_unconfirmed and counted against the cap, which is the
+// same fail-closed answer a longer wait would have reached more slowly.
+const CEREMONY_POLL_MS = 25_000;
+const CEREMONY_WAIT_MS = 20_000;
 
 const usdc = (units: bigint) => Number(units) / 1e6;
 
@@ -402,7 +417,7 @@ async function settleOne(input: {
   // How far the settlement got, filled in by runJob as it goes. Read only on
   // failure, and the only thing standing between a settlement that landed and a
   // log row claiming nothing was spent.
-  const progress: SettlementProgress = { settlementTx: null, broadcast: false };
+  const progress: SettlementProgress = { settlementTx: null, broadcast: false, jobId: null };
 
   try {
     const { jobId, settlementTx } = await runJob({
@@ -511,14 +526,18 @@ async function runJob(input: {
       agent.walletId,
       AGENTIC_COMMERCE_ADDRESS,
       encodeCreateJob(settler, auditor.address as `0x${string}`, expiredAt, description),
+      CEREMONY_POLL_MS,
     );
     if (!created.txHash) throw new Error("createJob is still pending — no tx hash");
     // Circle reports COMPLETE from its own indexer, which can run ahead of the
     // public RPC, so this WAITS for the receipt rather than demanding it now.
-    const receipt = await settlerReceipt(created.txHash as `0x${string}`);
+    const receipt = await settlerReceipt(created.txHash as `0x${string}`, CEREMONY_WAIT_MS);
     const id = jobIdFromLogs(receipt.logs);
     if (id === null) throw new Error("createJob receipt has no JobCreated log");
     jobId = id;
+    // Recorded before anything else can throw, so every later failure row can
+    // name the job an operator has to finish or expire by hand.
+    progress.jobId = id.toString();
   } catch (err) {
     // An agent too poor to open a job is 'agent_unfunded', not 'job_failed' —
     // that is the case the slug was introduced for, and wrapping it here would
@@ -530,15 +549,15 @@ async function runJob(input: {
   // 2. setBudget — the PROVIDER prices the work, which is why the Settler signs
   //    it and not the client. Tutorial order: createJob → setBudget → fund.
   try {
-    await settlerWrite(AGENTIC_COMMERCE_ADDRESS, encodeSetBudget(jobId, FEE_UNITS));
+    await settlerWrite(AGENTIC_COMMERCE_ADDRESS, encodeSetBudget(jobId, FEE_UNITS), CEREMONY_WAIT_MS);
   } catch (err) {
     throw new JobError("setBudget", err);
   }
 
   // 3. fund — the fee into escrow, preceded by the lazy approval.
   try {
-    await ensureAgentAllowance(agent, AGENTIC_COMMERCE_ADDRESS, FEE_UNITS);
-    await executeContractOnArc(agent.walletId, AGENTIC_COMMERCE_ADDRESS, encodeFund(jobId));
+    await ensureAgentAllowance(agent, AGENTIC_COMMERCE_ADDRESS, FEE_UNITS, CEREMONY_POLL_MS);
+    await executeContractOnArc(agent.walletId, AGENTIC_COMMERCE_ADDRESS, encodeFund(jobId), CEREMONY_POLL_MS);
   } catch (err) {
     if (err instanceof InsufficientFundsError) throw err;
     throw new JobError("fund", err);
@@ -560,26 +579,41 @@ async function runJob(input: {
     // The agent pays out of its own balance. payDebtFor credits the DEBTOR
     // and emits DebtPaid naming them as payer, so reputation still flows to
     // the user rather than to their agent.
-    await ensureAgentAllowance(agent, REGISTRY_ADDRESS, input.amount);
-    progress.broadcast = true;
-    const tx = await executeContractOnArc(agent.walletId, REGISTRY_ADDRESS, encodePayDebtFor(billId, debtor, input.amount));
-    // PENDING past Circle's ~60s poll, with no hash to show for it. The
-    // transaction is real and may mine seconds from now, so this is an
-    // unconfirmed settlement rather than a clean failure — `broadcast` above is
-    // what makes the caller log it as one.
-    if (!tx.txHash) throw new Error("payDebtFor is still pending — no tx hash");
-    settlementTx = tx.txHash as `0x${string}`;
+    await ensureAgentAllowance(agent, REGISTRY_ADDRESS, input.amount, CEREMONY_POLL_MS);
+    try {
+      const tx = await executeContractOnArc(
+        agent.walletId,
+        REGISTRY_ADDRESS,
+        encodePayDebtFor(billId, debtor, input.amount),
+        CEREMONY_POLL_MS,
+      );
+      // PENDING past the poll cap, with no hash to show for it. Circle accepted
+      // the transaction, so it may mine seconds from now: an unconfirmed
+      // settlement rather than a clean failure, and it must count against the cap.
+      if (!tx.txHash) {
+        progress.broadcast = true;
+        throw new Error("payDebtFor is still pending — no tx hash");
+      }
+      settlementTx = tx.txHash as `0x${string}`;
+    } catch (err) {
+      // Only Circle's own tag can tell these apart, which is why it exists.
+      // Rejected at creation, DENIED, CANCELLED and a reverted FAILED all moved
+      // nothing and never will — this is the debtor-paid-manually race, and
+      // charging it against the day would refuse their next real bill. A throw
+      // from inside the poll is the opposite: the transaction is away.
+      if (isBroadcast(err)) progress.broadcast = true;
+      throw err;
+    }
   } else {
     // One call, carrying no amount: the mandate reads the debtor's full
     // remaining share itself and re-checks every cap on chain. Whatever this
     // route decided, the contract decides again.
     try {
-      progress.broadcast = true;
-      settlementTx = await settlerWrite(MANDATE_ADDRESS, encodePayFor(billId, debtor));
+      settlementTx = await settlerWrite(MANDATE_ADDRESS, encodePayFor(billId, debtor), CEREMONY_WAIT_MS);
     } catch (err) {
-      // A reverted payFor moved nothing and never will, so it must NOT count
-      // against the day. Only an indeterminate one stays broadcast.
-      if (!isIndeterminate(err)) progress.broadcast = false;
+      // Same fork, the other library's tag: broadcast-but-unconfirmed counts,
+      // a revert does not.
+      if (isIndeterminate(err)) progress.broadcast = true;
       throw err;
     }
   }
@@ -588,7 +622,7 @@ async function runJob(input: {
   // 5. submit — the deliverable IS the settlement transaction, hashed, so
   //    anyone holding the tx hash can recompute it and check the job.
   try {
-    await settlerWrite(AGENTIC_COMMERCE_ADDRESS, encodeSubmit(jobId, deliverableFor(settlementTx)));
+    await settlerWrite(AGENTIC_COMMERCE_ADDRESS, encodeSubmit(jobId, deliverableFor(settlementTx)), CEREMONY_WAIT_MS);
   } catch (err) {
     throw new JobError("submit", err);
   }
@@ -602,7 +636,12 @@ async function runJob(input: {
     if (!settled.exists || settled.paid < settled.owed) {
       throw new Error(`registry still shows ${settled.paid} paid of ${settled.owed} owed`);
     }
-    await executeContractOnArc(auditor.walletId, AGENTIC_COMMERCE_ADDRESS, encodeComplete(jobId, COMPLETE_REASON));
+    await executeContractOnArc(
+      auditor.walletId,
+      AGENTIC_COMMERCE_ADDRESS,
+      encodeComplete(jobId, COMPLETE_REASON),
+      CEREMONY_POLL_MS,
+    );
   } catch (err) {
     throw new JobError("complete", err);
   }

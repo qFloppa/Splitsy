@@ -166,6 +166,10 @@ export function buildGrant(mode: MoneyMode, mandate: MandateFacts, rules: Mirror
 export type SettlementProgress = {
   settlementTx: string | null;
   broadcast: boolean;
+  // The job opened at step 1. Carried onto the failure row so an operator can
+  // find the job they must complete or expire by hand — a settled_incomplete
+  // row without it names a problem nobody can act on.
+  jobId: string | null;
 };
 
 // What went wrong, classified by the route so this module never has to import
@@ -178,6 +182,7 @@ export type SettlementRow = {
   reason: string;
   amountUsdc: number;
   txHash: string | null;
+  jobId: string | null;
   jobStatus: string;
 };
 
@@ -215,7 +220,14 @@ export function settlementRowFor(
   // The settlement landed and something after it broke — submit or complete.
   // The debt is paid; only the escrow ceremony is unfinished.
   if (progress.settlementTx) {
-    return { decision: "pay", reason, amountUsdc, txHash: progress.settlementTx, jobStatus: "settled_incomplete" };
+    return {
+      decision: "pay",
+      reason,
+      amountUsdc,
+      txHash: progress.settlementTx,
+      jobId: progress.jobId,
+      jobStatus: "settled_incomplete",
+    };
   }
 
   // Sent, but nothing ever confirmed it: Circle's poll timed out with no hash,
@@ -223,10 +235,17 @@ export function settlementRowFor(
   // against the cap. No hash to record, which is exactly what makes this row
   // the one a reconciliation sweep has to revisit.
   if (progress.broadcast) {
-    return { decision: "pay", reason, amountUsdc, txHash: null, jobStatus: "settlement_unconfirmed" };
+    return {
+      decision: "pay",
+      reason,
+      amountUsdc,
+      txHash: null,
+      jobId: progress.jobId,
+      jobStatus: "settlement_unconfirmed",
+    };
   }
 
   // Nothing was ever broadcast — the ceremony broke before step 4, or the send
   // itself was rejected. No money moved and none can.
-  return { decision: "skip", reason, amountUsdc: 0, txHash: null, jobStatus: "failed" };
+  return { decision: "skip", reason, amountUsdc: 0, txHash: null, jobId: progress.jobId, jobStatus: "failed" };
 }
