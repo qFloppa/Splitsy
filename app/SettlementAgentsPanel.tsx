@@ -30,6 +30,10 @@ import { encodeApprove, encodeRevokeMandate, encodeSetMandate } from "@/lib/regi
 const USDC_ADDRESS = (process.env.NEXT_PUBLIC_ARC_TESTNET_USDC_ADDRESS ??
   "0x3600000000000000000000000000000000000000") as `0x${string}`;
 
+// ERC-8004 IdentityRegistry, for the link to the agent's identity NFT. Display
+// only — nothing here signs against it.
+const IDENTITY_REGISTRY_ADDRESS = "0x8004A818BFB912233c491871b3d84c89A494BD9e";
+
 // The approval covers a week of spending at the full daily ceiling, matching
 // APPROVAL_DAYS in app/api/agents/grants/route.ts. The two must agree, or the
 // same caps would mean different exposure depending on which wallet signed.
@@ -52,6 +56,27 @@ type Grant = Caps & {
   minCreatorScore: number;
   requireVerifiedHash: boolean;
   requireBillReview: boolean;
+  // Where BILL money comes from. Defaults to 'mandate' — the mode where the
+  // CHAIN enforces the caps, never the one where only Splitsy says no.
+  moneyMode: "mandate" | "funded";
+};
+
+// The user's own agent, from /api/agents/wallet. One per ACCOUNT: the same
+// agent and the same balance cover the Splitsy wallet and the linked browser
+// wallet both, which is the line the card has to make unmissable.
+type AgentWallet = {
+  address: string | null;
+  tokenId: string | null;
+  balanceUsdc: number;
+  moneyMode: "mandate" | "funded";
+  jobs: {
+    billId: string;
+    jobId: string | null;
+    jobStatus: string | null;
+    feeUsdc: number;
+    txHash: string | null;
+    createdAt: string;
+  }[];
 };
 
 type LogEntry = {
@@ -62,6 +87,11 @@ type LogEntry = {
   amountUsdc: number;
   txHash: string | null;
   createdAt: string;
+  // The ERC-8183 job this decision opened. Null on a skip: no job is created
+  // for a payment that never happened, so there is nothing to show.
+  jobId: string | null;
+  jobStatus: string | null;
+  feeUsdc: number;
 };
 
 type MandateBill = {
@@ -96,6 +126,10 @@ type GrantsResponse = {
   provider: string;
   mandateAddress: string | null;
   agentAddress: string | null;
+  // Beside `grant`, not inside it: the route keeps the mode out of the
+  // AutopayGrant shape because it is not a cap. The form edits it as part of
+  // the grant, so `load` folds it in and `save` PUTs it back the same way.
+  moneyMode: "mandate" | "funded";
   // Keyed by LOWERCASE address. wagmi hands you a checksummed one, so always
   // lowercase before indexing — with noUncheckedIndexedAccess off, tsc will not
   // warn you that the miss types as a hit.
@@ -119,12 +153,15 @@ const REASONS: Record<string, string> = {
   review_unavailable: "The agent couldn't check this bill's contents, so it didn't pay",
   agent_out_of_funds: "The agent wallet is empty",
   agent_wallet_unavailable: "The agent wallet is unavailable",
+  agent_unfunded: "Your agent's balance is too low — top it up and the next bill will settle",
+  job_failed: "The on-chain job could not be completed, so nothing was paid",
   tx_failed: "The payment transaction failed",
 };
 
 export default function SettlementAgentsPanel() {
   const [grant, setGrant] = useState<Grant | null>(null);
   const [server, setServer] = useState<GrantsResponse | null>(null);
+  const [agentWallet, setAgentWallet] = useState<AgentWallet | null>(null);
   const [log, setLog] = useState<LogEntry[]>([]);
   const [mandates, setMandates] = useState<MandateBill[]>([]);
   const [saving, setSaving] = useState(false);
@@ -132,6 +169,9 @@ export default function SettlementAgentsPanel() {
   const [messageTone, setMessageTone] = useState<"error" | "success">("success");
   const [pendingBillId, setPendingBillId] = useState<string | null>(null);
   const [signedOut, setSignedOut] = useState(false);
+  // Collapsed by default: the warning matters, but a permanent wall of it above
+  // the caps would train people to scroll past the one thing they must read.
+  const [showUnlink, setShowUnlink] = useState(false);
   const { address: connectedAddress } = useAccount();
   const { signMessageAsync } = useSignMessage();
   // Which wallet the caps on this panel describe. The mandate is keyed per
@@ -150,7 +190,9 @@ export default function SettlementAgentsPanel() {
       })
       .then((d) => {
         if (!d) return;
-        setGrant(d.grant);
+        // The mode arrives beside `grant`, not inside it. Folded in here so the
+        // form can edit it like any other rule and PUT it straight back.
+        setGrant({ ...d.grant, moneyMode: d.moneyMode ?? "mandate" });
         setServer(d);
         setLog(d.log ?? []);
       })
@@ -161,6 +203,16 @@ export default function SettlementAgentsPanel() {
       .then((r) => (r.ok ? r.json() : null))
       .then((d) => {
         if (d) setMandates((d.mandates ?? []) as MandateBill[]);
+      })
+      .catch(() => {});
+    // Separate for the same reason, and the only call here that CREATES
+    // something: the agent wallet is made on first read, because someone has to
+    // see the card before they can fund it. No signedOut handling — the grants
+    // call above already answers that, and a second writer would only race it.
+    fetch("/api/agents/wallet")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (d) setAgentWallet(d as AgentWallet);
       })
       .catch(() => {});
   }, []);
@@ -175,11 +227,13 @@ export default function SettlementAgentsPanel() {
   const facts = armedAddress ? (server?.onchain[armedAddress.toLowerCase()] ?? null) : null;
   // A different account is selected in the wallet extension than the one linked.
   // Signing from it would set a mandate on a wallet whose rules nothing reads.
+  //
+  // Deliberately NOT scoped to the browser tab. Every consumer that is
+  // browser-only is already inside a `browser ?` block, and armOnChain is now
+  // reachable from the Unlink warning on either tab — where an unscoped
+  // mismatch would revoke some unrelated account's mandate and report success.
   const wrongAccount =
-    armingWallet === "browser" &&
-    !!linkedAddress &&
-    !!connectedAddress &&
-    connectedAddress.toLowerCase() !== linkedAddress.toLowerCase();
+    !!linkedAddress && !!connectedAddress && connectedAddress.toLowerCase() !== linkedAddress.toLowerCase();
 
   function fail(text: string) {
     setMessageTone("error");
@@ -261,6 +315,26 @@ export default function SettlementAgentsPanel() {
       load();
     } catch {
       fail("You declined the signature, so the wallet was not linked.");
+    }
+  }
+
+  // Never gated behind the wallet-unlock cookie, matching POST /api/agents/link
+  // and the settings form: TIGHTENING must never be harder than loosening.
+  async function unlinkWallet() {
+    setSaving(true);
+    try {
+      const res = await fetch("/api/agents/link", { method: "DELETE" });
+      const data = (await res.json().catch(() => ({}))) as { error?: string };
+      if (!res.ok) return fail(data.error ?? "Could not unlink that wallet.");
+      setShowUnlink(false);
+      // Back to the wallet we still hold a key for, or the caps on screen would
+      // describe a wallet this account can no longer resolve.
+      setArmingWallet("dcw");
+      setMessageTone("success");
+      setMessage("Wallet unlinked. Any mandate you left on it is still live until you revoke it.");
+      load();
+    } finally {
+      setSaving(false);
     }
   }
 
@@ -490,6 +564,94 @@ export default function SettlementAgentsPanel() {
         </div>
 
         <div className="spec-body space-y-4">
+          {/* The agent that spends. It is the user's: they fund it, it holds
+              its own balance, and its ERC-8004 identity NFT is theirs. */}
+          <div className="spec-row">
+            <div className="min-w-0">
+              <span className="inline-flex items-center gap-1.5 text-sm font-semibold">
+                <Bot size={14} /> Your agent
+              </span>
+              <span className="spec-hint">
+                {agentWallet?.address ? (
+                  <>
+                    <a
+                      className="mono underline-offset-2 hover:underline"
+                      href={`https://testnet.arcscan.app/address/${agentWallet.address}`}
+                      rel="noreferrer"
+                      target="_blank"
+                    >
+                      {short(agentWallet.address)}
+                    </a>
+                    {agentWallet.tokenId ? (
+                      <>
+                        {" · "}
+                        <a
+                          className="underline-offset-2 hover:underline"
+                          href={`https://testnet.arcscan.app/token/${IDENTITY_REGISTRY_ADDRESS}?a=${agentWallet.tokenId}`}
+                          rel="noreferrer"
+                          target="_blank"
+                        >
+                          identity #{agentWallet.tokenId}
+                        </a>
+                      </>
+                    ) : null}
+                  </>
+                ) : (
+                  "No agent yet — it is created the first time this page loads with Circle configured."
+                )}
+              </span>
+              {/* Said plainly, because the alternative is someone funding twice
+                  looking for a second agent that does not exist. */}
+              <span className="spec-hint">
+                One agent covers both your Splitsy wallet and your linked browser wallet. Fund it once.
+              </span>
+            </div>
+            <div className="flex shrink-0 flex-col items-end gap-1">
+              <span className="mono text-sm font-semibold">{(agentWallet?.balanceUsdc ?? 0).toFixed(2)} USDC</span>
+              {/* ponytail: no in-app Fund button. Funding is an inbound transfer
+                  from whatever wallet the user chooses, and a button would need a
+                  wallet connection they may not have. Add a one-click top-up from
+                  the Splitsy DCW if people ask for it. */}
+              <span className="spec-hint">
+                Send USDC to the address to top it up. Suggested: {grant.moneyMode === "funded" ? "20" : "2"} USDC.
+              </span>
+            </div>
+          </div>
+
+          {/* Which pocket the BILL comes out of. Not the same question as which
+              wallet the mandate binds, below: the fee and the gas come from the
+              agent in both modes, and only the share moves. */}
+          <div className="spec-row">
+            <div className="min-w-0">
+              <span className="inline-flex items-center gap-1.5 text-sm font-semibold">
+                <Wallet size={14} /> Bill money from
+              </span>
+              <span className="spec-hint">
+                {grant.moneyMode === "funded"
+                  ? "In this mode your limits are enforced by Splitsy, not by the chain. Your agent's balance is the only limit the chain enforces."
+                  : "Your own wallet, pulled under the on-chain mandate. The caps below are enforced by the contract."}
+              </span>
+            </div>
+            <div className="segmented-control shrink-0 text-xs" role="group" aria-label="Where bill money comes from">
+              <button
+                className={`tab-button ${grant.moneyMode === "funded" ? "" : "tab-button-active"}`}
+                disabled={saving}
+                onClick={() => save({ ...grant, moneyMode: "mandate" })}
+                type="button"
+              >
+                My wallet
+              </button>
+              <button
+                className={`tab-button ${grant.moneyMode === "funded" ? "tab-button-active" : ""}`}
+                disabled={saving}
+                onClick={() => save({ ...grant, moneyMode: "funded" })}
+                type="button"
+              >
+                My agent&rsquo;s balance
+              </button>
+            </div>
+          </div>
+
           {/* Which wallet these ceilings bind. The mandate is keyed per debtor on
               chain, so both wallets can be armed at once with different numbers —
               this picks which one you are looking at and editing. */}
@@ -524,13 +686,65 @@ export default function SettlementAgentsPanel() {
                   Browser wallet
                 </button>
               </div>
-              {linkedAddress ? null : (
+              {linkedAddress ? (
+                <button
+                  className="secondary-button"
+                  disabled={saving}
+                  onClick={() => setShowUnlink((v) => !v)}
+                  type="button"
+                >
+                  <X size={13} /> Unlink
+                </button>
+              ) : (
                 <button className="secondary-button" disabled={saving} onClick={linkWallet} type="button">
                   <Link2 size={13} /> Link wallet
                 </button>
               )}
             </div>
           </div>
+
+          {showUnlink && linkedAddress ? (
+            <div className="spec-row flex-col items-start gap-2">
+              {/* Unlinking does LESS than people expect, and the gap is money.
+                  Revoke first, then unlink — offered as the ordered pair,
+                  never as "unlink turns it off". */}
+              <span className="text-sm font-semibold">Unlinking {short(linkedAddress)} does four things, not one</span>
+              <ul className="spec-hint list-disc space-y-1 pl-4">
+                <li>
+                  Autopay for that wallet <strong>stops</strong> — it is no longer resolvable to your account.
+                </li>
+                <li>
+                  The on-chain mandate on it <strong>survives</strong>. Revoking is a separate transaction you send from
+                  that wallet.
+                </li>
+                <li>
+                  Its USDC approval to the mandate contract <strong>survives</strong>, and is inert only while the
+                  mandate is revoked.
+                </li>
+                <li>
+                  Your agent, its balance and its identity NFT are <strong>untouched</strong> — they belong to your
+                  account.
+                </li>
+              </ul>
+              <div className="flex flex-wrap items-center gap-2">
+                {/* The revoke is signed by the LINKED wallet itself, so it is
+                    offered only while that exact account is connected.
+                    Revoking from another account would report success while
+                    leaving the mandate that actually binds this user alive. */}
+                <button
+                  className="secondary-button"
+                  disabled={saving || !mandateAddress || !connectedAddress || wrongAccount}
+                  onClick={() => armOnChain(grant, true)}
+                  type="button"
+                >
+                  <Ban size={13} /> Revoke the mandate first
+                </button>
+                <button className="secondary-button" disabled={saving} onClick={unlinkWallet} type="button">
+                  <X size={13} /> Unlink anyway
+                </button>
+              </div>
+            </div>
+          ) : null}
 
           {/* Who may spend under the mandate. One address, straight into
               setMandate's first argument — no server logic, and no reason to
@@ -906,6 +1120,14 @@ export default function SettlementAgentsPanel() {
                   <span className="min-w-0">
                     <span className="text-sm font-semibold">Bill #{entry.billId}</span>
                     <span className="spec-hint">{REASONS[entry.reason] ?? entry.reason}</span>
+                    {/* Only a payment opens a job, so this line appears on pay
+                        rows alone. A skip keeps the model's own sentence above
+                        and nothing else — there is no job to point at. */}
+                    {entry.jobId ? (
+                      <span className="spec-hint">
+                        job #{entry.jobId} · {entry.jobStatus ?? "unknown"} · fee {entry.feeUsdc.toFixed(3)} USDC
+                      </span>
+                    ) : null}
                   </span>
                   <span className="shrink-0 text-right">
                     <span className="trail-amount">
