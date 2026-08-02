@@ -61,6 +61,9 @@ const publicClient = createPublicClient({ chain: arcTestnet, transport: http(ARC
 // failed send, so "has a cause" cannot tell an unconfirmed tx from one that
 // never left. Callers switch on the tag and treat its absence as never-sent:
 //   if (err?.settlement === "indeterminate") await settlerReceipt(err.txHash);
+// and settlerReceipt THROWING is not permission to resend either — a tx that
+// has still not mined is still indeterminate, so only a receipt in hand ever
+// resolves one.
 // Undefined on both never-broadcast paths is the safe default — it is the only
 // answer that never invents a settlement.
 // ponytail: viem re-fetches the nonce per send, so two overlapping settlements can claim the same one — wrap the account in viem's createNonceManager if deliveries ever run concurrently
@@ -83,8 +86,21 @@ export async function settlerWrite(to: `0x${string}`, data: `0x${string}`): Prom
   return hash;
 }
 
+// The receipt for a transaction this process did not necessarily send — in
+// practice the user's agent's createJob, whose logs carry the job id.
+//
+// WAITS rather than asking once. Circle reports a transaction COMPLETE from its
+// own indexer's view, and this public RPC can still be a block behind it:
+// getTransactionReceipt would throw TransactionReceiptNotFound for a
+// transaction that is perfectly real, losing a settlement to a race the chain
+// had already won. Bounded well under viem's 180s default, because the caller
+// is a webhook with five more transactions still to send.
+//
+// A THROW HERE IS "STILL UNCONFIRMED", NEVER "DIDN'T HAPPEN" — the same reading
+// settlerWrite's indeterminate tag demands, and for the same reason: resending
+// on it double-settles.
 export async function settlerReceipt(txHash: `0x${string}`) {
-  return publicClient.getTransactionReceipt({ hash: txHash });
+  return publicClient.waitForTransactionReceipt({ hash: txHash, timeout: 30_000 });
 }
 
 const REDEPOSIT_THRESHOLD = 100_000n; // 0.1 USDC atomic — 50 reviews at $0.002
