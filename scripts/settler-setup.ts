@@ -114,13 +114,31 @@ const before = await gateway.getBalances();
 console.log("Gateway available:", before.gateway.formattedAvailable, "USDC");
 
 const depositAmount = process.env.SETTLER_DEPOSIT_AMOUNT ?? "0.5";
-if (Number(before.gateway.formattedAvailable) < Number(depositAmount)) {
+let available = Number(before.gateway.formattedAvailable);
+
+if (available < Number(depositAmount)) {
   console.log(`Depositing ${depositAmount} USDC into Gateway...`);
   const deposit = await gateway.deposit(depositAmount);
   console.log("deposit tx:", deposit.depositTxHash);
-  const after = await gateway.getBalances();
-  console.log("Gateway available:", after.gateway.formattedAvailable, "USDC");
+
+  // Gateway credits the deposit only after Circle attests it, which lands a few
+  // seconds behind the transaction. Reading once here raced that and printed a
+  // stale 0.5 -> 0, directly above a line claiming the Settler was ready.
+  for (let attempt = 0; attempt < 10 && available < Number(depositAmount); attempt++) {
+    await new Promise((resolve) => setTimeout(resolve, 3000));
+    available = Number((await gateway.getBalances()).gateway.formattedAvailable);
+  }
+  console.log("Gateway available:", available, "USDC");
 }
 
-console.log("\nThe Settler is ready.");
+// Only claim readiness that was actually observed. The Settler cannot buy a
+// review without a Gateway balance, and a review it cannot buy is a settlement
+// it will not make — so "ready" with an empty balance is the one lie this
+// script must not tell.
+if (available >= Number(depositAmount)) {
+  console.log("\nThe Settler is ready.");
+} else {
+  console.log(`\nThe Settler is registered, but Gateway still reads ${available} USDC.`);
+  console.log("Circle's attestation can lag; re-run this script in a minute to confirm the credit.");
+}
 console.log("REMINDER: every existing user must RE-ARM their mandate to name this address.");

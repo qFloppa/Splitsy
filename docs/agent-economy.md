@@ -410,6 +410,24 @@ Send a contract write from the Settler holding only ERC-20 USDC.
 *If it fails:* the Settler needs a native balance, and
 `scripts/settler-setup.ts` must fund it.
 
+**Partially observed, not yet answered.** Across two setup runs the two balances
+this script prints were the same number:
+
+| | Native (`getBalance`, 18dp) | USDC (`balanceOf`, 6dp) |
+|---|---|---|
+| after faucet funding | `20` | `20` |
+| after the `register` tx | `19.9959468296` | `19.995946` |
+
+Truncated to six places the native figure *is* the USDC figure, both times —
+consistent with native and ERC-20 USDC being two views of one balance on Arc,
+which is what "USDC is the gas token" would imply. If that holds, the state Q4
+asks about (USDC held, native zero) is unreachable and the question is moot.
+
+Two samples are not a proof, and neither run tested the interesting case: the
+`register` transaction that succeeded had a non-zero native balance, so it says
+nothing about paying gas without one. Answering Q4 properly still needs an
+address where the two figures genuinely diverge — if one can exist.
+
 ### Q5 — End-to-end, Mandate mode
 
 Re-arm a mandate naming the Settler, fund the agent with 2 USDC, have a second
