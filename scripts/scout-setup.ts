@@ -88,7 +88,7 @@ if (process.env.SCOUT_ERC8004_TOKEN_ID) {
 }
 
 // --- Circle Gateway deposit --------------------------------------------------
-const gateway = new GatewayClient({ chain: "arcTestnet", privateKey });
+const gateway = new GatewayClient({ chain: "arcTestnet", privateKey, rpcUrl: ARC_TESTNET_RPC });
 const before = await gateway.getBalances();
 console.log("Gateway available:", before.gateway.formattedAvailable, "USDC");
 

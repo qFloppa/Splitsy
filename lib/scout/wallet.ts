@@ -1,5 +1,6 @@
 import { GatewayClient } from "@circle-fin/x402-batching/client";
 import { privateKeyToAccount } from "viem/accounts";
+import { ARC_TESTNET_RPC } from "../x402/constants.ts";
 
 // Scout's x402 signer. A plain EOA, deliberately not a Circle DCW: it only ever
 // signs EIP-3009 authorizations against its own Gateway balance, so it needs no
@@ -11,7 +12,9 @@ export function getScout() {
   const privateKey = process.env.SCOUT_PRIVATE_KEY as `0x${string}` | undefined;
   if (!privateKey) throw new Error("Missing SCOUT_PRIVATE_KEY — run npm run scout:setup");
   cached = {
-    gateway: new GatewayClient({ chain: "arcTestnet", privateKey }),
+    // rpcUrl or the SDK builds its own client against the public node, which
+    // rate-limits: a top-up then fails on an allowance read nothing here made.
+    gateway: new GatewayClient({ chain: "arcTestnet", privateKey, rpcUrl: ARC_TESTNET_RPC }),
     address: privateKeyToAccount(privateKey).address,
   };
   return cached;

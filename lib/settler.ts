@@ -39,7 +39,13 @@ export function getSettler() {
   }
   const privateKey = process.env.SETTLER_PRIVATE_KEY as `0x${string}`;
   const account = privateKeyToAccount(privateKey);
-  cached = { account, gateway: new GatewayClient({ chain: "arcTestnet", privateKey }), address: account.address };
+  // rpcUrl or the SDK builds its own client against the public node and
+  // rate-limits mid-deposit, on a read the caller never made.
+  cached = {
+    account,
+    gateway: new GatewayClient({ chain: "arcTestnet", privateKey, rpcUrl: ARC_TESTNET_RPC }),
+    address: account.address,
+  };
   return cached;
 }
 
