@@ -31,8 +31,9 @@ import {
   isMandateConfigured,
   MANDATE_ADDRESS,
 } from "@/lib/arc-read";
-import { executeContractOnArc, getOrCreateArcWallet, InsufficientFundsError } from "@/lib/circle-dcw";
+import { executeContractOnArc, InsufficientFundsError } from "@/lib/circle-dcw";
 import { encodeApprove, encodeExecuteBatch, encodeRevokeMandate, encodeSetMandate } from "@/lib/registry-calldata";
+import { getSettler, isSettlerConfigured } from "@/lib/settler";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -149,6 +150,8 @@ export async function GET() {
     // OUR agent?", and a case-sensitive === would answer no for a live Splitsy
     // mandate.
     agentAddress: (await resolveAgentAddress().catch(() => null))?.toLowerCase() ?? null,
+    // Where BILL money comes from. Not a chain fact — it lives only here.
+    moneyMode: rules?.moneyMode ?? "mandate",
     onchain,
   });
 }
@@ -192,6 +195,11 @@ export async function PUT(request: Request) {
 
   const enabled = raw.enabled === true;
 
+  // Anything that is not exactly 'funded' reads as 'mandate' — the mode where
+  // the CHAIN enforces the caps. A typo must never move someone into the mode
+  // where only this server says no.
+  const moneyMode = raw.moneyMode === "funded" ? "funded" : "mandate";
+
   // Read before write: debtor_address is not in the upsert payload, but the row
   // type requires it, and a settings save must never disturb the link.
   const existing = await getAutopayGrant(user.id);
@@ -208,9 +216,7 @@ export async function PUT(request: Request) {
     requireVerifiedHash: raw.requireVerifiedHash !== false,
     debtorAddress: existing?.debtorAddress ?? null,
     requireBillReview: raw.requireBillReview !== false,
-    // ponytail: preserved, not read from the body yet — the money mode has no UI
-    // and no validation here. Task 8 takes it from `raw` at this trust boundary.
-    moneyMode: existing?.moneyMode ?? "mandate",
+    moneyMode,
   });
 
   // A browser wallet signs its own mandate: the server holds no key for it, so
@@ -307,16 +313,20 @@ async function syncMandateOnchain(
   return tx.txHash;
 }
 
-// The agent the mandate will name. The env var is the deployment's answer; the
-// DCW lookup is the fallback, so a fresh environment works without one more
-// address to copy by hand. Same refId the autopay route resolves, so the two
-// cannot drift apart.
+// The agent the mandate will name. The env var is the deployment's answer (the
+// settler-setup script prints it); the Settler's own key is the fallback, so a
+// fresh environment works without one more address to copy by hand.
+//
+// No DCW fallback any more. The agent that signs a mandate pull is now the
+// Settler EOA, because it also has to sign x402 payments — and returning a DCW
+// here would arm a mandate naming an address that can never act on it.
+//
+// MIGRATION: this address REPLACES the old splitsy:autopay-agent DCW. Every
+// existing user must re-arm their mandate, exactly as after a contract redeploy.
 async function resolveAgentAddress(): Promise<`0x${string}` | null> {
   const configured = process.env.NEXT_PUBLIC_AUTOPAY_AGENT_ADDRESS;
   if (configured && /^0x[a-fA-F0-9]{40}$/.test(configured)) return configured as `0x${string}`;
-
-  const agent = await getOrCreateArcWallet("splitsy", "autopay-agent");
-  return (agent?.address as `0x${string}` | undefined) ?? null;
+  return isSettlerConfigured() ? getSettler().address : null;
 }
 
 function toMoney(value: unknown): number | null {
