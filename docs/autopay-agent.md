@@ -10,6 +10,29 @@ agent: you can arm autopay from **your own browser wallet** (not just the
 Splitsy-managed Circle wallet), and you can name **your own Circle Agent Wallet**
 as the spender instead of Splitsy's.
 
+> ### Changed by the agent economy
+>
+> The hosted path now runs every settlement as an ERC-8183 job. Three things on
+> this page changed; everything else, including all of "Running Your Own Agent
+> Wallet", is unaffected.
+>
+> 1. **The hosted agent is now the Splitsy Settler**, a raw EOA, not the
+>    `splitsy:autopay-agent` Circle wallet. It is a different address, so
+>    **every existing mandate must be re-armed** — exactly as after a
+>    mandate-contract redeploy. A mandate still naming the old wallet writes no
+>    log row at all, which looks identical to a working self-run setup.
+> 2. **You must fund your own agent**, in *both* money modes, before autopay can
+>    run. Mandate mode used to need no funding. Suggested: 2 USDC for Mandate
+>    mode, 20 USDC for Funded mode. An underfunded agent skips with
+>    `agent_unfunded` and creates no job.
+> 3. **There is a second money mode**, Funded, where the bill is paid from your
+>    agent's own balance and the caps below are enforced by Splitsy rather than
+>    by the contract.
+>
+> The job lifecycle, the paid bill review, the two modes and the manual
+> verification checklist are all in
+> [`agent-economy.md`](./agent-economy.md).
+
 ---
 
 ## Architecture
@@ -305,7 +328,7 @@ comes from the chain alone.
 
 ```ini
 NEXT_PUBLIC_AUTOPAY_MANDATE_ADDRESS=0x…   # unset ⇒ autopay reads as OFF everywhere
-NEXT_PUBLIC_AUTOPAY_AGENT_ADDRESS=0x…     # optional; else resolved from the Circle DCW
+NEXT_PUBLIC_AUTOPAY_AGENT_ADDRESS=0x…     # optional; else the Settler's own address
 AUTOPAY_REVIEW_MODEL=gemini-3.1-flash-lite
 RECEIPT_SCANNER_API_KEY=…                 # shared with OCR; no key ⇒ every review refuses
 AGENT_SECRET=…                            # or CRON_SECRET, to authorize /api/agents/autopay
@@ -313,6 +336,12 @@ AGENT_SECRET=…                            # or CRON_SECRET, to authorize /api/
 
 An unset mandate address is never "unlimited". It reads as off in the panel, and
 both `/api/agents/skill` and `/api/agents/queue` return 503.
+
+The hosted agent address no longer falls back to a Circle DCW: it is the env var
+or the Settler's own key, and an environment with neither has no hosted agent at
+all. Returning a DCW there would arm a mandate naming an address that can never
+act on it. See [`agent-economy.md`](./agent-economy.md#environment) for the rest
+of the agent-economy variables.
 
 ---
 
