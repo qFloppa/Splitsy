@@ -98,11 +98,16 @@ export async function finalizeAgentRegistration(
   walletAddress: string,
   agentId: string,
   registerTx: string,
+  // Which of the four roles this NFT was minted as. Stored because the minted
+  // metadata is immutable: re-pointing a token's URI later (scripts/
+  // reputation-backfill.ts) has to know what the agent DOES, and the wallet
+  // address alone does not say.
+  agentType = "splitsy-payer",
 ): Promise<void> {
   const client = requireClient();
   const { error } = await client
     .from("reputation_agents")
-    .update({ agent_id: agentId, register_tx: registerTx })
+    .update({ agent_id: agentId, register_tx: registerTx, agent_type: agentType })
     .eq("wallet_address", walletAddress.toLowerCase());
   if (error) throw new Error(`Failed to finalize registration: ${error.message}`);
 }

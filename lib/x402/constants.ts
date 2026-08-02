@@ -21,6 +21,15 @@ export const ARC_TESTNET_RPC =
   "https://rpc.testnet.arc.network";
 export const ARC_IDENTITY_REGISTRY = "0x8004A818BFB912233c491871b3d84c89A494BD9e" as const;
 
+// Circle's own record of one batched x402 payment: status, both addresses, the
+// amount, and the txHash of the batch that settled it on chain. Append the id
+// that settle() returned — the same string x402_payments.gateway_tx stores.
+//
+// Note the /x402/ segment. The plain /v1/transfers/<id> route is a DIFFERENT
+// namespace (Gateway's own transfer attestations) and 404s on these ids, which
+// reads as "this payment never happened" rather than "wrong endpoint".
+export const GATEWAY_TRANSFER_URL = "https://gateway-api-testnet.circle.com/v1/x402/transfers/" as const;
+
 /** "$0.005" -> "5000" (atomic 6-dp USDC string). */
 export function usdToAtomic(price: string): string {
   const dollars = parseFloat(price.replace("$", ""));

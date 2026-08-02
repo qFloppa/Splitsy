@@ -1,8 +1,8 @@
 import { createSupabaseServerClient } from "./supabase.ts";
-import type { AppUser, IdentityProvider } from "./types.ts";
+import type { AccountProvider, AppUser } from "./types.ts";
 
 export type ProviderProfileInput = {
-  provider: IdentityProvider;
+  provider: AccountProvider;
   providerUserId: string;
   handle: string;
   name: string | null;
@@ -78,7 +78,7 @@ export async function setUserPin(id: string, pinHash: string): Promise<void> {
 // Find a user by (provider, handle) — handle normalized like bills-repo. Used by
 // address resolution to reuse an existing person's wallet before pre-minting.
 export async function getUserByProviderHandle(
-  provider: IdentityProvider,
+  provider: AccountProvider,
   handle: string,
 ): Promise<AppUser | null> {
   const client = requireClient();
@@ -107,8 +107,8 @@ export async function getUserById(id: string): Promise<AppUser | null> {
 // row (non-custodial users) are simply absent — callers fall back to the address.
 export async function getUsersByWallets(
   addresses: string[],
-): Promise<Map<string, { id: string; handle: string; provider: IdentityProvider }>> {
-  const result = new Map<string, { id: string; handle: string; provider: IdentityProvider }>();
+): Promise<Map<string, { id: string; handle: string; provider: AccountProvider }>> {
+  const result = new Map<string, { id: string; handle: string; provider: AccountProvider }>();
   const wanted = [...new Set(addresses.map((a) => a.toLowerCase()))].filter(Boolean);
   if (wanted.length === 0) return result;
 
@@ -130,7 +130,7 @@ export async function getUsersByWallets(
     result.set(String(row.wallet_address).toLowerCase(), {
       id: String(row.id),
       handle: row.handle,
-      provider: row.provider as IdentityProvider,
+      provider: row.provider as AccountProvider,
     });
   }
   return result;

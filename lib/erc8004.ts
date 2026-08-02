@@ -177,13 +177,17 @@ const publicClient = createPublicClient({
 // https:// file to use one shared static image instead. Best-effort: with no
 // Pinata (nowhere to host) or a failed compose, metadata ships without an
 // image rather than failing registration.
-async function uploadAgentImage(walletAddress: string, registeredAt: Date): Promise<string | null> {
+async function uploadAgentImage(
+  walletAddress: string,
+  registeredAt: Date,
+  title: string,
+): Promise<string | null> {
   const override = process.env.SPLITSY_AGENT_IMAGE_URI;
   if (override) return override;
   if (!PINATA_JWT) return null;
   try {
     const { composeAgentImage } = await import("./agent-nft-image.ts");
-    const jpeg = await composeAgentImage({ walletAddress, registeredAt });
+    const jpeg = await composeAgentImage({ walletAddress, registeredAt, title });
     const form = new FormData();
     form.append("file", new Blob([new Uint8Array(jpeg)], { type: "image/jpeg" }), "agent.jpg");
     form.append("pinataMetadata", JSON.stringify({ name: `splitsy-agent-image-${walletAddress}` }));
@@ -203,6 +207,45 @@ async function uploadAgentImage(walletAddress: string, registeredAt: Date): Prom
 
 export type AgentType = "splitsy-payer" | "splitsy-user-agent" | "splitsy-settler" | "splitsy-auditor";
 
+// What each identity NFT says it is. Four roles that do four different jobs, so
+// one description for all of them was simply wrong on three of them: an autopay
+// agent that opens ERC-8183 jobs is not "a payment reputation agent", and the
+// minted metadata is immutable, so a wrong sentence is wrong forever unless
+// somebody re-points the URI.
+//
+// `title` always contains the word Agent, because it lands in the NFT's name and
+// in the image, where "Splitsy Payer 0x1234…" read like a person rather than a
+// piece of software acting for one.
+//
+// A Record over the union, so adding a fifth agent type will not compile until
+// it has said what it does.
+export const AGENT_PROFILE: Record<AgentType, { title: string; description: string; capabilities: string[] }> = {
+  "splitsy-payer": {
+    title: "Payer Agent",
+    description:
+      "Settles its owner's share of Splitsy bills on Arc and carries the reputation earned by doing it: one ERC-8004 feedback entry per bill, scored on whether the money arrived before the due date.",
+    capabilities: ["payment_verification", "debt_settlement"],
+  },
+  "splitsy-user-agent": {
+    title: "Autopay Agent",
+    description:
+      "Settles its owner's Splitsy bills without being asked. For every bill it opens an ERC-8183 job, pays the share out of its own funded balance under caps its owner sets, funds the job fee, and logs the ones it refuses along with the reason.",
+    capabilities: ["autopay", "erc8183_client", "debt_settlement"],
+  },
+  "splitsy-settler": {
+    title: "Settler Agent",
+    description:
+      "Provider on every Splitsy ERC-8183 job: prices its own work with setBudget, buys a bill review from the Auditor over x402 before it moves anything, signs the settlement on chain, and submits the settlement transaction hash as the job's deliverable.",
+    capabilities: ["erc8183_provider", "debt_settlement", "x402_buyer"],
+  },
+  "splitsy-auditor": {
+    title: "Auditor Agent",
+    description:
+      "Evaluator on every Splitsy ERC-8183 job. Sells bill reviews over x402, and releases a job's escrow to the Settler only after reading BillSplitRegistry on chain and seeing the debt actually settled — a job whose work it cannot verify expires unpaid.",
+    capabilities: ["erc8183_evaluator", "bill_review", "x402_seller"],
+  },
+};
+
 // Upload ERC-8004 agent metadata to IPFS via Pinata. Returns ipfs:// URI or
 // falls back to data: URI if Pinata is unconfigured (reputation still works,
 // just without discoverable off-chain metadata). Exported for the one-off
@@ -214,10 +257,13 @@ export async function uploadMetadataToIPFS(
   // existing caller mints; the agent economy passes 'splitsy-user-agent'.
   agentType: AgentType = "splitsy-payer",
 ): Promise<string> {
+  const profile = AGENT_PROFILE[agentType];
+  const name = `Splitsy ${profile.title} ${walletAddress.slice(0, 6)}…${walletAddress.slice(-4)}`;
+
   if (!PINATA_JWT) {
     const fallback = {
-      name: "Splitsy payer",
-      description: "Payment reputation agent for Splitsy bill-splitting app",
+      name,
+      description: profile.description,
       agent_type: agentType,
       version: "1",
       wallet: walletAddress,
@@ -226,16 +272,16 @@ export async function uploadMetadataToIPFS(
   }
 
   const stampedAt = registeredAt ?? new Date();
-  const imageURI = await uploadAgentImage(walletAddress, stampedAt);
+  const imageURI = await uploadAgentImage(walletAddress, stampedAt, profile.title);
   const metadata = {
-    name: `Splitsy Payer ${walletAddress.slice(0, 6)}…${walletAddress.slice(-4)}`,
-    description: "Payment reputation agent for Splitsy bill-splitting app on Arc Testnet",
+    name,
+    description: `${profile.description} Runs on Arc Testnet.`,
     ...(imageURI ? { image: imageURI } : {}),
     agent_type: agentType,
     version: "1",
     wallet: walletAddress,
     created_at: stampedAt.toISOString(),
-    capabilities: ["payment_verification", "debt_settlement"],
+    capabilities: profile.capabilities,
     platform: "splitsy",
   };
 
@@ -262,8 +308,8 @@ export async function uploadMetadataToIPFS(
   } catch (err) {
     console.error("IPFS metadata upload failed, falling back to data: URI:", err);
     const fallback = {
-      name: "Splitsy payer",
-      description: "Payment reputation agent for Splitsy",
+      name,
+      description: profile.description,
       agent_type: agentType,
       version: "1",
       wallet: walletAddress,
@@ -365,7 +411,7 @@ export async function ensureAgent(
     await releaseAgentClaim(walletAddress).catch(() => undefined);
     throw err;
   }
-  await finalizeAgentRegistration(walletAddress, agentId, registerTx);
+  await finalizeAgentRegistration(walletAddress, agentId, registerTx, agentType);
 
   if (minterAddress && minterAddress.toLowerCase() !== walletAddress.toLowerCase()) {
     try {

@@ -43,3 +43,8 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 recovery/
+
+# local dev artifacts
+.venv-audit/
+.console.txt
+.shot-*.png

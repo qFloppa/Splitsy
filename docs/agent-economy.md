@@ -209,10 +209,11 @@ balances.
 | Mandate | **2 USDC** | gas + job fees |
 | Funded | **20 USDC** | gas + job fees + bill money |
 
-The panel shows the agent's address and the suggested amount; funding is an
-ordinary inbound transfer from whatever wallet the user likes. There is no
-in-app Fund button, because it would need a wallet connection the user may not
-have.
+The panel shows the agent's address and, while the balance is still zero, says
+plainly that nothing settles until it is funded — 20 USDC, since Funded is the
+only mode it offers. Funding is an ordinary inbound transfer from whatever
+wallet the user likes. There is no in-app Fund button, because it would need a
+wallet connection the user may not have.
 
 An agent whose balance cannot cover the fee plus a 0.20 USDC gas headroom
 (plus the share itself, in Funded mode) **skips with `agent_unfunded` and
@@ -235,14 +236,25 @@ which is cosmetic, and never blocks a settlement.
 
 ## The two money modes
 
-The user chooses where **bill money** comes from. Both modes need the funded
-agent above; they differ only in who pays the share. The **fee is always the
-user's agent's**, in both.
+Where **bill money** comes from. Both modes need the funded agent above; they
+differ only in who pays the share. The **fee is always the user's agent's**, in
+both.
 
 | Mode | Bill money from | Settlement call | Signer | New Solidity |
 |---|---|---|---|---|
-| **Mandate** (default) | the user's own wallet | `AutopayMandate.payFor(billId, debtor)` | Settler | none |
-| **Funded** | the agent's own balance | `BillSplitRegistry.payDebtFor(billId, debtor, amount)` | user's agent | none |
+| **Mandate** | the user's own wallet | `AutopayMandate.payFor(billId, debtor)` | Settler | none |
+| **Funded** (the only one on offer) | the agent's own balance | `BillSplitRegistry.payDebtFor(billId, debtor, amount)` | user's agent | none |
+
+> **The mode is no longer a user choice.** The picker is gone from
+> `app/SettlementAgentsPanel.tsx`, which now describes Funded mode alone and
+> sends `moneyMode: 'funded'` on every save; the column default is `'funded'`
+> and existing rows were flipped (`schema-agent-economy.sql`). Everything below
+> about Mandate mode is still true of the *backend* — the route, the contract
+> and `buildGrant` are untouched and a `'mandate'` row still settles that way —
+> but nothing puts a user there any more. A save also **revokes** a mandate left
+> on the user's Splitsy wallet by the old flow, and the browser-wallet revoke
+> survives in the unlink warning. Re-plugging it means restoring the picker and
+> dropping two lines of SQL.
 
 `payDebtFor` pulls from `msg.sender`, credits the `debtor`, and emits `DebtPaid`
 naming the **debtor** as payer — so reputation keeps flowing to the user rather
@@ -254,11 +266,12 @@ the mandate is not in the path. The off-chain rules still do: per-bill cap,
 daily cap, creator allowlist, score floor and verified hash are all evaluated by
 `decideAutopay` against the Postgres mirror instead of against the chain.
 
-The weakening is genuine, and the panel says so in one sentence when Funded is
-selected:
+The weakening is genuine, and the panel says so in its own row rather than
+leaving it implied:
 
-> *In this mode your limits are enforced by Splitsy, not by the chain. Your
-> agent's balance is the only limit the chain enforces.*
+> *Splitsy does. They are checked before your agent spends, not enforced by a
+> contract — so the hard limit is the balance above: it can never pay out more
+> than you have sent it.*
 
 That last clause is the honest consolation: an agent holding 5 USDC can never
 spend 6. It is a simpler ceiling than a mandate and it needs no contract.
@@ -281,9 +294,10 @@ bucket in Mandate mode, and `sumAutopaySpentTodayUsdc` over `autopay_log` in
 Funded mode, where no bucket exists. Two modes, two sources, never two answers
 for the same mode.
 
-Mode is stored per user in `autopay_grants.money_mode`, defaulting to
-`'mandate'` — the mode where the *chain* says no. Anything that is not exactly
-`'funded'`, including a typo or a missing column, reads as `'mandate'`.
+Mode is stored per user in `autopay_grants.money_mode`. The column now defaults
+to `'funded'`, because that is the only mode the UI can describe; the *code*
+still reads anything that is not exactly `'funded'` as `'mandate'`, so a typo
+lands in the stricter mode rather than the looser one.
 
 ---
 

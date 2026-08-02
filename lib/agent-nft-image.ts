@@ -54,6 +54,9 @@ function line(
 export type AgentImageInput = {
   walletAddress: string;
   registeredAt: Date;
+  // The role, from AGENT_PROFILE in lib/erc8004.ts. Baked into the picture, so
+  // an autopay agent's NFT no longer shows a picture calling it a payer.
+  title: string;
 };
 
 export async function composeAgentImage(input: AgentImageInput): Promise<Buffer> {
@@ -61,7 +64,7 @@ export async function composeAgentImage(input: AgentImageInput): Promise<Buffer>
   const date = input.registeredAt.toISOString().slice(0, 10);
   const svg =
     `<svg xmlns="http://www.w3.org/2000/svg" width="${SIZE}" height="${SIZE}">` +
-    line(font, "SPLITSY · PAYER AGENT", 1090, 34, "#8fb4ff", 0.28) +
+    line(font, `SPLITSY · ${input.title.toUpperCase()}`, 1090, 34, "#8fb4ff", 0.28) +
     line(font, input.walletAddress.toLowerCase(), 1150, 36, "#eaf2ff") +
     line(font, `REGISTERED ${date} · ARC TESTNET`, 1204, 24, "#5f7bb0", 0.12) +
     "</svg>";

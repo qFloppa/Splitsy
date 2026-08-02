@@ -1,7 +1,13 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { encodeAbiParameters, encodeEventTopics } from "viem";
-import { feedbackDedupeKey, feedbackHashFor, parseDebtPaidLog } from "./erc8004.ts";
+import {
+  AGENT_PROFILE,
+  feedbackDedupeKey,
+  feedbackHashFor,
+  parseDebtPaidLog,
+  type AgentType,
+} from "./erc8004.ts";
 
 const DEBT_PAID_ABI = [
   {
@@ -116,4 +122,43 @@ test("feedback hashes and dedupe keys are case-insensitive in the registry addre
 
 test("a recurring cycle key stays distinct from a bare bill id on the same contract", () => {
   assert.notEqual(feedbackHashFor(V1, "tab:1:cycle:1", PAY_TX), feedbackHashFor(V1, "bill:1", PAY_TX));
+});
+
+// The metadata a token is minted with is IMMUTABLE, so these are not cosmetic
+// assertions: a profile that is wrong at mint time is wrong on chain forever
+// unless somebody re-points the URI by hand.
+const AGENT_TYPES: AgentType[] = [
+  "splitsy-payer",
+  "splitsy-user-agent",
+  "splitsy-settler",
+  "splitsy-auditor",
+];
+
+test("every agent type has a profile, and every title says Agent", () => {
+  for (const type of AGENT_TYPES) {
+    const profile = AGENT_PROFILE[type];
+    assert.ok(profile, `${type} has no profile`);
+    // The title lands in the NFT's name and in the picture. Without the word,
+    // "Splitsy Payer 0x1234…" reads like a person rather than software.
+    assert.match(profile.title, /\bAgent\b/, `${type}'s title must contain "Agent"`);
+    assert.ok(profile.capabilities.length > 0, `${type} claims no capabilities`);
+  }
+  assert.equal(Object.keys(AGENT_PROFILE).length, AGENT_TYPES.length);
+});
+
+test("each role describes its own job — no shared boilerplate across the four", () => {
+  const descriptions = AGENT_TYPES.map((t) => AGENT_PROFILE[t].description);
+  assert.equal(new Set(descriptions).size, AGENT_TYPES.length, "two agents share a description");
+  assert.equal(
+    new Set(AGENT_TYPES.map((t) => AGENT_PROFILE[t].title)).size,
+    AGENT_TYPES.length,
+    "two agents share a title",
+  );
+  for (const description of descriptions) {
+    // The old text called all four "Payment reputation agent for Splitsy
+    // bill-splitting app", which was true of one of them. Reputation is the
+    // payer's job; an autopay client or an escrow evaluator does something else.
+    assert.doesNotMatch(description, /^Payment reputation agent/, "the old boilerplate is back");
+    assert.ok(description.length > 60, "a description this short cannot say what the agent does");
+  }
 });

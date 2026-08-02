@@ -23,6 +23,8 @@ const {
   encodeSubmit,
   jobIdFromLogs,
   jobStatusName,
+  STEP_BY_TOPIC,
+  stepsFromLogs,
 } = await import("./erc8183.ts");
 
 const PROVIDER = "0x1111111111111111111111111111111111111111" as const;
@@ -107,6 +109,72 @@ test("jobIdFromLogs reads the id from a JobCreated log and ignores foreign logs"
     { address: AGENTIC_COMMERCE, topics: topicsFor("1c8"), data: jobCreatedData },
   ];
   assert.equal(jobIdFromLogs(logs), 456n);
+});
+
+// The leading bytes of each step's topic0, copied from what Arc Testnet really
+// emitted for job 164720 (tx 0xf2be6aa3… and its four siblings). Hard-coded
+// rather than recomputed from the same strings the source uses, which would only
+// prove keccak256 is deterministic: these came off the deployed contract, so a
+// signature edited to something plausible-but-wrong fails here.
+const ONCHAIN_TOPICS = {
+  createJob: "0xb0f0239b",
+  setBudget: "0x869e2577",
+  fund: "0xe3fbcc1e",
+  submit: "0x80c17db7",
+  complete: "0x0fd54bd3",
+  "escrow released": "0x21d71db5",
+} as const;
+
+test("every ceremony step keys off the topic0 the deployed contract emits", () => {
+  const byStep = new Map([...STEP_BY_TOPIC].map(([topic, step]) => [step, topic]));
+  for (const [step, prefix] of Object.entries(ONCHAIN_TOPICS)) {
+    const topic = byStep.get(step);
+    assert.ok(topic, `no topic registered for the ${step} step`);
+    assert.ok(topic.startsWith(prefix), `${step} hashes to ${topic}, but Arc emits ${prefix}…`);
+  }
+  assert.equal(STEP_BY_TOPIC.size, 6, "six events make up the trail");
+});
+
+test("stepsFromLogs orders the ceremony by block, keeps only this job, drops the rest", () => {
+  const pad = (hex: string) => `0x${hex.replace(/^0x/, "").padStart(64, "0")}`;
+  const byStep = new Map([...STEP_BY_TOPIC].map(([topic, step]) => [step, topic]));
+  const MINE = pad("28370"); // 164720
+  const log = (step: string, blockNumber: bigint, txHash: string, jobTopic = MINE, logIndex = 0) => ({
+    topics: [byStep.get(step) as string, jobTopic],
+    blockNumber,
+    transactionHash: txHash,
+    logIndex,
+  });
+
+  const steps = stepsFromLogs(164720n, [
+    // Out of order on purpose: getLogs is ordered, but the window is wide enough
+    // to hold another job's ceremony interleaved with this one's.
+    log("fund", 776n, "0xf2be"),
+    log("createJob", 752n, "0x2f09"),
+    // A neighbouring job in the same window — right event, wrong id.
+    log("complete", 760n, "0xdead", pad("28371")),
+    log("setBudget", 766n, "0x3d8e"),
+    log("complete", 814n, "0xb636", MINE, 3),
+    log("escrow released", 814n, "0xb636", MINE, 4),
+    log("submit", 809n, "0xc0f5"),
+    // An event this contract emits that is not part of the trail.
+    { topics: [pad("beef"), MINE], blockNumber: 800n, transactionHash: "0xbeef", logIndex: 0 },
+    // Still in the mempool as far as this node is concerned: no block, no hash.
+    { topics: [byStep.get("fund") as string, MINE], blockNumber: null, transactionHash: null, logIndex: 0 },
+  ]);
+
+  assert.deepEqual(
+    steps.map((s) => [s.step, s.blockNumber, s.txHash]),
+    [
+      ["createJob", 752, "0x2f09"],
+      ["setBudget", 766, "0x3d8e"],
+      ["fund", 776, "0xf2be"],
+      ["submit", 809, "0xc0f5"],
+      // Same block AND same transaction — ordered by log index, not by luck.
+      ["complete", 814, "0xb636"],
+      ["escrow released", 814, "0xb636"],
+    ],
+  );
 });
 
 test("jobIdFromLogs returns null when the receipt has no JobCreated", () => {

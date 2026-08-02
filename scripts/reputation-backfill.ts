@@ -9,7 +9,7 @@
 import { createPublicClient, encodeFunctionData, http } from "viem";
 import { arcTestnet } from "viem/chains";
 import { executeContractOnArc, getOrCreateArcWallet } from "../lib/circle-dcw.ts";
-import { IDENTITY_REGISTRY, uploadMetadataToIPFS } from "../lib/erc8004.ts";
+import { IDENTITY_REGISTRY, uploadMetadataToIPFS, type AgentType } from "../lib/erc8004.ts";
 import { createSupabaseServerClient } from "../lib/supabase.ts";
 
 const ABI = [
@@ -66,11 +66,16 @@ async function findWalletIdByAddress(address: string): Promise<string | null> {
 
 const { data: agents, error } = await supabase
   .from("reputation_agents")
-  .select("wallet_address, agent_id, created_at")
+  .select("wallet_address, agent_id, created_at, agent_type")
   .not("agent_id", "is", null);
 if (error) throw new Error(error.message);
 
-for (const agent of (agents ?? []) as { wallet_address: string; agent_id: string; created_at: string }[]) {
+for (const agent of (agents ?? []) as {
+  wallet_address: string;
+  agent_id: string;
+  created_at: string;
+  agent_type: AgentType | null;
+}[]) {
   try {
     const tokenId = BigInt(agent.agent_id);
     const owner = (
@@ -81,7 +86,9 @@ for (const agent of (agents ?? []) as { wallet_address: string; agent_id: string
         args: [tokenId],
       })
     ).toLowerCase();
-    console.log(`agent ${agent.agent_id} → payer ${agent.wallet_address}, owned by ${owner}`);
+    console.log(
+      `agent ${agent.agent_id} → ${agent.agent_type ?? "splitsy-payer"} ${agent.wallet_address}, owned by ${owner}`,
+    );
 
     const signerWalletId =
       owner === registrar.address.toLowerCase() ? registrar.walletId : await findWalletIdByAddress(owner);
@@ -93,7 +100,15 @@ for (const agent of (agents ?? []) as { wallet_address: string; agent_id: string
     // 1. Fresh metadata (adds the image, stamped with the real registration
     //    date). Must happen while we can still sign as the owner — i.e.
     //    before any transfer to a browser wallet.
-    const uri = await uploadMetadataToIPFS(agent.wallet_address, new Date(agent.created_at));
+    //
+    //    The stored role decides what the metadata SAYS. Passing nothing here
+    //    would re-describe every agent as a payer, which is how an autopay
+    //    agent ends up with a payer's sentence carved into an immutable URI.
+    const uri = await uploadMetadataToIPFS(
+      agent.wallet_address,
+      new Date(agent.created_at),
+      agent.agent_type ?? "splitsy-payer",
+    );
     await executeContractOnArc(
       signerWalletId,
       IDENTITY_REGISTRY,

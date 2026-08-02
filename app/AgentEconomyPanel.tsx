@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Bot, ExternalLink } from "lucide-react";
+import { Bot, ChevronRight, ExternalLink } from "lucide-react";
+import { PaymentLink } from "./JobTrail";
 
 // The four ledger figures are optional because /api/scout/stats omits them
 // wholesale when there is no database to read them from. Absent means unknown,
@@ -14,6 +15,17 @@ type Stats = {
   dailyCapUsd: number;
   budgetRemainingUsd: number;
   agent: { address: string | null; tokenId: string | null };
+  // Null for the same reason the figures above are optional: no ledger to read.
+  recent?: Payment[] | null;
+};
+
+type Payment = {
+  direction: "earned" | "spent";
+  endpoint: string;
+  counterparty: string;
+  amountUsdc: number;
+  gatewayTx: string | null;
+  createdAt: string;
 };
 
 const usdc = (v: number) => `${v.toFixed(3)} USDC`;
@@ -100,6 +112,31 @@ export default function AgentEconomyPanel() {
             </div>
           ))}
         </div>
+
+        {/* The payments behind the tiles. Every one links to Circle's own
+            receipt for it — these settle in batches, so there is no per-payment
+            transaction on chain to point at, only the batch that carried it. */}
+        {stats.recent?.length ? (
+          <details className="job-trail">
+            <summary className="spec-chip job-trail-summary">
+              <ChevronRight className="job-trail-caret" size={12} />
+              <span>last {stats.recent.length} x402 payments · Circle receipts</span>
+            </summary>
+            <div className="job-trail-body">
+              <ul className="job-trail-pay">
+                {stats.recent.map((p) => (
+                  <li key={`${p.createdAt}-${p.direction}-${p.endpoint}`}>
+                    <span className="job-trail-step">{p.endpoint}</span>
+                    <span className="job-trail-block">
+                      {p.direction} {usdc(p.amountUsdc)}
+                    </span>
+                    <PaymentLink gatewayTx={p.gatewayTx} />
+                  </li>
+                ))}
+              </ul>
+            </div>
+          </details>
+        ) : null}
       </div>
     </section>
   );

@@ -164,6 +164,16 @@ export const usdcAbi = [
     inputs: [{ internalType: "address", name: "account", type: "address" }],
     outputs: [{ type: "uint256" }],
   },
+  {
+    type: "function",
+    name: "transfer",
+    stateMutability: "nonpayable",
+    inputs: [
+      { internalType: "address", name: "to", type: "address" },
+      { internalType: "uint256", name: "amount", type: "uint256" },
+    ],
+    outputs: [{ type: "bool" }],
+  },
 ] as const;
 
 export type RecurringMemberState = {

@@ -108,15 +108,26 @@ export async function GET() {
   const onchain = Object.fromEntries(facts);
   const dcwFacts = dcw ? onchain[dcw] : null;
 
-  // The form's own values still come from the DCW's mandate when there is one,
-  // falling back to the Postgres mirror so a user sees the numbers they typed
-  // but have not yet signed. `enabled` is never mirrored: it is the answer to
-  // "can software move my money right now?" and must come from the chain alone.
+  // WHICH STORE ANSWERS depends on the mode, because the answer has to come from
+  // whatever will actually bind the agent:
+  //
+  //   'mandate' — the DCW's on-chain mandate, falling back to the Postgres
+  //     mirror for numbers typed but not yet signed. `enabled` is never
+  //     mirrored there: it is the answer to "can software move my money right
+  //     now?" and only the chain can give it.
+  //   'funded'  — the mirror, and only the mirror. The agent spends its own
+  //     balance under rules this server enforces, so a mandate left on the DCW
+  //     from the old flow governs nothing. Reading `enabled` off the chain here
+  //     would show Idle for an account whose agent is settling bills, and show
+  //     ceilings that nothing is checking against.
+  const funded = (rules?.moneyMode ?? "mandate") === "funded";
+  const chainCaps = !funded && dcwFacts?.enabled ? dcwFacts : null;
+
   const grant: AutopayGrant & { requireBillReview: boolean } = {
-    enabled: dcwFacts?.enabled ?? false,
-    maxPerBillUsdc: dcwFacts?.enabled ? dcwFacts.maxPerBillUsdc : (rules?.maxPerBillUsdc ?? DEFAULT_GRANT.maxPerBillUsdc),
-    maxPerDayUsdc: dcwFacts?.enabled ? dcwFacts.maxPerDayUsdc : (rules?.maxPerDayUsdc ?? DEFAULT_GRANT.maxPerDayUsdc),
-    trustedCreators: dcwFacts?.enabled ? dcwFacts.trustedCreators : (rules?.trustedCreators ?? []),
+    enabled: funded ? (rules?.enabled ?? false) : (dcwFacts?.enabled ?? false),
+    maxPerBillUsdc: chainCaps ? chainCaps.maxPerBillUsdc : (rules?.maxPerBillUsdc ?? DEFAULT_GRANT.maxPerBillUsdc),
+    maxPerDayUsdc: chainCaps ? chainCaps.maxPerDayUsdc : (rules?.maxPerDayUsdc ?? DEFAULT_GRANT.maxPerDayUsdc),
+    trustedCreators: chainCaps ? chainCaps.trustedCreators : (rules?.trustedCreators ?? []),
     minCreatorScore: rules?.minCreatorScore ?? DEFAULT_GRANT.minCreatorScore,
     requireVerifiedHash: rules?.requireVerifiedHash ?? DEFAULT_GRANT.requireVerifiedHash,
     requireBillReview: rules?.requireBillReview ?? true,
@@ -239,7 +250,18 @@ export async function PUT(request: Request) {
   }
 
   try {
-    const txHash = await syncMandateOnchain(user, { enabled, maxPerBillUsdc, maxPerDayUsdc, trustedCreators });
+    // Funded mode never arms anything: the agent spends its own balance, so a
+    // mandate on the user's wallet would be a standing permission nothing in
+    // the settlement path uses. Passing `enabled: false` is not a no-op though —
+    // it is the migration. An account that armed under the old flow gets that
+    // mandate REVOKED by its first save here, rather than left live on chain
+    // under caps this form no longer edits.
+    const txHash = await syncMandateOnchain(user, {
+      enabled: moneyMode === "funded" ? false : enabled,
+      maxPerBillUsdc,
+      maxPerDayUsdc,
+      trustedCreators,
+    });
     return Response.json({ ok: true, txHash, signWith: "dcw" });
   } catch (err) {
     if (err instanceof InsufficientFundsError) {
@@ -269,6 +291,9 @@ async function syncMandateOnchain(
 ): Promise<string | null> {
   if (!isMandateConfigured()) return null;
   if (!user.circle_wallet_id || !user.wallet_address) {
+    // A wallet that does not exist yet cannot be holding a mandate, so there is
+    // nothing to revoke and nothing to report. Arming one is a real failure.
+    if (!next.enabled) return null;
     throw new Error("your wallet isn't provisioned yet — log in again");
   }
 

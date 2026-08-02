@@ -25,9 +25,7 @@ alter table autopay_log add column if not exists fee_usdc    numeric(20,6) not n
 
 -- Where BILL money comes from.
 --   'mandate' — the user's own wallet, pulled under AutopayMandate. The caps
---               that bind are the on-chain ones. This is the default, and it
---               is the default deliberately: it is the mode where the chain,
---               not this server, is the thing that says no.
+--               that bind are the on-chain ones.
 --   'funded'  — the agent's own balance, via BillSplitRegistry.payDebtFor. The
 --               mandate is not in the path, so the caps that bind are the ones
 --               in THIS table, enforced off chain by lib/autopay.ts. The only
@@ -35,6 +33,17 @@ alter table autopay_log add column if not exists fee_usdc    numeric(20,6) not n
 -- The weakening is real and the UI must say so in one sentence.
 alter table autopay_grants add column if not exists money_mode text not null default 'mandate'
   check (money_mode in ('mandate','funded'));
+
+-- Funded is now the only mode the UI offers, so it is the only mode anyone
+-- should be left sitting in. Mandate mode stays whole in the backend — the
+-- route still reads this column and still knows how to pull under a mandate —
+-- but nothing routes a user into it, and an account left on 'mandate' would go
+-- on having its OWN wallet debited by a flow the app no longer explains.
+--
+-- ponytail: a data flip, not a schema change. Re-plugging mandate mode means
+-- deleting these two lines, not writing a down-migration.
+alter table autopay_grants alter column money_mode set default 'funded';
+update autopay_grants set money_mode = 'funded' where money_mode = 'mandate';
 
 -- The user's agent wallet — one per ACCOUNT, refId 'agent:<user_id>', covering
 -- both the Splitsy DCW and any linked browser wallet. Cached here so a page

@@ -21,10 +21,10 @@ import Image from "next/image";
 import { useEffect, useRef, useState } from "react";
 import { readArcUsdcBalance, billUnitsToUsdc } from "@/lib/bill-split-contracts";
 import { providerDisplay } from "@/lib/provider-display";
-import type { IdentityProvider } from "@/lib/types";
+import type { AccountProvider } from "@/lib/types";
 import { ProviderIcon } from "./ProviderTag";
 
-type Me = { id: string; provider?: IdentityProvider | null; handle: string; name: string | null; avatarUrl: string | null; walletAddress: string | null };
+type Me = { id: string; provider?: AccountProvider | null; handle: string; name: string | null; avatarUrl: string | null; walletAddress: string | null };
 type Tab = "info" | "send" | "receive" | "history";
 
 function Usdc({ size = 14 }: { size?: number }) {
@@ -171,7 +171,13 @@ export default function XAuthControl() {
 
   // Signed out (or still loading): render nothing. The header's SignInMenu
   // provides the sign-in entry point; this widget is only for signed-in users.
-  if (loading || !me) {
+  //
+  // Also nothing for an account that signed in AS a browser wallet. This panel
+  // is the Splitsy DCW — its balance, its send/receive, its PIN — and that
+  // wallet is an implementation detail to someone who already holds their own
+  // keys: they never funded it and nothing routes them to it. SignInMenu shows
+  // their address and the way out instead.
+  if (loading || !me || me.provider === "wallet") {
     return null;
   }
 

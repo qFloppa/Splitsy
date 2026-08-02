@@ -49,6 +49,7 @@ import XDebtsPanel from "./XDebtsPanel";
 import XHistoryPanel from "./XHistoryPanel";
 import DashboardPanel from "./DashboardPanel";
 import AgentEconomyPanel from "./AgentEconomyPanel";
+import { gatewayReceiptUrl } from "./JobTrail";
 import SettlementAgentsPanel, { Switch } from "./SettlementAgentsPanel";
 import { HistoryCard, PaidBillStamp } from "./HistoryCard";
 import { Panel, TabHero } from "./SpecCard";
@@ -5015,6 +5016,7 @@ function useBatchSettlement(payments: ScoutReport["payments"]) {
 const X402_EXPLAINER = [
   "Scout is an autonomous agent with its own wallet and on-chain identity (ERC-8004 #).",
   "Splitsy's scanning and currency endpoints are paywalled with x402, the HTTP standard for machine payments. Scout signs a gasless USDC authorization for each call it makes, and Circle Gateway batches those payments into one on-chain settlement on Arc.",
+  "Every payment below is checkable: 'receipt' opens Circle's own record of it, and 'settled tx' opens the batch transaction on Arc once that batch lands.",
   "It decides for itself: it refuses photos too poor to read, buys a second stricter opinion when its own parse looks unsure, and stops at a daily budget. If paying ever fails, it falls back to a free scan so your bill still goes through.",
 ];
 
@@ -5078,9 +5080,29 @@ function ScoutReceipt({ report }: { report: ScoutReport }) {
             <li key={`${payment.endpoint}-${index}`}>
               Paid <span className="amount-text">{payment.amountUsd.toFixed(3)} USDC</span> → {payment.endpoint}
               {payment.confidence != null ? ` (confidence ${(payment.confidence * 100).toFixed(0)}%)` : ""}
-              {/* Gateway batches settlement, so a fresh payment has only a
-                  transfer id — the on-chain hash appears once its batch lands,
-                  which useBatchSettlement waits for. */}
+              {/* Two different receipts, and both are worth having:
+                    · Circle's record of THIS payment — who paid whom, how much,
+                      and its status. Available the instant it settles.
+                    · the batch TRANSACTION on Arc, which carries this payment
+                      among others and only exists once the batch lands
+                      (minutes later — useBatchSettlement waits for it).
+                  Neither substitutes for the other: the transaction proves money
+                  moved on chain but names no single payment, and the receipt
+                  names the payment but is Circle's word for it. */}
+              {payment.tx && !payment.tx.startsWith("0x") ? (
+                <>
+                  {" · "}
+                  <a
+                    className="underline"
+                    href={gatewayReceiptUrl(payment.tx)}
+                    rel="noreferrer"
+                    target="_blank"
+                    title="Circle's own record of this x402 payment"
+                  >
+                    receipt {payment.tx.slice(0, 8)}…
+                  </a>
+                </>
+              ) : null}
               {(() => {
                 const hash = payment.tx?.startsWith("0x") ? payment.tx : settledTx[payment.tx ?? ""];
                 if (hash) {
@@ -5098,9 +5120,9 @@ function ScoutReceipt({ report }: { report: ScoutReport }) {
                     </>
                   );
                 }
-                return payment.tx ? (
-                  <span title={payment.tx}> · batching {payment.tx.slice(0, 8)}…</span>
-                ) : null;
+                // Not "no transaction" — not yet. Saying which it is stops the
+                // receipt reading as a payment that failed to land.
+                return payment.tx ? <span> · batching</span> : null;
               })()}
             </li>
           ))}

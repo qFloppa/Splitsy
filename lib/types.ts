@@ -33,9 +33,17 @@ export type Charge = {
 // X/Discord rule where separate providers never link.
 export type IdentityProvider = "x" | "discord" | "email";
 
+// How an ACCOUNT is owned, which is one wider than how a debtor is TAGGED. You
+// cannot tag a bill to "wallet" — there is no handle namespace to look up — but
+// you can own an account by proving control of an address, so users.provider
+// carries one value bill_debts.debtor_provider never will. Same
+// `IdentityProvider | "wallet"` idiom already used for participant rows
+// (lib/snapsplit.ts) and dashboard buckets (lib/dashboard-types.ts).
+export type AccountProvider = IdentityProvider | "wallet";
+
 export type AppUser = {
   id: string;
-  provider: IdentityProvider;
+  provider: AccountProvider;
   provider_user_id: string;
   handle: string;
   name: string | null;

@@ -205,7 +205,94 @@ export function jobIdFromLogs(
   return null;
 }
 
+// ── the ceremony, rebuilt from the chain ──
+//
+// Nothing writes these five transaction hashes down as they happen: autopay_log
+// keeps the job id and the settlement hash, and that is all. So the trail is
+// REBUILT from the contract's own logs rather than stored — which costs one
+// getLogs, and buys a full history for every job ever settled, including the
+// ones that predate this code.
+//
+// Keyed by topic0 rather than decoded through an ABI: the step's name, block and
+// transaction is all the trail shows, and every one of those is readable off the
+// raw log. A signature that drifts drops its row instead of throwing.
+const STEP_SIGNATURES = [
+  ["createJob", "JobCreated(uint256,address,address,address,uint256,address)"],
+  ["setBudget", "BudgetSet(uint256,uint256)"],
+  ["fund", "JobFunded(uint256,address,uint256)"],
+  ["submit", "JobSubmitted(uint256,address,bytes32)"],
+  ["complete", "JobCompleted(uint256,address,bytes32)"],
+  ["escrow released", "PaymentReleased(uint256,address,uint256)"],
+] as const;
+
+export const STEP_BY_TOPIC = new Map<string, string>(
+  STEP_SIGNATURES.map(([step, signature]) => [keccak256(toHex(signature)), step]),
+);
+
+export type JobStep = { step: string; blockNumber: number; txHash: string };
+
+type RawLog = {
+  address?: string;
+  topics: readonly string[];
+  blockNumber: bigint | null;
+  transactionHash: string | null;
+  logIndex: number | null;
+};
+
+// Pure, so the assembly is testable without a network.
+//
+// ponytail: the job id is matched in ANY topic slot rather than a known
+// position, because these six events do not agree on where they index it. The
+// ceiling: an indexed address or amount whose 32 bytes equal the job id would
+// pull in a foreign row. Nothing on this chain has one — a job id small enough
+// to be a plausible address would need 26 leading zero bytes. Pin the slot per
+// event if the contract ever indexes a uint that ranges that low.
+export function stepsFromLogs(jobId: bigint, logs: readonly RawLog[]): JobStep[] {
+  const idTopic = `0x${jobId.toString(16).padStart(64, "0")}`;
+  return logs
+    .filter((log) => log.topics.some((t) => t?.toLowerCase() === idTopic))
+    .flatMap((log) => {
+      const step = STEP_BY_TOPIC.get((log.topics[0] ?? "").toLowerCase());
+      if (!step || log.blockNumber === null || !log.transactionHash) return [];
+      return [
+        {
+          step,
+          blockNumber: Number(log.blockNumber),
+          txHash: log.transactionHash,
+          order: Number(log.logIndex ?? 0),
+        },
+      ];
+    })
+    .sort((a, b) => a.blockNumber - b.blockNumber || a.order - b.order)
+    .map(({ step, blockNumber, txHash }) => ({ step, blockNumber, txHash }));
+}
+
 const publicClient = createPublicClient({ chain: arcTestnet, transport: http(ARC_TESTNET_RPC) });
+
+// How far either side of the settlement to look. The whole ceremony spans about
+// 60 blocks; 2000 is ~17 minutes at Arc's block time, which covers a run that
+// stalled on a slow Circle poll without asking the RPC for an unbounded scan.
+const TRAIL_WINDOW = 2_000n;
+
+// The five calls and the escrow release, in the order the chain saw them.
+// Anchored on the settlement transaction because that is the one hash the log
+// row already holds — and it lands mid-ceremony, between fund and submit.
+export async function getJobTrail(jobId: bigint, anchorTxHash: `0x${string}`): Promise<JobStep[]> {
+  if (!isJobsConfigured()) return [];
+  const [receipt, head] = await Promise.all([
+    publicClient.getTransactionReceipt({ hash: anchorTxHash }),
+    publicClient.getBlockNumber(),
+  ]);
+  const anchor = receipt.blockNumber;
+  const logs = await publicClient.getLogs({
+    address: AGENTIC_COMMERCE_ADDRESS,
+    fromBlock: anchor > TRAIL_WINDOW ? anchor - TRAIL_WINDOW : 0n,
+    // Clamped to the head: an RPC that rejects a toBlock in the future would
+    // fail the whole trail on a job settled seconds ago.
+    toBlock: anchor + TRAIL_WINDOW > head ? head : anchor + TRAIL_WINDOW,
+  });
+  return stepsFromLogs(jobId, logs);
+}
 
 export type JobOnchain = {
   id: bigint;

@@ -48,22 +48,113 @@ export async function verifyLinkSignature(input: {
   signature: string;
   nowMs: number;
 }): Promise<{ ok: true } | { ok: false; error: string }> {
-  // Re-derive the message from what the SESSION says rather than trusting the
-  // body's copy. Otherwise a valid signature over some other text would pass.
+  return verifyFreshSignature({
+    address: input.address,
+    message: input.message,
+    signature: input.signature,
+    nowMs: input.nowMs,
+    // Re-derive the message from what the SESSION says rather than trusting the
+    // body's copy. Otherwise a valid signature over some other text would pass.
+    rebuild: (iso) => buildLinkMessage(input.address, input.handle, input.provider, iso),
+    mismatch: "That signature was not for this account and wallet.",
+    noun: "link request",
+  });
+}
+
+// The bytes a wallet signs to sign IN, as opposed to linking. Deliberately a
+// different sentence: the two are read by different routes with different
+// consequences — one widens an existing account's reach, the other mints an
+// account and a session — so a signature captured for either must be inert at
+// the other. Rebuilt server-side from the address in the body, so the only thing
+// the client controls is the timestamp.
+export function buildSigninMessage(address: string, isoTimestamp: string): string {
+  return `Splitsy: sign in as ${address.toLowerCase()}\n${isoTimestamp}`;
+}
+
+export async function verifySigninSignature(input: {
+  address: string;
+  message: string;
+  signature: string;
+  nowMs: number;
+}): Promise<{ ok: true } | { ok: false; error: string }> {
+  return verifyFreshSignature({
+    address: input.address,
+    message: input.message,
+    signature: input.signature,
+    nowMs: input.nowMs,
+    rebuild: (iso) => buildSigninMessage(input.address, iso),
+    mismatch: "That signature was not a Splitsy sign-in for this wallet.",
+    noun: "sign-in request",
+  });
+}
+
+// Fired on `window` once a wallet session has been dropped and the server has
+// confirmed the cookie is gone. Panels that read the session when they mount —
+// the Agents tab holds the account's caps, decision log and agent balance —
+// listen for it and re-read, which is what a page reload used to do. A reload
+// also threw away which tab the user was on, so this is both cheaper and less
+// destructive. Shared from here so the two sides cannot drift on the string.
+export const SESSION_ENDED_EVENT = "splitsy:session-ended";
+
+// Does this session still describe the wallet the browser is holding?
+//
+// A wallet session's handle IS the address that signed for it, so it outlives
+// its own truth in two ways: the user picks a different account in Rabby (the
+// session now names someone else — a different users row, a different agent, a
+// different balance), or disconnects entirely (there is no longer a key backing
+// the identity, and disconnecting is the only sign-out a wallet account has,
+// since it deliberately owns no chip in the header). Both drop the session in
+// app/SignInMenu.tsx.
+//
+// `connected` is passed rather than inferred from a missing address because the
+// two are NOT the same: wagmi's store initialises to disconnected with no
+// address and only flips to 'reconnecting' once reconnect() runs from a mount
+// effect, so "no address" during that window means "not known yet", not "signed
+// out". Callers pass connected: false only for wagmi's real connected →
+// disconnected transition.
+//
+// A session from any other provider is never stale here — a social account's
+// browser wallet is a linked wallet, not its identity. Casing never matters:
+// wagmi hands out checksummed addresses, the DB stores lowercase.
+export function isStaleWalletSession(
+  session: { provider?: string | null; handle: string } | null | undefined,
+  wallet: { connected: boolean; address?: string | null },
+): boolean {
+  if (session?.provider !== "wallet") return false;
+  if (!wallet.connected) return true;
+  if (!wallet.address) return false;
+  return wallet.address.toLowerCase() !== session.handle.toLowerCase();
+}
+
+// The shared tail of both checks: the message must be EXACTLY what we rebuild,
+// recent in both directions, and signed by the address it names.
+//
+// ponytail: the timestamp window is the whole replay defence — there is no
+// server-issued nonce, so a signature captured in flight is reusable until it
+// ages out. Bounded at 5 minutes and the transport is TLS. Add a nonce table if
+// sign-in ever leaves the browser->server hop.
+async function verifyFreshSignature(input: {
+  address: string;
+  message: string;
+  signature: string;
+  nowMs: number;
+  rebuild: (isoTimestamp: string) => string;
+  mismatch: string;
+  noun: string;
+}): Promise<{ ok: true } | { ok: false; error: string }> {
   const lines = input.message.split("\n");
   const isoTimestamp = lines[1] ?? "";
-  const expected = buildLinkMessage(input.address, input.handle, input.provider, isoTimestamp);
-  if (expected !== input.message) {
-    return { ok: false, error: "That signature was not for this account and wallet." };
+  if (input.rebuild(isoTimestamp) !== input.message) {
+    return { ok: false, error: input.mismatch };
   }
 
   const signedAt = Date.parse(isoTimestamp);
   if (!Number.isFinite(signedAt)) {
-    return { ok: false, error: "That link request has no readable timestamp." };
+    return { ok: false, error: `That ${input.noun} has no readable timestamp.` };
   }
   // Both directions: a future timestamp is as suspect as a stale one.
   if (Math.abs(input.nowMs - signedAt) > LINK_MAX_AGE_MS) {
-    return { ok: false, error: "That link request expired. Try again." };
+    return { ok: false, error: `That ${input.noun} expired. Try again.` };
   }
 
   const valid = await verifyMessage({

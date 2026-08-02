@@ -358,14 +358,22 @@ async function settleOne(input: {
     // would leave the payment with neither check.
     if (!input.preimage) return logSkip(REVIEW_UNAVAILABLE);
 
-    const verdict = await buyReview(input.baseUrl, {
-      preimage: input.preimage,
-      shareUsdc: usdc(decision.amount),
-      // The on-chain roster, not the published labels: undercounting inflates
-      // the even split the model compares the share against.
-      participantCount: input.participantCount,
-      creatorScore: input.creatorScore,
-    });
+    const verdict = await buyReview(
+      input.baseUrl,
+      {
+        preimage: input.preimage,
+        shareUsdc: usdc(decision.amount),
+        // The on-chain roster, not the published labels: undercounting inflates
+        // the even split the model compares the share against.
+        participantCount: input.participantCount,
+        creatorScore: input.creatorScore,
+      },
+      // Tags the spend row with the bill it was bought for, so the audit trail
+      // can show the review next to the job it gated. The seller's matching
+      // 'earned' row carries no bill: withGateway settles before the handler
+      // runs and never sees one.
+      billKey,
+    );
     if (!verdict.approve) {
       // The model's own sentence goes straight into the log when it reached a
       // verdict; REVIEW_UNAVAILABLE when it could not. Both are refusals.
@@ -658,7 +666,7 @@ async function runJob(input: {
 // Fails closed on everything — a 402, a timeout, an unparseable verdict, a
 // missing key, AND an x402 settlement failure. A Settler that cannot pay for a
 // review does not settle anything.
-async function buyReview(baseUrl: string, body: ReviewInput): Promise<ReviewVerdict> {
+async function buyReview(baseUrl: string, body: ReviewInput, billRef: string): Promise<ReviewVerdict> {
   try {
     // Swallows its own failures by design (lib/settler.ts), so there is nothing
     // here to catch: a failed top-up surfaces as the pay below declining.
@@ -677,6 +685,7 @@ async function buyReview(baseUrl: string, body: ReviewInput): Promise<ReviewVerd
         counterparty: getSettler().address,
         amountUsdc: (Number(result.amount) / 1e6).toString(),
         gatewayTx: result.transaction || null,
+        billRef,
       }),
     );
 

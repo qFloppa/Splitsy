@@ -4,7 +4,7 @@ import { resolveDebtsForHandle } from "@/lib/bills-repo";
 import { getOrCreateArcWallet } from "@/lib/circle-dcw";
 import { getPendingWallet, deletePendingWallet } from "@/lib/pending-wallets-repo";
 import { signSession, SESSION_COOKIE_NAME, SESSION_MAX_AGE } from "@/lib/session";
-import type { IdentityProvider } from "@/lib/types";
+import type { AccountProvider } from "@/lib/types";
 
 // Shared tail of every sign-in provider's OAuth callback (X, Discord, …). Each
 // provider's route does its own token exchange + profile fetch, normalizes the
@@ -25,7 +25,7 @@ export type NormalizedProfile = {
 // instead. Debt-linking and wallet provisioning are best-effort and never block
 // login.
 export async function finishProviderLogin(params: {
-  provider: IdentityProvider;
+  provider: AccountProvider;
   profile: NormalizedProfile;
   request: NextRequest;
   sessionSecret: string;
@@ -57,10 +57,16 @@ export async function finishProviderLogin(params: {
 
   // Link any pending debts tagged with this (provider, handle) now that we know
   // who they are. Best-effort — don't block login if it fails.
-  try {
-    await resolveDebtsForHandle(appUser.id, provider, appUser.handle);
-  } catch (resolveErr) {
-    console.error("Debt resolution failed (login continues):", resolveErr);
+  //
+  // Skipped for a wallet sign-in: bill_debts is tagged by HANDLE, and a wallet
+  // has no handle namespace — a bill aimed at a raw address is on chain against
+  // that address, not pending in this table under it.
+  if (provider !== "wallet") {
+    try {
+      await resolveDebtsForHandle(appUser.id, provider, appUser.handle);
+    } catch (resolveErr) {
+      console.error("Debt resolution failed (login continues):", resolveErr);
+    }
   }
 
   // Provision a wallet on first login (idempotent). Prefer ADOPTING a wallet that
@@ -68,12 +74,19 @@ export async function finishProviderLogin(params: {
   // already hold an escrow position, so it must become this user's wallet. Only
   // if there is no pending wallet do we mint a fresh one. Best-effort: never block
   // login if Circle/Supabase is down.
+  //
+  // A wallet sign-in still gets a Splitsy DCW, and should: it is the wallet the
+  // rest of the app creates bills from and receives shares into. What it skips is
+  // the pending-wallet ADOPTION, which is keyed on a tagged handle it does not
+  // have.
   if (!appUser.wallet_address) {
     try {
-      const pending = await getPendingWallet(provider, appUser.handle);
+      const pending = provider === "wallet" ? null : await getPendingWallet(provider, appUser.handle);
       if (pending) {
         await setUserWallet(appUser.id, pending.wallet_address, pending.circle_wallet_id);
-        await deletePendingWallet(provider, appUser.handle);
+        // Deleted by the row's OWN key rather than the session's provider: the
+        // row is what proves this was a taggable identity in the first place.
+        await deletePendingWallet(pending.provider, pending.handle);
       } else {
         const wallet = await getOrCreateArcWallet(provider, profile.providerUserId);
         if (wallet) await setUserWallet(appUser.id, wallet.address, wallet.walletId);

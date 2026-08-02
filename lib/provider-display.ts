@@ -1,17 +1,17 @@
-import type { IdentityProvider } from "@/lib/types";
+import type { AccountProvider } from "@/lib/types";
 
 // How a tagged person renders for each identity provider: the avatar source, a
 // link to their public profile (if the provider has one), and how their handle
 // reads (X uses a leading "@", Discord doesn't). Centralised so the debt/history
 // panels don't each re-implement the X-vs-Discord branching.
 export type ProviderPerson = {
-  provider?: IdentityProvider | null;
+  provider?: AccountProvider | null;
   handle?: string | null;
   avatarUrl?: string | null;
 };
 
 export type ProviderDisplay = {
-  provider: IdentityProvider;
+  provider: AccountProvider;
   avatarSrc: string | null;
   profileUrl: string | null;
   label: string;
@@ -21,6 +21,19 @@ export type ProviderDisplay = {
 export function providerDisplay(person: ProviderPerson): ProviderDisplay {
   const provider = person.provider ?? "x";
   const bare = person.handle?.replace(/^@/, "") ?? null;
+
+  // A wallet account's handle IS its address, so it renders as one: shortened,
+  // no avatar service to ask, no profile page to link. Without this branch it
+  // would fall through to the X default and offer x.com/0xab…12.
+  if (provider === "wallet") {
+    return {
+      provider,
+      avatarSrc: person.avatarUrl ?? null,
+      profileUrl: null,
+      label: bare ? `${bare.slice(0, 6)}…${bare.slice(-4)}` : "?",
+      prefix: "",
+    };
+  }
 
   if (provider === "discord") {
     return {

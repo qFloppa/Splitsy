@@ -26,6 +26,64 @@ export async function recordPayment(p: {
   if (error) console.error("[x402] recordPayment failed:", error.message);
 }
 
+export type PaymentRow = {
+  direction: X402Direction;
+  endpoint: string;
+  counterparty: string;
+  amountUsdc: number;
+  gatewayTx: string | null;
+  billRef: string | null;
+  createdAt: string;
+};
+
+const toPaymentRow = (r: Record<string, unknown>): PaymentRow => ({
+  direction: r.direction as X402Direction,
+  endpoint: String(r.endpoint),
+  counterparty: String(r.counterparty),
+  amountUsdc: Number(r.amount_usdc),
+  gatewayTx: (r.gateway_tx as string | null) ?? null,
+  billRef: (r.bill_ref as string | null) ?? null,
+  createdAt: String(r.created_at),
+});
+
+const PAYMENT_COLUMNS = "direction, endpoint, counterparty, amount_usdc, gateway_tx, bill_ref, created_at";
+
+// The individual payments behind the totals. Null, like getAgentStats, when
+// there is no ledger to read — an empty list would claim nothing has settled.
+export async function listPayments(limit = 12): Promise<PaymentRow[] | null> {
+  const supabase = createSupabaseServerClient();
+  if (!supabase) return null;
+  const { data, error } = await supabase
+    .from("x402_payments")
+    .select(PAYMENT_COLUMNS)
+    .order("created_at", { ascending: false })
+    .limit(limit);
+  if (error || !data) {
+    console.error("[x402] listPayments failed:", error?.message);
+    return null;
+  }
+  return (data as Record<string, unknown>[]).map(toPaymentRow);
+}
+
+// Every x402 payment tagged with one bill — today that is the Auditor's review,
+// bought before the agent settles. Rows written before buyReview started passing
+// billRef have none, so an older settlement shows an empty list rather than
+// somebody else's payment.
+export async function listPaymentsForBill(billRef: string): Promise<PaymentRow[]> {
+  const supabase = createSupabaseServerClient();
+  if (!supabase) return [];
+  const { data, error } = await supabase
+    .from("x402_payments")
+    .select(PAYMENT_COLUMNS)
+    .eq("bill_ref", billRef)
+    .order("created_at", { ascending: true });
+  if (error || !data) {
+    console.error("[x402] listPaymentsForBill failed:", error?.message);
+    return [];
+  }
+  return (data as Record<string, unknown>[]).map(toPaymentRow);
+}
+
 // Today's spend, used as the denominator of the daily cap.
 //
 // A read failure returns Infinity, not 0: this number gates real money, so an

@@ -1,7 +1,14 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { privateKeyToAccount } from "viem/accounts";
-import { buildLinkMessage, verifyLinkSignature, LINK_MAX_AGE_MS } from "./agent-link.ts";
+import {
+  buildLinkMessage,
+  buildSigninMessage,
+  isStaleWalletSession,
+  verifyLinkSignature,
+  verifySigninSignature,
+  LINK_MAX_AGE_MS,
+} from "./agent-link.ts";
 
 const account = privateKeyToAccount(
   "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d",
@@ -151,4 +158,125 @@ test("a signature for one provider cannot be replayed on another", async () => {
     ok: false,
     error: "That signature was not for this account and wallet.",
   });
+});
+
+// ── Sign-in ──────────────────────────────────────────────────────────────────
+// Signing in MINTS an account and a session; linking only widens the reach of
+// one that already exists. So the two messages must be mutually inert: neither
+// signature may be replayed as the other.
+
+test("a link signature is not a sign-in, and a sign-in is not a link", async () => {
+  const link = buildLinkMessage(account.address, "ada", "x", stamp);
+  const signin = buildSigninMessage(account.address, stamp);
+  assert.notEqual(link, signin);
+
+  const asSignin = await verifySigninSignature({
+    address: account.address,
+    message: link,
+    signature: await account.signMessage({ message: link }),
+    nowMs: NOW,
+  });
+  assert.deepEqual(asSignin, {
+    ok: false,
+    error: "That signature was not a Splitsy sign-in for this wallet.",
+  });
+
+  const asLink = await verifyLinkSignature({
+    address: account.address,
+    handle: "ada",
+    provider: "x",
+    message: signin,
+    signature: await account.signMessage({ message: signin }),
+    nowMs: NOW,
+  });
+  assert.deepEqual(asLink, {
+    ok: false,
+    error: "That signature was not for this account and wallet.",
+  });
+});
+
+test("a sign-in signature from the claimed address is accepted", async () => {
+  const message = buildSigninMessage(account.address, stamp);
+  const result = await verifySigninSignature({
+    address: account.address,
+    message,
+    signature: await account.signMessage({ message }),
+    nowMs: NOW,
+  });
+  assert.deepEqual(result, { ok: true });
+});
+
+// The address is the account: a signature from any other key must never mint
+// one under it.
+test("a sign-in signed by a different wallet is rejected", async () => {
+  const message = buildSigninMessage(account.address, stamp);
+  const result = await verifySigninSignature({
+    address: account.address,
+    message,
+    signature: await other.signMessage({ message }),
+    nowMs: NOW,
+  });
+  assert.deepEqual(result, {
+    ok: false,
+    error: "That signature does not come from this wallet.",
+  });
+});
+
+// The timestamp window is the only replay defence sign-in has (no nonce store),
+// so it is the thing worth pinning.
+test("a stale sign-in signature expires", async () => {
+  const message = buildSigninMessage(account.address, stamp);
+  const signature = await account.signMessage({ message });
+
+  const result = await verifySigninSignature({
+    address: account.address,
+    message,
+    signature,
+    nowMs: NOW + LINK_MAX_AGE_MS + 1,
+  });
+  assert.deepEqual(result, { ok: false, error: "That sign-in request expired. Try again." });
+
+  // ...and a future one is as suspect as a stale one.
+  const ahead = await verifySigninSignature({
+    address: account.address,
+    message,
+    signature,
+    nowMs: NOW - LINK_MAX_AGE_MS - 1,
+  });
+  assert.deepEqual(ahead, { ok: false, error: "That sign-in request expired. Try again." });
+});
+
+// Casing: wagmi hands the panel a checksummed address while every lookup in this
+// schema is lowercase. Sign the raw casing and the account would never match.
+test("buildSigninMessage lowercases the address", () => {
+  assert.equal(
+    buildSigninMessage(account.address.toUpperCase().replace("0X", "0x"), stamp),
+    buildSigninMessage(account.address.toLowerCase(), stamp),
+  );
+});
+
+// The header drops a wallet session the moment the extension moves off it. The
+// false cases are the ones that hurt: a hydrating wagmi (address undefined) or a
+// checksummed-vs-lowercase comparison would log everyone out on every load.
+test("isStaleWalletSession fires on an account switch and on a disconnect", () => {
+  const session = { provider: "wallet", handle: account.address.toLowerCase() };
+
+  assert.equal(isStaleWalletSession(session, { connected: true, address: other.address }), true, "switched accounts");
+  assert.equal(isStaleWalletSession(session, { connected: false }), true, "disconnecting is signing out");
+
+  assert.equal(
+    isStaleWalletSession(session, { connected: true, address: account.address }),
+    false,
+    "checksummed casing is the same account",
+  );
+  // The one that would log every wallet user out on every page load: wagmi's
+  // store sits at connected-with-no-address for a tick during reconnect, and an
+  // unknown address is not a changed one.
+  assert.equal(isStaleWalletSession(session, { connected: true }), false, "address not known yet");
+  assert.equal(isStaleWalletSession(null, { connected: false }), false, "signed out already");
+  assert.equal(
+    isStaleWalletSession({ provider: "x", handle: "qFloppa" }, { connected: false }),
+    false,
+    "a social account's browser wallet is a linked wallet, not its identity",
+  );
 });
