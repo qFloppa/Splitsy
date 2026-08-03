@@ -1,6 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { signSession, verifySession, SESSION_COOKIE_NAME, signWalletUnlock, verifyWalletUnlock } from "./session-core.ts";
+import {
+  signSession,
+  verifySession,
+  SESSION_COOKIE_NAME,
+  signWalletProof,
+  signWalletUnlock,
+  verifyWalletProof,
+  verifyWalletUnlock,
+} from "./session-core.ts";
 
 const SECRET = "test-secret-that-is-at-least-32-chars-long!!";
 
@@ -46,4 +54,27 @@ test("verifyWalletUnlock rejects a tampered expiry", () => {
   const token = signWalletUnlock("user-1", now + 1000, SECRET);
   const tampered = token.replace(String(now + 1000), String(now + 9_000_000));
   assert.equal(verifyWalletUnlock(tampered, SECRET, now), null);
+});
+
+test("verifyWalletProof accepts its own token and honours the expiry", () => {
+  const now = 1_000_000;
+  assert.equal(verifyWalletProof(signWalletProof("user-1", now + 300_000, SECRET), SECRET, now), "user-1");
+  assert.equal(verifyWalletProof(signWalletProof("user-1", 500, SECRET), SECRET, 1000), null);
+});
+
+// THE property, not a nicety. All three tokens are HMACs over a userId, so
+// without the domain prefix a wallet-proof cookie lifted into the session cookie
+// would BE that account, and lifted into the unlock cookie would bypass the wallet
+// PIN for as long as the proof lasts. Both directions are checked because either
+// one alone would pass with the prefix applied to the wrong side.
+test("a wallet-proof token is not a session token and not an unlock token", () => {
+  const now = 1_000_000;
+  const proof = signWalletProof("user-1", now + 300_000, SECRET);
+  const unlock = signWalletUnlock("user-1", now + 300_000, SECRET);
+
+  assert.equal(verifyWalletUnlock(proof, SECRET, now), null, "proof must not unlock the wallet");
+  assert.equal(verifyWalletProof(unlock, SECRET, now), null, "an unlock must not prove a wallet account");
+  // The session token is a different shape as well as a different signature, so
+  // this is belt and braces — and it is the replay that would cost the most.
+  assert.equal(verifySession(proof, SECRET), null, "proof must not be a session");
 });

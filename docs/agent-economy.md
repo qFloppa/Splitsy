@@ -283,11 +283,28 @@ what this panel exists to surface — and points at **Link wallet** as the way o
 
 **The second row follows the extension.** It is keyed on the address wagmi
 reports, so switching accounts in Rabby or MetaMask re-queries and swaps which
-agent is shown. A wallet that never signed in has no account and therefore no
-agent, and that case renders as a sentence plus a **Give 0x… its own agent**
-button rather than as an empty space — the agent that was on screen a moment ago
-belongs to the account of the wallet that signed in with it, not to the person
-looking at the page, and a card that just drops it reads as a lost balance.
+agent is shown. A wallet this browser has not proved renders as a sentence plus a
+**Sign to show 0x…'s agent** button rather than as an empty space — the agent that
+was on screen a moment ago belongs to the account of the wallet that signed in
+with it, not to the person looking at the page, and a card that just drops it
+reads as a lost balance. That row deliberately does not say whether the wallet
+*has* an account, because the server will not answer that without a signature.
+
+**The second account is resolved from a signed proof, never from the address in
+the query.** `getProvenWalletAccount` (lib/session.ts) reads
+`splitsy_wallet_proof` — issued by `POST /api/auth/wallet`, where a signature has
+just been verified — and only then, and only while the extension is still on that
+same wallet. The address in the query narrows; the cookie authorises. This matters
+because the same resolution gates the decision log, and a log row says which of a
+person's private rules declined which bill: an address is a claim anyone can make,
+and naming one must not be enough to read someone else's agent, balance, armed
+state or trail. The token is domain-separated from both the session and the
+wallet-unlock token despite sharing their shape — otherwise a proof cookie
+replayed as `splitsy_session` would *be* that account, and replayed as the unlock
+cookie would bypass the wallet PIN for a month. `lib/session.test.ts` pins both
+directions. Logging out clears it: it is tied to a wallet rather than to the
+session holding it, so leaving it behind would hand the next person on this
+browser the previous one's agent and trail.
 
 **That button does not sign you out.** `POST /api/auth/wallet` passes
 `setSession: false` to `finishProviderLogin` whenever a non-wallet session is
@@ -299,6 +316,21 @@ up front, because the read side never provisions one for an account it is not
 signed in as, so the card would otherwise still say *no agent* right after a
 successful signature. A **wallet** session is still replaced as before: there is
 no second identity to preserve.
+
+**The decision log spans both accounts.** `listAutopayLog` takes one user id or
+several and applies the limit to the merged result — 50 from each, sliced here,
+would drop recent rows from a busy account to keep old ones from a quiet one. The
+trail is the one part of this page that must not be scoped to whichever login you
+happen to be in: each agent writes its own rows, and the decisions missing from a
+session-scoped view are exactly the ones the reader has no other way to see, since
+the other account's rules are unreachable from here. Rows carry `otherAccount` so
+the panel can mark which agent decided — the ceilings above bind only the
+session's. `GET /api/agents/job` widens by the same proof and no further, because
+that endpoint authorises off the log itself; anything looser would make it the way
+to read another account's jobs by naming its wallet. After a link the historical
+rows stay under the account that wrote them, which is why the merged trail
+survives the merge — and why the panel derives "is this trail merged?" from the
+rows rather than from whether a second agent currently exists.
 
 The agent's ERC-8004 identity is minted from the agent's own wallet — keying it
 on the user's main wallet would collide with the `splitsy-payer` identity they

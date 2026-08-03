@@ -58,11 +58,17 @@ export default function JobTrail({
   jobId,
   jobStatus,
   feeUsdc,
+  connectedAddress,
 }: {
   billId: string;
   jobId: string;
   jobStatus: string | null;
   feeUsdc: number;
+  // Passed through to the read, and only so a row belonging to this browser's
+  // OTHER account can expand: the endpoint authorises off the proof cookie, which
+  // it will only honour for the wallet the extension is on. Nothing here is
+  // trusted — a wrong or missing address just narrows what opens.
+  connectedAddress?: string;
 }) {
   const [detail, setDetail] = useState<JobDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -75,7 +81,11 @@ export default function JobTrail({
     if (detail || loading) return;
     setLoading(true);
     setError(null);
-    fetch(`/api/agents/job?billId=${encodeURIComponent(billId)}`)
+    fetch(
+      `/api/agents/job?billId=${encodeURIComponent(billId)}${
+        connectedAddress ? `&connected=${encodeURIComponent(connectedAddress)}` : ""
+      }`,
+    )
       .then(async (res) => {
         const body: unknown = await res.json().catch(() => null);
         if (!res.ok) {

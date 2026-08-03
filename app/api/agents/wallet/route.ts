@@ -9,9 +9,8 @@ import { getAutopayGrant, listAutopayLog } from "@/lib/agents-repo";
 // The authoritative wallet -> ERC-8004 agent id mapping. It survives a registry
 // redeploy, which is why identity is resolved from here and not from an env var.
 import { getAgentByWallet } from "@/lib/reputation-repo";
-import { getSessionUser } from "@/lib/session";
+import { getProvenWalletAccount, getSessionUser } from "@/lib/session";
 import type { AppUser } from "@/lib/types";
-import { getUserByProviderHandle } from "@/lib/users-repo";
 import { getAgentBalanceUsdc, ensureUserAgentIdentity, getOrCreateUserAgent } from "@/lib/user-agent";
 
 export const runtime = "nodejs";
@@ -98,16 +97,14 @@ const NO_OTHER_ACCOUNT = { otherAgent: null, agentFromWallet: null };
 //     agent only because linking adopted it. Unlinking gives it back, so the
 //     warning has to stop promising the balance is untouched.
 //
-// ponytail: any signed-in user can ask this about any address and learn whether it
-// has a Splitsy wallet account, what its agent's address is and whether that agent
-// is armed. The addresses are public chain data; the armed flag is not. Gate it
-// behind a signature if that reads as a leak.
+// Resolved from the signed PROOF this browser holds rather than from the address
+// in the query, so learning that an address has a Splitsy account — and what its
+// agent holds, and whether it is armed — takes that wallet's own signature. The
+// query string only narrows it to the wallet the extension is on now.
 async function walletAccountAgent(user: AppUser, connected: string) {
   const address = connected.toLowerCase();
-  if (!/^0x[a-f0-9]{40}$/.test(address)) return NO_OTHER_ACCOUNT;
-
-  const own = await getUserByProviderHandle("wallet", address);
-  if (!own || own.id === user.id || !own.agent_wallet_address) return NO_OTHER_ACCOUNT;
+  const own = await getProvenWalletAccount(user.id, address);
+  if (!own || !own.agent_wallet_address) return NO_OTHER_ACCOUNT;
 
   // Both rows naming one agent wallet is the merged state. Rendering it as a
   // second agent would invent a balance that does not exist.

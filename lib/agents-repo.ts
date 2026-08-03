@@ -270,12 +270,28 @@ export type AutopayLogEntry = AutopayLogRow & {
   feeUsdc: number;
 };
 
-export async function listAutopayLog(userId: string, limit = 50): Promise<AutopayLogEntry[]> {
+// One account's decisions, or SEVERAL interleaved by time.
+//
+// Several, because one person can hold two accounts — a social login and the one
+// a browser-wallet sign-in minted — each with its own agent writing its own rows.
+// A log that shows one of them is not an audit trail: the decisions missing from
+// it are exactly the ones the reader cannot otherwise see, since the other
+// account's rules are unreachable from the session they are in.
+//
+// The `limit` applies to the MERGED result, which is what makes this one query
+// rather than one per account: taking 50 from each and slicing here would drop
+// recent rows from a busy account to keep old ones from a quiet one.
+export async function listAutopayLog(
+  userIds: string | string[],
+  limit = 50,
+): Promise<AutopayLogEntry[]> {
   const client = requireClient();
+  const ids = (Array.isArray(userIds) ? userIds : [userIds]).filter(Boolean);
+  if (ids.length === 0) return [];
   const { data, error } = await client
     .from("autopay_log")
     .select("user_id, registry_address, bill_id, debtor_address, decision, reason, amount_usdc, tx_hash, created_at, job_id, job_status, fee_usdc")
-    .eq("user_id", userId)
+    .in("user_id", ids)
     .order("created_at", { ascending: false })
     .limit(limit);
   if (error) throw new Error(`Failed to read autopay log: ${error.message}`);

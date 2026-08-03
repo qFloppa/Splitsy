@@ -22,7 +22,7 @@
 // The wallet-unlock cookie is deliberately NOT required here. Gating the
 // settings page behind an unlock would push people to leave the caps wide open
 // rather than tighten them, and TIGHTENING must never be harder than loosening.
-import { getSessionUser } from "@/lib/session";
+import { getProvenWalletAccount, getSessionUser } from "@/lib/session";
 import { getAutopayGrant, listAutopayLog, upsertAutopayGrant } from "@/lib/agents-repo";
 import type { AutopayGrant } from "@/lib/autopay";
 import {
@@ -64,9 +64,24 @@ const DEFAULT_GRANT: AutopayGrant = {
 const units = (usdc: number) => BigInt(Math.round(usdc * 1_000_000));
 const toUsdc = (units: bigint) => Number(units) / 1_000_000;
 
-export async function GET() {
+export async function GET(request: Request) {
   const user = await getSessionUser();
   if (!user) return Response.json({ error: "Not signed in" }, { status: 401 });
+
+  // The decision log covers BOTH of this person's accounts when the browser
+  // wallet connected right now minted one of its own. Each account's agent writes
+  // its own rows, and a trail that shows one of them hides exactly the decisions
+  // the reader has no other way to see: the other account's rules are unreachable
+  // from the session they are in. Everything else in this response stays
+  // session-scoped — the caps and the switch are per account and genuinely differ.
+  // Widened on the signed PROOF this browser holds, never on the address in the
+  // query: a decision log says which of someone's private rules declined which
+  // bill, so naming an address must not be enough to read it.
+  const sibling = await getProvenWalletAccount(
+    user.id,
+    new URL(request.url).searchParams.get("connected") ?? "",
+  ).catch(() => null);
+  const logUserIds = sibling ? [user.id, sibling.id] : [user.id];
 
   const rules = await getAutopayGrant(user.id);
   const dcw = user.wallet_address ? (user.wallet_address.toLowerCase() as `0x${string}`) : null;
@@ -82,7 +97,7 @@ export async function GET() {
   // undefined — and with noUncheckedIndexedAccess off, tsc will not say so.
   const wallets = [dcw, eoa].filter((a): a is `0x${string}` => a !== null);
   const [log, ...facts] = await Promise.all([
-    listAutopayLog(user.id),
+    listAutopayLog(logUserIds),
     ...wallets.map(async (address) => {
       const [mandate, allowance] = await Promise.all([
         getAutopayMandateOnchain(address).catch(() => null),
@@ -135,7 +150,12 @@ export async function GET() {
 
   return Response.json({
     grant,
-    log,
+    // Flagged rather than left to the client to work out: a row's user_id means
+    // nothing to a browser that never learns its own. The panel needs it to say
+    // WHICH agent decided, which is the only thing that makes a merged trail
+    // readable — and it is also how a row keeps its meaning after the accounts
+    // are linked, since the historical rows stay under the account that wrote them.
+    log: log.map((row) => ({ ...row, otherAccount: row.userId !== user.id })),
     linkedAddress: eoa,
     walletAddress: dcw,
     // The panel needs BOTH to rebuild the exact bytes the wallet must sign.

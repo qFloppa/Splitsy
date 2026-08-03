@@ -89,6 +89,9 @@ type AgentWallet = {
 };
 
 type LogEntry = {
+  // Part of the row's identity, not decoration: (registry, bill, debtor) is the
+  // unique key in Postgres, and the bill id repeats across registries.
+  registryAddress: string;
   billId: string;
   debtorAddress: string;
   decision: "pay" | "skip";
@@ -101,6 +104,9 @@ type LogEntry = {
   jobId: string | null;
   jobStatus: string | null;
   feeUsdc: number;
+  // Decided by the OTHER account's agent — the one the connected browser wallet
+  // signed in as. The trail merges both, so each row has to say which.
+  otherAccount: boolean;
 };
 
 type MandateBill = {
@@ -188,7 +194,10 @@ export default function SettlementAgentsPanel() {
   const { signMessageAsync } = useSignMessage();
 
   const load = useCallback(() => {
-    fetch("/api/agents/grants")
+    // The connected address goes here too, and for the same reason as below: the
+    // decision log spans both of this person's accounts, and the server can only
+    // find the second one from the address the extension is on.
+    fetch(`/api/agents/grants${connectedAddress ? `?connected=${connectedAddress}` : ""}`)
       .then((r) => {
         // Rules are session-scoped, so a 401 is the normal signed-out state and
         // needs saying — on its own tab, returning nothing reads as a bug.
@@ -398,7 +407,7 @@ export default function SettlementAgentsPanel() {
       setMessage(
         wasSignedOut
           ? ""
-          : `${short(connectedAddress)} now has its own Splitsy account and agent — it appears above. You are still signed in as before.`,
+          : `${short(connectedAddress)} is signed in here now — its agent and its decisions appear above, and it has an account of its own. You are still signed in as before.`,
       );
       // This panel alone, no page reload: nothing else on screen renders a wallet
       // session differently from a signed-out one. The header's menu shows the
@@ -597,16 +606,24 @@ export default function SettlementAgentsPanel() {
   const armed = grant.enabled;
   // Left over from the mandate flow on the linked wallet, and revocable below.
   const staleMandate = linkedFacts?.enabled ?? false;
+  // The trail actually holds another account's decisions. Read off the ROWS, not
+  // off `otherAgent`: linking merges the accounts, and the rows written before it
+  // stay under the account that wrote them, so a merged trail outlives the second
+  // agent it came from.
+  const mergedTrail = log.some((entry) => entry.otherAccount);
   // The wallet the extension is on RIGHT NOW, when it is none of the three the
-  // card already accounts for: not this session's own, not the linked one, and
-  // not an account with an agent of its own.
+  // card already accounts for: not this session's own, not the linked one, and not
+  // one whose agent is on screen.
   //
-  // This is the state switching wallets in Rabby lands in, and it used to render
-  // as nothing at all: an agent row on screen a second ago simply disappeared,
-  // with no way to tell whether the agent had gone or the wallet had. Each agent
-  // belongs to the account of the wallet that signed in with it, so a wallet that
-  // never signed in has none — which is a sentence, not an empty space.
-  const connectedWithoutAgent =
+  // This is the state switching wallets in Rabby lands in, and it used to render as
+  // nothing at all: an agent row on screen a second ago simply disappeared, with no
+  // way to tell whether the agent had gone or the wallet had.
+  //
+  // Deliberately does NOT distinguish "has no account" from "has one this browser
+  // cannot prove", because the server will not say which without a signature — that
+  // is what stops an address alone from revealing someone's agent. One button
+  // covers both states, since one signature resolves both.
+  const unprovenWallet =
     !walletSignin &&
     !agentWallet?.otherAgent &&
     connectedAddress &&
@@ -889,28 +906,33 @@ export default function SettlementAgentsPanel() {
             </div>
           ) : null}
 
-          {/* ── The connected wallet, when it has no agent of its own ── The row
-              above is keyed on the wallet the extension is on, so switching
-              accounts in Rabby swaps which agent is on screen — and lands on
-              nothing for a wallet that never signed in. Both ways out are offered
-              here, where the disappearance happened, rather than left to be
-              inferred from a button further down. */}
-          {connectedWithoutAgent ? (
+          {/* ── The connected wallet, while it is unproven ── The row above is
+              keyed on the wallet the extension is on, so switching accounts in
+              Rabby swaps which agent is on screen — and lands here for a wallet
+              that has not signed a message in this browser. Said where the
+              disappearance happened rather than left to be inferred from a button
+              further down. */}
+          {unprovenWallet ? (
             <div className="spec-row flex-col items-start gap-2">
               <div className="min-w-0">
                 <span className="inline-flex items-center gap-1.5 text-sm font-semibold">
-                  <Bot size={14} /> {short(connectedWithoutAgent)} has no agent
+                  <Bot size={14} /> {short(unprovenWallet)} isn&rsquo;t signed in here
                 </span>
+                {/* Does not claim the wallet HAS no agent, which this page cannot
+                    know: the server will not reveal whether an address has an
+                    account without that address's signature, which is exactly what
+                    stops anyone reading a stranger's agent and decisions. */}
                 <span className="spec-hint">
-                  The wallet your extension is on now has no Splitsy account, so it has no agent of its own and
-                  nothing settles its bills. An agent belongs to the account of the wallet that signed in with it,
-                  which is why switching wallets changes what this card shows.
+                  The wallet your extension is on now hasn&rsquo;t proved itself in this browser, so its agent
+                  can&rsquo;t be shown — and if it never signed in, it has none and nothing settles its bills. An
+                  agent belongs to the account of the wallet that signed in with it, which is why switching wallets
+                  changes what this card shows.
                 </span>
               </div>
               <div className="flex flex-wrap items-center gap-2">
                 {/* One control, and it is the one that was missing: linking has
                     its own button in the row below, and this is the only way to
-                    give THIS wallet an agent of its own.
+                    surface THIS wallet's own agent.
 
                     Labelled by its OUTCOME rather than "Sign in with…", because
                     the login does not change any more — POST /api/auth/wallet
@@ -919,15 +941,15 @@ export default function SettlementAgentsPanel() {
                     this", which is exactly what it used to do. */}
                 <button className="secondary-button" disabled={saving} onClick={signInWithWallet} type="button">
                   {saving ? <Loader2 className="animate-spin" size={13} /> : <Wallet size={13} />}
-                  Give {short(connectedWithoutAgent)} its own agent
+                  Sign to show {short(unprovenWallet)}&rsquo;s agent
                 </button>
               </div>
               {/* Two ways out, one signature each, no money either way — and the
                   quieter one is named second because it is the one that leaves
                   you with a single agent to think about. */}
               <span className="spec-hint">
-                It signs a message to prove the wallet is yours, then gets its own Splitsy account and agent, which
-                appears above. <strong>You stay signed in here.</strong>{" "}
+                One signature, nothing moved: its agent, its balance and its decisions then appear beside your own,
+                and it gets an account and an agent of its own if it had none. <strong>You stay signed in here.</strong>{" "}
                 {linkedAddress
                   ? `To have the agent above cover this wallet instead — no second agent at all — unlink ${short(linkedAddress)} first, then link this one.`
                   : "Or link it below instead: the agent above then settles its bills too, and there is no second agent to fund."}
@@ -1267,10 +1289,17 @@ export default function SettlementAgentsPanel() {
         <div className="spec-head">
           <div className="min-w-0">
             <span className="spec-step">03 · Audit trail</span>
-            <h3 className="spec-title">What the agent decided</h3>
+            {/* Plural once there are two agents to account for: the trail is the
+                one place on this page that must never be scoped to whichever
+                login you happen to be in, because a decision you cannot see is
+                the only kind that matters. */}
+            <h3 className="spec-title">What {mergedTrail ? "your agents" : "the agent"} decided</h3>
             <p className="spec-note">
               Every run, including the ones it declined. A skip and its reason is the proof the ceilings above are
               real.
+              {mergedTrail
+                ? " Both of your agents are here, each row marked with the one that decided it — the ceilings above bind only the first."
+                : ""}
             </p>
           </div>
           {log.length > 0 ? (
@@ -1295,13 +1324,28 @@ export default function SettlementAgentsPanel() {
               {log.map((entry) => (
                 <li
                   className={`trail-row ${entry.decision === "pay" ? "trail-done" : ""}`}
-                  key={`${entry.billId}-${entry.debtorAddress}`}
+                  // The row's full unique key in Postgres. Bill id and debtor
+                  // alone are not unique across registries, and a merged trail
+                  // lists enough rows for that to actually collide.
+                  key={`${entry.registryAddress}-${entry.billId}-${entry.debtorAddress}`}
                 >
                   <span className="trail-mark">
                     {entry.decision === "pay" ? <Check size={11} /> : <Ban size={11} />}
                   </span>
                   <span className="min-w-0">
-                    <span className="text-sm font-semibold">Bill #{entry.billId}</span>
+                    <span className="inline-flex flex-wrap items-center gap-1.5 text-sm font-semibold">
+                      Bill #{entry.billId}
+                      {/* Only on the other agent's rows. Marking every row would
+                          be noise; marking the ones that came from an agent whose
+                          rules are not on this page is the whole point. The
+                          address is the one already shown up in section 01, so
+                          the two rows read as the same agent. */}
+                      {entry.otherAccount ? (
+                        <span className="spec-badge">
+                          {agentWallet?.otherAgent ? short(agentWallet.otherAgent.address) : "your other agent"}
+                        </span>
+                      ) : null}
+                    </span>
                     <span className="spec-hint">{REASONS[entry.reason] ?? entry.reason}</span>
                     {/* Only a payment opens a job, so this line appears on pay
                         rows alone. A skip keeps the model's own sentence above
@@ -1309,6 +1353,7 @@ export default function SettlementAgentsPanel() {
                     {entry.jobId ? (
                       <JobTrail
                         billId={entry.billId}
+                        connectedAddress={connectedAddress}
                         feeUsdc={entry.feeUsdc}
                         jobId={entry.jobId}
                         jobStatus={entry.jobStatus}

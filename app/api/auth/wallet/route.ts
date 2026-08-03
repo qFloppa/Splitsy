@@ -18,7 +18,7 @@ import type { NextRequest } from "next/server";
 import { getGrantsByDebtorAddresses, setGrantDebtorAddress } from "@/lib/agents-repo";
 import { verifySigninSignature } from "@/lib/agent-link";
 import { finishProviderLogin } from "@/lib/oauth-callback";
-import { getSessionUser } from "@/lib/session";
+import { getSessionUser, signWalletProof, WALLET_PROOF_COOKIE, WALLET_PROOF_TTL } from "@/lib/session";
 import { getOrCreateUserAgent } from "@/lib/user-agent";
 import { getUserById, getUserByProviderHandle } from "@/lib/users-repo";
 
@@ -124,6 +124,22 @@ export async function POST(request: NextRequest) {
       await getOrCreateUserAgent(user).catch((err) => {
         console.error("wallet signin: could not create the agent wallet (account exists):", err);
       });
+      // The proof that lets the Agents tab show this account beside the session's
+      // — its agent, its balance and its decisions. Issued HERE because this is
+      // where the signature was verified: everything downstream then reads a
+      // cookie instead of trusting an address from a client, which is the
+      // difference between evidence and a claim about someone else's log.
+      response.cookies.set(
+        WALLET_PROOF_COOKIE,
+        signWalletProof(user.id, Date.now() + WALLET_PROOF_TTL * 1000, sessionSecret),
+        {
+          httpOnly: true,
+          secure: request.nextUrl.protocol === "https:",
+          sameSite: "lax",
+          path: "/",
+          maxAge: WALLET_PROOF_TTL,
+        },
+      );
     }
   }
 

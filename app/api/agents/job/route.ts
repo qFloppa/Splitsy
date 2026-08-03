@@ -13,7 +13,7 @@
 //
 // Session-scoped and never cached: the job status moves (funded → submitted →
 // completed) while the panel is open, and a cached "funded" would read as stuck.
-import { getSessionUser } from "@/lib/session";
+import { getProvenWalletAccount, getSessionUser } from "@/lib/session";
 import { listAutopayLog } from "@/lib/agents-repo";
 import { getJobOnchain, getJobTrail } from "@/lib/erc8183";
 import { listPaymentsForBill } from "@/lib/x402/payments-repo";
@@ -30,7 +30,17 @@ export async function GET(request: Request) {
     return Response.json({ error: "Expected ?billId=<number>." }, { status: 400 });
   }
 
-  const entry = (await listAutopayLog(user.id)).find((row) => row.billId === billId && row.jobId);
+  // The trail in the panel spans both of this browser's accounts, so a row from
+  // the proven one must expand rather than 404 — and the authorisation widens by
+  // exactly the same proof the listing does, never by the address in the query.
+  // Anything looser would make this endpoint the way to read another account's
+  // jobs by naming its wallet.
+  const proven = await getProvenWalletAccount(
+    user.id,
+    new URL(request.url).searchParams.get("connected") ?? "",
+  ).catch(() => null);
+  const readable = proven ? [user.id, proven.id] : [user.id];
+  const entry = (await listAutopayLog(readable)).find((row) => row.billId === billId && row.jobId);
   if (!entry?.jobId) {
     return Response.json({ error: "No job on this bill." }, { status: 404 });
   }
