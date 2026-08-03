@@ -284,10 +284,21 @@ what this panel exists to surface — and points at **Link wallet** as the way o
 **The second row follows the extension.** It is keyed on the address wagmi
 reports, so switching accounts in Rabby or MetaMask re-queries and swaps which
 agent is shown. A wallet that never signed in has no account and therefore no
-agent, and that case renders as a sentence plus a **Sign in with 0x…** button
-rather than as an empty space — the agent that was on screen a moment ago
+agent, and that case renders as a sentence plus a **Give 0x… its own agent**
+button rather than as an empty space — the agent that was on screen a moment ago
 belongs to the account of the wallet that signed in with it, not to the person
 looking at the page, and a card that just drops it reads as a lost balance.
+
+**That button does not sign you out.** `POST /api/auth/wallet` passes
+`setSession: false` to `finishProviderLogin` whenever a non-wallet session is
+already live: there is one session cookie, so setting it would evict the social
+login the caller is still using, and proving control of a browser wallet is not a
+request to be signed out of anything. The account is created either way — only
+the cookie differs — and on that path the route also creates the account's agent
+up front, because the read side never provisions one for an account it is not
+signed in as, so the card would otherwise still say *no agent* right after a
+successful signature. A **wallet** session is still replaced as before: there is
+no second identity to preserve.
 
 The agent's ERC-8004 identity is minted from the agent's own wallet — keying it
 on the user's main wallet would collide with the `splitsy-payer` identity they

@@ -18,6 +18,8 @@ import type { NextRequest } from "next/server";
 import { getGrantsByDebtorAddresses, setGrantDebtorAddress } from "@/lib/agents-repo";
 import { verifySigninSignature } from "@/lib/agent-link";
 import { finishProviderLogin } from "@/lib/oauth-callback";
+import { getSessionUser } from "@/lib/session";
+import { getOrCreateUserAgent } from "@/lib/user-agent";
 import { getUserById, getUserByProviderHandle } from "@/lib/users-repo";
 
 export const runtime = "nodejs";
@@ -76,6 +78,17 @@ export async function POST(request: NextRequest) {
     }
   }
 
+  // KEEP A SOCIAL SESSION. There is one session cookie, so signing this wallet in
+  // would evict whatever it held — and someone whose social login is live is not
+  // asking to be signed out of it. They are on the Agents tab, where a wallet
+  // with no account of its own has no agent to show, and this is what gives it
+  // one. The account is created either way; only the cookie differs.
+  //
+  // A WALLET session is replaced as normal: there is no second identity to
+  // preserve, and the extension has already moved on to another address.
+  const current = await getSessionUser().catch(() => null);
+  const keepSession = !!current && current.provider !== "wallet";
+
   const response = await finishProviderLogin({
     provider: "wallet",
     // The address is both the id and the handle: it is the only name this
@@ -84,6 +97,7 @@ export async function POST(request: NextRequest) {
     request,
     sessionSecret,
     mode: "json",
+    setSession: !keepSession,
   });
   if (response.status !== 200) return response;
 
@@ -100,6 +114,17 @@ export async function POST(request: NextRequest) {
     await setGrantDebtorAddress(user.id, address).catch((err) => {
       console.error("wallet signin: could not record the debtor address (login continues):", err);
     });
+    // Give the new account its agent NOW, on the keep-session path only. The
+    // caller is the Agents tab, which is about to ask for this account's agent by
+    // address — and that read deliberately never creates one for an account it is
+    // not signed in as, so without this the card would still say "no agent" after
+    // a signature the user just gave. An ordinary sign-in needs none of this: its
+    // own next GET /api/agents/wallet creates the agent, as it always has.
+    if (keepSession) {
+      await getOrCreateUserAgent(user).catch((err) => {
+        console.error("wallet signin: could not create the agent wallet (account exists):", err);
+      });
+    }
   }
 
   return response;

@@ -387,8 +387,19 @@ export default function SettlementAgentsPanel() {
         fail(body.error ?? "Could not sign in with that wallet.");
         return;
       }
+      // Two outcomes from one route, told apart by whether there was a session to
+      // keep: signed out, this signs you in; signed in socially, the account is
+      // created and the cookie is left alone (see /api/auth/wallet). The server
+      // decides, and `signedOut` is the same input it decided on, so the message
+      // cannot disagree with what happened.
+      const wasSignedOut = signedOut;
       setSignedOut(false);
-      setMessage("");
+      setMessageTone("success");
+      setMessage(
+        wasSignedOut
+          ? ""
+          : `${short(connectedAddress)} now has its own Splitsy account and agent — it appears above. You are still signed in as before.`,
+      );
       // This panel alone, no page reload: nothing else on screen renders a wallet
       // session differently from a signed-out one. The header's menu shows the
       // same social dropdown either way (a wallet is not a social login), the
@@ -397,7 +408,7 @@ export default function SettlementAgentsPanel() {
       // which need a DCW address a wallet account does not have.
       load();
     } catch {
-      fail("You declined the signature, so you were not signed in.");
+      fail("You declined the signature, so nothing was created.");
     } finally {
       setSaving(false);
     }
@@ -897,23 +908,29 @@ export default function SettlementAgentsPanel() {
                 </span>
               </div>
               <div className="flex flex-wrap items-center gap-2">
-                {/* Sign-in, and only sign-in: linking already has its button in
-                    the row below and a second copy of it here would be two
-                    controls for one action. This is the one that was missing —
-                    the only way to give THIS wallet an agent of its own. */}
+                {/* One control, and it is the one that was missing: linking has
+                    its own button in the row below, and this is the only way to
+                    give THIS wallet an agent of its own.
+
+                    Labelled by its OUTCOME rather than "Sign in with…", because
+                    the login does not change any more — POST /api/auth/wallet
+                    leaves a social session where it is. A button that says "sign
+                    in" while you are already signed in reads as "sign out of
+                    this", which is exactly what it used to do. */}
                 <button className="secondary-button" disabled={saving} onClick={signInWithWallet} type="button">
                   {saving ? <Loader2 className="animate-spin" size={13} /> : <Wallet size={13} />}
-                  Sign in with {short(connectedWithoutAgent)}
+                  Give {short(connectedWithoutAgent)} its own agent
                 </button>
               </div>
-              {/* Both cost one signature and no money, and they end somewhere
-                  quite different — said before the wallet prompt appears, not
-                  after the page has already changed identity. */}
+              {/* Two ways out, one signature each, no money either way — and the
+                  quieter one is named second because it is the one that leaves
+                  you with a single agent to think about. */}
               <span className="spec-hint">
-                Signing in gives it an account and an agent of its own, and switches this page to that login.{" "}
+                It signs a message to prove the wallet is yours, then gets its own Splitsy account and agent, which
+                appears above. <strong>You stay signed in here.</strong>{" "}
                 {linkedAddress
-                  ? `To have the agent above cover this wallet instead, unlink ${short(linkedAddress)} first, then link this one.`
-                  : "Or link it below and stay in this login — one signature, and the agent above settles its bills too, with no second agent to fund."}
+                  ? `To have the agent above cover this wallet instead — no second agent at all — unlink ${short(linkedAddress)} first, then link this one.`
+                  : "Or link it below instead: the agent above then settles its bills too, and there is no second agent to fund."}
               </span>
             </div>
           ) : null}

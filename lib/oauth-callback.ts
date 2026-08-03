@@ -34,8 +34,15 @@ export async function finishProviderLogin(params: {
   // inline panel, so it wants a JSON body it can read ("json"); the session
   // cookie is set the same way on either response.
   mode?: "redirect" | "json";
+  // Provision the account but leave the CALLER SIGNED IN AS WHOEVER THEY ARE.
+  //
+  // There is one session cookie, so setting it evicts whatever it held. A browser
+  // wallet proving itself while a social login is live is not a request to be
+  // signed out of that login — it only needs the account to exist, so the wallet
+  // has an agent of its own to show. See /api/auth/wallet.
+  setSession?: boolean;
 }): Promise<NextResponse> {
-  const { provider, profile, request, sessionSecret, mode = "redirect" } = params;
+  const { provider, profile, request, sessionSecret, mode = "redirect", setSession = true } = params;
 
   let appUser;
   try {
@@ -100,13 +107,17 @@ export async function finishProviderLogin(params: {
     mode === "json"
       ? NextResponse.json({ ok: true })
       : NextResponse.redirect(new URL("/app", request.nextUrl.origin));
-  response.cookies.set(SESSION_COOKIE_NAME, signSession(appUser.id, sessionSecret), {
-    httpOnly: true,
-    secure: request.nextUrl.protocol === "https:",
-    sameSite: "lax",
-    path: "/",
-    maxAge: SESSION_MAX_AGE,
-  });
+  // Untouched rather than cleared when setSession is false: the browser keeps the
+  // session it already had. Clearing would be its own kind of sign-out.
+  if (setSession) {
+    response.cookies.set(SESSION_COOKIE_NAME, signSession(appUser.id, sessionSecret), {
+      httpOnly: true,
+      secure: request.nextUrl.protocol === "https:",
+      sameSite: "lax",
+      path: "/",
+      maxAge: SESSION_MAX_AGE,
+    });
+  }
   return response;
 }
 
