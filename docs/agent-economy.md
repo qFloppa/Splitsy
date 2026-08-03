@@ -281,6 +281,14 @@ wallet. The second row therefore carries that account's own Armed/Idle chip —
 an agent that can spend while its rules are invisible from here is precisely
 what this panel exists to surface — and points at **Link wallet** as the way out.
 
+**The second row follows the extension.** It is keyed on the address wagmi
+reports, so switching accounts in Rabby or MetaMask re-queries and swaps which
+agent is shown. A wallet that never signed in has no account and therefore no
+agent, and that case renders as a sentence plus a **Sign in with 0x…** button
+rather than as an empty space — the agent that was on screen a moment ago
+belongs to the account of the wallet that signed in with it, not to the person
+looking at the page, and a card that just drops it reads as a lost balance.
+
 The agent's ERC-8004 identity is minted from the agent's own wallet — keying it
 on the user's main wallet would collide with the `splitsy-payer` identity they
 already earned by paying bills — and then transferred to the user with a

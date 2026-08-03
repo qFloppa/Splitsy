@@ -586,6 +586,22 @@ export default function SettlementAgentsPanel() {
   const armed = grant.enabled;
   // Left over from the mandate flow on the linked wallet, and revocable below.
   const staleMandate = linkedFacts?.enabled ?? false;
+  // The wallet the extension is on RIGHT NOW, when it is none of the three the
+  // card already accounts for: not this session's own, not the linked one, and
+  // not an account with an agent of its own.
+  //
+  // This is the state switching wallets in Rabby lands in, and it used to render
+  // as nothing at all: an agent row on screen a second ago simply disappeared,
+  // with no way to tell whether the agent had gone or the wallet had. Each agent
+  // belongs to the account of the wallet that signed in with it, so a wallet that
+  // never signed in has none — which is a sentence, not an empty space.
+  const connectedWithoutAgent =
+    !walletSignin &&
+    !agentWallet?.otherAgent &&
+    connectedAddress &&
+    connectedAddress.toLowerCase() !== (linkedAddress ?? "").toLowerCase()
+      ? connectedAddress
+      : null;
 
   return (
     <div className="space-y-4">
@@ -858,6 +874,46 @@ export default function SettlementAgentsPanel() {
                 <strong>Link {short(connectedAddress ?? "")} below</strong> and the two accounts become one:{" "}
                 {short(agentWallet.otherAgent.address)} stays as your only agent, with its balance, and these rules are
                 the only ones left.
+              </span>
+            </div>
+          ) : null}
+
+          {/* ── The connected wallet, when it has no agent of its own ── The row
+              above is keyed on the wallet the extension is on, so switching
+              accounts in Rabby swaps which agent is on screen — and lands on
+              nothing for a wallet that never signed in. Both ways out are offered
+              here, where the disappearance happened, rather than left to be
+              inferred from a button further down. */}
+          {connectedWithoutAgent ? (
+            <div className="spec-row flex-col items-start gap-2">
+              <div className="min-w-0">
+                <span className="inline-flex items-center gap-1.5 text-sm font-semibold">
+                  <Bot size={14} /> {short(connectedWithoutAgent)} has no agent
+                </span>
+                <span className="spec-hint">
+                  The wallet your extension is on now has no Splitsy account, so it has no agent of its own and
+                  nothing settles its bills. An agent belongs to the account of the wallet that signed in with it,
+                  which is why switching wallets changes what this card shows.
+                </span>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                {/* Sign-in, and only sign-in: linking already has its button in
+                    the row below and a second copy of it here would be two
+                    controls for one action. This is the one that was missing —
+                    the only way to give THIS wallet an agent of its own. */}
+                <button className="secondary-button" disabled={saving} onClick={signInWithWallet} type="button">
+                  {saving ? <Loader2 className="animate-spin" size={13} /> : <Wallet size={13} />}
+                  Sign in with {short(connectedWithoutAgent)}
+                </button>
+              </div>
+              {/* Both cost one signature and no money, and they end somewhere
+                  quite different — said before the wallet prompt appears, not
+                  after the page has already changed identity. */}
+              <span className="spec-hint">
+                Signing in gives it an account and an agent of its own, and switches this page to that login.{" "}
+                {linkedAddress
+                  ? `To have the agent above cover this wallet instead, unlink ${short(linkedAddress)} first, then link this one.`
+                  : "Or link it below and stay in this login — one signature, and the agent above settles its bills too, with no second agent to fund."}
               </span>
             </div>
           ) : null}
