@@ -71,7 +71,13 @@ type AgentWallet = {
   address: string | null;
   tokenId: string | null;
   balanceUsdc: number;
-  otherAgent: { address: string; balanceUsdc: number } | null;
+  // The connected wallet's own agent, while it is still a separate one. `enabled`
+  // is that account's OWN autopay switch — not this one's — so it is the only
+  // honest answer to "can software spend from the agent I cannot configure here?"
+  otherAgent: { address: string; balanceUsdc: number; enabled: boolean } | null;
+  // Set when the agent above is only ours because linking merged the two
+  // accounts. Unlinking hands it back, which the warning has to say.
+  agentFromWallet: string | null;
   jobs: {
     billId: string;
     jobId: string | null;
@@ -439,14 +445,19 @@ export default function SettlementAgentsPanel() {
     setSaving(true);
     try {
       const res = await fetch("/api/agents/link", { method: "DELETE" });
-      const data = (await res.json().catch(() => ({}))) as { error?: string };
+      const data = (await res.json().catch(() => ({}))) as { error?: string; returnedAgent?: string };
       if (!res.ok) return fail(data.error ?? "Could not unlink that wallet.");
       setShowUnlink(false);
       setMessageTone("success");
+      // The agent address on screen changes when a merge is undone, so say which
+      // one left and where it went — the alternative is someone reading their own
+      // un-merge as a lost balance.
       setMessage(
-        linkedFacts?.enabled
-          ? "Wallet unlinked. The mandate you armed on it earlier is still live until you revoke it from that wallet."
-          : "Wallet unlinked. Your agent no longer settles bills owed by it.",
+        data.returnedAgent
+          ? `Wallet unlinked, and the two accounts are separate again. ${short(data.returnedAgent)} went back to that wallet's account with its balance; this login is back on its own agent.`
+          : linkedFacts?.enabled
+            ? "Wallet unlinked. The mandate you armed on it earlier is still live until you revoke it from that wallet."
+            : "Wallet unlinked. Your agent no longer settles bills owed by it.",
       );
       load();
     } finally {
@@ -734,6 +745,11 @@ export default function SettlementAgentsPanel() {
             <div className="min-w-0">
               <span className="inline-flex items-center gap-1.5 text-sm font-semibold">
                 <Bot size={14} /> Your agent
+                {/* Which of the two is live, said on the row itself. With two
+                    agents on screen and one set of rules under them, "which one
+                    does this page mean?" is the question the card must answer
+                    before anything else on it can be trusted. */}
+                {agentWallet?.otherAgent ? <span className="spec-badge">in use here</span> : null}
               </span>
               <span className="spec-hint">
                 {agentWallet?.address ? (
@@ -798,34 +814,51 @@ export default function SettlementAgentsPanel() {
               spend the other's, so hiding one is how USDC ends up in an agent
               nobody can find. Linking below is what merges them. */}
           {agentWallet?.otherAgent ? (
-            <div className="spec-row">
-              <div className="min-w-0">
-                <span className="inline-flex items-center gap-1.5 text-sm font-semibold">
-                  <Bot size={14} /> Your other agent
-                </span>
-                <span className="spec-hint">
-                  <a
-                    className="mono underline-offset-2 hover:underline"
-                    href={`https://testnet.arcscan.app/address/${agentWallet.otherAgent.address}`}
-                    rel="noreferrer"
-                    target="_blank"
-                  >
-                    {short(agentWallet.otherAgent.address)}
-                  </a>
-                </span>
-                <span className="spec-hint">
-                  It belongs to {short(connectedAddress ?? "")}, which signed in as an account of its own before you
-                  added this login. <strong>Link that wallet</strong> below and the two accounts become one — this agent
-                  is the one that stays, balance and all.
-                </span>
+            <div className="spec-row flex-col items-start gap-2">
+              <div className="flex w-full flex-wrap items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <span className="inline-flex items-center gap-1.5 text-sm font-semibold">
+                    <Bot size={14} /> Your other agent
+                    {/* That account's OWN switch, and the reason this row is not
+                        trivia: it can be spending while every control on this page
+                        belongs to the other login. */}
+                    <span className={`spec-chip ${agentWallet.otherAgent.enabled ? "spec-chip-live" : ""}`}>
+                      <span className="spec-dot" />
+                      {agentWallet.otherAgent.enabled ? "Armed" : "Idle"}
+                    </span>
+                  </span>
+                  <span className="spec-hint">
+                    <a
+                      className="mono underline-offset-2 hover:underline"
+                      href={`https://testnet.arcscan.app/address/${agentWallet.otherAgent.address}`}
+                      rel="noreferrer"
+                      target="_blank"
+                    >
+                      {short(agentWallet.otherAgent.address)}
+                    </a>
+                  </span>
+                  <span className="spec-hint">
+                    It belongs to {short(connectedAddress ?? "")}, which signed in as an account of its own before you
+                    added this login. <strong>Nothing on this page applies to it</strong> — the ceilings and checks
+                    below are one row on the login you are in now, and that account keeps its own copy, which only
+                    appears when you sign in with that wallet again.
+                  </span>
+                </div>
+                <div className="flex shrink-0 flex-col items-end gap-1">
+                  <span className="mono text-sm font-semibold">
+                    {agentWallet.otherAgent.balanceUsdc.toFixed(2)} USDC
+                  </span>
+                  <span className="spec-hint">the agent above cannot spend this</span>
+                </div>
               </div>
-              <div className="flex shrink-0 flex-col items-end gap-1">
-                <span className="mono text-sm font-semibold">{agentWallet.otherAgent.balanceUsdc.toFixed(2)} USDC</span>
-                {/* The reason this row is not just trivia: the agent above cannot
-                    touch this money, so a bill settles or skips on the balance
-                    of whichever agent the login points at. */}
-                <span className="spec-hint">the agent above cannot spend this</span>
-              </div>
+              {/* The way out, not a footnote: two agents with two sets of rules is
+                  a state nobody should have to hold in their head, and linking is
+                  the one action that ends it. The button is in the row below. */}
+              <span className="spec-hint">
+                <strong>Link {short(connectedAddress ?? "")} below</strong> and the two accounts become one:{" "}
+                {short(agentWallet.otherAgent.address)} stays as your only agent, with its balance, and these rules are
+                the only ones left.
+              </span>
             </div>
           ) : null}
 
@@ -844,9 +877,16 @@ export default function SettlementAgentsPanel() {
                   ? `Bills owed by ${short(linkedAddress ?? "")} — the wallet you signed in with — and by your Splitsy wallet. One agent, one balance, both.`
                   : linkedAddress
                     ? `Bills owed by your Splitsy wallet and by ${short(linkedAddress)}. Both are paid out of the one agent balance above.`
-                    : connectedAddress
-                      ? `Bills owed by your Splitsy wallet. Link ${short(connectedAddress)} and the same agent covers its bills too — it stays one agent and one balance.`
-                      : "Bills owed by your Splitsy wallet. Connect a browser wallet to also have the same agent cover its bills."}
+                    : // A second agent changes this sentence completely: bills owed
+                      // by that wallet are NOT unattended, they are settled by the
+                      // other agent under the other account's rules. Saying "link
+                      // it and the agent covers them too" would imply nothing is
+                      // spending for them today, which is the opposite of true.
+                      agentWallet?.otherAgent
+                      ? `Bills owed by your Splitsy wallet — those, and only those. Bills owed by ${short(connectedAddress ?? "")} are settled by the other agent above, under that account's own rules. Link it and one agent covers both, under these.`
+                      : connectedAddress
+                        ? `Bills owed by your Splitsy wallet. Link ${short(connectedAddress)} and the same agent covers its bills too — it stays one agent and one balance.`
+                        : "Bills owed by your Splitsy wallet. Connect a browser wallet to also have the same agent cover its bills."}
               </span>
             </div>
             <div className="flex shrink-0 flex-wrap items-center gap-2">
@@ -882,10 +922,22 @@ export default function SettlementAgentsPanel() {
                 <li>
                   Autopay for that wallet <strong>stops</strong> — its bills are no longer resolvable to your account.
                 </li>
-                <li>
-                  Your agent, its balance and its identity NFT are <strong>untouched</strong> — they belong to your
-                  account, not to that wallet.
-                </li>
+                {/* Two different truths, and the difference is a balance. An agent
+                    this account only holds because linking merged two accounts
+                    GOES BACK on unlink — the inverse of the adoption — so the
+                    reassuring version of this bullet would be a lie about money. */}
+                {agentWallet?.agentFromWallet ? (
+                  <li>
+                    Your agent <strong>goes back</strong> to being that wallet&rsquo;s own, with its balance and its
+                    identity NFT: linking is what merged the two accounts, and unlinking un-merges them. This login
+                    gets its own agent again — a different address, and an empty one until you fund it or link back.
+                  </li>
+                ) : (
+                  <li>
+                    Your agent, its balance and its identity NFT are <strong>untouched</strong> — they belong to your
+                    account, not to that wallet.
+                  </li>
+                )}
                 {staleMandate ? (
                   <li>
                     The mandate you armed on it earlier <strong>survives</strong>, along with its USDC approval.
@@ -983,6 +1035,9 @@ export default function SettlementAgentsPanel() {
               <span className="spec-hint">
                 Splitsy does. They are checked before your agent spends, not enforced by a contract — so the hard limit
                 is the balance above: it can never pay out more than you have sent it.
+                {agentWallet?.otherAgent
+                  ? ` And they hold for ${short(agentWallet.address ?? "")} only — your other agent runs under the rules stored on its own account.`
+                  : ""}
               </span>
             </div>
             <span className="shrink-0 text-right">
@@ -995,9 +1050,11 @@ export default function SettlementAgentsPanel() {
           <div className="pt-1">
             <span className="spec-label">Checks on every payment</span>
             <span className="spec-hint">
-              {linkedAddress
-                ? "These apply to bills owed by either of your wallets — one setting on your account."
-                : "These apply to every bill your agent looks at — one setting on your account."}
+              {agentWallet?.otherAgent
+                ? `These apply to every bill ${short(agentWallet.address ?? "")} looks at, and to nothing your other agent does — one setting per account, and you currently have two.`
+                : linkedAddress
+                  ? "These apply to bills owed by either of your wallets — one setting on your account."
+                  : "These apply to every bill your agent looks at — one setting on your account."}
             </span>
           </div>
 

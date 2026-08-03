@@ -13,10 +13,10 @@
 // Deliberately NOT behind the wallet-unlock cookie, for the same reason the
 // settings panel isn't: UNLINKING must never be harder than linking.
 import { getSessionUser } from "@/lib/session";
-import { setGrantDebtorAddress } from "@/lib/agents-repo";
+import { getAutopayGrant, setGrantDebtorAddress } from "@/lib/agents-repo";
 import { verifyLinkSignature } from "@/lib/agent-link";
 import { getUsdcBalanceOnchain } from "@/lib/arc-read";
-import { agentToAdopt } from "@/lib/user-agent";
+import { agentToAdopt, wasAgentAdoptedFrom } from "@/lib/user-agent";
 import { getUserByProviderHandle, setUserAgentWallet } from "@/lib/users-repo";
 
 export const runtime = "nodejs";
@@ -122,6 +122,40 @@ export async function DELETE() {
   const user = await getSessionUser();
   if (!user) return Response.json({ error: "Not signed in" }, { status: 401 });
 
+  // Read the link BEFORE dropping it: giving the agent back needs to know which
+  // wallet is being unlinked, and nothing else records it.
+  const grant = await getAutopayGrant(user.id).catch(() => null);
+  const linked = grant?.debtorAddress ?? null;
   await setGrantDebtorAddress(user.id, null);
-  return Response.json({ ok: true });
+
+  // Hand the agent BACK when this account only has it because the link merged two
+  // accounts. Unlinking must be the exact inverse of linking or it is not an
+  // unlink: the wallet's own account would stay signed out of the agent it
+  // funded, while this one kept spending it.
+  //
+  // Detected rather than recorded, because no column had to be added: the donor
+  // row still names the agent it donated, so an address match IS the adoption.
+  // Clearing our two columns is the whole handover — getOrCreateUserAgent
+  // re-derives this account's own agent from its unchanged refId on the next
+  // read, which is the agent it had before the merge, balance and all.
+  let returnedAgent: string | null = null;
+  if (linked && user.agent_wallet_address) {
+    const donor = await getUserByProviderHandle("wallet", linked).catch(() => null);
+    const adopted = wasAgentAdoptedFrom(
+      { id: user.id, agentAddress: user.agent_wallet_address },
+      donor && { id: donor.id, agentAddress: donor.agent_wallet_address },
+    );
+    if (adopted) {
+      // Never fail the unlink over this: the permission is already withdrawn,
+      // which is the part the user asked for and the part that matters.
+      try {
+        await setUserAgentWallet(user.id, null, null);
+        returnedAgent = user.agent_wallet_address;
+      } catch (err) {
+        console.error("agents/link: could not hand the merged agent back:", err);
+      }
+    }
+  }
+
+  return Response.json({ ok: true, returnedAgent });
 }

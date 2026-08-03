@@ -112,6 +112,26 @@ export function agentToAdopt(
   return { address: donor.address, walletId: donor.walletId };
 }
 
+// The inverse, asked at unlink time: does this account hold its agent ONLY
+// because linking adopted it from that wallet's own account? If so, unlinking
+// hands it back, which is what makes unlink the true inverse of link rather than
+// a half-undo that leaves the donor locked out of the agent it funded.
+//
+// No column remembers the adoption because none is needed: the donor row still
+// names the agent it donated, so an address match IS the record. Clearing on a
+// false POSITIVE is self-healing rather than destructive — an account that was
+// never merged re-derives the very same wallet from its unchanged refId — while a
+// false NEGATIVE strands the donor. Hence a match on the agent address itself and
+// nothing looser.
+export function wasAgentAdoptedFrom(
+  mine: { id: string; agentAddress: string | null },
+  donor: { id: string; agentAddress: string | null } | null,
+): boolean {
+  if (!donor || !mine.agentAddress || !donor.agentAddress) return false;
+  if (donor.id === mine.id) return false;
+  return donor.agentAddress.toLowerCase() === mine.agentAddress.toLowerCase();
+}
+
 // A week of fees and shares at the amount being spent right now, so the next
 // hundred settlements do not each pay for their own approval.
 // ponytail: 100x the amount in hand is a guess at "a week" — meter real settlement volume and set it from that, or approve the exact amount every time if a standing allowance ever needs justifying

@@ -12,7 +12,7 @@
 // network-bound and has no seam; those are not tested rather than mocked.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { agentToAdopt, getOrCreateUserAgent } from "./user-agent.ts";
+import { agentToAdopt, getOrCreateUserAgent, wasAgentAdoptedFrom } from "./user-agent.ts";
 
 const CIRCLE_VARS = ["CIRCLE_API_KEY", "CIRCLE_ENTITY_SECRET", "CIRCLE_WALLET_SET_ID"] as const;
 const original = CIRCLE_VARS.map((k) => [k, process.env[k]] as const);
@@ -88,4 +88,37 @@ test("nothing to adopt is a null, not a half-written row", () => {
   // Already the same agent — the columns are equal, so the write would be a
   // no-op, and reporting an adoption would tell the user something happened.
   assert.equal(agentToAdopt({ address: DONOR.address.toLowerCase(), balance: 0n }, DONOR), null);
+});
+
+// The other half of the pair. Unlink hands the agent back only when link took
+// it, so this predicate decides whether an account keeps the agent it is holding.
+test("an agent shared with the donor account reads as adopted, whatever the case", () => {
+  assert.equal(
+    wasAgentAdoptedFrom(
+      { id: "social", agentAddress: DONOR.address.toLowerCase() },
+      { id: "wallet", agentAddress: DONOR.address },
+    ),
+    true,
+  );
+});
+
+test("an agent of our own is never handed back", () => {
+  // Different agents: this account minted its own, so there is nothing to return.
+  assert.equal(
+    wasAgentAdoptedFrom(
+      { id: "social", agentAddress: "0xbbb0000000000000000000000000000000000002" },
+      { id: "wallet", agentAddress: DONOR.address },
+    ),
+    false,
+  );
+  // The donor IS us — a wallet account unlinking its own sign-in address must
+  // not clear the agent it has always owned.
+  assert.equal(
+    wasAgentAdoptedFrom({ id: "same", agentAddress: DONOR.address }, { id: "same", agentAddress: DONOR.address }),
+    false,
+  );
+  // No donor account at all: an ordinary browser wallet that was only ever
+  // linked, never signed in with.
+  assert.equal(wasAgentAdoptedFrom({ id: "social", agentAddress: DONOR.address }, null), false);
+  assert.equal(wasAgentAdoptedFrom({ id: "social", agentAddress: null }, { id: "wallet", agentAddress: null }), false);
 });

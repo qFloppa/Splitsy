@@ -56,11 +56,20 @@ export async function setUserWallet(id: string, walletAddress: string, circleWal
 // The account's agent wallet, cached so it is not re-derived from Circle on
 // every request. One per ACCOUNT, never per wallet: a user who signs in
 // socially AND links a browser wallet has one agent covering both.
-export async function setUserAgentWallet(id: string, address: string, walletId: string): Promise<void> {
+//
+// NULLS CLEAR IT, and that is a real operation rather than a defensive overload:
+// unlinking a browser wallet whose own account donated this agent has to give it
+// back (POST/DELETE /api/agents/link). Clearing is all that takes — the next read
+// re-derives this account's own agent from its unchanged refId.
+export async function setUserAgentWallet(
+  id: string,
+  address: string | null,
+  walletId: string | null,
+): Promise<void> {
   const client = requireClient();
   const { error } = await client
     .from("users")
-    .update({ agent_wallet_address: address.toLowerCase(), agent_wallet_id: walletId })
+    .update({ agent_wallet_address: address?.toLowerCase() ?? null, agent_wallet_id: walletId })
     .eq("id", id);
   if (error) {
     throw new Error(`Failed to save agent wallet: ${error.message}`);

@@ -264,6 +264,23 @@ session agent that already holds a balance: adoption overwrites the only columns
 that lead back to an agent wallet, so it is refused rather than allowed to strand
 money, and the second agent stays on screen until one of them is empty.
 
+**Unlink is the exact inverse.** `DELETE /api/agents/link` hands the agent back
+when `wasAgentAdoptedFrom` says the link is why this account holds it — the donor
+row still names what it donated, so an address match is the record and no column
+remembers it. Handing back is just clearing the two columns: the next read
+re-derives this account's own agent from its unchanged `refId`, so both accounts
+end up on the agent they had before the merge, balances included. Anything less
+would be a half-undo, leaving the wallet's account locked out of the agent it
+funded while this one kept spending it.
+
+**Two agents mean two sets of rules,** and the card says so rather than implying
+one form binds both. `autopay_grants` is one row per `user_id`, so the ceilings,
+the checks and the `enabled` switch on this page bind the session's agent only;
+the other account keeps its own copy, editable only by signing in with that
+wallet. The second row therefore carries that account's own Armed/Idle chip —
+an agent that can spend while its rules are invisible from here is precisely
+what this panel exists to surface — and points at **Link wallet** as the way out.
+
 The agent's ERC-8004 identity is minted from the agent's own wallet — keying it
 on the user's main wallet would collide with the `splitsy-payer` identity they
 already earned by paying bills — and then transferred to the user with a

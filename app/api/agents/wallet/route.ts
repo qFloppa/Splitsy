@@ -30,20 +30,22 @@ export async function GET(request: Request) {
       tokenId: null,
       balanceUsdc: 0,
       moneyMode: "mandate",
-      otherAgent: null,
+      ...NO_OTHER_ACCOUNT,
       jobs: [],
     });
   }
 
-  const [balance, identity, rules, log, otherAgent] = await Promise.all([
+  const [balance, identity, rules, log, walletAccount] = await Promise.all([
     getAgentBalanceUsdc(agent.address).catch(() => 0n),
     getAgentByWallet(agent.address).catch(() => null),
     getAutopayGrant(user.id).catch(() => null),
     listAutopayLog(user.id).catch(() => []),
-    // The connected browser wallet's OWN agent, if that wallet is an account of
-    // its own. Never fails the card: an absent second agent reads as "there is
-    // only one", which is the answer in almost every case.
-    connectedAccountAgent(user, new URL(request.url).searchParams.get("connected") ?? "").catch(() => null),
+    // The connected browser wallet's OWN account, if it has one. Never fails the
+    // card: absent reads as "there is only one agent", the answer in almost
+    // every case.
+    walletAccountAgent(user, new URL(request.url).searchParams.get("connected") ?? "").catch(
+      () => NO_OTHER_ACCOUNT,
+    ),
   ]);
 
   // Register the identity in the background once the agent has gas to pay for
@@ -62,7 +64,7 @@ export async function GET(request: Request) {
     tokenId: identity?.agent_id ?? process.env.NEXT_PUBLIC_USER_AGENT_TOKEN_ID ?? null,
     balanceUsdc: Number(balance) / 1e6,
     moneyMode: rules?.moneyMode ?? "mandate",
-    otherAgent,
+    ...walletAccount,
     // Only the rows that opened a job. A skip has no job and belongs in the
     // decision log, which the panel already renders separately.
     jobs: log
@@ -78,29 +80,53 @@ export async function GET(request: Request) {
   });
 }
 
-// The SECOND agent, when there is one: the one belonging to the connected browser
-// wallet's own account.
+const NO_OTHER_ACCOUNT = { otherAgent: null, agentFromWallet: null };
+
+// What the connected browser wallet's OWN account contributes to this card.
 //
 // A wallet sign-in mints a whole account (see /api/auth/wallet), so someone who
 // used this tab before adding a social login has two accounts and two agents,
-// each with its own refId and its own balance. The card only ever showed the
-// session's, which is how USDC ends up in an agent the person can no longer find:
-// they funded it under one login and then looked for it under the other. It is
-// shown alongside until 'Link wallet' merges the two.
+// each with its own refId, its own balance and its own copy of the rules. Two
+// facts come out of that, and the card needs both:
 //
-// ponytail: any signed-in user can ask this about any address and learn whether
-// it has a Splitsy wallet account and what its agent's address is — both public
-// chain addresses either way. Gate it behind a signature if that reads as a leak.
-async function connectedAccountAgent(user: AppUser, connected: string) {
+//   * otherAgent — a SECOND agent, still separate. Showing only the session's is
+//     how USDC ends up in an agent the person cannot find: they funded it under
+//     one login and then looked for it under the other. `enabled` comes with it
+//     because an agent that can spend while its rules are invisible from here is
+//     the whole reason this panel exists.
+//   * agentFromWallet — the two are ALREADY merged, and this account holds the
+//     agent only because linking adopted it. Unlinking gives it back, so the
+//     warning has to stop promising the balance is untouched.
+//
+// ponytail: any signed-in user can ask this about any address and learn whether it
+// has a Splitsy wallet account, what its agent's address is and whether that agent
+// is armed. The addresses are public chain data; the armed flag is not. Gate it
+// behind a signature if that reads as a leak.
+async function walletAccountAgent(user: AppUser, connected: string) {
   const address = connected.toLowerCase();
-  if (!/^0x[a-f0-9]{40}$/.test(address)) return null;
+  if (!/^0x[a-f0-9]{40}$/.test(address)) return NO_OTHER_ACCOUNT;
 
   const own = await getUserByProviderHandle("wallet", address);
-  if (!own || own.id === user.id || !own.agent_wallet_address) return null;
-  // Already merged: after an adoption both rows name the same agent wallet, and
-  // showing it twice would invent a second balance that does not exist.
-  if (own.agent_wallet_address.toLowerCase() === (user.agent_wallet_address ?? "").toLowerCase()) return null;
+  if (!own || own.id === user.id || !own.agent_wallet_address) return NO_OTHER_ACCOUNT;
 
-  const balance = await getAgentBalanceUsdc(own.agent_wallet_address as `0x${string}`).catch(() => 0n);
-  return { address: own.agent_wallet_address, balanceUsdc: Number(balance) / 1e6 };
+  // Both rows naming one agent wallet is the merged state. Rendering it as a
+  // second agent would invent a balance that does not exist.
+  if (own.agent_wallet_address.toLowerCase() === (user.agent_wallet_address ?? "").toLowerCase()) {
+    return { otherAgent: null, agentFromWallet: address };
+  }
+
+  const [balance, rules] = await Promise.all([
+    getAgentBalanceUsdc(own.agent_wallet_address as `0x${string}`).catch(() => 0n),
+    getAutopayGrant(own.id).catch(() => null),
+  ]);
+  return {
+    otherAgent: {
+      address: own.agent_wallet_address,
+      balanceUsdc: Number(balance) / 1e6,
+      // Funded mode is the only one this UI writes, and there `enabled` is the
+      // whole answer — no mandate on chain to disagree with it.
+      enabled: rules?.enabled === true && rules.moneyMode === "funded",
+    },
+    agentFromWallet: null,
+  };
 }
