@@ -2679,6 +2679,16 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
               title="Split a bill, keep the receipt"
             />
 
+            {/* After a successful submit the split form resets (unmounting the
+                panel that shows billMessage), so surface the "Bill #N is live"
+                confirmation here until a new bill is started. It sits directly
+                under the hero — above the inbox/claim panels — because creating
+                a bill smooth-scrolls back to the top; anywhere lower and the
+                confirmation scrolls out of view the moment it appears. */}
+            {billState === "success" && billMessage && !billReadyForSplit ? (
+              <Message tone="success">{billMessage}</Message>
+            ) : null}
+
             {/* One merged "You owe" card. It stays mounted and is only *hidden*
                 when nothing is pending — never unmounted — so XDebtsPanel keeps
                 fetching and can report its social count up for the summed
@@ -2752,12 +2762,6 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
             ) : null}
 
             <div className="space-y-5">
-              {/* After a successful submit the split form resets (unmounting the
-                  panel that shows billMessage), so surface the "Bill #N is live"
-                  confirmation here until a new bill is started. */}
-              {billState === "success" && billMessage && !billReadyForSplit ? (
-                <Message tone="success">{billMessage}</Message>
-              ) : null}
               <Panel
                 chip={
                   ocrState === "reading" ? (
