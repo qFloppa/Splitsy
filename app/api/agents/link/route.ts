@@ -15,6 +15,9 @@
 import { getSessionUser } from "@/lib/session";
 import { setGrantDebtorAddress } from "@/lib/agents-repo";
 import { verifyLinkSignature } from "@/lib/agent-link";
+import { getUsdcBalanceOnchain } from "@/lib/arc-read";
+import { agentToAdopt } from "@/lib/user-agent";
+import { getUserByProviderHandle, setUserAgentWallet } from "@/lib/users-repo";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -49,6 +52,20 @@ export async function POST(request: Request) {
   });
   if (!verdict.ok) return Response.json({ error: verdict.error }, { status: 400 });
 
+  // This wallet may already be an ACCOUNT of its own — /api/auth/wallet mints
+  // one from a signature — in which case the two accounts here are one person's
+  // two login slots, not rivals, and the unique index below would 409 them out of
+  // linking their own wallet. Fold that account in rather than refusing it: the
+  // signature just verified is the same credential the account itself is built
+  // on, so whoever can link is exactly whoever could sign into it.
+  const own = await getUserByProviderHandle("wallet", address).catch(() => null);
+  const merging = own && own.id !== user.id ? own : null;
+  // Free the index BEFORE claiming the address, and only in that order: the two
+  // writes are not atomic, and a failure between them must leave the wallet
+  // linked to NEITHER account rather than to the wrong one. Nothing is lost by
+  // that — the next sign-in with this wallet re-links it, since no one holds it.
+  if (merging) await setGrantDebtorAddress(merging.id, null);
+
   try {
     await setGrantDebtorAddress(user.id, address);
   } catch (err) {
@@ -65,7 +82,40 @@ export async function POST(request: Request) {
     throw err;
   }
 
-  return Response.json({ ok: true, address });
+  // One account now, so one agent. The merged-in account's agent wins where it
+  // can (see agentToAdopt) — it is the one that has been funded — and the loser
+  // is simply forgotten: its balance is the reason this is not unconditional.
+  //
+  // Adopted AFTER the link write, so a failed link cannot leave two accounts
+  // pointing at one agent wallet.
+  let adoptedAgent: string | null = null;
+  if (merging) {
+    const keep = agentToAdopt(
+      {
+        address: user.agent_wallet_address,
+        balance: user.agent_wallet_address
+          ? // 1n on failure: an unreadable balance must not read as empty, or an
+            // RPC blip is enough to strand whatever this agent holds.
+            await getUsdcBalanceOnchain(user.agent_wallet_address as `0x${string}`).catch(() => 1n)
+          : 0n,
+      },
+      { address: merging.agent_wallet_address, walletId: merging.agent_wallet_id },
+    );
+    if (keep) {
+      // Never fail the link over the adoption: the link is the permission the
+      // user asked for, and an un-adopted agent is still visible and fundable.
+      // ponytail: the donor row keeps pointing at the same agent wallet, so an
+      // unlink later leaves both accounts on it — clear it here if that bites.
+      try {
+        await setUserAgentWallet(user.id, keep.address, keep.walletId);
+        adoptedAgent = keep.address;
+      } catch (err) {
+        console.error("agents/link: could not adopt the merged agent:", err);
+      }
+    }
+  }
+
+  return Response.json({ ok: true, address, adoptedAgent });
 }
 
 export async function DELETE() {

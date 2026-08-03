@@ -62,10 +62,16 @@ type Grant = {
 // The user's own agent, from /api/agents/wallet. One per ACCOUNT: the same
 // agent and the same balance cover the Splitsy wallet and the linked browser
 // wallet both, which is the line the card has to make unmissable.
+//
+// One per account is NOT one per person, though, and `otherAgent` is that gap
+// made visible: signing in with a browser wallet mints an account of its own, so
+// a person with both logins has two accounts and two agents. Linking is what
+// merges them back to one.
 type AgentWallet = {
   address: string | null;
   tokenId: string | null;
   balanceUsdc: number;
+  otherAgent: { address: string; balanceUsdc: number } | null;
   jobs: {
     billId: string;
     jobId: string | null;
@@ -202,13 +208,17 @@ export default function SettlementAgentsPanel() {
     // something: the agent wallet is made on first read, because someone has to
     // see the card before they can fund it. No signedOut handling — the grants
     // call above already answers that, and a second writer would only race it.
-    fetch("/api/agents/wallet")
+    //
+    // The connected address is passed because the SERVER cannot see it: a wallet
+    // sign-in mints an account of its own, and that account's agent is only
+    // findable from the address the extension is currently on.
+    fetch(`/api/agents/wallet${connectedAddress ? `?connected=${connectedAddress}` : ""}`)
       .then((r) => (r.ok ? r.json() : null))
       .then((d) => {
         if (d) setAgentWallet(d as AgentWallet);
       })
       .catch(() => {});
-  }, []);
+  }, [connectedAddress]);
 
   useEffect(load, [load]);
 
@@ -409,7 +419,14 @@ export default function SettlementAgentsPanel() {
         return;
       }
       setMessageTone("success");
-      setMessage("Wallet linked. Your agent will settle bills owed by it too.");
+      // Two accounts collapsing into one is a bigger event than a link, and the
+      // agent address on screen is about to CHANGE — say which one won, or the
+      // card looks like it lost the agent they funded.
+      setMessage(
+        body.adoptedAgent
+          ? `Wallet linked, and your two agents are now one: ${short(String(body.adoptedAgent))} — the one you funded first. Its balance came with it.`
+          : "Wallet linked. Your agent will settle bills owed by it too.",
+      );
       load();
     } catch {
       fail("You declined the signature, so the wallet was not linked.");
@@ -748,9 +765,12 @@ export default function SettlementAgentsPanel() {
                 )}
               </span>
               {/* Said plainly, because the alternative is someone funding twice
-                  looking for a second agent that does not exist. */}
+                  looking for a second agent that does not exist — or, when there
+                  really are two, funding the one that is about to be replaced. */}
               <span className="spec-hint">
-                One agent covers both your Splitsy wallet and your linked browser wallet. Fund it once.
+                {agentWallet?.otherAgent
+                  ? "This one belongs to the login you are in now. You have a second below, because you have two logins."
+                  : "One agent covers both your Splitsy wallet and your linked browser wallet. Fund it once."}
               </span>
             </div>
             <div className="flex shrink-0 flex-col items-end gap-1">
@@ -770,6 +790,44 @@ export default function SettlementAgentsPanel() {
               </span>
             </div>
           </div>
+
+          {/* ── The SECOND agent ── Shown only when one exists, which means the
+              person signed in with this browser wallet before adding the login
+              they are using now: that sign-in minted an account of its own, and
+              an account gets an agent. Both hold real balances and neither can
+              spend the other's, so hiding one is how USDC ends up in an agent
+              nobody can find. Linking below is what merges them. */}
+          {agentWallet?.otherAgent ? (
+            <div className="spec-row">
+              <div className="min-w-0">
+                <span className="inline-flex items-center gap-1.5 text-sm font-semibold">
+                  <Bot size={14} /> Your other agent
+                </span>
+                <span className="spec-hint">
+                  <a
+                    className="mono underline-offset-2 hover:underline"
+                    href={`https://testnet.arcscan.app/address/${agentWallet.otherAgent.address}`}
+                    rel="noreferrer"
+                    target="_blank"
+                  >
+                    {short(agentWallet.otherAgent.address)}
+                  </a>
+                </span>
+                <span className="spec-hint">
+                  It belongs to {short(connectedAddress ?? "")}, which signed in as an account of its own before you
+                  added this login. <strong>Link that wallet</strong> below and the two accounts become one — this agent
+                  is the one that stays, balance and all.
+                </span>
+              </div>
+              <div className="flex shrink-0 flex-col items-end gap-1">
+                <span className="mono text-sm font-semibold">{agentWallet.otherAgent.balanceUsdc.toFixed(2)} USDC</span>
+                {/* The reason this row is not just trivia: the agent above cannot
+                    touch this money, so a bill settles or skips on the balance
+                    of whichever agent the login points at. */}
+                <span className="spec-hint">the agent above cannot spend this</span>
+              </div>
+            </div>
+          ) : null}
 
           {/* Which DEBTS the agent settles, which is no longer the same question
               as which wallet it spends from — it always spends its own. A bill

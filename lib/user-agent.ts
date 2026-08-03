@@ -84,6 +84,34 @@ export async function getAgentBalanceUsdc(address: `0x${string}`): Promise<bigin
   return getUsdcBalanceOnchain(address);
 }
 
+// Which agent survives when a browser wallet that already had a Splitsy account
+// of its own is linked into another one.
+//
+// Two logins mean two accounts: /api/auth/wallet mints one from a signature, so
+// anyone who used the Agents tab before adding a social login has two, each with
+// its own agent under its own refId. Linking is what collapses them, and the
+// DONOR's agent is the one that survives — it is the first one the person ever
+// saw, since the wallet account is necessarily the earlier login slot, so it is
+// the one they will have funded and the one whose identity NFT exists.
+//
+// Unless the session's own agent is holding money. Adoption overwrites the
+// columns that are the only way back to an agent wallet, so adopting past a
+// funded one would strand its balance where nothing in the app can reach it.
+// Then the donor loses and the panel keeps showing both.
+//
+// An UNREADABLE balance counts as money, not as zero: the caller passes 1n on an
+// RPC failure. Losing a merge to a network blip costs a click; winning one costs
+// the balance.
+export function agentToAdopt(
+  mine: { address: string | null; balance: bigint },
+  donor: { address: string | null; walletId: string | null },
+): { address: string; walletId: string } | null {
+  if (!donor.address || !donor.walletId) return null;
+  if (mine.address?.toLowerCase() === donor.address.toLowerCase()) return null;
+  if (mine.address && mine.balance > 0n) return null;
+  return { address: donor.address, walletId: donor.walletId };
+}
+
 // A week of fees and shares at the amount being spent right now, so the next
 // hundred settlements do not each pay for their own approval.
 // ponytail: 100x the amount in hand is a guess at "a week" — meter real settlement volume and set it from that, or approve the exact amount every time if a standing allowance ever needs justifying

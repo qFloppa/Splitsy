@@ -252,6 +252,18 @@ balance and one identity NFT covering both. They fund it once. The panel says so
 in as many words, because the alternative is someone funding twice looking for a
 second agent that does not exist.
 
+**One per account is not one per person, though.** A browser-wallet sign-in mints
+a whole account (`/api/auth/wallet`), so a person who used this tab before adding
+a social login has *two* accounts and therefore two agents, each with its own
+balance and neither able to spend the other's. The card shows **both** — hiding
+one is how USDC ends up in an agent nobody can find — and **Link wallet** is what
+collapses them: it frees the wallet account's `debtor_address`, claims it for the
+session account, and then adopts that account's agent (`agentToAdopt`), because
+the earlier login slot is the one that has been funded. The one exception is a
+session agent that already holds a balance: adoption overwrites the only columns
+that lead back to an agent wallet, so it is refused rather than allowed to strand
+money, and the second agent stays on screen until one of them is empty.
+
 The agent's ERC-8004 identity is minted from the agent's own wallet — keying it
 on the user's main wallet would collide with the `splitsy-payer` identity they
 already earned by paying bills — and then transferred to the user with a
