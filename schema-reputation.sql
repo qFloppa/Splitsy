@@ -65,9 +65,9 @@ alter table reputation_feedback
 alter table reputation_agents
   alter column agent_id drop not null; -- claim rows (see header comment)
 
--- Which of the four roles the NFT was minted as: 'splitsy-payer',
--- 'splitsy-user-agent', 'splitsy-settler', 'splitsy-auditor'. The four do
--- different jobs and their metadata says so (AGENT_PROFILE in lib/erc8004.ts).
+-- Which role the NFT was minted as: 'splitsy-payer', 'splitsy-user-agent',
+-- 'splitsy-settler', 'splitsy-auditor', 'splitsy-validator'. Each does a
+-- different job and its metadata says so (AGENT_PROFILE in lib/erc8004.ts).
 --
 -- Stored rather than derived because minted metadata is IMMUTABLE: re-pointing a
 -- token's URI later needs to know what that agent does, and the wallet address

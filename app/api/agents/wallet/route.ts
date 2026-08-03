@@ -4,6 +4,7 @@
 // agent is created on first read, which is deliberate — someone has to look at
 // the card before they can fund it, and the wallet must exist to be funded.
 // Creating a DCW costs nothing until it is used.
+import { after } from "next/server";
 import { getAutopayGrant, listAutopayLog } from "@/lib/agents-repo";
 // The authoritative wallet -> ERC-8004 agent id mapping. It survives a registry
 // redeploy, which is why identity is resolved from here and not from an env var.
@@ -33,10 +34,14 @@ export async function GET() {
   ]);
 
   // Register the identity in the background once the agent has gas to pay for
-  // it. Never awaited: a card render must not wait on a mint, and a failure
-  // leaves the agent perfectly able to settle — it just has no NFT yet.
+  // it. Deferred with after() rather than a bare `void`, which is not optional
+  // here: a dangling promise is frozen the moment the response is sent on
+  // serverless, so the mint could be killed between the register tx and the row
+  // that records its tokenId — stranding the NFT and letting the next page load
+  // mint another. after() keeps the function alive until it finishes. A failure
+  // still leaves the agent perfectly able to settle; it just has no NFT yet.
   if (!identity?.agent_id && balance > 0n) {
-    void ensureUserAgentIdentity(agent, user.wallet_address);
+    after(() => ensureUserAgentIdentity(agent, user.wallet_address));
   }
 
   return Response.json({

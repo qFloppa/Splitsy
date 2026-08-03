@@ -77,6 +77,13 @@ const ERC8004_ABI = [
   },
   {
     type: "function",
+    name: "balanceOf", // how many identity NFTs a wallet already holds
+    stateMutability: "view",
+    inputs: [{ name: "owner", type: "address" }],
+    outputs: [{ name: "", type: "uint256" }],
+  },
+  {
+    type: "function",
     name: "giveFeedback",
     stateMutability: "nonpayable",
     inputs: [
@@ -205,7 +212,12 @@ async function uploadAgentImage(
   }
 }
 
-export type AgentType = "splitsy-payer" | "splitsy-user-agent" | "splitsy-settler" | "splitsy-auditor";
+export type AgentType =
+  | "splitsy-payer"
+  | "splitsy-user-agent"
+  | "splitsy-settler"
+  | "splitsy-auditor"
+  | "splitsy-validator";
 
 // What each identity NFT says it is. Four roles that do four different jobs, so
 // one description for all of them was simply wrong on three of them: an autopay
@@ -217,7 +229,7 @@ export type AgentType = "splitsy-payer" | "splitsy-user-agent" | "splitsy-settle
 // in the image, where "Splitsy Payer 0x1234…" read like a person rather than a
 // piece of software acting for one.
 //
-// A Record over the union, so adding a fifth agent type will not compile until
+// A Record over the union, so adding another agent type will not compile until
 // it has said what it does.
 export const AGENT_PROFILE: Record<AgentType, { title: string; description: string; capabilities: string[] }> = {
   "splitsy-payer": {
@@ -243,6 +255,12 @@ export const AGENT_PROFILE: Record<AgentType, { title: string; description: stri
     description:
       "Evaluator on every Splitsy ERC-8183 job. Sells bill reviews over x402, and releases a job's escrow to the Settler only after reading BillSplitRegistry on chain and seeing the debt actually settled — a job whose work it cannot verify expires unpaid.",
     capabilities: ["erc8183_evaluator", "bill_review", "x402_seller"],
+  },
+  "splitsy-validator": {
+    title: "Validator Agent",
+    description:
+      "Records every Splitsy payment reputation score on the ERC-8004 ReputationRegistry. Scores only payments the payer themselves made, grades them against the due date committed in the bill, and commits a hash of the bill and payment transaction so any score can be re-verified against the settlement it claims to grade.",
+    capabilities: ["reputation_attestation", "payment_verification"],
   },
 };
 
@@ -343,6 +361,49 @@ async function getRegistrarWallet() {
   return wallet;
 }
 
+// The Splitsy service agents that act in their own name on chain and therefore
+// deserve an attributable identity. NOT a list of every service wallet:
+//
+//   * auditor   — evaluator on every ERC-8183 job and an x402 seller. It decides
+//                 whether escrow releases, so leaving it anonymous while the
+//                 provider it grades is registered is backwards.
+//   * validator — signs every giveFeedback on the ReputationRegistry. Reputation
+//                 asserted by an unidentified address asks readers to trust our
+//                 database instead of the chain, which is the opposite of the point.
+//
+// The REGISTRAR is deliberately absent. It is plumbing, not an actor: it exists
+// only because register() mints to msg.sender and browser payers cannot sign, so
+// it holds their tokens transiently and transfers them on. A wallet whose job is
+// holding other agents' NFTs must not also hold one of its own — that is the
+// exact ambiguity that makes a duplicate-mint bug hard to read.
+export const SERVICE_AGENTS = [
+  { refId: "auditor", agentType: "splitsy-auditor" },
+  { refId: "reputation-validator", agentType: "splitsy-validator" },
+] as const satisfies readonly { refId: string; agentType: AgentType }[];
+
+// Register one service agent's identity, idempotently.
+//
+// Deliberately routed through ensureAgent rather than calling register()
+// directly, which is the whole point of this function: ensureAgent already
+// carries the DB claim, the on-chain balanceOf guard and the tokenId-from-receipt
+// read. scripts/settler-setup.ts skips all three because it gates on an env var,
+// so losing SETTLER_ERC8004_TOKEN_ID from .env.local mints a SECOND identity for
+// a wallet that already has one. Keying on reputation_agents instead means the
+// answer survives a lost .env, and the balance guard refuses a second mint even
+// if the database is wiped.
+//
+// The wallet signs for itself, so it needs USDC for gas (Arc bills gas in USDC)
+// and must be faucet-funded first — same as the validator always has been.
+export async function ensureServiceAgentIdentity(
+  refId: string,
+  agentType: AgentType,
+): Promise<{ address: string; agentId: string }> {
+  const wallet = await getOrCreateArcWallet("splitsy", refId);
+  if (!wallet) throw new Error(`Circle is not configured — no ${refId} wallet`);
+  const agentId = await ensureAgent(wallet.address, wallet.walletId, undefined, agentType);
+  return { address: wallet.address, agentId };
+}
+
 // Wallet → agentId, registering the identity NFT on first use. Lazy on
 // purpose: registration is a tx paid by the member's wallet, and the only
 // caller is the post-payment hook — at which point the wallet demonstrably
@@ -365,6 +426,17 @@ async function getRegistrarWallet() {
 // they were. It exists because the minted metadata is immutable: an agent that
 // registers as the wrong type is wrong on chain forever, and the user agents
 // are not payers.
+// Is this registration minting for the wallet itself, or on someone else's
+// behalf? Exported because it decides whether the one-identity-per-wallet guard
+// in ensureAgent applies, and getting it backwards is silent in both directions:
+// inverted, the registrar refuses to mint for any browser payer after its first
+// (all of them lose reputation), while a self-mint would stop being guarded and
+// pile up duplicate NFTs again. A pure predicate is the only part of that guard
+// testable without a chain, so it is the part that gets pinned.
+export function isSelfMint(walletAddress: string, minterAddress?: string): boolean {
+  return !minterAddress || minterAddress.toLowerCase() === walletAddress.toLowerCase();
+}
+
 export async function ensureAgent(
   walletAddress: string,
   circleWalletId: string,
@@ -376,6 +448,35 @@ export async function ensureAgent(
 
   if ((await claimAgentRegistration(walletAddress)) !== "won") {
     return waitForAgentRegistration(walletAddress);
+  }
+
+  // LAST LINE OF DEFENCE, ON CHAIN. The DB claim above serializes concurrent
+  // callers, but it cannot protect against a mint whose row never got written:
+  // the registry has no address->tokenId resolver, so a finalize that failed
+  // leaves a real NFT that nothing in Postgres remembers, and the stale-claim
+  // takeover happily mints a second one 120s later. Four identities piled up on
+  // one agent wallet that way.
+  //
+  // So ask the chain, not just the database. A wallet that already holds a token
+  // must never register again — one wallet, one identity, and no amount of
+  // database damage can make this mint twice. Only for the self-minting case:
+  // the registrar mints on others' behalf and legitimately holds many at once.
+  // ponytail: this cannot recover the orphaned tokenId (no resolver, and eth_getLogs is range-capped on Arc) — it refuses to make the problem worse and logs loudly; scripts/reputation-backfill.ts is where a log-scan repair belongs
+  if (isSelfMint(walletAddress, minterAddress)) {
+    const held = await publicClient
+      .readContract({
+        address: IDENTITY_REGISTRY,
+        abi: ERC8004_ABI,
+        functionName: "balanceOf",
+        args: [walletAddress as `0x${string}`],
+      })
+      .catch(() => 0n); // an unreadable balance must not block a first mint
+    if (held > 0n) {
+      await releaseAgentClaim(walletAddress).catch(() => undefined);
+      throw new Error(
+        `${walletAddress} already holds ${held} ERC-8004 identity NFT(s) but has no recorded agent id — refusing to mint another`,
+      );
+    }
   }
 
   let agentId: string;

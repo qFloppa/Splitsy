@@ -98,7 +98,7 @@ export async function finalizeAgentRegistration(
   walletAddress: string,
   agentId: string,
   registerTx: string,
-  // Which of the four roles this NFT was minted as. Stored because the minted
+  // Which role this NFT was minted as. Stored because the minted
   // metadata is immutable: re-pointing a token's URI later (scripts/
   // reputation-backfill.ts) has to know what the agent DOES, and the wallet
   // address alone does not say.
@@ -109,7 +109,30 @@ export async function finalizeAgentRegistration(
     .from("reputation_agents")
     .update({ agent_id: agentId, register_tx: registerTx, agent_type: agentType })
     .eq("wallet_address", walletAddress.toLowerCase());
-  if (error) throw new Error(`Failed to finalize registration: ${error.message}`);
+  if (!error) return;
+
+  // THE MINT ALREADY HAPPENED. An NFT exists on chain and this row is the only
+  // index of it — the registry has no address->tokenId resolver — so failing
+  // here strands that token forever AND leaves the claim row null, which the
+  // stale-claim takeover then re-mints 120s later. That is exactly what shipped:
+  // agent_type is newer than some deployed databases (schema-reputation.sql is
+  // additive and run by hand), so on one that never got the column every finalize
+  // died on 42703/PGRST204 and every page load minted another identity.
+  //
+  // agent_type is metadata for a backfill script; agent_id is the thing that
+  // must be recorded. So retry without it rather than lose the token.
+  if (error.code === "42703" || error.code === "PGRST204") {
+    console.error(
+      `reputation: reputation_agents.agent_type is missing — recording agent ${agentId} without it. Run schema-reputation.sql.`,
+    );
+    const retry = await client
+      .from("reputation_agents")
+      .update({ agent_id: agentId, register_tx: registerTx })
+      .eq("wallet_address", walletAddress.toLowerCase());
+    if (!retry.error) return;
+    throw new Error(`Failed to finalize registration: ${retry.error.message}`);
+  }
+  throw new Error(`Failed to finalize registration: ${error.message}`);
 }
 
 export async function releaseAgentClaim(walletAddress: string): Promise<void> {

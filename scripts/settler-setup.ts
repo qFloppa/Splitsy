@@ -78,8 +78,31 @@ if (gas === 0n && usdc > 0n) {
 const wallet = createWalletClient({ account, chain: arcTestnet, transport: http(ARC_TESTNET_RPC) });
 
 // --- ERC-8004 identity -------------------------------------------------------
+// The env var is a hint, not the authority. Gating the mint on it alone means a
+// .env.local that loses SETTLER_ERC8004_TOKEN_ID mints a SECOND identity for a
+// wallet that already owns one — the same duplicate-identity bug that hit the
+// user agents, one script over. So ask the chain: one wallet, one identity.
+const heldIdentities = await publicClient.readContract({
+  address: ARC_IDENTITY_REGISTRY,
+  abi: [
+    {
+      type: "function",
+      name: "balanceOf",
+      stateMutability: "view",
+      inputs: [{ name: "owner", type: "address" }],
+      outputs: [{ type: "uint256" }],
+    },
+  ] as const,
+  functionName: "balanceOf",
+  args: [account.address],
+});
+
 if (process.env.SETTLER_ERC8004_TOKEN_ID) {
   console.log("\nERC-8004 already registered: #" + process.env.SETTLER_ERC8004_TOKEN_ID);
+} else if (heldIdentities > 0n) {
+  console.log(`\nThis address already holds ${heldIdentities} ERC-8004 identity NFT(s) — not minting another.`);
+  console.log("Find its token id on Arcscan and set SETTLER_ERC8004_TOKEN_ID in .env.local:");
+  console.log(`https://testnet.arcscan.app/address/${account.address}`);
 } else {
   const metadataUri =
     process.env.SETTLER_METADATA_URI ??

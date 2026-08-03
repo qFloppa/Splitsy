@@ -988,8 +988,11 @@ export default function SettlementAgentsPanel() {
               <span className="inline-flex items-center gap-1.5 text-sm font-semibold">
                 <ShieldCheck size={14} /> Check the bill&rsquo;s contents before paying
               </span>
+              {/* Deliberately does not promise a line-item check: lib/autopay-review.ts
+                  is given the headline fields only, and the receipt image is never sent. */}
               <span className="spec-hint">
-                The agent reads the receipt and refuses if your share doesn&rsquo;t match what&rsquo;s on it.
+                The agent weighs the merchant, total and your share against each other, and refuses if the
+                numbers don&rsquo;t hang together. It has no line items, so it cannot tell who ordered what.
               </span>
             </div>
             <Switch

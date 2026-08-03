@@ -11,6 +11,7 @@
     "deploy:arc:autopay-mandate": "node --env-file=.env.local ./node_modules/hardhat/dist/src/cli.js run --network arcTestnet scripts/deploy-autopay-mandate.ts",
     "scout:setup": "node --experimental-strip-types --env-file=.env.local scripts/scout-setup.ts",
     "settler:setup": "node --experimental-strip-types --env-file=.env.local scripts/settler-setup.ts",
+    "agents:setup": "node --experimental-strip-types --env-file=.env.local scripts/service-agents-setup.ts",
     "test:contracts": "hardhat test",
     "audit:contracts": "slither . --config-file slither.config.json",
     "test:scout": "node --test --experimental-strip-types lib/scout/decide.test.ts lib/scout/scan.test.ts lib/x402/spend.test.ts lib/image-size.test.ts",
@@ -21,7 +22,7 @@
     "test:landing": "node --test --experimental-strip-types lib/landing-ledger.test.ts",
     "test:dashboard-create": "node --test --experimental-strip-types app/api/onchain-bills/create/route.test.ts",
     "test:docs-search": "node --test --experimental-strip-types app/docs/search-score.test.ts",
-    "test:agents": "node --test --experimental-strip-types lib/autopay.test.ts lib/dunning.test.ts lib/agent-link.test.ts lib/autopay-review.test.ts lib/agent-queue.test.ts lib/erc8183.test.ts lib/settler.test.ts lib/user-agent.test.ts",
+    "test:agents": "node --test --experimental-strip-types lib/autopay.test.ts lib/dunning.test.ts lib/agent-link.test.ts lib/autopay-review.test.ts lib/agent-queue.test.ts lib/erc8004.test.ts lib/erc8183.test.ts lib/settler.test.ts lib/user-agent.test.ts",
     "start": "next start",
     "lint": "eslint"
   },

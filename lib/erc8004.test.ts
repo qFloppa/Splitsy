@@ -5,7 +5,9 @@ import {
   AGENT_PROFILE,
   feedbackDedupeKey,
   feedbackHashFor,
+  isSelfMint,
   parseDebtPaidLog,
+  SERVICE_AGENTS,
   type AgentType,
 } from "./erc8004.ts";
 
@@ -132,6 +134,7 @@ const AGENT_TYPES: AgentType[] = [
   "splitsy-user-agent",
   "splitsy-settler",
   "splitsy-auditor",
+  "splitsy-validator",
 ];
 
 test("every agent type has a profile, and every title says Agent", () => {
@@ -146,7 +149,7 @@ test("every agent type has a profile, and every title says Agent", () => {
   assert.equal(Object.keys(AGENT_PROFILE).length, AGENT_TYPES.length);
 });
 
-test("each role describes its own job — no shared boilerplate across the four", () => {
+test("each role describes its own job — no shared boilerplate across the roles", () => {
   const descriptions = AGENT_TYPES.map((t) => AGENT_PROFILE[t].description);
   assert.equal(new Set(descriptions).size, AGENT_TYPES.length, "two agents share a description");
   assert.equal(
@@ -161,4 +164,46 @@ test("each role describes its own job — no shared boilerplate across the four"
     assert.doesNotMatch(description, /^Payment reputation agent/, "the old boilerplate is back");
     assert.ok(description.length > 60, "a description this short cannot say what the agent does");
   }
+});
+
+// The one-identity-per-wallet guard. An agent wallet must hold exactly one
+// ERC-8004 identity; four piled up on one because a failed finalize left a real
+// NFT with no recorded id, and the stale-claim takeover minted again. The
+// on-chain balanceOf check that now backstops that only applies to a SELF mint —
+// the registrar legitimately holds many at once while minting for browser payers
+// — so this predicate decides whether the guard runs at all.
+test("a wallet minting for itself is guarded; a registrar minting for others is not", () => {
+  const payer = "0x734E41581EFF7C76D16C6404530638D6999E04F6";
+  const registrar = "0xba867373502c82d248292287862111e835a3e801";
+
+  // No minter named: the wallet signs its own register() — guard applies.
+  assert.equal(isSelfMint(payer, undefined), true);
+  // Minter IS the wallet, differing only in case. Case-sensitive comparison
+  // here would skip the guard for every checksummed address and let the
+  // duplicate mints straight back in.
+  assert.equal(isSelfMint(payer, payer.toLowerCase()), true);
+  assert.equal(isSelfMint(payer.toLowerCase(), payer), true);
+  // The registrar minting on a browser payer's behalf: it already holds other
+  // payers' tokens, so a balance check would refuse every mint after the first.
+  assert.equal(isSelfMint(payer, registrar), false);
+});
+
+// Which service wallets get an identity of their own. The registrar's absence is
+// the assertion that matters: it holds OTHER agents' NFTs in transit (register()
+// mints to msg.sender, and browser payers cannot sign), so giving it one of its
+// own makes "why does this wallet hold four identities?" unanswerable — which is
+// the exact question a duplicate-mint bug forces you to ask.
+test("the service agents registered are the auditor and validator, never the registrar", () => {
+  const refIds = SERVICE_AGENTS.map((a) => a.refId);
+  assert.deepEqual([...refIds].sort(), ["auditor", "reputation-validator"]);
+  assert.ok(!refIds.includes("reputation-registrar" as never), "the registrar must not be given an identity");
+
+  // Each one must name a profile that actually exists, or the mint writes
+  // metadata for an agent type nobody described — permanently, since minted
+  // metadata is immutable.
+  for (const { refId, agentType } of SERVICE_AGENTS) {
+    assert.ok(AGENT_PROFILE[agentType], `${refId} points at a missing profile`);
+  }
+  // Two wallets sharing an agent type would describe one of them wrongly forever.
+  assert.equal(new Set(SERVICE_AGENTS.map((a) => a.agentType)).size, SERVICE_AGENTS.length);
 });

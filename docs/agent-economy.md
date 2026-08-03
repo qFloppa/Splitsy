@@ -146,9 +146,29 @@ yet**. Worth knowing before pointing this at a bill with many participants.
 
 5. **Tell your users to re-arm their mandates**, per the migration note above.
 
-The Auditor needs no setup step. Its wallet is created lazily under
-`refId` `splitsy:auditor` the first time `/api/agents/review` is called or a
-job needs an evaluator.
+6. **Register the service agents' identities:**
+
+   ```bash
+   npm run agents:setup
+   ```
+
+   The Auditor and the Validator act in their own name on chain — the Auditor is
+   the named evaluator on every job and an x402 seller, the Validator signs every
+   `giveFeedback` — so both carry an ERC-8004 identity. The script prints each
+   wallet's address; fund them from the faucet and re-run. It is **idempotent and
+   safe to re-run**: it keys on `reputation_agents` and is additionally guarded
+   on chain by `balanceOf`, so it cannot mint a second identity for a wallet that
+   already has one.
+
+   The **registrar is deliberately excluded.** It is plumbing, not an actor: it
+   exists only because `register()` mints to `msg.sender` and browser payers
+   cannot sign, so it holds their tokens transiently and transfers them on. A
+   wallet whose job is holding other agents' NFTs must not also hold one of its
+   own.
+
+The Auditor's wallet itself needs no setup step to *function* — it is created
+lazily under `refId` `splitsy:auditor` the first time `/api/agents/review` is
+called or a job needs an evaluator. Only its identity needs the script above.
 
 ---
 
@@ -185,10 +205,16 @@ can skip registration. Identity is resolved from `reputation_agents` via
 `getAgentByWallet`, which is authoritative and survives a redeploy; unset, the
 links simply come from the database.
 
-> The design spec also lists `AUDITOR_ERC8004_TOKEN_ID`. **No code reads it.**
-> The Auditor's identity is not surfaced anywhere yet, so setting it does
-> nothing. It is named here only so nobody wastes time wondering why it has no
+> The design spec also lists `AUDITOR_ERC8004_TOKEN_ID`. **No code reads it**,
+> and nothing needs it to: the Auditor now has a real identity (`npm run
+> agents:setup`), resolved from `reputation_agents` like every other agent's.
+> It is named here only so nobody wastes time wondering why setting it has no
 > effect.
+
+`SETTLER_ERC8004_TOKEN_ID` is a hint, not the authority. `settler-setup.ts` also
+asks the chain before minting, so losing the var from `.env.local` no longer
+mints the Settler a second identity — the failure mode that gave one user agent
+four NFTs.
 
 ---
 
