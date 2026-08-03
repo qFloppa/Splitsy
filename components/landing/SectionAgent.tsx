@@ -38,7 +38,13 @@ export function SectionAgent() {
       id="agent"
       ref={rootRef}
     >
-      <h2 className="lp-display-lg max-w-3xl" data-agent-heading id="agent-heading">
+      <p
+        className="text-[0.62rem] font-extrabold uppercase tracking-[0.08em] text-[var(--text-muted)]"
+        data-agent-heading
+      >
+        Act one · agents that buy
+      </p>
+      <h2 className="lp-display-lg mt-3 max-w-3xl" data-agent-heading id="agent-heading">
         Upload a receipt. <span className="lp-headline-accent">An agent goes shopping.</span>
       </h2>
       <p className="lp-lede mt-5 max-w-2xl" data-agent-heading>

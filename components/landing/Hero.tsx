@@ -68,11 +68,17 @@ export function Hero() {
         <h1 className="lp-display lp-hero-headline mt-6" id="hero-heading" ref={headlineRef}>
           <Image alt="S" className="lp-hero-s" data-hero-s height={429} preload src="/splitsy2.png" width={323} />plit any receipt.
           <br />
-          <span className="lp-headline-accent">Anyone. Anywhere.</span>
+          {/* Two sibling spans with a <br> between them, rather than one span
+              containing the break: this is the same structure SplitType already
+              splits correctly for the line above, and each span re-clips the
+              gradient on its own words either way. */}
+          <span className="lp-headline-accent">Anyone.</span>
+          <br />
+          <span className="lp-headline-accent">Or their agent.</span>
         </h1>
         <p className="lp-lede mt-7 max-w-xl" ref={ledeRef}>
-          Scan a receipt, tag friends by X, Discord, email, or wallet, then settle the split in USDC on Arc.
-          One click.
+          Scan a receipt, tag friends by X, Discord, email, or wallet, and settle in USDC on Arc. Or fund
+          an agent and let it settle your share for you, under ceilings you set.
         </p>
       </div>
     </section>

@@ -10,6 +10,8 @@ import { Nav } from "./Nav";
 import { Hero } from "./Hero";
 import { DemoSection } from "./DemoSection";
 import { SectionAgent } from "./SectionAgent";
+import { SectionAutopay } from "./SectionAutopay";
+import { SectionMarket } from "./SectionMarket";
 import { SectionAnyone } from "./SectionAnyone";
 import { SectionOnchain } from "./SectionOnchain";
 import { SectionTreasury } from "./SectionTreasury";
@@ -46,6 +48,8 @@ export default function LandingPage() {
           <Hero />
           <DemoSection />
           <SectionAgent />
+          <SectionAutopay />
+          <SectionMarket />
           <SectionAnyone />
           <SectionOnchain />
           <SectionTreasury />

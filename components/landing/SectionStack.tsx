@@ -9,7 +9,9 @@ import {
   BadgeCheck,
   Bot,
   Coins,
+  CreditCard,
   Fuel,
+  Gavel,
   Layers,
   WalletCards,
   Webhook,
@@ -62,7 +64,7 @@ const STACK: Tech[] = [
     origin: "Circle",
     name: "x402 machine payments",
     description:
-      "Splitsy's own /api/ocr and /api/fx answer HTTP 402 with the terms of the call. A buying agent signs an offchain EIP-3009 authorization instead of sending a transaction, so it pays for the API in USDC and spends no gas doing it.",
+      "Splitsy's own /api/ocr, /api/fx and /api/agents/review answer HTTP 402 with the terms of the call. A buying agent signs an offchain EIP-3009 authorization instead of sending a transaction, so it pays for the API in USDC and spends no gas doing it.",
     proof: `402 → payment-signature → 200 · ${PRICES["/api/ocr"]} per scan`,
     href: "https://developers.circle.com/gateway/nanopayments/concepts/x402",
     linkLabel: "developers.circle.com",
@@ -79,6 +81,18 @@ const STACK: Tech[] = [
     href: "https://developers.circle.com/gateway/nanopayments/concepts/batched-settlement",
     linkLabel: "developers.circle.com",
     icon: <Coins size={17} />,
+  },
+  {
+    key: "erc8183",
+    origin: "ERC standard",
+    name: "ERC-8183 agent jobs",
+    description:
+      "A settlement is not a hidden server call. Your agent opens a job on Arc's AgenticCommerce deployment and escrows the fee, a second agent does the work, and a third is paid to read the registry and release the escrow only if the debt really settled.",
+    proof: "AgenticCommerce 0x0747…4583 · client / provider / evaluator",
+    href: "https://docs.arc.io/arc/tutorials/create-your-first-erc-8183-job",
+    linkLabel: "docs.arc.io",
+    icon: <Gavel size={17} />,
+    wide: true,
   },
   {
     key: "circle-wallets",
@@ -112,6 +126,17 @@ const STACK: Tech[] = [
     href: "https://developers.circle.com/cctp",
     linkLabel: "developers.circle.com",
     icon: <ArrowLeftRight size={17} />,
+  },
+  {
+    key: "paymaster",
+    origin: "Circle",
+    name: "Paymaster gas in USDC",
+    description:
+      "Bridging in normally needs that chain's own gas token. Circle's Paymaster lets the browser wallet pay the fee in USDC instead, funded by an EIP-2612 permit and run as an EIP-7702 authorization on the user's own address.",
+    proof: "Paymaster v0.8 0x3BA9…8966 · EIP-7702 + EIP-2612",
+    href: "https://developers.circle.com/paymaster",
+    linkLabel: "developers.circle.com",
+    icon: <CreditCard size={17} />,
   },
   {
     key: "erc8004",
@@ -186,8 +211,12 @@ export function SectionStack() {
       </p>
 
       <ul className="mt-12 grid list-none grid-cols-1 gap-3 p-0 sm:grid-cols-2 lg:grid-cols-3">
+        {/* Wide cards span only at lg. Eleven cards is 15 column units, which
+            packs into exactly five 3-column rows with no hole; at sm a spanning
+            card leaves the slot beside its predecessor empty, so there they are
+            all one column and simply grow taller. */}
         {STACK.map((tech) => (
-          <li className={tech.wide ? "sm:col-span-2" : undefined} data-stack-card key={tech.key}>
+          <li className={tech.wide ? "lg:col-span-2" : undefined} data-stack-card key={tech.key}>
             <motion.a
               className="group flex h-full flex-col rounded-[calc(var(--radius)+4px)] border border-[var(--border)] bg-[var(--surface)] p-5 no-underline shadow-[var(--shadow-soft)] backdrop-blur-xl"
               href={tech.href}
