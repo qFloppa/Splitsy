@@ -15,7 +15,6 @@
 import { getSessionUser } from "@/lib/session";
 import { getAutopayGrant, setGrantDebtorAddress } from "@/lib/agents-repo";
 import { verifyLinkSignature } from "@/lib/agent-link";
-import { getUsdcBalanceOnchain } from "@/lib/arc-read";
 import { agentToAdopt, wasAgentAdoptedFrom } from "@/lib/user-agent";
 import { getUserByProviderHandle, setUserAgentWallet } from "@/lib/users-repo";
 
@@ -82,25 +81,18 @@ export async function POST(request: Request) {
     throw err;
   }
 
-  // One account now, so one agent. The merged-in account's agent wins where it
-  // can (see agentToAdopt) — it is the one that has been funded — and the loser
-  // is simply forgotten: its balance is the reason this is not unconditional.
+  // One account now, so one agent, and it is the LINKED WALLET's (see
+  // agentToAdopt) — that is the wallet the user just named. The loser is simply
+  // forgotten until an unlink hands it back.
   //
   // Adopted AFTER the link write, so a failed link cannot leave two accounts
   // pointing at one agent wallet.
   let adoptedAgent: string | null = null;
   if (merging) {
-    const keep = agentToAdopt(
-      {
-        address: user.agent_wallet_address,
-        balance: user.agent_wallet_address
-          ? // 1n on failure: an unreadable balance must not read as empty, or an
-            // RPC blip is enough to strand whatever this agent holds.
-            await getUsdcBalanceOnchain(user.agent_wallet_address as `0x${string}`).catch(() => 1n)
-          : 0n,
-      },
-      { address: merging.agent_wallet_address, walletId: merging.agent_wallet_id },
-    );
+    const keep = agentToAdopt(user.agent_wallet_address, {
+      address: merging.agent_wallet_address,
+      walletId: merging.agent_wallet_id,
+    });
     if (keep) {
       // Never fail the link over the adoption: the link is the permission the
       // user asked for, and an un-adopted agent is still visible and fundable.

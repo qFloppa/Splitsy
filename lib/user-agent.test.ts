@@ -58,36 +58,27 @@ test("an empty row with Circle unconfigured is a null, not a throw", async () =>
   assert.equal(agent, null);
 });
 
-// The merge decision, which is a MONEY decision in both directions: adopting
-// strands whatever the session's own agent holds, and not adopting leaves the
-// funded one unreachable from the account that just took the wallet over. Both
-// directions are pinned because inverting this reads the same in the UI.
+// The merge decision. The linked wallet's agent always wins — it is the wallet
+// the user named — and a funded session agent is not lost by that, since unlink
+// re-derives it from its own refId. Both directions are pinned because inverting
+// this reads the same in the UI.
 const DONOR = { address: "0xAAA0000000000000000000000000000000000001", walletId: "wallet-a" };
 
-test("the merged-in account's agent wins when ours is empty or absent", () => {
-  assert.deepEqual(agentToAdopt({ address: null, balance: 0n }, DONOR), {
+test("the linked wallet's agent wins, funded session agent or not", () => {
+  assert.deepEqual(agentToAdopt(null, DONOR), { address: DONOR.address, walletId: "wallet-a" });
+  assert.deepEqual(agentToAdopt("0xbbb0000000000000000000000000000000000002", DONOR), {
     address: DONOR.address,
     walletId: "wallet-a",
   });
-  assert.deepEqual(agentToAdopt({ address: "0xbbb0000000000000000000000000000000000002", balance: 0n }, DONOR), {
-    address: DONOR.address,
-    walletId: "wallet-a",
-  });
-});
-
-test("a funded agent of our own is never overwritten", () => {
-  // 1n is also what the route passes when the balance cannot be read, so this
-  // pins the RPC-failure path too: unreadable loses the merge, never the money.
-  assert.equal(agentToAdopt({ address: "0xbbb0000000000000000000000000000000000002", balance: 1n }, DONOR), null);
 });
 
 test("nothing to adopt is a null, not a half-written row", () => {
-  assert.equal(agentToAdopt({ address: null, balance: 0n }, { address: null, walletId: null }), null);
-  assert.equal(agentToAdopt({ address: null, balance: 0n }, { address: DONOR.address, walletId: null }), null);
-  assert.equal(agentToAdopt({ address: null, balance: 0n }, { address: null, walletId: "wallet-a" }), null);
+  assert.equal(agentToAdopt(null, { address: null, walletId: null }), null);
+  assert.equal(agentToAdopt(null, { address: DONOR.address, walletId: null }), null);
+  assert.equal(agentToAdopt(null, { address: null, walletId: "wallet-a" }), null);
   // Already the same agent — the columns are equal, so the write would be a
   // no-op, and reporting an adoption would tell the user something happened.
-  assert.equal(agentToAdopt({ address: DONOR.address.toLowerCase(), balance: 0n }, DONOR), null);
+  assert.equal(agentToAdopt(DONOR.address.toLowerCase(), DONOR), null);
 });
 
 // The other half of the pair. Unlink hands the agent back only when link took

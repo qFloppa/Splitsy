@@ -450,7 +450,7 @@ export default function SettlementAgentsPanel() {
       // card looks like it lost the agent they funded.
       setMessage(
         body.adoptedAgent
-          ? `Wallet linked, and your two agents are now one: ${short(String(body.adoptedAgent))} — the one you funded first. Its balance came with it.`
+          ? `Wallet linked, and your two agents are now one: ${short(String(body.adoptedAgent))} — that wallet's own agent, balance and all. Unlink to split them apart again.`
           : "Wallet linked. Your agent will settle bills owed by it too.",
       );
       load();

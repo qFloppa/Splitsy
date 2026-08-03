@@ -90,25 +90,20 @@ export async function getAgentBalanceUsdc(address: `0x${string}`): Promise<bigin
 // Two logins mean two accounts: /api/auth/wallet mints one from a signature, so
 // anyone who used the Agents tab before adding a social login has two, each with
 // its own agent under its own refId. Linking is what collapses them, and the
-// DONOR's agent is the one that survives — it is the first one the person ever
-// saw, since the wallet account is necessarily the earlier login slot, so it is
-// the one they will have funded and the one whose identity NFT exists.
+// DONOR's agent — the LINKED WALLET's own — always survives. The wallet is the
+// thing being linked, so its agent is the one the user is pointing at; which of
+// the two happens to hold USDC does not change which one they named.
 //
-// Unless the session's own agent is holding money. Adoption overwrites the
-// columns that are the only way back to an agent wallet, so adopting past a
-// funded one would strand its balance where nothing in the app can reach it.
-// Then the donor loses and the panel keeps showing both.
-//
-// An UNREADABLE balance counts as money, not as zero: the caller passes 1n on an
-// RPC failure. Losing a merge to a network blip costs a click; winning one costs
-// the balance.
+// A funded session agent is not lost to this, which is why the balance no longer
+// gets a say. Adoption only overwrites two columns, and unlink is its exact
+// inverse (see wasAgentAdoptedFrom): clearing them re-derives this account's own
+// agent from its unchanged refId, balance and all.
 export function agentToAdopt(
-  mine: { address: string | null; balance: bigint },
+  mineAddress: string | null,
   donor: { address: string | null; walletId: string | null },
 ): { address: string; walletId: string } | null {
   if (!donor.address || !donor.walletId) return null;
-  if (mine.address?.toLowerCase() === donor.address.toLowerCase()) return null;
-  if (mine.address && mine.balance > 0n) return null;
+  if (mineAddress?.toLowerCase() === donor.address.toLowerCase()) return null;
   return { address: donor.address, walletId: donor.walletId };
 }
 
