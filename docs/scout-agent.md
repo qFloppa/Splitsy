@@ -45,10 +45,16 @@ serve the result and record an `earned` row in `x402_payments`.
 
 Prices (from `lib/x402/pricing.ts`, the single source of truth for both sides):
 
-| Endpoint   | Price per call |
-|------------|---------------|
-| `/api/ocr` | $0.005 USDC   |
-| `/api/fx`  | $0.001 USDC   |
+| Endpoint   | Price per call | Buyer |
+|------------|---------------|-------|
+| `/api/ocr` | $0.005 USDC   | Scout |
+| `/api/fx`  | $0.001 USDC   | Scout |
+| `/api/agents/review` | $0.002 USDC | the Splitsy Settler |
+
+The third is not Scout's, and is listed only because it shares this table and the
+same `withGateway` seller wrapper: the Splitsy Auditor sells a bill review and the
+Settler buys one before every autopay settlement. See
+[`agent-economy.md`](./agent-economy.md).
 
 The facilitator is Circle's `BatchFacilitatorClient` (`@circle-fin/x402-batching`).
 Requirement shape: `scheme: "exact"`, `extra.name: "GatewayWalletBatched"`,

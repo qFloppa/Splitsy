@@ -11,13 +11,15 @@ Splitsy is a Next.js prototype for scanning receipts, splitting shared costs, an
 - Circle AppKit bridging from supported CCTP source chains into Arc Testnet.
 - Recurring USDC tabs with cycle settings and allowance-based collection.
 - Net-settlement treasury: every open position collapsed to one net figure per counterparty, settled atomically on Circle SCA wallets.
+- Debtor-side autopay: each account gets its own **user-funded** agent that settles the account's shares as ERC-8183 jobs, audited by a second Splitsy agent that is paid over x402 to check the work.
 
 ## Stack
 
 - Next.js `16.2.9` with the App Router.
 - React `19.2.4`.
 - Circle AppKit and Viem for wallet, bridge, and chain interactions.
-- `@circle-fin/x402-batching` for Scout's x402 buyer client and the seller facilitator.
+- `@circle-fin/x402-batching` for the x402 buyer clients (Scout, the Settler) and the seller facilitator.
+- ERC-8004 (identity + reputation) on Arc's pre-deployed registries, and ERC-8183 (job escrow) on the already-deployed `AgenticCommerce` contract — no Splitsy agent contracts.
 - Hardhat 3 for contract tests and Arc Testnet deployment.
 - Server-side receipt scanning API.
 
@@ -63,7 +65,18 @@ SELLER_ADDRESS=0x...              # Splitsy treasury DCW — receives x402 earni
 SCOUT_DAILY_CAP_USDC=1            # Scout's daily spend ceiling in USDC (default 1)
 SCOUT_ERC8004_TOKEN_ID=...        # set after scout-setup.ts registers Scout on Arc
 NEXT_PUBLIC_BASE_URL=https://your-deployment.vercel.app
+
+# Agent economy (ERC-8183 settlement jobs)
+SETTLER_PRIVATE_KEY=0x...                      # the Splitsy Settler EOA; x402 + ERC-8183 signer
+NEXT_PUBLIC_AGENTIC_COMMERCE_ADDRESS=0x0747EEf0706327138c69792bF28Cd525089e4583
+NEXT_PUBLIC_AUTOPAY_MANDATE_ADDRESS=0x...      # AutopayMandate deployment
+NEXT_PUBLIC_AUTOPAY_AGENT_ADDRESS=0x...        # the Settler's address, named in new mandates
+SETTLEMENT_FEE_USDC=0.01                       # optional, default 0.01
+SETTLER_ERC8004_TOKEN_ID=...                   # optional, display only
 ```
+
+Unsetting `SETTLER_PRIVATE_KEY` or `NEXT_PUBLIC_AGENTIC_COMMERCE_ADDRESS` reads as
+**autopay off**, never as "run the settlement without the job".
 
 ### Sign-in providers
 
@@ -103,10 +116,14 @@ npm run test:netting
 npm run test:treasury
 npm run test:dashboard
 npm run test:landing
+npm run test:agents
 npm run test:contracts
 npm run deploy:arc:bill-registry
 npm run deploy:arc:factory
-node --env-file=.env.local --experimental-strip-types scripts/scout-setup.ts
+npm run deploy:arc:autopay-mandate
+npm run scout:setup      # Scout's EOA, ERC-8004 identity, Gateway deposit
+npm run settler:setup    # the Settler EOA, its identity, its Gateway deposit
+npm run agents:setup     # ERC-8004 identities for the Auditor and the Validator
 ```
 
 ## Demo Flow
@@ -122,6 +139,7 @@ node --env-file=.env.local --experimental-strip-types scripts/scout-setup.ts
 9. Open the Treasury view on the dashboard: every open debt and credit collapses to one net figure per counterparty. Hit "Settle net" — Circle SCA wallets execute one atomic `executeBatch` transaction; browser wallets run a sequential approve + pay + claim loop.
 10. Create weekly, monthly, or custom recurring tabs on Arc Testnet.
 11. Payers approve the recurring tab as a constrained USDC spender. Funds stay in their wallets until the backend settler runs and pulls due recurring shares.
+12. Fund your own agent from the settlement-agents panel and switch autopay on. The next bill raised against you is settled by that agent as an ERC-8183 job — expand the log row to see every ceremony transaction, the live job status, and the x402 payments that gated it.
 
 The repository includes a small sample image at `.tmp/test-receipt.png` for local receipt-scan testing.
 
@@ -146,10 +164,14 @@ call to `lib/ocr-core.ts` so the human upload UX never breaks.
 
 Defined once in `lib/x402/pricing.ts`:
 
-| Endpoint   | Price per call |
-|------------|---------------|
-| `/api/ocr` | $0.005 USDC   |
-| `/api/fx`  | $0.001 USDC   |
+| Endpoint              | Price per call | Seller             | Buyer                          |
+|-----------------------|----------------|--------------------|--------------------------------|
+| `/api/ocr`            | $0.005 USDC    | Splitsy            | Scout, per scan                |
+| `/api/fx`             | $0.001 USDC    | Splitsy            | Scout, non-USD receipts only   |
+| `/api/agents/review`  | $0.002 USDC    | the Splitsy Auditor | the Splitsy Settler, per settlement |
+
+All three are public to anyone who pays — that is what makes them a market rather
+than an internal call.
 
 ### Scout's wallet
 
@@ -195,6 +217,114 @@ node --env-file=.env.local --experimental-strip-types scripts/scout-setup.ts
 Fund Scout's EOA with test USDC from the [Circle faucet](https://faucet.circle.com) before running.
 
 See `docs/scout-agent.md` for full technical details.
+
+## Agent Economy (ERC-8183 settlement jobs)
+
+Debtor-side autopay is no longer one hosted wallet calling `payFor`. Every
+settlement runs as an [ERC-8183](https://eips.ethereum.org/EIPS/eip-8183) job on
+the already-deployed `AgenticCommerce` contract at
+`0x0747EEf0706327138c69792bF28Cd525089e4583`, with three **distinct** wallets so
+no agent grades its own work:
+
+| Job role | Who | Wallet kind | Why |
+|---|---|---|---|
+| client | the **user's own agent** | Circle DCW, `refId` `agent:<userId>` | posts the job and escrows the fee |
+| provider | the **Splitsy Settler** | raw EOA (`SETTLER_PRIVATE_KEY`) | x402 needs a raw key to sign EIP-3009; a DCW will not hand one over |
+| evaluator | the **Splitsy Auditor** | Circle DCW, `refId` `splitsy:auditor` | it is paid to say no |
+
+### Users must fund their own agent
+
+**This is a breaking product change.** Autopay under a mandate alone used to need
+no user funding. Now every account has one agent (`agent:<userId>` — one per
+*account*, so it covers the Splitsy DCW and any linked browser wallet) that pays
+its own gas (Arc charges gas in USDC), escrows the job fee, and in the mode the
+UI offers pays the bill share out of its own balance.
+
+Its balance is therefore the **hard ceiling**: funding is a plain USDC transfer,
+custody rather than an allowance, so an agent holding 5 USDC can never spend 6.
+Before starting, `settleOne` requires `fee + 0.20 USDC gas headroom + share`;
+short of that it logs `agent_unfunded` and **creates no job**, so an underfunded
+agent costs nothing.
+
+The dashboard's settlement-agents panel has a **Fund** dialog with three routes:
+a USDC `transfer` signed by the connected browser wallet, a PIN-gated server send
+from the user's Splitsy wallet (`POST /api/wallet/send`), or an ordinary inbound
+transfer to the agent's address from anywhere. Suggested first top-up: 2 USDC.
+
+### The ceremony — 6 transactions per settled share
+
+```
+0. decide       lib/autopay.ts rules, then a bill review BOUGHT from the
+                Auditor over x402. Any refusal stops here: no job, 0 tx.
+1. createJob    the user's agent   ← client
+2. setBudget    the Settler        ← the provider prices its own work
+3. fund         the user's agent   → the fee (SETTLEMENT_FEE_USDC) into escrow
+4. settle       payDebtFor (user's agent)  |  payFor (Settler, mandate mode)
+5. submit       the Settler        → keccak256(settlementTxHash)
+6. complete     the Auditor, ONLY after reading getParticipant on chain and
+                seeing paid >= owed
+```
+
+Six transactions per settled **share**, not per bill — a four-participant bill is
+four independent jobs. A skip costs zero. Two USDC `approve`s sit outside the six
+and are lazy (sent only when the allowance is short, for 100× the amount), so
+they amortise across ~100 settlements. The escrow only ever holds the fee; the
+bill money is never in it, so a failed settlement strands at most
+`SETTLEMENT_FEE_USDC` until the job expires (`JOB_TTL_SECONDS = 3600`).
+
+Step 6 is not a rubber stamp: the Auditor reads `BillSplitRegistry.getParticipant`
+itself and completes only when `paid >= owed`. The deliverable is
+`keccak256(settlementTxHash)`, so anyone holding the settlement transaction can
+recompute it and check the job against it.
+
+`payDebtFor` pulls from `msg.sender`, credits the `debtor`, and emits `DebtPaid`
+naming the **debtor** as payer — so reputation flows to the user, not to their
+agent, and the existing scoring path is untouched.
+
+### The paid bill review
+
+`lib/autopay-review.ts` used to be a free internal call. It is now
+`POST /api/agents/review`, sold by the Auditor at $0.002 and bought by the
+Settler over x402 out of its job-fee income. Both sides land in `x402_payments`
+(`earned` by the seller wrapper, `spent` by the Settler — recorded *before* the
+body is inspected, because by then Gateway has already settled the payment).
+Every failure direction is a refusal: a 402, a timeout, an unparseable verdict, a
+missing key, or a settlement failure. **A Settler that cannot buy a review
+settles nothing.**
+
+### Setup
+
+```bash
+# 1. Apply the schema (additive; adds no table)
+#    Run schema-agent-economy.sql in the Supabase SQL editor:
+#    autopay_log.job_id/.job_status/.fee_usdc, autopay_grants.money_mode,
+#    users.agent_wallet_address/.agent_wallet_id
+
+# 2. Generate the Settler EOA — prints SETTLER_PRIVATE_KEY and
+#    NEXT_PUBLIC_AUTOPAY_AGENT_ADDRESS
+npm run settler:setup
+
+# 3. Fund it from https://faucet.circle.com, then re-run to register its
+#    ERC-8004 identity and make its Gateway deposit
+npm run settler:setup
+
+# 4. Register ERC-8004 identities for the Auditor and the Validator.
+#    Idempotent (keyed on reputation_agents, guarded on chain by balanceOf).
+#    It prints each wallet's address — fund from the faucet and re-run.
+npm run agents:setup
+
+# 5. Set NEXT_PUBLIC_AGENTIC_COMMERCE_ADDRESS, then tell existing users to
+#    RE-ARM their mandates: the Settler's address replaces the old
+#    splitsy:autopay-agent DCW named in them.
+```
+
+The registrar is deliberately excluded from `agents:setup` — a wallet whose job
+is transiently holding other agents' NFTs must not also hold one of its own.
+
+See `docs/agent-economy.md` for the full design, the two money modes, the
+decision-log semantics, and the manual verification checklist. `docs/autopay-agent.md`
+covers the mandate contract, arming from a browser wallet, and running your own
+Circle Agent Wallet.
 
 ## Net-Settlement Treasury
 
@@ -336,6 +466,9 @@ The allowance-based recurring contract differs from the older prepaid tab deploy
 | Gateway Wallet | `0x0077777d7EBA4688BDeF3E311b846F25870A19B9` |
 | RPC | `https://rpc.testnet.arc.network` |
 | ERC-8004 IdentityRegistry | `0x8004A818BFB912233c491871b3d84c89A494BD9e` |
+| ERC-8004 ReputationRegistry | `0x8004B663056A597Dffe9eCcC1965A193B7388713` |
+| AgenticCommerce (ERC-8183) | `0x0747EEf0706327138c69792bF28Cd525089e4583` |
+| Explorer | `https://testnet.arcscan.app` |
 
 All constants live in `lib/x402/constants.ts`.
 
@@ -348,6 +481,7 @@ npm run lint
 npm run test:netting
 npm run test:treasury
 npm run test:landing
+npm run test:agents
 npm run build
 ```
 

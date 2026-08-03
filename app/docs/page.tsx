@@ -17,7 +17,10 @@ import {
   Coins,
   Eye,
   FileText,
+  Fuel,
   Gauge,
+  Gavel,
+  HandCoins,
   KeyRound,
   Landmark,
   Layers,
@@ -42,6 +45,7 @@ const sections = [
   "Payment Reputation",
   "Recurring Tabs",
   "Circle and Arc",
+  "Autopay Agents",
   "Scout Agent",
   "Net-Settlement Treasury",
   "Architecture",
@@ -58,6 +62,7 @@ const stack = [
   ["Circle AppKit", "Browser-wallet USDC bridging into Arc Testnet through Circle bridge capability."],
   ["CCTP", "Native USDC burn-and-mint movement between supported source chains and Arc."],
   ["Settlement automation", "Protected automation checks recurring tabs on a schedule so payers do not need to press a settle button each cycle."],
+  ["Agent economy", "Per-account autopay agents settle debtor shares as ERC-8183 jobs, with an independent evaluator releasing the escrowed fee and paid bill review bought over x402."],
 ];
 
 // Render at request time so the nonce-based CSP (see proxy.ts) is applied to
@@ -168,6 +173,10 @@ export default function DocsPage() {
               <InfoCard icon={<CalendarClock />} title="Automated recurring settlement">
                 Once a payer has approved a recurring tab, Splitsy checks due cycles automatically so users do not manually press
                 a settlement button every cycle.
+              </InfoCard>
+              <InfoCard icon={<Bot />} title="An agent that pays for you">
+                Bills raised against you can be settled by your own funded agent, under ceilings you set. It spends only the USDC
+                you send it, and every settlement is a public on-chain job a second agent has to sign off.
               </InfoCard>
             </div>
           </section>
@@ -836,6 +845,330 @@ export default function DocsPage() {
             <SourceList />
           </section>
 
+          <section id="autopay-agents" className="docs-section">
+            <SectionHeading icon={<Bot size={20} />} title="Autopay Agents" />
+            <p>
+              When someone raises a bill against you, you can have it settled without opening the app. The thing that
+              settles it is <strong>your own agent</strong>: a wallet on Arc that belongs to your Splitsy account, holds
+              its own USDC balance, carries its own{" "}
+              <a href="https://eips.ethereum.org/EIPS/eip-8004">ERC-8004</a> identity NFT, and spends strictly under
+              ceilings you set. It draws only on what you have sent it — Splitsy takes no allowance on your own wallet
+              to make this work.
+            </p>
+            <Callout title="You must fund your agent before anything settles">
+              This is the one step nobody can do for you. Your agent pays your share, escrows the job fee, and pays its
+              own gas (Arc charges gas in USDC) — all out of a balance you send it. Until it holds USDC, every bill is
+              skipped with <code>agent_unfunded</code> and nothing is created on chain. A suggested first top-up is{" "}
+              <strong>2 USDC</strong>; send more if the shares you expect are larger.
+            </Callout>
+
+            <div className="docs-card-grid">
+              <InfoCard icon={<Bot />} title="One agent per account">
+                Its wallet is keyed to your account, not to a wallet, so the <em>same</em> agent and the same balance
+                cover both your Splitsy wallet and any browser wallet you have linked. You fund it once.
+              </InfoCard>
+              <InfoCard icon={<HandCoins />} title="Its balance is the hard ceiling">
+                Funding is a plain USDC transfer to the agent — custody, not permission. An agent holding 5 USDC can
+                never spend 6, whatever any rule or bug says, because it has nothing else to draw on.
+              </InfoCard>
+              <InfoCard icon={<ShieldCheck />} title="Rules are checked before it spends">
+                Per-bill ceiling, per-day ceiling, an allowed-creator list, a creator score floor, a verified-hash
+                requirement, and a bill-contents review. Every one is a ceiling evaluated before payment, never a target.
+              </InfoCard>
+              <InfoCard icon={<Gavel />} title="Every settlement is an audited job">
+                The payment is wrapped in an <a href="https://eips.ethereum.org/EIPS/eip-8183">ERC-8183</a> job:
+                your agent posts and escrows a fee, a Splitsy agent does the work, and a <em>third</em> agent is paid to
+                check the debt really settled before that fee is released.
+              </InfoCard>
+            </div>
+
+            <h3 className="docs-subheading">Funding your agent</h3>
+            <p>
+              The <strong>Fund</strong> button sits next to the agent&apos;s balance on the settlement-agents panel.
+              Whichever route you use, it is an ordinary inbound USDC transfer on Arc Testnet — there is no special
+              deposit contract, and you can verify the balance yourself on{" "}
+              <a href="https://testnet.arcscan.app">Arcscan</a>.
+            </p>
+            <div className="docs-table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Route</th>
+                    <th>What happens</th>
+                    <th>What it needs</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td>From a connected browser wallet</td>
+                    <td>Your wallet signs a USDC <code>transfer</code> to the agent&apos;s address. Splitsy waits for the receipt and checks it succeeded.</td>
+                    <td>A wallet connected on Arc Testnet with USDC.</td>
+                  </tr>
+                  <tr>
+                    <td>From your Splitsy wallet</td>
+                    <td>The same transfer, sent server-side from your Circle wallet.</td>
+                    <td>Your wallet PIN unlocked — the same five-minute unlock a normal send uses.</td>
+                  </tr>
+                  <tr>
+                    <td>From anywhere else</td>
+                    <td>Send USDC to the agent&apos;s address from any wallet or faucet. Nothing in the app needs to know.</td>
+                    <td>Just the address, shown on the card and linked to the explorer.</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            <p>
+              Three things come out of that one balance on every settlement: <strong>your share</strong> of the bill,
+              the <strong>job fee</strong> (0.01 USDC by default, escrowed and released to the agent that did the work),
+              and the agent&apos;s own <strong>gas</strong>. Before it starts, the agent checks it holds the fee plus a{" "}
+              <strong>0.20 USDC</strong> gas headroom plus the share itself; short of that it skips with{" "}
+              <code>agent_unfunded</code> and opens no job, so an underfunded agent costs you nothing. Top it up and the
+              next bill settles.
+            </p>
+
+            <Callout title="Two logins can mean two agents — and only one of them is funded">
+              Signing in with a browser wallet creates an account of its own. If you used a wallet here before adding a
+              social login, you have two accounts, and therefore two agents with two separate balances and two separate
+              rule sets — neither can spend the other&apos;s. The panel deliberately shows <strong>both</strong>, because
+              a hidden one is how USDC ends up in an agent you cannot find. <strong>Link wallet</strong> merges them into
+              the account that was already funded; <strong>Unlink</strong> hands the agent and its balance back.
+            </Callout>
+
+            <h3 className="docs-subheading">Three agents on every job</h3>
+            <p>
+              The settlement itself is not a single hidden server call. It is an ERC-8183 job on the already-deployed{" "}
+              <code>AgenticCommerce</code> contract on Arc Testnet, with three <strong>distinct</strong> wallets in three
+              roles, so no agent ever grades its own work:
+            </p>
+            <div className="docs-table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Role</th>
+                    <th>Who</th>
+                    <th>What it does</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td>Client</td>
+                    <td><strong>Your agent</strong></td>
+                    <td>Posts the job and escrows the fee out of your balance.</td>
+                  </tr>
+                  <tr>
+                    <td>Provider</td>
+                    <td>The <strong>Splitsy Settler</strong></td>
+                    <td>Prices the work, buys the bill review, settles the debt, and submits proof of what it did.</td>
+                  </tr>
+                  <tr>
+                    <td>Evaluator</td>
+                    <td>The <strong>Splitsy Auditor</strong></td>
+                    <td>Reads the registry on chain and releases the escrow only if the debt really is settled.</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            <div className="docs-steps">
+              <Step number="0" title="Decide — and buy a second opinion">
+                Your rules run first against the bill. If they say pay and the contents check is on, the Settler{" "}
+                <em>buys</em> a review of the bill from the Auditor over x402. Any refusal stops here:{" "}
+                <strong>no job is created and no transaction is sent</strong>, so a skip costs nothing.
+              </Step>
+              <Step number="1" title="createJob — your agent">
+                Your agent opens the job naming the Settler as provider, the Auditor as evaluator, a description
+                identifying the bill and debtor, and an expiry one hour out.
+              </Step>
+              <Step number="2" title="setBudget — the Settler">
+                The provider prices its own work at the settlement fee. The client does not set the provider&apos;s price.
+              </Step>
+              <Step number="3" title="fund — your agent">
+                The fee moves from your agent&apos;s balance into escrow. The <strong>bill money is never in the
+                escrow</strong> — only the fee.
+              </Step>
+              <Step number="4" title="settle — the debt is paid">
+                <code>BillSplitRegistry.payDebtFor(billId, debtor, amount)</code> is called by your agent, paying your
+                share out of its own balance. This is the only step that moves bill money.
+              </Step>
+              <Step number="5" title="submit — the Settler">
+                The Settler submits <code>keccak256(settlementTxHash)</code> as the deliverable, so anyone holding the
+                settlement transaction can recompute it and check the job against it.
+              </Step>
+              <Step number="6" title="complete — the Auditor">
+                The Auditor calls <code>getParticipant</code> on the registry itself and completes the job only when{" "}
+                <code>paid ≥ owed</code>. Otherwise it does not complete, the job expires, and the Settler is not paid.
+              </Step>
+            </div>
+            <Callout title="The audit step is the point, not decoration">
+              An evaluator that rubber-stamped would make the escrow meaningless. This one re-reads the chain rather
+              than trusting the Settler&apos;s claim, and it is a different wallet from both the client and the provider,
+              so the party that gets paid is never the party that decides it earned it.
+            </Callout>
+
+            <h3 className="docs-subheading">The bill review is bought, not asked for</h3>
+            <p>
+              &quot;Check the bill&apos;s contents before paying&quot; is not a free internal function call. The Auditor{" "}
+              <strong>sells</strong> that verdict at <strong>$0.002</strong> per review and the Settler buys it over{" "}
+              <strong>x402</strong> — the same HTTP <code>402 Payment Required</code> protocol Scout uses — paying out of
+              the fee income it earns from completed jobs. The review weighs the merchant, total and your share against
+              each other; it is given headline figures only and never the receipt image, so it cannot tell who ordered
+              what.
+            </p>
+            <p>
+              Every failure direction is a refusal: a 402, a timeout, an unparseable verdict, a missing key, or a failed
+              x402 settlement. <strong>A Settler that cannot buy a review settles nothing.</strong>
+            </p>
+
+            <h3 className="docs-subheading">Splitsy&apos;s paid endpoints</h3>
+            <div className="docs-table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Endpoint</th>
+                    <th>Price</th>
+                    <th>Seller</th>
+                    <th>Buyer</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td><code>/api/ocr</code></td>
+                    <td>$0.005 USDC</td>
+                    <td>Splitsy</td>
+                    <td>Scout, per receipt scan</td>
+                  </tr>
+                  <tr>
+                    <td><code>/api/fx</code></td>
+                    <td>$0.001 USDC</td>
+                    <td>Splitsy</td>
+                    <td>Scout, only for non-USD receipts</td>
+                  </tr>
+                  <tr>
+                    <td><code>/api/agents/review</code></td>
+                    <td>$0.002 USDC</td>
+                    <td>The Splitsy Auditor</td>
+                    <td>The Splitsy Settler, before every settlement</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            <p>
+              All three are open to anyone who pays — that is what makes them a market rather than an internal call. Each
+              is settled by Circle&apos;s batch facilitator against an offchain{" "}
+              <strong>EIP-3009</strong> authorization, so the buying agent spends <strong>no gas</strong> to pay, and
+              both sides of every payment are recorded in Splitsy&apos;s x402 ledger.
+            </p>
+
+            <Callout title="Your reputation, not your agent's">
+              <code>payDebtFor</code> pulls from the agent but credits <strong>you</strong>, and the{" "}
+              <code>DebtPaid</code> event names <strong>you</strong> as payer. So a bill your agent settles earns{" "}
+              <a href="#payment-reputation">payment reputation</a> for your wallet exactly as if you had paid it by
+              hand — the agent accumulates none of its own.
+            </Callout>
+
+            <h3 className="docs-subheading">Reading the decision log</h3>
+            <p>
+              Every bill your agent looked at leaves a row, including the ones it refused — the refusals are the point,
+              because they are what shows a spending permission is still constrained. Each row carries the bill, the
+              amount, the decision, and a reason:
+            </p>
+            <div className="docs-table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Reason</th>
+                    <th>What happened</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td><code>agent_unfunded</code></td>
+                    <td>The balance could not cover the share plus the fee plus gas headroom. <strong>No job was created.</strong> Top it up.</td>
+                  </tr>
+                  <tr>
+                    <td><code>over_bill_cap</code> / <code>over_daily_cap</code></td>
+                    <td>Above your per-bill or per-day ceiling.</td>
+                  </tr>
+                  <tr>
+                    <td><code>untrusted_creator</code> / <code>low_creator_score</code></td>
+                    <td>The creator is not on your allowed list, or their payment reputation is below your floor.</td>
+                  </tr>
+                  <tr>
+                    <td><code>hash_mismatch</code> / <code>unverifiable</code></td>
+                    <td>The bill&apos;s details do not match what was committed on chain, or nothing was published to check against.</td>
+                  </tr>
+                  <tr>
+                    <td><code>review_unavailable</code></td>
+                    <td>The paid review refused or could not be read. Fail-closed: nothing was paid.</td>
+                  </tr>
+                  <tr>
+                    <td><code>job_failed</code> / <code>tx_failed</code></td>
+                    <td>A job transaction reverted, or the settlement transaction itself failed.</td>
+                  </tr>
+                  <tr>
+                    <td><code>nothing_owed</code> / <code>disabled</code></td>
+                    <td>The share was already settled, or autopay is switched off.</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            <p>
+              A settled row expands into its <strong>job trail</strong>: every transaction of the ceremony with its block
+              number and hash, the job&apos;s live status read from the contract, and the x402 payments that gated it,
+              each linking to Circle&apos;s own receipt. The status stored on the row is a display mirror; the contract is
+              the source of truth.
+            </p>
+            <div className="docs-table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Job status</th>
+                    <th>Means</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td><code>completed</code></td>
+                    <td>The full ceremony ran; the Auditor verified the debt and released the escrow.</td>
+                  </tr>
+                  <tr>
+                    <td><code>settled_incomplete</code></td>
+                    <td><strong>Your debt is paid.</strong> Only the submit or complete step broke afterwards.</td>
+                  </tr>
+                  <tr>
+                    <td><code>settlement_unconfirmed</code></td>
+                    <td>The settlement was broadcast but not confirmed in time; it may still mine.</td>
+                  </tr>
+                  <tr>
+                    <td><code>failed</code></td>
+                    <td>The ceremony broke before the payment step. No money moved and none can.</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            <p>
+              The last three are deliberately logged as a <strong>payment for the full amount</strong> whenever the money
+              might have moved, and they count against your daily ceiling. Costing you headroom you were entitled to is
+              recoverable; handing back a cap you had already spent is not.
+            </p>
+
+            <h3 className="docs-subheading">What it costs to run</h3>
+            <div className="docs-card-grid two">
+              <InfoCard icon={<Fuel />} title="Six transactions per settled share">
+                Not per bill — per share. A four-person bill where everyone autopays is four independent jobs. A{" "}
+                <strong>skip costs zero</strong>, because the decision happens before the job is opened.
+              </InfoCard>
+              <InfoCard icon={<Coins />} title="0.01 USDC fee, at risk of nothing else">
+                The escrow only ever holds the fee. If a settlement fails the job simply expires an hour later, and at
+                worst that fee is stranded — the bill money is never inside the escrow in the first place.
+              </InfoCard>
+            </div>
+            <p>
+              Two USDC approvals sit outside those six. They are lazy — sent only when the current allowance is short,
+              and for 100× the amount being spent — so they amortise across roughly a hundred settlements instead of
+              landing on each one.
+            </p>
+          </section>
+
           <section id="scout-agent" className="docs-section">
             <SectionHeading icon={<Bot size={20} />} title="Scout Agent" />
             <p>
@@ -943,8 +1276,11 @@ export default function DocsPage() {
             <p>
               So a clean USD receipt costs the agent $0.005; a blurry euro receipt costs $0.011. Both sides of
               every payment are recorded — what Splitsy <em>earned</em> as the seller and what Scout{" "}
-              <em>spent</em> as the buyer — and the dashboard&apos;s <strong>Agent economy</strong> panel shows
-              the running totals with the budget left for the day.
+              <em>spent</em> as the buyer — and the dashboard&apos;s <strong>Scout&apos;s x402 ledger</strong> panel shows
+              the running totals, the budget left for the day, and the last payments with a link to Circle&apos;s receipt
+              for each. Scout is not the only agent that pays this way: see{" "}
+              <a href="#autopay-agents">Autopay Agents</a> for the review the Splitsy Settler buys before every
+              settlement.
             </p>
 
             <h3 className="docs-subheading">Scout&apos;s wallet and on-chain identity</h3>
@@ -1207,6 +1543,13 @@ export default function DocsPage() {
               unpaid portion later after the payer funds or re-approves their wallet. Recipients can claim collected funds when a
               claimable balance is available.
             </p>
+            <p>
+              <a href="#autopay-agents">Autopay agents</a> are the debtor-side equivalent and are funded by the user, not by
+              the operator: an agent that runs out of USDC skips with <code>agent_unfunded</code> and creates nothing on
+              chain, so restoring it is a top-up rather than an operator action. The Splitsy Settler and Auditor pay for
+              their own transactions out of their own balances, and an unset settlement configuration reads as autopay{" "}
+              <strong>off</strong> — never as &quot;settle without the job&quot;.
+            </p>
           </section>
 
           <section id="security" className="docs-section">
@@ -1223,6 +1566,8 @@ export default function DocsPage() {
               <li>Receipt OCR data should be reviewed by the splitter before submission. The scanner is a convenience layer, not an accounting authority.</li>
               <li>Bridge flows depend on the connected wallet signing each step and on Circle attestation for CCTP minting.</li>
               <li>Payment reputation is consent-based and positive-only: a score can only be created by a payment the wallet itself made, and every entry is re-verifiable against the on-chain payment it commits to (see <a href="#payment-reputation">Payment Reputation</a>).</li>
+              <li>An <a href="#autopay-agents">autopay agent</a> spends only the USDC you transferred to it — Splitsy holds no allowance on your own wallet for it — so its balance is a hard ceiling no rule, bug, or compromised server can exceed.</li>
+              <li>Each settlement job uses three distinct wallets for client, provider, and evaluator, so the agent that is paid for a job is never the agent that decides it was done. The evaluator re-reads the registry on chain rather than trusting the provider&apos;s claim.</li>
             </ul>
             <Callout title="Disclaimer & acknowledgments">
               Splitsy is an experimental demo on Arc Testnet that uses test USDC only — no real funds — and is not

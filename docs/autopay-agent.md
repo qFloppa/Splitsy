@@ -22,8 +22,12 @@ as the spender instead of Splitsy's.
 >    mandate-contract redeploy. A mandate still naming the old wallet writes no
 >    log row at all, which looks identical to a working self-run setup.
 > 2. **You must fund your own agent**, in *both* money modes, before autopay can
->    run. Mandate mode used to need no funding. Suggested: 2 USDC for Mandate
->    mode, 20 USDC for Funded mode. An underfunded agent skips with
+>    run. Mandate mode used to need no funding. The agent pays its own gas (Arc
+>    charges gas in USDC) and escrows the job fee; in Funded mode it also pays
+>    the share. Suggested: 2 USDC for Mandate mode, 20 USDC for Funded mode. Top
+>    it up from the **Fund** button beside its balance on the settlement-agents
+>    panel — from a connected browser wallet, from your Splitsy wallet, or by
+>    sending USDC to its address from anywhere. An underfunded agent skips with
 >    `agent_unfunded` and creates no job.
 > 3. **There is a second money mode**, Funded, where the bill is paid from your
 >    agent's own balance and the caps below are enforced by Splitsy rather than

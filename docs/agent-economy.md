@@ -235,11 +235,26 @@ balances.
 | Mandate | **2 USDC** | gas + job fees |
 | Funded | **20 USDC** | gas + job fees + bill money |
 
-The panel shows the agent's address and, while the balance is still zero, says
-plainly that nothing settles until it is funded — 20 USDC, since Funded is the
-only mode it offers. Funding is an ordinary inbound transfer from whatever
-wallet the user likes. There is no in-app Fund button, because it would need a
-wallet connection the user may not have.
+The panel shows the agent's address, its balance, and a **Fund** button beside
+it; while the balance is still zero it says plainly that nothing settles until it
+is funded. The dialog's placeholder is `DEFAULT_FUND_USDC` = **2 USDC** — the
+smallest amount that leaves the agent actually able to settle something, not a
+figure that covers the table above. Someone expecting larger shares should raise
+it.
+
+Three routes, and the dialog offers only the ones the account has:
+
+| Route | What happens | Needs |
+|---|---|---|
+| connected browser wallet | the wallet signs a USDC `transfer` to the agent; the receipt is checked with `assertReceiptSuccess`, because viem *resolves* on a reverted transaction | a wallet connected on Arc |
+| the user's Splitsy wallet | the same transfer, sent server-side via `POST /api/wallet/send` | the wallet PIN unlocked |
+| anywhere else | an ordinary inbound transfer to the address, which the card links to Arcscan | nothing |
+
+It is deliberately a plain transfer either way, never an approval: the agent's
+balance **is** its spending ceiling, so funding has to mean handing over custody
+rather than permission. The Splitsy-wallet route is not offered to a
+wallet-signin account — that DCW exists but has never been funded, and it sits
+behind a PIN that account never set.
 
 An agent whose balance cannot cover the fee plus a 0.20 USDC gas headroom
 (plus the share itself, in Funded mode) **skips with `agent_unfunded` and
