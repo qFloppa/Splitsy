@@ -10,7 +10,7 @@ import SignInMenu from "@/app/SignInMenu";
 import XAuthControl from "@/app/XAuthControl";
 import { Switch } from "@/app/SettlementAgentsPanel";
 import { wagmiConfig } from "@/lib/wagmi";
-import { payableRows, selectionTotalUnits } from "@/lib/pay-link";
+import { coveredByOthers, payableRows, selectionTotalUnits } from "@/lib/pay-link";
 import {
   approveBillRegistry,
   billUnitsToUsdc,
@@ -58,20 +58,27 @@ export default function PayClient({ token }: { token: string }) {
   const [paying, setPaying] = useState(false);
   const [message, setMessage] = useState<string>("");
 
-  const load = useCallback(async () => {
+  // Returns the bill it loaded so a payment run can ask the fresh read which of
+  // its failed rows someone else covered — see settleRun.
+  const load = useCallback(async (): Promise<Bill | null> => {
     const res = await fetch(`/api/pay/${token}`);
     if (!res.ok) {
       setLoadError(res.status === 404 ? "not_found" : "unavailable");
-      return;
+      return null;
     }
     const data = (await res.json()) as Bill;
     setBill(data);
     // Preselect nothing. The payer chooses; a page that arrives with everyone
     // ticked invites an accidental payment of the entire bill.
     setLoadError(null);
+    return data;
   }, [token]);
 
   useEffect(() => {
+    // Every setState in load() sits behind `await fetch`, so none of them run
+    // synchronously with this effect — the rule cannot see through useCallback
+    // to tell. Same call, same reason, as HomeClient.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     void load();
   }, [load]);
 
@@ -125,6 +132,30 @@ export default function PayClient({ token }: { token: string }) {
     });
   }
 
+  // Both pay paths end here. payDebtFor REVERTS rather than clamps when a row
+  // was covered while we were signing, and that revert reaches us as a bare
+  // "reverted" receipt (browser) or an opaque Circle string (Splitsy) — nothing
+  // in either can separate it from a real failure. A fresh read can: a failed
+  // row that now sits at zero was covered by someone else, and blaming the payer
+  // for it would be a lie. On a public link that race is routine, not exotic.
+  async function settleRun(states: Record<string, RowState>) {
+    const fresh = await load();
+    const failed = Object.entries(states)
+      .filter(([, state]) => state.status === "failed")
+      .map(([address]) => address);
+    const covered = new Set(coveredByOthers(fresh?.rows ?? [], failed));
+    setRowStates(Object.fromEntries(Object.entries(states).filter(([address]) => !covered.has(address))));
+    const labels = (fresh ?? bill!).rows.filter((row) => covered.has(row.address)).map((row) => row.label);
+    setMessage(
+      labels.length === 0
+        ? ""
+        : labels.length === 1
+          ? `${labels[0]}'s share was already covered by someone else — you weren't charged for it.`
+          : `${labels.join(", ")} were already covered by someone else — you weren't charged for those shares.`,
+    );
+    setSelected(new Set());
+  }
+
   // Browser wallet: one approval for the whole selection, then one payDebtFor
   // per row. The registry has no batch pay-for-others, so the honest thing is to
   // show each row settling on its own — and to leave the earlier rows paid when
@@ -139,7 +170,12 @@ export default function PayClient({ token }: { token: string }) {
 
     setPaying(true);
     setMessage("");
-    setRowStates(Object.fromEntries(legs.map((l) => [l.address, { status: "pending" } as RowState])));
+    // Tracked locally as well as in state: settleRun needs the finished map, and
+    // a setState callback won't have handed it back by the time the loop ends.
+    const states: Record<string, RowState> = Object.fromEntries(
+      legs.map((l) => [l.address, { status: "pending" } as RowState]),
+    );
+    setRowStates({ ...states });
 
     try {
       const walletClient = await getWalletClient(wagmiConfig, { chainId: arcTestnet.id });
@@ -150,7 +186,8 @@ export default function PayClient({ token }: { token: string }) {
       await approveBillRegistry({ ...wallet, amount: selectedTotal });
 
       for (const leg of legs) {
-        setRowStates((s) => ({ ...s, [leg.address]: { status: "signing" } }));
+        states[leg.address] = { status: "signing" };
+        setRowStates({ ...states });
         try {
           const receipt = await payBillDebtFor({
             ...wallet,
@@ -158,17 +195,13 @@ export default function PayClient({ token }: { token: string }) {
             debtor: leg.address as `0x${string}`,
             amount: BigInt(leg.remainingUnits),
           });
-          setRowStates((s) => ({ ...s, [leg.address]: { status: "paid", txHash: receipt.transactionHash } }));
+          states[leg.address] = { status: "paid", txHash: receipt.transactionHash };
         } catch (err) {
-          setRowStates((s) => ({
-            ...s,
-            [leg.address]: { status: "failed", error: err instanceof Error ? err.message : "Payment failed" },
-          }));
+          states[leg.address] = { status: "failed", error: err instanceof Error ? err.message : "Payment failed" };
         }
+        setRowStates({ ...states });
       }
-      setMessage("");
-      setSelected(new Set());
-      await load();
+      await settleRun(states);
     } catch (err) {
       setMessage(err instanceof Error ? err.message : "Payment failed.");
     } finally {
@@ -181,7 +214,19 @@ export default function PayClient({ token }: { token: string }) {
     const legs = bill!.rows.filter((r) => selected.has(r.address) && BigInt(r.remainingUnits) > 0n);
     if (legs.length === 0) return;
 
-    const pin = await fetch("/api/wallet/pin").then((r) => r.json()).catch(() => ({}));
+    // A share link is opened by strangers, so signed-out is the ordinary case
+    // here rather than an edge one. /api/wallet/pin answers 401 for them, and
+    // telling someone with no account to unlock a wallet is a dead end.
+    const pinRes = await fetch("/api/wallet/pin").catch(() => null);
+    if (!pinRes) {
+      setMessage("Couldn't reach Splitsy just now. Check your connection and try again.");
+      return;
+    }
+    if (pinRes.status === 401) {
+      setMessage("Sign in to pay from a Splitsy wallet — or use Pay on Arc with a browser wallet.");
+      return;
+    }
+    const pin = await pinRes.json().catch(() => ({}));
     if (!pin.unlocked) {
       setMessage("Unlock your wallet (the wallet button in the bottom-right corner), then tap Pay again.");
       return;
@@ -209,16 +254,19 @@ export default function PayClient({ token }: { token: string }) {
         return;
       }
       const results = (data.results ?? []) as { address: string; ok: boolean; txHash?: string; error?: string }[];
-      setRowStates(
-        Object.fromEntries(
-          results.map((r) => [
-            r.address,
-            r.ok ? { status: "paid" as const, txHash: r.txHash } : { status: "failed" as const, error: r.error },
-          ]),
-        ),
+      const states: Record<string, RowState> = Object.fromEntries(
+        results.map((r) => [
+          r.address,
+          r.ok ? { status: "paid" as const, txHash: r.txHash } : { status: "failed" as const, error: r.error },
+        ]),
       );
-      setSelected(new Set());
-      await load();
+      setRowStates(states);
+      await settleRun(states);
+    } catch (err) {
+      // Without this the request dying mid-flight left every row spinning on
+      // `pending` with nothing said, and threw past the `void` at the call site.
+      setMessage(err instanceof Error ? err.message : "Payment failed.");
+      setRowStates({});
     } finally {
       setPaying(false);
     }

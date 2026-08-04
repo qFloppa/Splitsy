@@ -55,3 +55,22 @@ export function selectionTotalUnits(
 export function payableRows<T extends { remainingUnits: string }>(rows: readonly T[]): T[] {
   return rows.filter((row) => BigInt(row.remainingUnits) > 0n);
 }
+
+// payDebtFor REVERTS on a stale amount rather than clamping it, and its
+// InvalidAmount error carries no arguments — so neither a receipt nor Circle's
+// error string can tell "someone else covered this row while I was signing"
+// from a real failure. A public link invites exactly that race. The only way to
+// know is to look: re-read the bill after a run and treat a failed row that is
+// now settled as covered by someone else, not as an error against the payer.
+//
+// `rows` must come from a read taken AFTER the run — a stale one reports
+// nothing as covered, which is the safe direction to be wrong in.
+export function coveredByOthers(
+  rows: ReadonlyArray<{ address: string; remainingUnits: string }>,
+  failedAddresses: Iterable<string>,
+): string[] {
+  const settled = new Set(
+    rows.filter((row) => BigInt(row.remainingUnits) === 0n).map((row) => row.address.toLowerCase()),
+  );
+  return [...failedAddresses].filter((address) => settled.has(address.toLowerCase()));
+}

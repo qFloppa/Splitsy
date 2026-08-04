@@ -4,6 +4,7 @@ import {
   SHARE_TOKEN_LENGTH,
   isShareToken,
   newShareToken,
+  coveredByOthers,
   payableRows,
   selectionTotalUnits,
 } from "./pay-link.ts";
@@ -75,4 +76,22 @@ test("payable rows exclude anything already settled", () => {
   ];
   assert.deepEqual(payableRows(rows).map((r) => r.address), ["0xAAA", "0xCCC"]);
   assert.deepEqual(payableRows([{ address: "0xD", remainingUnits: "0" }]), []);
+});
+
+test("a failed row that is now settled reads as covered by someone else", () => {
+  // The row we tried to pay went to zero while we were signing — someone else
+  // got there first. The other failure is a genuine one: still owed.
+  const afterRun = [
+    { address: "0xAAA", remainingUnits: "0" },
+    { address: "0xBBB", remainingUnits: "1990000" },
+    { address: "0xCCC", remainingUnits: "0" },
+  ];
+  assert.deepEqual(coveredByOthers(afterRun, ["0xAAA", "0xBBB"]), ["0xAAA"]);
+  // Case cannot decide the outcome: the API renders checksummed addresses and
+  // the social route echoes back whatever casing the client sent.
+  assert.deepEqual(coveredByOthers(afterRun, ["0xaaa"]), ["0xaaa"]);
+  // A row that never failed is never reported, settled or not.
+  assert.deepEqual(coveredByOthers(afterRun, []), []);
+  // No fresh read (the refetch itself failed) → nothing is claimed as covered.
+  assert.deepEqual(coveredByOthers([], ["0xAAA"]), []);
 });
