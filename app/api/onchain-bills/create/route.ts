@@ -7,6 +7,7 @@ import { encodeCreateBill } from "@/lib/registry-calldata";
 import { executeContractOnArc, InsufficientFundsError } from "@/lib/circle-dcw";
 import { REGISTRY_ADDRESS, getBillOnchain, getBillIdsForSplitterOnchain } from "@/lib/arc-read";
 import { publishOnchainBillPreimage } from "@/lib/onchain-bill-preimage-repo";
+import { isShareToken } from "@/lib/pay-link";
 import { participantProvidersFromSlots } from "./participant-providers";
 import type { IdentityProvider } from "@/lib/types";
 
@@ -28,7 +29,7 @@ export async function POST(request: Request) {
   const body = (await request.json().catch(() => null)) as {
     merchant?: unknown; currency?: unknown; total?: unknown;
     participants?: InRow[]; receiptHash?: unknown; receiptImageBase64?: unknown; dueDate?: unknown;
-    escrowUntilFull?: unknown;
+    escrowUntilFull?: unknown; shareToken?: unknown;
   } | null;
   if (!body || !Array.isArray(body.participants) || body.participants.length === 0) {
     return Response.json({ error: "participants required" }, { status: 400 });
@@ -46,6 +47,12 @@ export async function POST(request: Request) {
   // Escrow requires a deadline to release it — the registry rejects the pair
   // outright, so refuse it here too rather than sending a call that reverts.
   const escrowUntilFull = body.escrowUntilFull === true && dueDate !== undefined;
+  // Same rejection rule as the browser-wallet path: a malformed token means the
+  // creator is holding a link that would never resolve.
+  const shareToken = body.shareToken;
+  if (shareToken !== undefined && !isShareToken(shareToken)) {
+    return Response.json({ error: "Invalid share token" }, { status: 400 });
+  }
   if (dueDate !== undefined && dueDate <= Math.floor(Date.now() / 1000)) {
     return Response.json({ error: "The due date must be in the future." }, { status: 400 });
   }
@@ -124,7 +131,7 @@ export async function POST(request: Request) {
     // inside publishOnchainBillPreimage (hard gate) and swallowed by this catch —
     // text-only publish is impossible once a receiptHash is committed on-chain.
     await publishOnchainBillPreimage(
-      { registryAddress: REGISTRY_ADDRESS, billId: billId.toString(), merchant, currency, total, participantLabels: labels, participantProviders, receiptHash, dueDate },
+      { registryAddress: REGISTRY_ADDRESS, billId: billId.toString(), merchant, currency, total, participantLabels: labels, participantProviders, receiptHash, dueDate, shareToken: shareToken as string | undefined },
       metadataHash,
       receiptBytes,
     );

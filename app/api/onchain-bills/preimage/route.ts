@@ -4,6 +4,7 @@ import { arcTestnet } from "viem/chains";
 import { REGISTRY_ADDRESS } from "@/lib/arc-read";
 import { triggerAutopay } from "@/lib/autopay-trigger";
 import { getOnchainBillPreimage, publishOnchainBillPreimage } from "@/lib/onchain-bill-preimage-repo";
+import { isShareToken } from "@/lib/pay-link";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -78,6 +79,7 @@ export async function POST(request: Request) {
     receiptHash?: unknown;
     receiptImageBase64?: unknown;
     dueDate?: unknown;
+    shareToken?: unknown;
   } | null;
   if (!body) {
     return Response.json({ error: "Invalid JSON body" }, { status: 400 });
@@ -94,6 +96,7 @@ export async function POST(request: Request) {
     receiptHash,
     receiptImageBase64,
     dueDate,
+    shareToken,
   } = body;
   if (!isAddress(registryAddress) || !isBillId(billId)) {
     return Response.json({ error: "registryAddress and billId are required" }, { status: 400 });
@@ -120,6 +123,12 @@ export async function POST(request: Request) {
     return Response.json({ error: "Invalid due date" }, { status: 400 });
   }
   const normalizedDueDate = typeof dueDate === "number" && dueDate > 0 ? dueDate : undefined;
+  // Optional public share link. Rejected outright rather than silently dropped
+  // when malformed: the creator's UI has already shown them the link, so a
+  // quietly-discarded token would hand them a URL that 404s forever.
+  if (shareToken !== undefined && !isShareToken(shareToken)) {
+    return Response.json({ error: "Invalid share token" }, { status: 400 });
+  }
   // Display/analytics only (never hashed), so a bad value is dropped rather than
   // rejected — but a wrong-length array would mis-attribute identities, so it
   // must line up with the labels it annotates.
@@ -151,7 +160,7 @@ export async function POST(request: Request) {
 
   try {
     await publishOnchainBillPreimage(
-      { registryAddress, billId, merchant, currency, total, participantLabels, participantProviders: providers, receiptHash, dueDate: normalizedDueDate },
+      { registryAddress, billId, merchant, currency, total, participantLabels, participantProviders: providers, receiptHash, dueDate: normalizedDueDate, shareToken: shareToken as string | undefined },
       onchainHash,
       receiptBytes,
     );
