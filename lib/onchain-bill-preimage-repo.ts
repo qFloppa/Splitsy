@@ -35,6 +35,56 @@ function receiptPath(registryAddress: string, billId: string) {
   return `${registryAddress.toLowerCase()}/${billId}`;
 }
 
+// The columns every reader below selects. Not the full row: share_token is a
+// lookup key, never read back out.
+type PreimageRow = {
+  merchant: string;
+  currency: string;
+  total_usd: string | number;
+  participant_labels: string[] | null;
+  participant_providers: string[] | null;
+  receipt_hash: string | null;
+  due_date: string | number | null;
+  created_at: string | null;
+};
+
+// Row -> PublishedBillPreimage, shared by all three readers: they differ in how
+// they find the row, never in how they read it. One mapper means a new field on
+// PublishedBillPreimage is one edit, not three that have to agree.
+//
+// registryAddress/billId are parameters rather than row columns because the batch
+// and single-bill readers don't select them. They're only used to build the
+// storage key, and receiptPath lowercases whatever it's given — so the caller's
+// address, the loop's, and the row's own all land on the same object.
+function toPublished(
+  client: NonNullable<ReturnType<typeof createSupabaseServerClient>>,
+  row: PreimageRow,
+  registryAddress: string,
+  billId: string,
+): PublishedBillPreimage {
+  const receiptHash = row.receipt_hash ?? "";
+  const receiptUrl = receiptHash
+    ? client.storage.from(RECEIPT_BUCKET).getPublicUrl(receiptPath(registryAddress, billId)).data.publicUrl
+    : null;
+
+  // 0 (the column default) means "no due date" — surface it as undefined so the
+  // preimage hashes byte-identically to a pre-due-date bill on the payer's side.
+  const dueDateRaw = Number(row.due_date ?? 0);
+  const parsedAt = row.created_at ? Date.parse(row.created_at) : NaN;
+
+  return {
+    merchant: row.merchant,
+    currency: row.currency,
+    total: Number(row.total_usd),
+    participantLabels: row.participant_labels ?? [],
+    participantProviders: row.participant_providers ?? [],
+    receiptHash,
+    receiptUrl,
+    dueDate: dueDateRaw > 0 ? dueDateRaw : undefined,
+    createdAtSeconds: Number.isNaN(parsedAt) ? 0 : Math.floor(parsedAt / 1000),
+  };
+}
+
 // Publish the plaintext details of an on-chain bill, but ONLY if they actually
 // hash to the commitment recorded on-chain. Storing a non-matching preimage
 // would let a "Declined" appear for an honest bill, so the check is a hard gate:
@@ -125,23 +175,7 @@ export async function getOnchainBillPreimages(
   if (error) throw new Error(`Failed to read bill preimages: ${error.message}`);
 
   for (const row of data ?? []) {
-    const receiptHash = row.receipt_hash ?? "";
-    const receiptUrl = receiptHash
-      ? client.storage.from(RECEIPT_BUCKET).getPublicUrl(receiptPath(reg, row.bill_id)).data.publicUrl
-      : null;
-    const dueDateRaw = Number(row.due_date ?? 0);
-    const parsedAt = row.created_at ? Date.parse(row.created_at) : NaN;
-    result.set(row.bill_id, {
-      merchant: row.merchant,
-      currency: row.currency,
-      total: Number(row.total_usd),
-      participantLabels: row.participant_labels ?? [],
-      participantProviders: row.participant_providers ?? [],
-      receiptHash,
-      receiptUrl,
-      dueDate: dueDateRaw > 0 ? dueDateRaw : undefined,
-      createdAtSeconds: Number.isNaN(parsedAt) ? 0 : Math.floor(parsedAt / 1000),
-    });
+    result.set(row.bill_id, toPublished(client, row, reg, row.bill_id));
   }
   return result;
 }
@@ -164,30 +198,7 @@ export async function getOnchainBillPreimage(
   if (error) throw new Error(`Failed to read bill preimage: ${error.message}`);
   if (!data) return null;
 
-  const receiptHash = data.receipt_hash ?? "";
-  const receiptUrl = receiptHash
-    ? client.storage.from(RECEIPT_BUCKET).getPublicUrl(receiptPath(registryAddress, billId)).data.publicUrl
-    : null;
-
-  // 0 (the column default) means "no due date" — surface it as undefined so the
-  // preimage hashes byte-identically to a pre-due-date bill on the payer's side.
-  const dueDateRaw = Number(data.due_date ?? 0);
-  const dueDate = dueDateRaw > 0 ? dueDateRaw : undefined;
-
-  const parsedAt = data.created_at ? Date.parse(data.created_at) : NaN;
-  const createdAtSeconds = Number.isNaN(parsedAt) ? 0 : Math.floor(parsedAt / 1000);
-
-  return {
-    merchant: data.merchant,
-    currency: data.currency,
-    total: Number(data.total_usd),
-    participantLabels: data.participant_labels ?? [],
-    participantProviders: data.participant_providers ?? [],
-    receiptHash,
-    receiptUrl,
-    dueDate,
-    createdAtSeconds,
-  };
+  return toPublished(client, data, registryAddress, billId);
 }
 
 // Resolve a public share link back to the bill it addresses. Returns the same
@@ -209,29 +220,12 @@ export async function getPreimageByShareToken(
     )
     .eq("share_token", token)
     .maybeSingle();
-  if (error) throw new Error(`Failed to read bill preimage: ${error.message}`);
+  // Distinct from the by-key reader's message so a production error names the
+  // lookup path that failed.
+  if (error) throw new Error(`Failed to read bill preimage by share token: ${error.message}`);
   if (!data) return null;
 
-  const registryAddress = String(data.registry_address);
-  const billId = String(data.bill_id);
-  const receiptHash = data.receipt_hash ?? "";
-  const receiptUrl = receiptHash
-    ? client.storage.from(RECEIPT_BUCKET).getPublicUrl(receiptPath(registryAddress, billId)).data.publicUrl
-    : null;
-  const dueDateRaw = Number(data.due_date ?? 0);
-  const parsedAt = data.created_at ? Date.parse(data.created_at) : NaN;
-
-  return {
-    registryAddress,
-    billId,
-    merchant: data.merchant,
-    currency: data.currency,
-    total: Number(data.total_usd),
-    participantLabels: data.participant_labels ?? [],
-    participantProviders: data.participant_providers ?? [],
-    receiptHash,
-    receiptUrl,
-    dueDate: dueDateRaw > 0 ? dueDateRaw : undefined,
-    createdAtSeconds: Number.isNaN(parsedAt) ? 0 : Math.floor(parsedAt / 1000),
-  };
+  const registryAddress: string = data.registry_address;
+  const billId: string = data.bill_id;
+  return { registryAddress, billId, ...toPublished(client, data, registryAddress, billId) };
 }
