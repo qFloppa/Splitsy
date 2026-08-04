@@ -3040,3 +3040,152 @@ a.job-trail-tx:hover {
     animation: none;
   }
 }
+
+/* ── Public pay page (/pay/[token]) ───────────────────────────────────────────
+   Two zones: a fixed ink poster carrying the headline amount, and a scrolling
+   roster of payer rows. The poster never leaves the viewport on desktop so the
+   figure you are working against stays visible while you pick rows. */
+
+.pay-shell {
+  display: grid;
+  grid-template-columns: minmax(0, 0.85fr) minmax(0, 1.15fr);
+  min-height: calc(100dvh - 4rem);
+}
+
+.pay-poster {
+  position: sticky;
+  top: 0;
+  align-self: start;
+  height: calc(100dvh - 4rem);
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 2rem;
+  padding: clamp(2rem, 1rem + 3vw, 4rem);
+  background: var(--ink-950);
+  color: var(--paper-50);
+}
+
+.pay-poster[data-settled="true"] { background: #0d2a1f; }
+
+.pay-merchant {
+  font-family: var(--font-clash), system-ui, sans-serif;
+  font-weight: 600;
+  letter-spacing: -0.03em;
+  line-height: 0.95;
+  font-size: clamp(2.2rem, 1.2rem + 3.4vw, 4rem);
+  margin: 0.6rem 0 1.4rem;
+}
+
+.pay-amount {
+  font-family: var(--font-clash), system-ui, sans-serif;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  letter-spacing: -0.03em;
+  line-height: 1;
+  font-size: clamp(3rem, 1.6rem + 5vw, 5.5rem);
+}
+
+.pay-amount[data-settled="true"] { color: var(--success); }
+
+.pay-progress {
+  height: 5px;
+  border-radius: 999px;
+  background: rgba(247, 243, 234, 0.18);
+  overflow: hidden;
+  margin-top: 1.1rem;
+}
+
+.pay-progress > span {
+  display: block;
+  height: 100%;
+  background: var(--arc-cyan);
+  transition: width var(--dur-3) var(--ease-out);
+}
+
+.pay-poster[data-settled="true"] .pay-progress > span { background: var(--success); }
+
+.pay-roster {
+  padding: clamp(1.25rem, 0.8rem + 1.6vw, 2.5rem);
+  background: var(--surface-strong);
+}
+
+.pay-row {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 1.1rem 0;
+  border-bottom: 1px solid var(--border);
+  transition: box-shadow var(--dur-1) var(--ease-out), background var(--dur-1) var(--ease-out);
+}
+
+.pay-row:last-child { border-bottom: 0; }
+
+.pay-row[data-selected="true"] {
+  box-shadow: inset 3px 0 0 var(--accent);
+  background: linear-gradient(90deg, var(--accent-soft), transparent 65%);
+  padding-left: 0.9rem;
+  margin-left: -0.9rem;
+}
+
+.pay-row[data-state="paid"] { opacity: 0.45; }
+.pay-row[data-state="paid"] .pay-row-name { text-decoration: line-through; }
+
+.pay-row-name {
+  font-family: var(--font-clash), system-ui, sans-serif;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  font-size: clamp(1.05rem, 0.9rem + 0.6vw, 1.5rem);
+}
+
+.pay-row-meta {
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  margin-top: 0.15rem;
+}
+
+.pay-row-amount {
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  font-size: clamp(1.05rem, 0.9rem + 0.6vw, 1.4rem);
+}
+
+.pay-stamp {
+  border: 1px solid var(--success);
+  border-radius: 4px;
+  color: var(--success);
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  padding: 0.15rem 0.4rem;
+}
+
+.pay-bar {
+  position: sticky;
+  bottom: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+  padding: 0.9rem clamp(1.25rem, 0.8rem + 1.6vw, 2.5rem);
+  background: var(--ink-950);
+  color: var(--paper-50);
+}
+
+.pay-bar-total {
+  font-family: var(--font-clash), system-ui, sans-serif;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  font-size: clamp(1.3rem, 1.1rem + 0.8vw, 1.9rem);
+}
+
+@media (max-width: 860px) {
+  .pay-shell { grid-template-columns: minmax(0, 1fr); }
+  .pay-poster { position: static; height: auto; }
+  .pay-bar { position: fixed; left: 0; right: 0; bottom: 0; }
+  .pay-roster { padding-bottom: 6rem; }
+}
