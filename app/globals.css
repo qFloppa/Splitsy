@@ -3442,6 +3442,20 @@ a.job-trail-tx:hover {
   color: var(--pay-poster-fg);
 }
 
+/* Radix stamps data-state on both parts, so the slide-up needs no JS. */
+@keyframes settle-sheet-in {
+  from { transform: translateY(100%); }
+  to { transform: none; }
+}
+@keyframes settle-backdrop-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+.settle-sheet[data-state="open"] { animation: settle-sheet-in var(--dur-3) var(--ease-out); }
+.settle-sheet[data-state="closed"] { animation: settle-sheet-in var(--dur-2) var(--ease-out) reverse; }
+.settle-sheet-backdrop[data-state="open"] { animation: settle-backdrop-in var(--dur-2) var(--ease-out); }
+.settle-sheet-backdrop[data-state="closed"] { animation: settle-backdrop-in var(--dur-1) var(--ease-out) reverse; }
+
 .settle-divider {
   height: 100%;
   scroll-snap-align: start;
@@ -3489,4 +3503,5 @@ a.job-trail-tx:hover {
   }
   .settle-rule { transform: scaleX(1); transition: none; }
   .settle-divider > hr { width: min(28rem, 60vw); transition: none; }
+  .settle-sheet, .settle-sheet-backdrop { animation: none; }
 }

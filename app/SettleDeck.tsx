@@ -1,9 +1,11 @@
 "use client";
 
-import { useMemo } from "react";
+import * as Dialog from "@radix-ui/react-dialog";
+import { useMemo, useState, type ReactNode } from "react";
 import { billUnitsToUsdc } from "@/lib/bill-split-contracts";
 import { buildSettleItems, type OwnedDebt, type SettleItem, type SocialDebt } from "@/lib/settle-items";
-import type { BridgeSourceChain } from "@/lib/appkit-bridge";
+import { bridgeSourceChains, type BridgeSourceChain } from "@/lib/appkit-bridge";
+import { useBillVerification } from "./BillVerification";
 import type { BillRunState, ProgressFlow } from "./HomeClient";
 
 // The handlers and shared state every section reads. Bundled rather than
@@ -166,6 +168,15 @@ function SocialDebtBody({ deck, item }: { deck: SettleDeckHandlers; item: ItemOf
 
 function WalletDebtBody({ deck, item }: { deck: SettleDeckHandlers; item: ItemOf<"debt-wallet"> }) {
   const { debt, action, refundable } = item;
+  const verification = useBillVerification(debt.billId, debt.metadataHash);
+  const merchant = verification.merchant || `Bill #${debt.billId.toString()}`;
+  // A mismatch or an altered total is a red warning, not a detail — it opens
+  // itself rather than waiting behind a click, because Pay is right there.
+  const unsafe = verification.status === "mismatch" || verification.audit.state === "altered";
+  // null = follow the warning; an explicit open or close pins it. Same shape as
+  // BillVerification's receipt toggle, and it needs no effect to do it.
+  const [sheet, setSheet] = useState<"verified" | "bridge" | "none" | null>(null);
+  const openSheet = sheet ?? (unsafe ? "verified" : "none");
   // Client-side guard only — the contract clamps regardless. Saying so before
   // the signature costs one comparison and saves a rejected transaction.
   const remainingLabel = billUnitsToUsdc(debt.remaining);
@@ -179,9 +190,7 @@ function WalletDebtBody({ deck, item }: { deck: SettleDeckHandlers; item: ItemOf
   return (
     <>
       <p className="settle-label">bill #{debt.billId.toString()}</p>
-      {/* Placeholder heading: the merchant name comes from useBillVerification,
-          wired in by the next task. */}
-      <h2 className="settle-merchant">Bill #{debt.billId.toString()}</h2>
+      <h2 className="settle-merchant">{merchant}</h2>
       <p className="settle-label">{action === "refund" ? "you get back" : "you pay"}</p>
       {editing ? (
         <>
@@ -231,7 +240,166 @@ function WalletDebtBody({ deck, item }: { deck: SettleDeckHandlers; item: ItemOf
         </p>
       ) : null}
       <DeckMessage deck={deck} id={item.id} />
+
+      <div className="settle-triggers">
+        <button
+          className="settle-trigger"
+          data-tone={unsafe ? "warning" : undefined}
+          onClick={() => setSheet("verified")}
+          type="button"
+        >
+          {verification.status === "loading" ? "checking…" : unsafe ? "⌃ doesn't match arc" : "⌃ verified on arc"}
+        </button>
+        {/* Bridging pays from the browser wallet; a Circle-wallet debt has
+            nothing to bridge into. */}
+        {item.editable ? (
+          <button className="settle-trigger" onClick={() => setSheet("bridge")} type="button">
+            ⌃ bridge
+          </button>
+        ) : null}
+      </div>
+
+      <Sheet
+        onClose={() => setSheet("none")}
+        open={openSheet === "verified"}
+        title={unsafe ? `warning — ${merchant}` : `verified on arc — ${merchant}`}
+      >
+        <VerifiedSheetBody metadataHash={debt.metadataHash} verification={verification} />
+      </Sheet>
+
+      <Sheet onClose={() => setSheet("none")} open={openSheet === "bridge"} title="bring usdc to arc">
+        <p className="settle-meta">
+          Your USDC is on another chain. CCTP V2 burns it there and mints it on Arc in three transactions — approve,
+          bridge, then claim. After it lands, pay the debt here.
+        </p>
+        <div style={{ display: "grid", gap: "0.4rem", marginTop: "1.4rem" }}>
+          {bridgeSourceChains.map((chain) => (
+            <button
+              className="settle-action"
+              disabled={deck.billState === "working"}
+              key={chain.id}
+              onClick={() => {
+                setSheet("none");
+                deck.bridgeForDebt(debt, chain.id);
+              }}
+              style={{ fontSize: "clamp(1.3rem, 0.9rem + 1.4vw, 2rem)", margin: 0 }}
+              type="button"
+            >
+              {chain.label} →
+            </button>
+          ))}
+        </div>
+      </Sheet>
     </>
+  );
+}
+
+// A viewport-fixed slide-up. Radix owns the portal (a fixed child of a scaled
+// .settle-section would otherwise position against the section, not the
+// viewport), the focus trap, Escape, outside-click, and focus return.
+// ponytail: no close-on-scroll — a modal blocks the scroll it would react to.
+function Sheet({
+  children,
+  onClose,
+  open,
+  title,
+}: {
+  children: ReactNode;
+  onClose: () => void;
+  open: boolean;
+  title: string;
+}) {
+  return (
+    <Dialog.Root
+      onOpenChange={(next) => {
+        if (!next) onClose();
+      }}
+      open={open}
+    >
+      <Dialog.Portal>
+        <Dialog.Overlay className="settle-sheet-backdrop" />
+        <Dialog.Content aria-describedby={undefined} className="settle-sheet">
+          <Dialog.Title className="settle-label">{title}</Dialog.Title>
+          {children}
+        </Dialog.Content>
+      </Dialog.Portal>
+    </Dialog.Root>
+  );
+}
+
+// The same two checks the inline panel renders, in the poster's voice.
+function VerifiedSheetBody({
+  metadataHash,
+  verification,
+}: {
+  metadataHash: `0x${string}`;
+  verification: ReturnType<typeof useBillVerification>;
+}) {
+  const { status, receiptUrl, dueDate, audit } = verification;
+
+  if (status === "loading") {
+    return <p className="settle-meta">Checking this bill against Arc…</p>;
+  }
+  if (status === "unpublished" || status === "error") {
+    return (
+      <p className="settle-meta">
+        {status === "unpublished"
+          ? "On-chain verification isn’t available for this bill."
+          : "Couldn’t reach the verifier — refresh to retry."}
+      </p>
+    );
+  }
+
+  const verified = status === "verified";
+  return (
+    <div style={{ display: "grid", gap: "0.9rem", marginTop: "1.2rem" }}>
+      <p className="settle-meta" style={verified ? undefined : { color: "var(--warning-text)" }}>
+        {verified
+          ? "Genuine bill on Arc — the merchant, total, and split shown here are exactly what the creator committed, and can’t have been edited since."
+          : "The details don’t match what was committed on Arc. Don’t pay until the creator re-checks this bill."}
+      </p>
+
+      {verified && dueDate ? (
+        <p className="settle-meta">
+          Pay by {new Date(dueDate * 1000).toLocaleDateString()} to keep your on-chain payment reputation strong.
+        </p>
+      ) : null}
+
+      {verified ? (
+        <p className="settle-meta" style={audit.state === "altered" ? { color: "var(--warning-text)" } : undefined}>
+          {audit.state === "checking"
+            ? "Checking the total against the receipt…"
+            : audit.state === "ok"
+              ? `Total matches the receipt (~$${audit.onchainUsd.toFixed(2)}).`
+              : audit.state === "altered"
+                ? `Total was changed — the receipt reads about $${audit.scannedUsd.toFixed(2)}, but you’re charged $${audit.onchainUsd.toFixed(2)}. Ask the creator before paying.`
+                : audit.state === "no-receipt"
+                  ? "No receipt was uploaded — the creator typed this total by hand, so it can’t be checked against a bill."
+                  : "Couldn’t re-read the total automatically — compare the receipt below yourself."}
+        </p>
+      ) : null}
+
+      {verified && receiptUrl ? (
+        <a href={receiptUrl} rel="noreferrer" target="_blank">
+          {/* Plain img: a Supabase Storage URL isn't in next.config's allowed domains. */}
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            alt="Receipt committed on-chain for this bill"
+            src={receiptUrl}
+            style={{
+              border: "1px solid var(--pay-poster-rule)",
+              borderRadius: "0.6rem",
+              maxHeight: "18rem",
+              width: "auto",
+            }}
+          />
+        </a>
+      ) : null}
+
+      <p className="settle-meta" style={{ fontFamily: "var(--font-geist-mono)", overflowWrap: "anywhere" }}>
+        {metadataHash}
+      </p>
+    </div>
   );
 }
 
