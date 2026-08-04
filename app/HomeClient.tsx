@@ -89,6 +89,7 @@ import {
   refundBillPayment,
 } from "@/lib/bill-split-contracts";
 import { refundableNow } from "@/lib/treasury";
+import { settleItemId, type OwnedDebt } from "@/lib/settle-items";
 import {
   authorizeRecurringPayment,
   approveUsdc,
@@ -194,9 +195,13 @@ type FlowStep = {
   state: FlowStepState;
   explorerUrl?: string;
 };
-type ProgressFlow = {
+export type ProgressFlow = {
   kind: "pay" | "bridge" | "claim";
   open: boolean;
+  // Which deck section owns this flow, as settleItemId(). Lets the Settle deck
+  // render the step ticker inside the right section. Null for flows that aren't
+  // about a single debt (the multi-position settle, the recurring top-up).
+  subjectKey: string | null;
   amountLabel: string;
   contextLabel: string;
   status: "running" | "success" | "error";
@@ -277,7 +282,10 @@ function dueDateToUnix(value: string): number | undefined {
 // non-custodial wallet. Registry rows are tagged with the wallet they were read
 // for, so pay/claim can route each bill to the right signer — the server (DCW)
 // or the browser wallet — instead of guessing from global connection state.
-type OwnedBillSplitDebt = BillSplitDebt & { account: `0x${string}`; via: "wallet" | "social" };
+// Declared in lib/settle-items so the ordering function can be unit-tested
+// without pulling this "use client" module into scope. Aliased rather than
+// re-declared: two structurally identical types are exactly how they drift.
+type OwnedBillSplitDebt = OwnedDebt;
 
 // Which identity signs createBill (and therefore owns the bill + collects the
 // payments) when both are available. Persisted so the picker remembers the
@@ -1313,10 +1321,11 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
     }
   }
 
-  function beginPayFlow(billId: string, amountLabel: string) {
+  function beginPayFlow(subjectKey: string, billId: string, amountLabel: string) {
     setProgressFlow({
       kind: "pay",
       open: true,
+      subjectKey,
       amountLabel,
       contextLabel: `bill #${billId}`,
       status: "running",
@@ -1332,12 +1341,13 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
   // Server-side (Circle DCW) pay: one POST does approve + payDebt from the
   // user's Circle wallet, so the modal shows both steps but can only observe
   // the round-trip — completeFlow marks them done when the route returns.
-  function beginSocialPayFlow(billId: string, amountLabel: string) {
+  function beginSocialPayFlow(subjectKey: string, contextLabel: string, amountLabel: string) {
     setProgressFlow({
       kind: "pay",
       open: true,
+      subjectKey,
       amountLabel,
-      contextLabel: `bill #${billId}`,
+      contextLabel,
       status: "running",
       errorMessage: "",
       runningLabel: "Processing from your Circle wallet — this can take a moment",
@@ -1348,10 +1358,11 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
     });
   }
 
-  function beginClaimFlow(billId: string, amountLabel: string) {
+  function beginClaimFlow(subjectKey: string, billId: string, amountLabel: string) {
     setProgressFlow({
       kind: "claim",
       open: true,
+      subjectKey,
       amountLabel,
       contextLabel: `bill #${billId}`,
       status: "running",
@@ -1363,10 +1374,11 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
     });
   }
 
-  function beginBridgeFlow(amountLabel: string, source: string) {
+  function beginBridgeFlow(subjectKey: string | null, amountLabel: string, source: string) {
     setProgressFlow({
       kind: "bridge",
       open: true,
+      subjectKey,
       amountLabel,
       contextLabel: `from ${source}`,
       status: "running",
@@ -1431,7 +1443,10 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
   }
 
   async function payDebtOnArc(debt: OwnedBillSplitDebt) {
-    const debtKey = debt.billId.toString();
+    // Keyed by bill AND account: a dual-identity user can owe the same bill from
+    // their browser wallet and their Circle DCW, and one key would let the two
+    // rows share an amount input and overwrite each other's messages.
+    const debtKey = settleItemId(debt.billId, debt.account);
 
     // Debt owed by the user's Circle (DCW) wallet — pay from the server, gated
     // by the same PIN unlock the off-chain pay flow uses. The route reads the
@@ -1447,7 +1462,7 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
         return;
       }
       const amountLabel = billUnitsToUsdc(debt.remaining);
-      beginSocialPayFlow(debtKey, amountLabel);
+      beginSocialPayFlow(debtKey, `bill #${debt.billId}`, amountLabel);
       try {
         setBillState("working");
         setDebtMessages((current) => {
@@ -1455,7 +1470,7 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
           delete next[debtKey];
           return next;
         });
-        const res = await fetch(`/api/onchain-bills/${debtKey}/pay`, { method: "POST" });
+        const res = await fetch(`/api/onchain-bills/${debt.billId}/pay`, { method: "POST" });
         const data = await res.json().catch(() => ({}));
         if (!res.ok) {
           const message = data.error === "insufficient_funds"
@@ -1473,7 +1488,7 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
         setBillState("success");
         setDebtMessages((current) => ({
           ...current,
-          [debtKey]: { tone: "success", message: `Paid bill #${debtKey} from your wallet.` },
+          [debtKey]: { tone: "success", message: `Paid bill #${debt.billId} from your wallet.` },
         }));
         await refreshBillRegistry();
       } catch (caught) {
@@ -1505,7 +1520,7 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
     }
 
     const amountLabel = billUnitsToUsdc(amount);
-    beginPayFlow(debtKey, amountLabel);
+    beginPayFlow(debtKey, debt.billId.toString(), amountLabel);
 
     try {
       setBillState("working");
@@ -1526,7 +1541,7 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
       setBillState("success");
       setDebtMessages((current) => ({
         ...current,
-        [debtKey]: { tone: "success", message: `Paid ${amountLabel} USDC toward bill #${debtKey}.` },
+        [debtKey]: { tone: "success", message: `Paid ${amountLabel} USDC toward bill #${debt.billId}.` },
       }));
       await refreshBillRegistry(wallet.account);
     } catch (caught) {
@@ -1544,7 +1559,8 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
   // the caller's whole contribution. Deliberately not folded into `settle`: this
   // is rare, and a refund leg that reverted would take an entire batch with it.
   async function refundOnArc(debt: OwnedBillSplitDebt) {
-    const debtKey = debt.billId.toString();
+    // See payDebtOnArc: one key per bill would collide across a user's two wallets.
+    const debtKey = settleItemId(debt.billId, debt.account);
     const amountLabel = billUnitsToUsdc(debt.paid);
 
     const fail = (message: string) => {
@@ -1556,7 +1572,7 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
       setBillState("success");
       setDebtMessages((current) => ({
         ...current,
-        [debtKey]: { tone: "success", message: `Refunded ${amountLabel} USDC from bill #${debtKey}.` },
+        [debtKey]: { tone: "success", message: `Refunded ${amountLabel} USDC from bill #${debt.billId}.` },
       }));
     };
 
@@ -1576,7 +1592,7 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
       }
       try {
         setBillState("working");
-        const res = await fetch(`/api/onchain-bills/${debtKey}/refund`, { method: "POST" });
+        const res = await fetch(`/api/onchain-bills/${debt.billId}/refund`, { method: "POST" });
         const data = await res.json().catch(() => ({}));
         if (!res.ok) {
           fail(data.error ?? "Refund failed.");
@@ -1635,6 +1651,8 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
     setProgressFlow({
       kind: "pay",
       open: true,
+      // Not one debt — no deck section owns it.
+      subjectKey: null,
       amountLabel: billUnitsToUsdc(total),
       contextLabel: `${payLegs.length + claimLegs.length} positions`,
       status: "running",
@@ -1701,9 +1719,11 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
     }
   }
 
-  async function bridgeForDebt(debt: BillSplitDebt, debtSourceChain: BridgeSourceChain) {
+  async function bridgeForDebt(debt: OwnedBillSplitDebt, debtSourceChain: BridgeSourceChain) {
     const session = bridgeSession ?? (await connectForBridge());
-    const debtKey = debt.billId.toString();
+    // See payDebtOnArc: this reads the same partialPayments entry the Pay button
+    // does, so it must resolve to the same key.
+    const debtKey = settleItemId(debt.billId, debt.account);
 
     if (!session || !billWallet) {
       setBillState("error");
@@ -1714,7 +1734,7 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
       return;
     }
 
-    const amount = usdcToBillUnits(partialPayments[debt.billId.toString()] ?? billUnitsToUsdc(debt.remaining));
+    const amount = usdcToBillUnits(partialPayments[debtKey] ?? billUnitsToUsdc(debt.remaining));
 
     if (amount <= 0n || amount > debt.remaining) {
       setBillState("error");
@@ -1729,7 +1749,7 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
     const amountLabel = billUnitsToUsdc(amount);
     const balanceBeforeBridge = arcUsdcBalance;
 
-    beginBridgeFlow(amountLabel, source);
+    beginBridgeFlow(debtKey, amountLabel, source);
 
     try {
       setBillState("working");
@@ -1838,7 +1858,8 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
     const source = sourceLabel(sourceChain);
     const balanceBeforeBridge = arcUsdcBalance;
 
-    beginBridgeFlow(amountLabel, source);
+    // A recurring top-up, not a debt — nothing in the deck owns it.
+    beginBridgeFlow(null, amountLabel, source);
 
     try {
       setRecurringState("working");
@@ -1874,7 +1895,9 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
   }
 
   async function claimSplitterFunds(debt: OwnedBillSplitDebt) {
-    const debtKey = debt.billId.toString();
+    // See payDebtOnArc: a dual-identity creator can hold the same bill on both
+    // wallets, and claimAmounts must not be shared between them.
+    const debtKey = settleItemId(debt.billId, debt.account);
 
     // Bill split by the user's Circle (DCW) wallet — only that wallet can claim,
     // so the server claims it, gated by the same PIN unlock. The route reads the
@@ -1887,12 +1910,12 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
         setClaimMessage("Unlock your wallet (the wallet button in the bottom-right corner), then tap Claim again.");
         return;
       }
-      beginClaimFlow(debtKey, billUnitsToUsdc(debt.claimable));
+      beginClaimFlow(debtKey, debt.billId.toString(), billUnitsToUsdc(debt.claimable));
       try {
         setBillState("working");
         setClaimMessageTone("neutral");
         setClaimMessage("Claiming paid funds.");
-        const res = await fetch(`/api/onchain-bills/${debtKey}/claim`, { method: "POST" });
+        const res = await fetch(`/api/onchain-bills/${debt.billId}/claim`, { method: "POST" });
         const data = await res.json().catch(() => ({}));
         if (!res.ok) {
           setBillState("error");
@@ -1904,7 +1927,7 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
         completeFlow();
         setBillState("success");
         setClaimMessageTone("success");
-        setClaimMessage(`Claimed funds from bill #${debtKey} to your wallet.`);
+        setClaimMessage(`Claimed funds from bill #${debt.billId} to your wallet.`);
         await refreshBillRegistry();
       } catch (caught) {
         setBillState("error");
@@ -1921,7 +1944,7 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
       return;
     }
 
-    const amount = usdcToBillUnits(claimAmounts[debt.billId.toString()] ?? billUnitsToUsdc(debt.claimable));
+    const amount = usdcToBillUnits(claimAmounts[debtKey] ?? billUnitsToUsdc(debt.claimable));
 
     if (amount <= 0n || amount > debt.claimable) {
       setBillState("error");
@@ -3456,7 +3479,7 @@ function WalletDebtRows({
   refundOnArc,
   setPartialPayments,
 }: {
-  bridgeForDebt: (debt: BillSplitDebt, debtSourceChain: BridgeSourceChain) => void;
+  bridgeForDebt: (debt: OwnedBillSplitDebt, debtSourceChain: BridgeSourceChain) => void;
   bridgeResults: Record<string, BridgeSummary>;
   billState: BillRunState;
   // Balance per identity wallet (lowercase address key), so each row shows the
@@ -3484,7 +3507,10 @@ function WalletDebtRows({
   return (
     <>
             {activeDebts.map((debt) => {
-              const key = debt.billId.toString();
+              // Bill AND account: the same bill can be owed by both of a
+              // dual-identity user's wallets, and each row needs its own
+              // amount input and message.
+              const key = settleItemId(debt.billId, debt.account);
               const bridgeResult = bridgeResults[key];
               const debtMessage = debtMessages[key];
               // Debt owed by the user's Circle (DCW) wallet: it lives only on
@@ -3505,7 +3531,7 @@ function WalletDebtRows({
               const expanded = expandedDebts[key] ?? activeDebts.length === 1;
 
               return (
-                <div className="rounded-[var(--radius)] border border-[var(--border)] bg-[var(--surface-strong)] p-3" key={`${key}:${debt.account}`}>
+                <div className="rounded-[var(--radius)] border border-[var(--border)] bg-[var(--surface-strong)] p-3" key={key}>
                   <button
                     className="flex w-full items-start justify-between gap-2 text-left"
                     onClick={() => setExpandedDebts((prev) => ({ ...prev, [key]: !expanded }))}
@@ -3514,7 +3540,7 @@ function WalletDebtRows({
                     <div>
                       <p className="flex items-center gap-1.5 font-semibold">
                         <ChevronDown className={`transition-transform ${expanded ? "rotate-180" : ""}`} size={15} />
-                        Bill #{key}
+                        Bill #{debt.billId.toString()}
                       </p>
                       <p className="mt-1 text-sm text-[var(--text-muted)]">
                         Owed <span className="amount-text">${billUnitsToUsdc(debt.owed)}</span> · paid{" "}
@@ -3789,15 +3815,17 @@ function ClaimFundsPanel({
         ) : (
         <div className="space-y-3">
           {claimableBills.map((debt) => {
-            const key = debt.billId.toString();
+            // Bill AND account: a dual-identity creator can hold the same bill
+            // on both wallets, and each row needs its own claim input.
+            const key = settleItemId(debt.billId, debt.account);
             // Bill split by the user's Circle (DCW) wallet: the server claim
             // route always claims the full claimable balance, so the
             // partial-amount input is hidden.
             const socialWallet = debt.via === "social";
             return (
-              <div className={`relative grid gap-3 overflow-hidden rounded-[var(--radius)] border border-[var(--border)] bg-[var(--surface-strong)] p-3 sm:items-end ${socialWallet ? "sm:grid-cols-[1fr_auto]" : "sm:grid-cols-[1fr_0.4fr_auto]"}`} key={`${key}:${debt.account}`}>
+              <div className={`relative grid gap-3 overflow-hidden rounded-[var(--radius)] border border-[var(--border)] bg-[var(--surface-strong)] p-3 sm:items-end ${socialWallet ? "sm:grid-cols-[1fr_auto]" : "sm:grid-cols-[1fr_0.4fr_auto]"}`} key={key}>
                 <div>
-                  <p className="font-semibold">Bill #{key}</p>
+                  <p className="font-semibold">Bill #{debt.billId.toString()}</p>
                   <p className="mt-1 text-sm text-[var(--text-muted)]">
                     Paid <span className="amount-text">${billUnitsToUsdc(debt.totalPaid)}</span> · claimed{" "}
                     <span className="amount-text">${billUnitsToUsdc(debt.claimed)}</span>
