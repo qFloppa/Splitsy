@@ -1,7 +1,7 @@
 "use client";
 
 import { ConnectButton } from "@rainbow-me/rainbowkit";
-import { Loader2 } from "lucide-react";
+import { Loader2, Moon, Sun } from "lucide-react";
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { getWalletClient } from "wagmi/actions";
@@ -9,6 +9,9 @@ import { arcTestnet } from "viem/chains";
 import SignInMenu from "@/app/SignInMenu";
 import XAuthControl from "@/app/XAuthControl";
 import { Switch } from "@/app/SettlementAgentsPanel";
+import { ProviderIcon } from "@/app/ProviderTag";
+import type { AccountProvider } from "@/lib/types";
+import { useTheme } from "@/lib/use-theme";
 import { wagmiConfig } from "@/lib/wagmi";
 import { coveredByOthers, payableRows, selectionTotalUnits } from "@/lib/pay-link";
 import {
@@ -50,7 +53,14 @@ type RowState = { status: "idle" | "pending" | "signing" | "paid" | "failed"; tx
 
 const usd = (units: string) => `$${Number(billUnitsToUsdc(BigInt(units))).toFixed(2)}`;
 
+// The row's provider arrives as a bare string (the preimage's snapshot, or the
+// live users row). Only badge the ones ProviderIcon actually knows — it defaults
+// unknown values to the X logo, and claiming the wrong platform is worse than
+// claiming none.
+const KNOWN_PROVIDERS = new Set(["x", "discord", "email", "wallet"]);
+
 export default function PayClient({ token }: { token: string }) {
+  const { theme, setTheme } = useTheme();
   const [bill, setBill] = useState<Bill | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -281,6 +291,14 @@ export default function PayClient({ token }: { token: string }) {
         <div className="flex items-center gap-2">
           <SignInMenu />
           <ConnectButton accountStatus="address" chainStatus="icon" showBalance={false} />
+          <button
+            aria-label={`Switch to ${theme === "light" ? "dark" : "light"} mode`}
+            className="icon-button shrink-0"
+            onClick={() => setTheme((current) => (current === "light" ? "dark" : "light"))}
+            type="button"
+          >
+            {theme === "light" ? <Moon size={17} /> : <Sun size={17} />}
+          </button>
         </div>
       </header>
 
@@ -354,7 +372,14 @@ export default function PayClient({ token }: { token: string }) {
                         />
                       )}
                       <div className="min-w-0 flex-1">
-                        <p className="pay-row-name truncate">{row.label}</p>
+                        <p className="pay-row-name flex items-center gap-2">
+                          {KNOWN_PROVIDERS.has(row.provider ?? "") ? (
+                            <span className="flex shrink-0 items-center">
+                              <ProviderIcon provider={row.provider as AccountProvider} size={20} />
+                            </span>
+                          ) : null}
+                          <span className="truncate">{row.label}</span>
+                        </p>
                         <p className="pay-row-meta">
                           {state === "signing"
                             ? "waiting for confirmation…"
