@@ -382,7 +382,11 @@ export function assertReceiptSuccess(receipt: TransactionReceipt, action: string
 // payDebt reverts inside USDC.transferFrom when the payer is short, and a receipt
 // only ever says "reverted" — no reason string survives. So check the balance
 // before we spend a wallet prompt on it, and name the real cause. Approval is the
-// choke point: every path that spends USDC approves the exact amount first.
+// choke point: every path that spends USDC approves first, for exactly what it is
+// about to spend. That is one call's amount on the single-payment paths, and the
+// exact sum of the selected rows on /pay/[token], which approves once and then
+// calls payDebtFor per row — so the balance named here is the whole selection's,
+// not one row's.
 async function assertUsdcBalance(account: `0x${string}`, amount: bigint) {
   const balance = await readArcUsdcBalance(account);
   if (balance < amount) {
