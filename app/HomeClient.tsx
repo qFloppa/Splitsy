@@ -171,7 +171,7 @@ type ScoutReport = {
 type OcrState = "idle" | "reading" | "ready" | "error";
 type BillRunState = "idle" | "connecting" | "working" | "success" | "error";
 type RecurringRunState = "idle" | "connecting" | "working" | "error" | "success";
-type AppTab = "bills" | "recurring" | "dashboard" | "agents";
+type AppTab = "bills" | "settle" | "recurring" | "dashboard" | "agents";
 type RecurringCycle = "test" | "weekly" | "monthly" | "custom";
 type RecurringMemberInput = {
   id: string;
@@ -353,6 +353,7 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
   // collapsed "Action needed" summary shows one $ total across both systems.
   const [socialPendingTotalUsd, setSocialPendingTotalUsd] = useState(0);
   const [socialHistoryCount, setSocialHistoryCount] = useState(0);
+  const headerRef = useRef<HTMLElement | null>(null);
   // The same off-chain debts XDebtsPanel renders, fetched here because the
   // Settle deck needs them as data rather than as rows. Task 10 removes the
   // panel and this becomes the only reader of /api/bills' `iOwe`.
@@ -2573,9 +2574,25 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [address]);
 
+  // The Settle deck sizes itself to the viewport minus the header, and the
+  // header is responsive (it stacks below `md`), so its height is measured
+  // rather than assumed the way .pay-shell hardcodes 4rem.
+  useEffect(() => {
+    const node = headerRef.current;
+    if (!node) return;
+    const observer = new ResizeObserver(([entry]) => {
+      document.documentElement.style.setProperty("--app-header-h", `${entry.contentRect.height}px`);
+    });
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, []);
+
   return (
     <main className="app-shell min-h-screen text-[var(--text)]">
-      <header className="static z-30 border-b border-[var(--border)] bg-[color:var(--header-bg)] backdrop-blur-xl">
+      <header
+        ref={headerRef}
+        className={`${activeTab === "settle" ? "sticky top-0" : "static"} z-30 border-b border-[var(--border)] bg-[color:var(--header-bg)] backdrop-blur-xl`}
+      >
         <div className="mx-auto max-w-[88rem] px-4 py-3 sm:px-6 lg:px-8">
           <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
             <div className="min-w-0 shrink">

@@ -3216,3 +3216,277 @@ a.job-trail-tx:hover {
   .pay-bar { position: fixed; left: 0; right: 0; bottom: 0; }
   .pay-roster { padding-bottom: 6rem; }
 }
+
+/* ── Settle deck (/app → Settle tab) ──────────────────────────────────────────
+   The /pay poster treatment applied to every debt and claim the signed-in user
+   has. One full-viewport section per item, snapped, over a single poster field.
+   Deliberately native: CSS scroll-snap, no smooth-scroll library — Lenis owns
+   the scroll position and fights snap. */
+
+.settle-deck {
+  height: calc(100dvh - var(--app-header-h, 0px));
+  overflow-y: auto;
+  scroll-snap-type: y mandatory;
+  background: var(--pay-poster-bg);
+  color: var(--pay-poster-fg);
+  /* No overscroll-behavior: contain — default scroll-chaining is what lets the
+     end card hand off to the document so the site footer stays reachable. */
+}
+
+.settle-section {
+  height: 100%;
+  scroll-snap-align: start;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 0.6rem;
+  padding: clamp(1.5rem, 1rem + 4vw, 5rem);
+  position: relative;
+  opacity: 0.25;
+  transform: scale(0.98);
+  transition: opacity var(--dur-3) var(--ease-out), transform var(--dur-3) var(--ease-out);
+}
+
+.settle-section[data-active="true"] { opacity: 1; transform: none; }
+.settle-section[data-state="settled"] { opacity: 0.5; }
+
+.settle-rail {
+  position: absolute;
+  top: clamp(1.5rem, 1rem + 4vw, 5rem);
+  left: clamp(1.5rem, 1rem + 4vw, 5rem);
+  right: clamp(1.5rem, 1rem + 4vw, 5rem);
+  display: flex;
+  justify-content: space-between;
+  font-family: var(--font-clash), system-ui, sans-serif;
+  font-size: 0.69rem;
+  font-weight: 300;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--pay-poster-dim);
+}
+
+/* Every reveal below runs off [data-active], so one IntersectionObserver drives
+   the whole surface — no scroll listener, no animation loop. */
+.settle-merchant,
+.settle-label,
+.settle-amount,
+.settle-meta,
+.settle-action {
+  clip-path: inset(0 0 100% 0);
+  transform: translateY(0.3em);
+  transition:
+    clip-path var(--dur-3) var(--ease-out),
+    transform var(--dur-3) var(--ease-out),
+    opacity var(--dur-2) var(--ease-out);
+}
+
+.settle-section[data-active="true"] :is(.settle-merchant, .settle-label, .settle-amount, .settle-meta, .settle-action) {
+  clip-path: inset(0);
+  transform: none;
+}
+
+.settle-section[data-active="true"] .settle-label { transition-delay: 80ms; }
+.settle-section[data-active="true"] .settle-amount { transition-delay: 80ms; }
+.settle-section[data-active="true"] .settle-meta { transition-delay: 140ms; }
+.settle-section[data-active="true"] .settle-action { transition-delay: 260ms; }
+
+.settle-merchant {
+  font-family: var(--font-clash), system-ui, sans-serif;
+  font-weight: 300;
+  font-size: clamp(3.2rem, 1.4rem + 7vw, 9rem);
+  line-height: 0.9;
+  letter-spacing: -0.03em;
+  /* Merchant names come from OCR — one long unbroken token would otherwise run
+     off the section at this size. */
+  overflow-wrap: anywhere;
+  margin: 0.4rem 0 1.6rem;
+}
+
+.settle-label {
+  font-family: var(--font-clash), system-ui, sans-serif;
+  font-weight: 300;
+  font-size: 0.69rem;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--pay-poster-dim);
+}
+
+.settle-amount {
+  font-family: var(--font-clash), system-ui, sans-serif;
+  font-weight: 300;
+  font-size: clamp(3rem, 1.4rem + 6vw, 7rem);
+  line-height: 1;
+  letter-spacing: -0.03em;
+  font-variant-numeric: tabular-nums;
+  /* The editable case is a bare <input>: no chrome of its own, inheriting all
+     of the above. */
+  appearance: none;
+  border: 0;
+  background: none;
+  color: inherit;
+  padding: 0;
+  width: 100%;
+  max-width: 12ch;
+  outline: none;
+}
+
+.settle-amount::-webkit-outer-spin-button,
+.settle-amount::-webkit-inner-spin-button { appearance: none; margin: 0; }
+
+.settle-rule {
+  height: 1px;
+  max-width: 12ch;
+  background: var(--pay-poster-rule);
+  transform: scaleX(0);
+  transform-origin: left;
+  transition: transform var(--dur-4) var(--ease-out), background var(--dur-1) var(--ease-out);
+}
+
+.settle-section[data-active="true"] .settle-rule { transform: scaleX(1); }
+.settle-amount:focus + .settle-rule { background: var(--pay-poster-fg); height: 2px; }
+.settle-rule[data-tone="warning"] { background: var(--warning-text); }
+
+.settle-meta {
+  font-size: 0.75rem;
+  color: var(--pay-poster-dim);
+  margin-top: 0.55rem;
+}
+
+/* The signature control: borderless, huge, receded into the poster — but it is
+   the control that moves money, so its rest state sits at the lowest mix that
+   still clears 4.5:1 on --pay-poster-bg. Faded, never invisible. */
+.settle-action {
+  font-family: var(--font-clash), system-ui, sans-serif;
+  font-weight: 300;
+  font-size: clamp(2.2rem, 1rem + 3.2vw, 4.4rem);
+  letter-spacing: 0.14em;
+  line-height: 1;
+  border: 0;
+  background: none;
+  padding: 0;
+  margin: clamp(2rem, 1rem + 3vw, 4rem) 0 0;
+  cursor: pointer;
+  /* A stretched flex item would put the focus ring around the whole column. */
+  align-self: flex-start;
+  color: color-mix(in srgb, var(--pay-poster-fg) 62%, var(--pay-poster-bg));
+  transition: color var(--dur-2) var(--ease-out), letter-spacing var(--dur-2) var(--ease-out);
+}
+
+:root[data-theme="dark"] .settle-action {
+  color: color-mix(in srgb, var(--pay-poster-fg) 58%, var(--pay-poster-bg));
+}
+
+.settle-action:hover:not(:disabled),
+.settle-action:focus-visible {
+  color: var(--pay-poster-fg);
+  letter-spacing: 0.1em;
+}
+
+/* No border means nothing to indicate focus — this ring is not optional. */
+.settle-action:focus-visible {
+  outline: 1px solid currentColor;
+  outline-offset: 0.6em;
+}
+
+.settle-action:disabled { opacity: 0.4; cursor: not-allowed; }
+
+@media (prefers-contrast: more) {
+  .settle-action { color: var(--pay-poster-fg); }
+}
+
+.settle-triggers {
+  position: absolute;
+  bottom: clamp(1.5rem, 1rem + 4vw, 5rem);
+  left: clamp(1.5rem, 1rem + 4vw, 5rem);
+  display: flex;
+  gap: 2rem;
+}
+
+.settle-trigger {
+  font-family: var(--font-clash), system-ui, sans-serif;
+  font-weight: 300;
+  font-size: 0.78rem;
+  letter-spacing: 0.06em;
+  border: 0;
+  background: none;
+  padding: 0.3rem 0;
+  cursor: pointer;
+  color: var(--pay-poster-dim);
+  border-bottom: 1px solid var(--pay-poster-rule);
+  transition: color var(--dur-1) var(--ease-out), border-color var(--dur-1) var(--ease-out);
+}
+
+.settle-trigger:hover, .settle-trigger:focus-visible { color: var(--pay-poster-fg); border-color: currentColor; }
+.settle-trigger[data-tone="warning"] { color: var(--warning-text); border-color: currentColor; }
+
+.settle-sheet-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  background: color-mix(in srgb, var(--pay-poster-bg) 55%, transparent);
+  backdrop-filter: blur(20px);
+}
+
+.settle-sheet {
+  position: fixed;
+  z-index: 41;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  max-height: 70dvh;
+  overflow-y: auto;
+  padding: clamp(1.5rem, 1rem + 2vw, 3rem);
+  border-top: 1px solid var(--pay-poster-rule);
+  border-radius: 1.4rem 1.4rem 0 0;
+  background: var(--pay-poster-bg);
+  color: var(--pay-poster-fg);
+}
+
+.settle-divider {
+  height: 100%;
+  scroll-snap-align: start;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.8rem;
+  text-align: center;
+}
+
+.settle-divider > hr {
+  width: 0;
+  border: 0;
+  border-top: 1px solid var(--pay-poster-rule);
+  transition: width var(--dur-4) var(--ease-out);
+}
+
+.settle-divider[data-active="true"] > hr { width: min(28rem, 60vw); }
+
+.settle-steps {
+  font-family: var(--font-clash), system-ui, sans-serif;
+  font-weight: 300;
+  font-size: 1rem;
+  color: var(--pay-poster-dim);
+  display: grid;
+  gap: 0.35rem;
+}
+
+.settle-steps > li[data-state="active"] { color: var(--pay-poster-fg); }
+.settle-steps > li[data-state="done"] { opacity: 0.55; }
+.settle-steps > li[data-state="error"] { color: var(--warning-text); }
+
+@media (prefers-reduced-motion: reduce) {
+  .settle-deck { scroll-behavior: auto; }
+  .settle-section,
+  .settle-merchant,
+  .settle-label,
+  .settle-amount,
+  .settle-meta,
+  .settle-action {
+    transform: none;
+    clip-path: none;
+    transition: opacity var(--dur-1) linear;
+  }
+  .settle-rule { transform: scaleX(1); transition: none; }
+  .settle-divider > hr { width: min(28rem, 60vw); transition: none; }
+}
