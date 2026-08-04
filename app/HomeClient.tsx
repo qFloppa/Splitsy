@@ -169,7 +169,7 @@ type ScoutReport = {
 };
 
 type OcrState = "idle" | "reading" | "ready" | "error";
-type BillRunState = "idle" | "connecting" | "working" | "success" | "error";
+export type BillRunState = "idle" | "connecting" | "working" | "success" | "error";
 type RecurringRunState = "idle" | "connecting" | "working" | "error" | "success";
 type AppTab = "bills" | "settle" | "recurring" | "dashboard" | "agents";
 type RecurringCycle = "test" | "weekly" | "monthly" | "custom";
