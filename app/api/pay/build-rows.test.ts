@@ -80,6 +80,23 @@ test("an unreadable participant slot is omitted, not shown as a $0 phantom", () 
   assert.deepEqual(rows.map((r) => r.label), ["@a"]);
 });
 
+// The omission above drops the tail, so nothing survives *after* a hole. A
+// builder walking labels with a running counter instead of index k would still
+// pass it — and would land "@a" on the wrong person's debt here.
+test("a row after an omitted slot keeps its own label, not the omitted one's", () => {
+  const rows = buildPayRows({
+    participantList: ["0xAaA", "0xBbB"],
+    participants: [null, P(2000000n, 0n)],
+    labels: ["@a", "@b"],
+    providers: ["x", "discord"],
+    liveHandles: new Map(),
+  });
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].label, "@b");
+  assert.equal(rows[0].provider, "discord");
+  assert.equal(rows[0].address, "0xBbB");
+});
+
 test("live handle lookup is case-insensitive against checksummed chain addresses", () => {
   const rows = buildPayRows({
     participantList: ["0xAbCdEf1234567890AbCdEf1234567890AbCdEf12"],

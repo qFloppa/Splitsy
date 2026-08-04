@@ -25,15 +25,19 @@ export async function GET(_request: Request, ctx: RouteContext<"/api/pay/[token]
 
   const billId = BigInt(preimage.billId);
   let bill;
+  let participants;
   try {
     bill = await getBillOnchain(billId);
+    // Inside the same try as getBillOnchain: this is the same transport with a
+    // larger request. multicall's allowFailure covers individual legs, but the
+    // RPC call itself still rejects — so an Arc hiccup here has to surface as
+    // the same 502, not a default 500. One error contract for Task 7.
+    participants = await getParticipantsOnchain(
+      bill.participantList.map((addr) => ({ billId, addr })),
+    );
   } catch {
     return Response.json({ error: "Could not read this bill from Arc." }, { status: 502 });
   }
-
-  const participants = await getParticipantsOnchain(
-    bill.participantList.map((addr) => ({ billId, addr })),
-  );
 
   // Display-only enrichment; getUsersByWallets already degrades to an empty map
   // rather than throwing, so a Supabase hiccup costs handles, not the page.
@@ -59,6 +63,8 @@ export async function GET(_request: Request, ctx: RouteContext<"/api/pay/[token]
     registryAddress: preimage.registryAddress,
     merchant: preimage.merchant,
     currency: preimage.currency,
+    // Display only, from the preimage — and the stale figure if the preimage
+    // and the chain ever disagree. Charge from the *Units fields, never this.
     total: preimage.total,
     dueDate: preimage.dueDate ?? 0,
     escrowUntilFull: bill.escrowUntilFull,
