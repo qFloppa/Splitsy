@@ -88,6 +88,7 @@ import {
 } from "@/lib/bill-split-contracts";
 import { refundableNow } from "@/lib/treasury";
 import { settleItemId, type OwnedDebt } from "@/lib/settle-items";
+import { useSocialDebts } from "@/lib/use-social-debts";
 import {
   authorizeRecurringPayment,
   approveUsdc,
@@ -352,6 +353,10 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
   // collapsed "Action needed" summary shows one $ total across both systems.
   const [socialPendingTotalUsd, setSocialPendingTotalUsd] = useState(0);
   const [socialHistoryCount, setSocialHistoryCount] = useState(0);
+  // The same off-chain debts XDebtsPanel renders, fetched here because the
+  // Settle deck needs them as data rather than as rows. Task 10 removes the
+  // panel and this becomes the only reader of /api/bills' `iOwe`.
+  const { debts: socialDebts, reload: reloadSocialDebts } = useSocialDebts();
   // Whether the "Action needed" list is expanded. Null = auto: expanded for a
   // short list, collapsed once it gets long (a summary stands in). A tap pins
   // it, persisted across reloads.
