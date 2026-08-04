@@ -9,6 +9,10 @@ import { REGISTRY_ADDRESS, getParticipantsOnchain } from "@/lib/arc-read";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+// 1 approval + up to MAX_ROWS legs, each polled sequentially by
+// executeContractOnArc. The default budget can kill this mid-batch AFTER money
+// has moved, returning no `results` at all. Mirrors app/api/agents/autopay.
+export const maxDuration = 300;
 
 const ARC_USDC_ADDRESS = process.env.ARC_TESTNET_USDC_ADDRESS ?? "0x3600000000000000000000000000000000000000";
 const MAX_ROWS = 20;
