@@ -48,3 +48,6 @@ recovery/
 .venv-audit/
 .console.txt
 .shot-*.png
+
+# Visual brainstorming companion scratch dir
+.superpowers/
