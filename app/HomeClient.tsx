@@ -1365,7 +1365,10 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
         ? { ...current, status: "success", steps: current.steps.map((step) => ({ ...step, state: "done" })) }
         : current,
     );
-    fireSuccessConfetti();
+    // The Settle deck celebrates once, when it empties — a burst under every
+    // card in a deck of bills is noise, not a reward. Every other surface shows
+    // ProgressModal and keeps its confetti here.
+    if (activeTab !== "settle") fireSuccessConfetti();
   }
 
   function failFlow(message: string) {
@@ -3415,7 +3418,12 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
         </AnimatePresence>
       </section>
 
-      {progressFlow ? <ProgressModal flow={progressFlow} onClose={closeFlow} /> : null}
+      {/* A deck flow renders its steps inside the section that owns it, so the
+          modal would cover the very thing it duplicates. Flows with no owning
+          section (the multi-position settle) still use the modal on every tab. */}
+      {progressFlow && !(activeTab === "settle" && progressFlow.subjectKey) ? (
+        <ProgressModal flow={progressFlow} onClose={closeFlow} />
+      ) : null}
       <XAuthControl />
     </main>
   );

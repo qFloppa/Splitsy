@@ -1,7 +1,8 @@
 "use client";
 
 import * as Dialog from "@radix-ui/react-dialog";
-import { useMemo, useState, type ReactNode } from "react";
+import confetti from "canvas-confetti";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { billUnitsToUsdc } from "@/lib/bill-split-contracts";
 import { buildSettleItems, type OwnedDebt, type SettleItem, type SocialDebt } from "@/lib/settle-items";
 import { bridgeSourceChains, type BridgeSourceChain } from "@/lib/appkit-bridge";
@@ -38,6 +39,13 @@ export type SettleDeckProps = SettleDeckHandlers & {
 
 const usd = (units: bigint) => `$${billUnitsToUsdc(units)}`;
 
+// The flow running against THIS section, if any. Everything else in the deck
+// carries on rendering its amount as usual.
+function runningFlow(deck: SettleDeckHandlers, id: string): ProgressFlow | null {
+  const flow = deck.progressFlow;
+  return flow && flow.subjectKey === id && flow.status === "running" ? flow : null;
+}
+
 export default function SettleDeck({
   socialDebts,
   walletDebts,
@@ -55,14 +63,76 @@ export default function SettleDeck({
   // itself would reject a plain SettleItem.
   const countedIds = items.filter((item) => item.kind !== "divider" && item.kind !== "end").map((item) => item.id);
 
+  const deckRef = useRef<HTMLDivElement | null>(null);
+  const [activeId, setActiveId] = useState<string | null>(null);
+  // Sections whose flow succeeded this session. They stay mounted and dimmed
+  // until the registry refresh drops them, and the count tells the end card
+  // whether the user emptied the deck or it simply arrived empty.
+  const [settledIds, setSettledIds] = useState<string[]>([]);
+  // Before the observer's first callback nothing is active, which would paint an
+  // entirely hidden first section. The top of the deck is the honest default.
+  const active = activeId ?? items[0]?.id ?? null;
+  const { progressFlow } = deck;
+
+  useEffect(() => {
+    const node = deckRef.current;
+    if (!node) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const visible = entries.find((entry) => entry.isIntersecting);
+        if (visible) setActiveId(visible.target.getAttribute("data-id"));
+      },
+      { root: node, threshold: 0.6 },
+    );
+    node.querySelectorAll("[data-id]").forEach((section) => observer.observe(section));
+    return () => observer.disconnect();
+  }, [items]);
+
+  // The settled section stays mounted through the advance. Unmounting it the
+  // instant the payment lands would pull the snap point out from under the
+  // user's thumb mid-scroll — so hold for a beat, then move on. Marking it
+  // settled inside the timeout (rather than on the success render) is also what
+  // keeps this out of the synchronous-setState-in-an-effect trap.
+  useEffect(() => {
+    if (progressFlow?.status !== "success" || !progressFlow.subjectKey) return;
+    const settled = progressFlow.subjectKey;
+    const timer = setTimeout(() => {
+      setSettledIds((current) => (current.includes(settled) ? current : [...current, settled]));
+      // The just-settled section isn't marked in the DOM yet — this render
+      // hasn't happened — so exclude it by id and skip anything already dimmed.
+      const next = deckRef.current?.querySelector(
+        `[data-id]:not([data-id="${settled}"]):not([data-state="settled"])`,
+      );
+      next?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }, 1200);
+    return () => clearTimeout(timer);
+  }, [progressFlow?.status, progressFlow?.subjectKey]);
+
+  // Fires once, when the deck empties — not per card. Under every section in a
+  // deck it is noise rather than a reward.
+  useEffect(() => {
+    if (countedIds.length > 0 || settledIds.length === 0) return;
+    if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) return;
+    void confetti({
+      colors: ["#2775ca", "#3ee6d6", "#17a56b"],
+      origin: { y: 0.5 },
+      particleCount: 110,
+      spread: 68,
+      startVelocity: 36,
+    });
+  }, [countedIds.length, settledIds.length]);
+
   return (
-    <div className="settle-deck">
+    <div className="settle-deck" ref={deckRef}>
       {items.map((item) => (
         <Section
+          active={item.id === active}
           deck={deck}
           index={countedIds.indexOf(item.id)}
           item={item}
           key={item.id}
+          settled={settledIds.includes(item.id)}
+          settledCount={settledIds.length}
           signedIn={signedIn}
           total={countedIds.length}
         />
@@ -72,21 +142,27 @@ export default function SettleDeck({
 }
 
 function Section({
+  active,
   deck,
   index,
   item,
+  settled,
+  settledCount,
   signedIn,
   total,
 }: {
+  active: boolean;
   deck: SettleDeckHandlers;
   index: number;
   item: SettleItem;
+  settled: boolean;
+  settledCount: number;
   signedIn: boolean;
   total: number;
 }) {
   if (item.kind === "divider") {
     return (
-      <section className="settle-divider" data-active="true">
+      <section className="settle-divider" data-active={active} data-id={item.id}>
         <p className="settle-label">owed to you</p>
         <hr />
         <p className="settle-merchant" style={{ fontSize: "clamp(2rem, 1rem + 3vw, 4rem)", margin: 0 }}>
@@ -98,19 +174,28 @@ function Section({
 
   if (item.kind === "end") {
     return (
-      <section className="settle-section" data-active="true">
-        <h2 className="settle-merchant">{signedIn ? "nothing waiting on you" : "sign in to settle"}</h2>
+      <section className="settle-section" data-active={active} data-id={item.id}>
+        <h2 className="settle-merchant">
+          {settledCount > 0 ? "all settled" : signedIn ? "nothing waiting on you" : "sign in to settle"}
+        </h2>
         <p className="settle-meta">
-          {signedIn
-            ? "Bills tagged to your handle or wallet will appear here."
-            : "Sign in or connect a wallet to see the bills tagged to you."}
+          {settledCount > 0
+            ? `${settledCount} ${settledCount === 1 ? "bill" : "bills"} cleared just now. Nothing else is waiting on you.`
+            : signedIn
+              ? "Bills tagged to your handle or wallet will appear here."
+              : "Sign in or connect a wallet to see the bills tagged to you."}
         </p>
       </section>
     );
   }
 
   return (
-    <section className="settle-section" data-active="true">
+    <section
+      className="settle-section"
+      data-active={active}
+      data-id={item.id}
+      data-state={settled ? "settled" : undefined}
+    >
       {/* A lone item gets no counter — snap chrome on a single card is noise. */}
       <div className="settle-rail">
         <span>{total > 1 ? `${String(index + 1).padStart(2, "0")} / ${String(total).padStart(2, "0")}` : ""}</span>
@@ -119,7 +204,7 @@ function Section({
       {item.kind === "debt-social" ? (
         <SocialDebtBody deck={deck} item={item} />
       ) : item.kind === "debt-wallet" ? (
-        <WalletDebtBody deck={deck} item={item} />
+        <WalletDebtBody active={active} deck={deck} item={item} />
       ) : item.kind === "claim" ? (
         <ClaimBody deck={deck} item={item} />
       ) : (
@@ -130,6 +215,20 @@ function Section({
 }
 
 type ItemOf<K extends SettleItem["kind"]> = Extract<SettleItem, { kind: K }>;
+
+// The progress modal's steps, inlined where the amount and the button were. The
+// section the money is leaving is the right place to watch it leave.
+function FlowSteps({ flow }: { flow: ProgressFlow }) {
+  return (
+    <ol className="settle-steps">
+      {flow.steps.map((step) => (
+        <li data-state={step.state} key={step.key}>
+          {step.label}
+        </li>
+      ))}
+    </ol>
+  );
+}
 
 // One shared message line, so an error from any path lands in the same place.
 function DeckMessage({ deck, id }: { deck: SettleDeckHandlers; id: string }) {
@@ -143,6 +242,7 @@ function DeckMessage({ deck, id }: { deck: SettleDeckHandlers; id: string }) {
 }
 
 function SocialDebtBody({ deck, item }: { deck: SettleDeckHandlers; item: ItemOf<"debt-social"> }) {
+  const flow = runningFlow(deck, item.id);
   return (
     <>
       <p className="settle-label">
@@ -150,33 +250,49 @@ function SocialDebtBody({ deck, item }: { deck: SettleDeckHandlers; item: ItemOf
         {item.debt.creator?.provider ? ` · ${item.debt.creator.provider}` : ""}
       </p>
       <h2 className="settle-merchant">{item.debt.merchant}</h2>
-      <p className="settle-label">you pay</p>
-      <p className="settle-amount">${item.debt.amountUsd.toFixed(2)}</p>
-      <p className="settle-meta">settles in full from your splitsy wallet</p>
-      <button
-        className="settle-action"
-        disabled={deck.billState === "working"}
-        onClick={() => deck.paySocialDebt(item.debt)}
-        type="button"
-      >
-        Pay →
-      </button>
+      {flow ? (
+        <FlowSteps flow={flow} />
+      ) : (
+        <>
+          <p className="settle-label">you pay</p>
+          <p className="settle-amount">${item.debt.amountUsd.toFixed(2)}</p>
+          <p className="settle-meta">settles in full from your splitsy wallet</p>
+          <button
+            className="settle-action"
+            disabled={deck.billState === "working"}
+            onClick={() => deck.paySocialDebt(item.debt)}
+            type="button"
+          >
+            Pay →
+          </button>
+        </>
+      )}
       <DeckMessage deck={deck} id={item.id} />
     </>
   );
 }
 
-function WalletDebtBody({ deck, item }: { deck: SettleDeckHandlers; item: ItemOf<"debt-wallet"> }) {
+function WalletDebtBody({
+  active,
+  deck,
+  item,
+}: {
+  active: boolean;
+  deck: SettleDeckHandlers;
+  item: ItemOf<"debt-wallet">;
+}) {
   const { debt, action, refundable } = item;
   const verification = useBillVerification(debt.billId, debt.metadataHash);
   const merchant = verification.merchant || `Bill #${debt.billId.toString()}`;
   // A mismatch or an altered total is a red warning, not a detail — it opens
-  // itself rather than waiting behind a click, because Pay is right there.
+  // itself rather than waiting behind a click, because Pay is right there. Only
+  // for the section in view: a modal thrown from off-screen is a jump scare.
   const unsafe = verification.status === "mismatch" || verification.audit.state === "altered";
   // null = follow the warning; an explicit open or close pins it. Same shape as
   // BillVerification's receipt toggle, and it needs no effect to do it.
   const [sheet, setSheet] = useState<"verified" | "bridge" | "none" | null>(null);
-  const openSheet = sheet ?? (unsafe ? "verified" : "none");
+  const openSheet = sheet ?? (active && unsafe ? "verified" : "none");
+  const flow = runningFlow(deck, item.id);
   // Client-side guard only — the contract clamps regardless. Saying so before
   // the signature costs one comparison and saves a rejected transaction.
   const remainingLabel = billUnitsToUsdc(debt.remaining);
@@ -191,54 +307,62 @@ function WalletDebtBody({ deck, item }: { deck: SettleDeckHandlers; item: ItemOf
     <>
       <p className="settle-label">bill #{debt.billId.toString()}</p>
       <h2 className="settle-merchant">{merchant}</h2>
-      <p className="settle-label">{action === "refund" ? "you get back" : "you pay"}</p>
-      {editing ? (
-        <>
-          <input
-            aria-label={`Amount to pay on bill ${debt.billId.toString()}`}
-            className="settle-amount"
-            inputMode="decimal"
-            onChange={(event) => deck.setPartialPayments({ ...deck.partialPayments, [item.id]: event.target.value })}
-            type="number"
-            value={deck.partialPayments[item.id] ?? remainingLabel}
-          />
-          <span className="settle-rule" data-tone={overpaying ? "warning" : undefined} />
-        </>
+      {flow ? (
+        <FlowSteps flow={flow} />
       ) : (
         <>
-          <p className="settle-amount">{usd(action === "refund" ? refundable : debt.remaining)}</p>
-          <span className="settle-rule" />
+          <p className="settle-label">{action === "refund" ? "you get back" : "you pay"}</p>
+          {editing ? (
+            <>
+              <input
+                aria-label={`Amount to pay on bill ${debt.billId.toString()}`}
+                className="settle-amount"
+                inputMode="decimal"
+                onChange={(event) =>
+                  deck.setPartialPayments({ ...deck.partialPayments, [item.id]: event.target.value })
+                }
+                type="number"
+                value={deck.partialPayments[item.id] ?? remainingLabel}
+              />
+              <span className="settle-rule" data-tone={overpaying ? "warning" : undefined} />
+            </>
+          ) : (
+            <>
+              <p className="settle-amount">{usd(action === "refund" ? refundable : debt.remaining)}</p>
+              <span className="settle-rule" />
+            </>
+          )}
+          <p className="settle-meta">
+            {action === "refund"
+              ? "this bill didn't come together — your share goes back to your wallet"
+              : heldInEscrow
+                ? `your ${usd(debt.paid)} is in the bill, not with the creator — they can't collect until the group is paid up${
+                    debt.dueDate > 0n
+                      ? `, and you can take yours back after ${new Date(Number(debt.dueDate) * 1000).toLocaleDateString()}`
+                      : ""
+                  }`
+                : `of ${usd(debt.owed)} owed${
+                    debt.dueDate > 0n ? ` · due ${new Date(Number(debt.dueDate) * 1000).toLocaleDateString()}` : ""
+                  }`}
+          </p>
+          {!item.editable && action === "pay" ? (
+            <p className="settle-meta">settles in full from your splitsy wallet</p>
+          ) : null}
+          <button
+            className="settle-action"
+            disabled={deck.billState === "working" || overpaying}
+            onClick={() => (action === "refund" ? deck.refundOnArc(debt) : deck.payDebtOnArc(debt))}
+            type="button"
+          >
+            {action === "refund" ? "Get it back" : "Pay"} →
+          </button>
+          {overpaying ? (
+            <p className="settle-meta" style={{ color: "var(--warning-text)" }}>
+              more than the {usd(debt.remaining)} remaining
+            </p>
+          ) : null}
         </>
       )}
-      <p className="settle-meta">
-        {action === "refund"
-          ? "this bill didn't come together — your share goes back to your wallet"
-          : heldInEscrow
-            ? `your ${usd(debt.paid)} is in the bill, not with the creator — they can't collect until the group is paid up${
-                debt.dueDate > 0n
-                  ? `, and you can take yours back after ${new Date(Number(debt.dueDate) * 1000).toLocaleDateString()}`
-                  : ""
-              }`
-            : `of ${usd(debt.owed)} owed${
-                debt.dueDate > 0n ? ` · due ${new Date(Number(debt.dueDate) * 1000).toLocaleDateString()}` : ""
-              }`}
-      </p>
-      {!item.editable && action === "pay" ? (
-        <p className="settle-meta">settles in full from your splitsy wallet</p>
-      ) : null}
-      <button
-        className="settle-action"
-        disabled={deck.billState === "working" || overpaying}
-        onClick={() => (action === "refund" ? deck.refundOnArc(debt) : deck.payDebtOnArc(debt))}
-        type="button"
-      >
-        {action === "refund" ? "Get it back" : "Pay"} →
-      </button>
-      {overpaying ? (
-        <p className="settle-meta" style={{ color: "var(--warning-text)" }}>
-          more than the {usd(debt.remaining)} remaining
-        </p>
-      ) : null}
       <DeckMessage deck={deck} id={item.id} />
 
       <div className="settle-triggers">
@@ -290,6 +414,77 @@ function WalletDebtBody({ deck, item }: { deck: SettleDeckHandlers; item: ItemOf
           ))}
         </div>
       </Sheet>
+    </>
+  );
+}
+
+function ClaimBody({ deck, item }: { deck: SettleDeckHandlers; item: ItemOf<"claim"> }) {
+  const { debt } = item;
+  const flow = runningFlow(deck, item.id);
+  const claimableLabel = billUnitsToUsdc(debt.claimable);
+  const typed = Number(deck.claimAmounts[item.id] ?? claimableLabel);
+  const overclaiming = Number.isFinite(typed) && typed > Number(claimableLabel);
+
+  return (
+    <>
+      <p className="settle-label">bill #{debt.billId.toString()}</p>
+      <h2 className="settle-merchant">ready to collect</h2>
+      {flow ? (
+        <FlowSteps flow={flow} />
+      ) : (
+        <>
+          <p className="settle-label">you collect</p>
+          {item.editable ? (
+            <>
+              <input
+                aria-label={`Amount to collect from bill ${debt.billId.toString()}`}
+                className="settle-amount"
+                inputMode="decimal"
+                onChange={(event) => deck.setClaimAmounts({ ...deck.claimAmounts, [item.id]: event.target.value })}
+                type="number"
+                value={deck.claimAmounts[item.id] ?? claimableLabel}
+              />
+              <span className="settle-rule" data-tone={overclaiming ? "warning" : undefined} />
+            </>
+          ) : (
+            <>
+              <p className="settle-amount">{usd(debt.claimable)}</p>
+              <span className="settle-rule" />
+            </>
+          )}
+          <p className="settle-meta">
+            paid {usd(debt.totalPaid)} · claimed {usd(debt.claimed)}
+          </p>
+          {!item.editable ? <p className="settle-meta">collects in full to your splitsy wallet</p> : null}
+          <button
+            className="settle-action"
+            disabled={deck.billState === "working" || overclaiming}
+            onClick={() => deck.claimSplitterFunds(debt)}
+            type="button"
+          >
+            Collect →
+          </button>
+          {overclaiming ? (
+            <p className="settle-meta" style={{ color: "var(--warning-text)" }}>
+              more than the {usd(debt.claimable)} ready
+            </p>
+          ) : null}
+        </>
+      )}
+      <DeckMessage deck={deck} id={item.id} />
+    </>
+  );
+}
+
+function FailedClaimBody({ item }: { item: ItemOf<"claim-failed"> }) {
+  return (
+    <>
+      <p className="settle-label">bill #{item.debt.billId.toString()}</p>
+      <h2 className="settle-merchant">this bill didn&apos;t come together</h2>
+      <p className="settle-meta">
+        It held the money until everyone paid, and the due date passed while still short. There is nothing to
+        collect — each payer takes their own share back.
+      </p>
     </>
   );
 }
@@ -400,69 +595,5 @@ function VerifiedSheetBody({
         {metadataHash}
       </p>
     </div>
-  );
-}
-
-function ClaimBody({ deck, item }: { deck: SettleDeckHandlers; item: ItemOf<"claim"> }) {
-  const { debt } = item;
-  const claimableLabel = billUnitsToUsdc(debt.claimable);
-  const typed = Number(deck.claimAmounts[item.id] ?? claimableLabel);
-  const overclaiming = Number.isFinite(typed) && typed > Number(claimableLabel);
-
-  return (
-    <>
-      <p className="settle-label">bill #{debt.billId.toString()}</p>
-      <h2 className="settle-merchant">ready to collect</h2>
-      <p className="settle-label">you collect</p>
-      {item.editable ? (
-        <>
-          <input
-            aria-label={`Amount to collect from bill ${debt.billId.toString()}`}
-            className="settle-amount"
-            inputMode="decimal"
-            onChange={(event) => deck.setClaimAmounts({ ...deck.claimAmounts, [item.id]: event.target.value })}
-            type="number"
-            value={deck.claimAmounts[item.id] ?? claimableLabel}
-          />
-          <span className="settle-rule" data-tone={overclaiming ? "warning" : undefined} />
-        </>
-      ) : (
-        <>
-          <p className="settle-amount">{usd(debt.claimable)}</p>
-          <span className="settle-rule" />
-        </>
-      )}
-      <p className="settle-meta">
-        paid {usd(debt.totalPaid)} · claimed {usd(debt.claimed)}
-      </p>
-      {!item.editable ? <p className="settle-meta">collects in full to your splitsy wallet</p> : null}
-      <button
-        className="settle-action"
-        disabled={deck.billState === "working" || overclaiming}
-        onClick={() => deck.claimSplitterFunds(debt)}
-        type="button"
-      >
-        Collect →
-      </button>
-      {overclaiming ? (
-        <p className="settle-meta" style={{ color: "var(--warning-text)" }}>
-          more than the {usd(debt.claimable)} ready
-        </p>
-      ) : null}
-      <DeckMessage deck={deck} id={item.id} />
-    </>
-  );
-}
-
-function FailedClaimBody({ item }: { item: ItemOf<"claim-failed"> }) {
-  return (
-    <>
-      <p className="settle-label">bill #{item.debt.billId.toString()}</p>
-      <h2 className="settle-merchant">this bill didn&apos;t come together</h2>
-      <p className="settle-meta">
-        It held the money until everyone paid, and the due date passed while still short. There is nothing to
-        collect — each payer takes their own share back.
-      </p>
-    </>
   );
 }
