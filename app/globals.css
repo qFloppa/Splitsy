@@ -34,6 +34,19 @@
   --success: var(--settled-green);
   --success-soft: rgba(23, 165, 107, 0.12);
 
+  /* The pay page's poster and CTA bar are one editorial surface. They used to
+     be hardcoded to ink/paper, which left the page half near-black and half
+     pure white in light mode and put two mismatched navies side by side in
+     dark. Both halves now flip together: cream poster beside a white roster in
+     light, ink poster beside the navy roster in dark. */
+  --pay-poster-bg: var(--paper-50);
+  --pay-poster-fg: var(--ink-950);
+  --pay-poster-dim: rgba(7, 20, 33, 0.6);
+  --pay-poster-rule: rgba(7, 20, 33, 0.14);
+  --pay-poster-settled: #dceee3;
+  /* arc-cyan is near-invisible on the light poster; blue carries it there. */
+  --pay-poster-fill: var(--accent);
+
   /* Dashboard chart palette. The 5 identity hues are CVD-validated (dataviz
      validate_palette.js — do not "improve"); created/settled are a separate
      2-series activity pair (indigo/green), not identity buckets. */
@@ -114,6 +127,13 @@
   --accent-soft: rgba(98, 168, 241, 0.15);
   --success: #46d996;
   --success-soft: rgba(70, 217, 150, 0.13);
+
+  --pay-poster-bg: var(--ink-950);
+  --pay-poster-fg: var(--paper-50);
+  --pay-poster-dim: rgba(247, 243, 234, 0.6);
+  --pay-poster-rule: rgba(247, 243, 234, 0.18);
+  --pay-poster-settled: #0d2a1f;
+  --pay-poster-fill: var(--arc-cyan);
 
   /* Dashboard chart palette — dark. CVD-validated identity hues + activity pair. */
   --chart-identity-x: #3987e5;
@@ -3056,24 +3076,30 @@ a.job-trail-tx:hover {
   position: sticky;
   top: 0;
   align-self: start;
-  height: calc(100dvh - 4rem);
+  /* min-height, not height: at this type scale a long merchant name would
+     otherwise overflow a fixed-height box. Short bills still pin the footer to
+     the bottom of the viewport. */
+  min-height: calc(100dvh - 4rem);
   display: flex;
   flex-direction: column;
   justify-content: space-between;
   gap: 2rem;
   padding: clamp(2rem, 1rem + 3vw, 4rem);
-  background: var(--ink-950);
-  color: var(--paper-50);
+  background: var(--pay-poster-bg);
+  color: var(--pay-poster-fg);
 }
 
-.pay-poster[data-settled="true"] { background: #0d2a1f; }
+.pay-poster[data-settled="true"] { background: var(--pay-poster-settled); }
 
 .pay-merchant {
   font-family: var(--font-clash), system-ui, sans-serif;
   font-weight: 600;
   letter-spacing: -0.03em;
-  line-height: 0.95;
-  font-size: clamp(2.2rem, 1.2rem + 3.4vw, 4rem);
+  line-height: 0.92;
+  font-size: clamp(2.8rem, 1.2rem + 6.4vw, 7.5rem);
+  /* Merchant names come from OCR — a single long unbroken token at this size
+     would otherwise run off the poster. */
+  overflow-wrap: anywhere;
   margin: 0.6rem 0 1.4rem;
 }
 
@@ -3083,7 +3109,7 @@ a.job-trail-tx:hover {
   font-weight: 600;
   letter-spacing: -0.03em;
   line-height: 1;
-  font-size: clamp(3rem, 1.6rem + 5vw, 5.5rem);
+  font-size: clamp(3.6rem, 1.5rem + 8.6vw, 9.5rem);
 }
 
 .pay-amount[data-settled="true"] { color: var(--success); }
@@ -3091,7 +3117,7 @@ a.job-trail-tx:hover {
 .pay-progress {
   height: 5px;
   border-radius: 999px;
-  background: rgba(247, 243, 234, 0.18);
+  background: var(--pay-poster-rule);
   overflow: hidden;
   margin-top: 1.1rem;
 }
@@ -3099,7 +3125,7 @@ a.job-trail-tx:hover {
 .pay-progress > span {
   display: block;
   height: 100%;
-  background: var(--arc-cyan);
+  background: var(--pay-poster-fill);
   transition: width var(--dur-3) var(--ease-out);
 }
 
@@ -3114,7 +3140,7 @@ a.job-trail-tx:hover {
   display: flex;
   align-items: center;
   gap: 1rem;
-  padding: 1.1rem 0;
+  padding: 1.45rem 0;
   border-bottom: 1px solid var(--border);
   transition: box-shadow var(--dur-1) var(--ease-out), background var(--dur-1) var(--ease-out);
 }
@@ -3135,12 +3161,12 @@ a.job-trail-tx:hover {
   font-family: var(--font-clash), system-ui, sans-serif;
   font-weight: 600;
   letter-spacing: -0.02em;
-  font-size: clamp(1.05rem, 0.9rem + 0.6vw, 1.5rem);
+  font-size: clamp(1.35rem, 1rem + 1.4vw, 2.4rem);
 }
 
 .pay-row-meta {
   font-family: var(--font-geist-mono), ui-monospace, monospace;
-  font-size: 0.7rem;
+  font-size: 0.82rem;
   color: var(--text-muted);
   margin-top: 0.15rem;
 }
@@ -3149,7 +3175,7 @@ a.job-trail-tx:hover {
   font-family: var(--font-geist-mono), ui-monospace, monospace;
   font-variant-numeric: tabular-nums;
   font-weight: 600;
-  font-size: clamp(1.05rem, 0.9rem + 0.6vw, 1.4rem);
+  font-size: clamp(1.3rem, 1rem + 1.3vw, 2.2rem);
 }
 
 .pay-stamp {
@@ -3172,15 +3198,16 @@ a.job-trail-tx:hover {
   gap: 1rem;
   flex-wrap: wrap;
   padding: 0.9rem clamp(1.25rem, 0.8rem + 1.6vw, 2.5rem);
-  background: var(--ink-950);
-  color: var(--paper-50);
+  border-top: 1px solid var(--pay-poster-rule);
+  background: var(--pay-poster-bg);
+  color: var(--pay-poster-fg);
 }
 
 .pay-bar-total {
   font-family: var(--font-clash), system-ui, sans-serif;
   font-variant-numeric: tabular-nums;
   font-weight: 600;
-  font-size: clamp(1.3rem, 1.1rem + 0.8vw, 1.9rem);
+  font-size: clamp(1.65rem, 1.2rem + 1.5vw, 2.8rem);
 }
 
 @media (max-width: 860px) {

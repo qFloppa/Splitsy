@@ -305,7 +305,7 @@ export default function PayClient({ token }: { token: string }) {
       <main className="pay-shell">
         <aside className="pay-poster" data-settled={bill.settled}>
           <div>
-            <p className="text-[0.62rem] font-semibold uppercase tracking-[0.14em] text-[rgba(247,243,234,0.55)]">
+            <p className="text-[0.72rem] font-semibold uppercase tracking-[0.14em] text-[var(--pay-poster-dim)]">
               Bill #{bill.billId} · Arc Testnet
             </p>
             <h1 className="pay-merchant">{bill.merchant || "Bill"}</h1>
@@ -316,14 +316,14 @@ export default function PayClient({ token }: { token: string }) {
             ) : (
               <p className="pay-amount">{usd(remainingUnits.toString())}</p>
             )}
-            <p className="amount-text mt-1 text-xs text-[rgba(247,243,234,0.6)]">
+            <p className="amount-text mt-1 text-sm text-[var(--pay-poster-dim)]">
               {bill.settled ? `${usd(bill.totalOwedUnits)} of ${usd(bill.totalOwedUnits)}` : `still owed of ${usd(bill.totalOwedUnits)}`}
             </p>
             <div className="pay-progress">
               <span style={{ width: `${Math.min(100, pct)}%` }} />
             </div>
           </div>
-          <div className="text-[0.62rem] leading-relaxed text-[rgba(247,243,234,0.55)]">
+          <div className="text-[0.72rem] leading-relaxed text-[var(--pay-poster-dim)]">
             <p>✓ Details verified against Arc</p>
             <p>
               Created by {bill.creator.label ?? `${bill.creator.address.slice(0, 6)}…${bill.creator.address.slice(-4)}`}
@@ -344,7 +344,7 @@ export default function PayClient({ token }: { token: string }) {
             </div>
           ) : (
             <>
-              <p className="text-[0.62rem] font-semibold uppercase tracking-[0.14em] text-[var(--text-muted)]">
+              <p className="text-[0.72rem] font-semibold uppercase tracking-[0.14em] text-[var(--text-muted)]">
                 {paying ? "Settling — don't close this tab" : "Choose who you're covering"}
               </p>
               {message ? <p className="mt-2 text-sm text-[var(--warning-text)]">{message}</p> : null}
@@ -410,11 +410,11 @@ export default function PayClient({ token }: { token: string }) {
       {bill.settled ? null : (
         <div className="pay-bar">
           <span className="flex items-baseline gap-2">
-            <span className="text-[0.62rem] font-semibold uppercase tracking-[0.14em] text-[rgba(247,243,234,0.6)]">
+            <span className="text-[0.72rem] font-semibold uppercase tracking-[0.14em] text-[var(--pay-poster-dim)]">
               You pay
             </span>
             <span className="pay-bar-total">{usd(selectedTotal.toString())}</span>
-            <span className="text-xs text-[rgba(247,243,234,0.6)]">
+            <span className="text-xs text-[var(--pay-poster-dim)]">
               · {selected.size} row{selected.size === 1 ? "" : "s"}
             </span>
           </span>
