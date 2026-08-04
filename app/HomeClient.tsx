@@ -15,6 +15,7 @@ import {
   FileJson,
   Info,
   Landmark,
+  Link2,
   Loader2,
   Lock,
   Mail,
@@ -113,6 +114,7 @@ import {
   ParsedBill,
   SplitParticipant,
 } from "@/lib/snapsplit";
+import { newShareToken } from "@/lib/pay-link";
 import { providerDisplay } from "@/lib/provider-display";
 import { ReputationBadge } from "./ReputationBadge";
 import type { IdentityProvider } from "@/lib/types";
@@ -369,6 +371,12 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
   // used to grade payment-reputation timeliness; absent leaves scoring unchanged.
   const [dueDateInput, setDueDateInput] = useState("");
   const [escrowUntilFull, setEscrowUntilFull] = useState(false);
+  // "Anyone can pay": mints a share link at creation. Off by default — a bill
+  // that anyone holding a URL can pay into is a choice, not a default.
+  const [publicPayLink, setPublicPayLink] = useState(false);
+  // Set on success by BOTH creation paths, so the confirmation can offer the
+  // link regardless of which wallet wrote the bill.
+  const [shareLinkUrl, setShareLinkUrl] = useState<string>("");
   const [bridgeResults, setBridgeResults] = useState<Record<string, BridgeSummary>>({});
   const [bridgeSession, setBridgeSession] = useState<BrowserWalletSession | null>(null);
   const [recurringCycle, setRecurringCycle] = useState<RecurringCycle>("weekly");
@@ -1037,6 +1045,7 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
     setSplitMode("equal");
     setDueDateInput("");
     setEscrowUntilFull(false);
+    setPublicPayLink(false);
     setParticipantShareInputs({});
     setSubmittedBillId(null);
     setParticipants([
@@ -1059,6 +1068,10 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
       setBillMessage("Manual shares cannot be larger than the bill Total USD amount.");
       return;
     }
+    // The previous bill's link is deliberately NOT cleared by resetSplitForm()
+    // (that runs on success and is what reveals the confirmation). Clear it as a
+    // new submit starts instead, so a failed create can't leave a stale link.
+    setShareLinkUrl("");
     const rows = displayParticipants.filter((p) => p.walletAddress.trim());
     if (rows.length === 0) {
       setBillState("error");
@@ -1191,6 +1204,12 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
       // date. Both creation paths commit this identically so the payer's re-hash
       // matches. Invalid/empty input leaves it undefined (scoring unchanged).
       const dueDate = dueDateToUnix(dueDateInput);
+      // Minted in the browser, not the server: the browser-wallet path publishes
+      // its preimage fire-and-forget, so a server-minted token would mean either
+      // awaiting that POST or a second round trip before the link could be
+      // shown. Publishing a preimage already requires details that hash to the
+      // on-chain commitment, so in practice only the creator can set one.
+      const shareToken = publicPayLink ? newShareToken() : undefined;
 
       // Social creator → server signs from their Circle DCW. Either it's the
       // only identity they have, or they explicitly picked it over their
@@ -1214,6 +1233,7 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
             receiptHash,
             receiptImageBase64: receiptCommit ? bytesToBase64(receiptCommit.bytes) : undefined,
             dueDate,
+            shareToken,
             escrowUntilFull: Boolean(dueDate) && escrowUntilFull,
           }),
         });
@@ -1227,6 +1247,7 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
         }
         setBillState("success");
         setBillMessage(`Bill #${data.billId} is live on Arc from your Splitsy wallet. Tagged people will see it after signing in.`);
+        setShareLinkUrl(shareToken ? `${window.location.origin}/pay/${shareToken}` : "");
         resetSplitForm();
         void refreshBillRegistry();
         return;
@@ -1258,6 +1279,7 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
         escrowUntilFull: Boolean(dueDate) && escrowUntilFull,
       });
       setSubmittedBillId(result.billId);
+      setShareLinkUrl(shareToken ? `${window.location.origin}/pay/${shareToken}` : "");
       setBillState("success");
       setBillMessage(`Bill #${result.billId.toString()} is live on Arc. Payers will see it when they connect.`);
       const publishedReceipt = receiptCommit;
@@ -1276,6 +1298,7 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
           billId: result.billId.toString(),
           merchant: bill.merchant, currency: bill.currency, total: confirmedUsd,
           participantLabels: labels, participantProviders: providers, receiptHash, dueDate,
+          shareToken,
           receiptImageBase64: publishedReceipt ? bytesToBase64(publishedReceipt.bytes) : undefined,
         }),
         // Fire-and-forget, but never silent: a swallowed failure here is how the
@@ -2686,7 +2709,30 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
                 a bill smooth-scrolls back to the top; anywhere lower and the
                 confirmation scrolls out of view the moment it appears. */}
             {billState === "success" && billMessage && !billReadyForSplit ? (
-              <Message tone="success">{billMessage}</Message>
+              <div className="flex flex-col gap-3">
+                <Message tone="success">{billMessage}</Message>
+                {shareLinkUrl ? (
+                  <div className="flex flex-col gap-2 rounded-[var(--radius)] border border-[var(--accent)] bg-[var(--accent-soft)] p-3 text-sm">
+                    <span className="font-semibold text-[var(--text)]">Anyone with this link can pay</span>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <code className="amount-text min-w-0 flex-1 truncate rounded-[var(--radius)] border border-[var(--border)] bg-[var(--surface-strong)] px-2 py-1.5 text-xs text-[var(--text)]">
+                        {shareLinkUrl}
+                      </code>
+                      <button
+                        className="secondary-button"
+                        onClick={() => void navigator.clipboard.writeText(shareLinkUrl)}
+                        type="button"
+                      >
+                        <Link2 size={15} />
+                        Copy link
+                      </button>
+                    </div>
+                    <span className="text-xs text-[var(--text-muted)]">
+                      Save it now — it isn&apos;t shown again anywhere.
+                    </span>
+                  </div>
+                ) : null}
+              </div>
             ) : null}
 
             {/* One merged "You owe" card. It stays mounted and is only *hidden*
@@ -3133,6 +3179,32 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
                     disabled={!dueDateInput}
                     onChange={setEscrowUntilFull}
                     srLabel="All or nothing — hold the money until everyone has paid"
+                  />
+                </div>
+
+                <div
+                  className={`mt-4 flex flex-col gap-3 rounded-[var(--radius)] border p-3 text-sm sm:flex-row sm:items-start sm:justify-between ${
+                    publicPayLink
+                      ? "border-[var(--accent)] bg-[var(--accent-soft)]"
+                      : "border-[var(--border)] bg-[var(--surface-muted)]"
+                  }`}
+                >
+                  <div>
+                    <p className="flex items-center gap-1.5 font-semibold text-[var(--text)]">
+                      <Link2 size={14} />
+                      Anyone can pay
+                      <span className="font-normal text-[var(--text-muted)]">(share link)</span>
+                    </p>
+                    <p className="mt-1 max-w-xl leading-6 text-[var(--text-muted)]">
+                      Get a link that opens this bill on its own page, where anyone holding it can cover any payer&apos;s
+                      share — useful when one person picks up several shares. Without it, only the people you tagged can
+                      pay. The link is minted when the bill is written and can&apos;t be added or removed afterwards.
+                    </p>
+                  </div>
+                  <Switch
+                    checked={publicPayLink}
+                    onChange={setPublicPayLink}
+                    srLabel="Anyone can pay — get a shareable link for this bill"
                   />
                 </div>
 
