@@ -465,8 +465,12 @@ export async function payBillDebtWithMemo({
 
 // Cover somebody else's share. The registry makes this permissionless on
 // purpose: it moves only the caller's USDC and only ever reduces `debtor`'s
-// remaining balance, capped at what they still owe. Same approve-then-pay shape
-// as payBillDebt — the caller must have approved the registry for `amount`.
+// remaining balance. `amount` must be at most their `remaining` — the registry
+// reverts InvalidAmount if it exceeds it, it does not clamp. Pass a freshly-read
+// `owed - paid`; a concurrent payment on the same row will revert this tx, so
+// surface that as "already covered", not a generic failure. That amount must be
+// chain-derived, never client-supplied. Same approve-then-pay shape as
+// payBillDebt — the caller must have approved the registry for `amount`.
 //
 // No memo wrapper. billPaymentMemoId keys a memo by (billId, payer), so N rows
 // paid by one wallet in one sitting would collide on a single id; the registry's
