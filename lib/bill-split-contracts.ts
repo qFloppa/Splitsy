@@ -463,6 +463,39 @@ export async function payBillDebtWithMemo({
   return assertReceiptSuccess(await publicClient.waitForTransactionReceipt({ hash }), "Payment");
 }
 
+// Cover somebody else's share. The registry makes this permissionless on
+// purpose: it moves only the caller's USDC and only ever reduces `debtor`'s
+// remaining balance, capped at what they still owe. Same approve-then-pay shape
+// as payBillDebt — the caller must have approved the registry for `amount`.
+//
+// No memo wrapper. billPaymentMemoId keys a memo by (billId, payer), so N rows
+// paid by one wallet in one sitting would collide on a single id; the registry's
+// own DebtFunded event already records who funded whose share.
+export async function payBillDebtFor({
+  walletClient,
+  account,
+  billId,
+  debtor,
+  amount,
+}: BillSplitWallet & {
+  billId: bigint;
+  debtor: `0x${string}`;
+  amount: bigint;
+}) {
+  ensureRegistryConfigured();
+
+  const hash = await walletClient.writeContract({
+    address: BILL_SPLIT_REGISTRY_ADDRESS,
+    abi: billSplitRegistryAbi,
+    functionName: "payDebtFor",
+    args: [billId, debtor, amount],
+    account,
+    chain: arcTestnet,
+  });
+
+  return assertReceiptSuccess(await publicClient.waitForTransactionReceipt({ hash }), "Payment");
+}
+
 export async function claimBillFunds({
   walletClient,
   account,
