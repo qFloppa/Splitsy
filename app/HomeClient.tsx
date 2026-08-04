@@ -46,7 +46,6 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 import BillVerification from "./BillVerification";
 import XAuthControl from "./XAuthControl";
 import SignInMenu from "./SignInMenu";
-import XDebtsPanel from "./XDebtsPanel";
 import XHistoryPanel from "./XHistoryPanel";
 import DashboardPanel from "./DashboardPanel";
 import AgentEconomyPanel from "./AgentEconomyPanel";
@@ -59,7 +58,6 @@ import {
   bridgeUsdcToArc,
   BridgeSourceChain,
   type BridgeStepEvent,
-  BridgeSummary,
   type BrowserWalletSession,
   createBrowserWalletSessionFromConnector,
 } from "@/lib/appkit-bridge";
@@ -87,7 +85,8 @@ import {
   refundBillPayment,
 } from "@/lib/bill-split-contracts";
 import { refundableNow } from "@/lib/treasury";
-import { settleItemId, type OwnedDebt } from "@/lib/settle-items";
+import { buildSettleItems, settleItemId, type OwnedDebt, type SocialDebt } from "@/lib/settle-items";
+import SettleDeck from "./SettleDeck";
 import { useSocialDebts } from "@/lib/use-social-debts";
 import {
   authorizeRecurringPayment,
@@ -323,7 +322,6 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
   // Set on success by BOTH creation paths, so the confirmation can offer the
   // link regardless of which wallet wrote the bill.
   const [shareLinkUrl, setShareLinkUrl] = useState<string>("");
-  const [bridgeResults, setBridgeResults] = useState<Record<string, BridgeSummary>>({});
   const [bridgeSession, setBridgeSession] = useState<BrowserWalletSession | null>(null);
   const [recurringCycle, setRecurringCycle] = useState<RecurringCycle>("weekly");
   const [customCycleDays, setCustomCycleDays] = useState("30");
@@ -332,36 +330,20 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
   const [billMessage, setBillMessage] = useState("");
   const [debtMessages, setDebtMessages] = useState<Record<string, { message: string; tone: "error" | "neutral" | "success" }>>({});
   const [progressFlow, setProgressFlow] = useState<ProgressFlow | null>(null);
-  const [claimMessage, setClaimMessage] = useState("");
-  const [claimMessageTone, setClaimMessageTone] = useState<"error" | "neutral" | "success">("neutral");
   const [submittedBillId, setSubmittedBillId] = useState<bigint | null>(null);
   const [debts, setDebts] = useState<OwnedBillSplitDebt[]>([]);
   const [splitterBills, setSplitterBills] = useState<OwnedBillSplitDebt[]>([]);
   const [arcUsdcBalance, setArcUsdcBalance] = useState<bigint | null>(null);
-  // Per-identity-wallet balances (keyed by lowercase address), so a debt row
-  // shows the balance of the wallet that will actually pay it.
-  const [arcUsdcBalances, setArcUsdcBalances] = useState<Record<string, bigint>>({});
-  const [arcUsdcBalanceFlash, setArcUsdcBalanceFlash] = useState(false);
   const [partialPayments, setPartialPayments] = useState<Record<string, string>>({});
   const [claimAmounts, setClaimAmounts] = useState<Record<string, string>>({});
   const [participantShareInputs, setParticipantShareInputs] = useState<Record<string, string>>({});
-  // Off-chain (social) counts reported up by the self-fetching X panels, so the
-  // merged pending window and the shared History panel can sum/gate across both
-  // the social and on-chain debt systems.
-  const [socialPendingCount, setSocialPendingCount] = useState(0);
-  // Sum of the off-chain (social) debts, reported up by XDebtsPanel, so the
-  // collapsed "Action needed" summary shows one $ total across both systems.
-  const [socialPendingTotalUsd, setSocialPendingTotalUsd] = useState(0);
+  // Off-chain (social) history count, reported up by the self-fetching X history
+  // panel so the shared History panel can gate across both debt systems.
   const [socialHistoryCount, setSocialHistoryCount] = useState(0);
   const headerRef = useRef<HTMLElement | null>(null);
-  // The same off-chain debts XDebtsPanel renders, fetched here because the
-  // Settle deck needs them as data rather than as rows. Task 10 removes the
-  // panel and this becomes the only reader of /api/bills' `iOwe`.
+  // The off-chain debts owed by the signed-in handle. The Settle deck wants them
+  // as data rather than as rows, so the fetch lives here now.
   const { debts: socialDebts, reload: reloadSocialDebts } = useSocialDebts();
-  // Whether the "Action needed" list is expanded. Null = auto: expanded for a
-  // short list, collapsed once it gets long (a summary stands in). A tap pins
-  // it, persisted across reloads.
-  const [debtsExpanded, setDebtsExpanded] = usePersistedExpand("splitsy-expand-debts");
   // The signed-in Splitsy user (social creator), if any — lets a DCW user create
   // an on-chain bill server-side without a browser wallet. Provider + handle are
   // kept so the split form can reject the creator tagging themselves.
@@ -455,8 +437,7 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [socialWalletAddress]);
 
-  // On-chain debts still owed, and the merged pending count (social + wallet)
-  // that the single "Action needed" window heading shows.
+  // On-chain debts still owed.
   //
   // A refundable debt belongs here even with nothing remaining: the payer who
   // settled their whole share is exactly the person a failed all-or-nothing bill
@@ -467,12 +448,14 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
   const activeWalletDebts = registryReadAddress
     ? debts.filter((debt) => debt.remaining > 0n || refundableNow(debt, debt.paid, nowSeconds) > 0n)
     : [];
-  const pendingTotal = socialPendingCount + activeWalletDebts.length;
-  // Combined $ owed across both systems, for the collapsed summary line.
-  const walletPendingUnits = activeWalletDebts.reduce((sum, debt) => sum + debt.remaining, 0n);
-  const pendingTotalUsd = socialPendingTotalUsd + Number(billUnitsToUsdc(walletPendingUnits));
-  // Auto-collapse a long pending list; a tap on Expand/Collapse pins the choice.
-  const debtsShown = debtsExpanded ?? pendingTotal <= 3;
+  // The Settle tab's badge, from the same ordering function the deck renders, so
+  // the two can't disagree about what's pending. Chrome sections don't count.
+  const settleCount = buildSettleItems({
+    socialDebts,
+    walletDebts: activeWalletDebts,
+    splitterBills,
+    nowSeconds,
+  }).filter((item) => item.kind !== "divider" && item.kind !== "end").length;
   // Whether the wallet side has any history record (paid / pending-as-creditor /
   // claimed), so the shared History panel can show one empty state across both
   // the social and wallet systems.
@@ -870,16 +853,13 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
 
   function resetAccountState() {
     setBridgeSession(null);
-    setBridgeResults({});
     setBillWallet(null);
     setRecurringWallet(null);
     setDebts([]);
     setSplitterBills([]);
-    setArcUsdcBalances({});
     setPartialPayments({});
     setClaimAmounts({});
     setDebtMessages({});
-    setClaimMessage("");
     setWalletTabs([]);
     setTabState(null);
     setTabEvents([]);
@@ -938,7 +918,6 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
       setDebts(nextDebts);
       setSplitterBills(nextSplitterBills);
       setArcUsdcBalance(perAccount[0].balance);
-      setArcUsdcBalances(Object.fromEntries(perAccount.map(({ account: owner, balance }) => [owner.toLowerCase(), balance])));
       setPartialPayments((current) => ({
         ...Object.fromEntries(
           nextDebts.map((debt) => [debt.billId.toString(), billUnitsToUsdc(debt.remaining)]),
@@ -965,16 +944,7 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
       try {
         const next = await readArcUsdcBalance(account);
         setArcUsdcBalance(next);
-        setArcUsdcBalances((current) => ({ ...current, [account.toLowerCase()]: next }));
-        if (previousBalance === null || next !== previousBalance) {
-          if (previousBalance !== null) {
-            // Re-arm the animation: clear first so the class re-adds and replays.
-            setArcUsdcBalanceFlash(false);
-            window.requestAnimationFrame(() => setArcUsdcBalanceFlash(true));
-            window.setTimeout(() => setArcUsdcBalanceFlash(false), 1000);
-          }
-          return;
-        }
+        if (previousBalance === null || next !== previousBalance) return;
       } catch {
         // Swallow transient RPC errors and try again on the next tick.
       }
@@ -1388,6 +1358,52 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
     setProgressFlow((current) => (current ? { ...current, open: false } : current));
   }
 
+  // Off-chain debt tagged to a handle: the server transfers the full amount from
+  // the user's Circle wallet. The PIN gate is the same one every server-signed
+  // path uses.
+  async function paySocialDebt(debt: SocialDebt) {
+    const key = `social:${debt.id}`;
+    const pin = await fetch("/api/wallet/pin").then((r) => r.json()).catch(() => ({}));
+    if (!pin.unlocked) {
+      setDebtMessages((current) => ({
+        ...current,
+        [key]: {
+          tone: "neutral",
+          message: "Unlock your wallet (the wallet button in the bottom-right corner), then tap Pay again.",
+        },
+      }));
+      return;
+    }
+    beginSocialPayFlow(key, debt.merchant, debt.amountUsd.toFixed(2));
+    try {
+      setBillState("working");
+      setDebtMessages((current) => {
+        const next = { ...current };
+        delete next[key];
+        return next;
+      });
+      const res = await fetch(`/api/debts/${debt.id}/pay`, { method: "POST" });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        const message =
+          data.error === "insufficient_funds"
+            ? "Your wallet needs more test USDC to cover this."
+            : (data.error ?? "Payment failed.");
+        setBillState("error");
+        failFlow(message);
+        setDebtMessages((current) => ({ ...current, [key]: { tone: "error", message } }));
+        return;
+      }
+      setBillState("success");
+      completeFlow();
+      await reloadSocialDebts();
+    } catch (caught) {
+      setBillState("error");
+      failFlow(errorMessage(caught));
+      setDebtMessages((current) => ({ ...current, [key]: { tone: "error", message: errorMessage(caught) } }));
+    }
+  }
+
   async function payDebtOnArc(debt: OwnedBillSplitDebt) {
     // Keyed by bill AND account: a dual-identity user can owe the same bill from
     // their browser wallet and their Circle DCW, and one key would let the two
@@ -1711,7 +1727,6 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
         amount: amountLabel,
         onStep: (event) => handleBridgeStep(event, source),
       });
-      setBridgeResults((current) => ({ ...current, [debtKey]: result }));
 
       if (result.state === "error") {
         failFlow("The bridge did not complete. No funds were claimed on Arc.");
@@ -1852,34 +1867,41 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
     if (debt.via === "social" && me?.walletAddress) {
       const pin = await fetch("/api/wallet/pin").then((r) => r.json()).catch(() => ({}));
       if (!pin.unlocked) {
-        setClaimMessageTone("neutral");
-        setClaimMessage("Unlock your wallet (the wallet button in the bottom-right corner), then tap Claim again.");
+        setDebtMessages((current) => ({
+          ...current,
+          [debtKey]: {
+            tone: "neutral",
+            message: "Unlock your wallet (the wallet button in the bottom-right corner), then tap Claim again.",
+          },
+        }));
         return;
       }
       beginClaimFlow(debtKey, debt.billId.toString(), billUnitsToUsdc(debt.claimable));
       try {
         setBillState("working");
-        setClaimMessageTone("neutral");
-        setClaimMessage("Claiming paid funds.");
+        setDebtMessages((current) => ({ ...current, [debtKey]: { tone: "neutral", message: "Claiming paid funds." } }));
         const res = await fetch(`/api/onchain-bills/${debt.billId}/claim`, { method: "POST" });
         const data = await res.json().catch(() => ({}));
         if (!res.ok) {
           setBillState("error");
           failFlow(data.error ?? "Claim failed.");
-          setClaimMessageTone("error");
-          setClaimMessage(data.error ?? "Claim failed.");
+          setDebtMessages((current) => ({
+            ...current,
+            [debtKey]: { tone: "error", message: data.error ?? "Claim failed." },
+          }));
           return;
         }
         completeFlow();
         setBillState("success");
-        setClaimMessageTone("success");
-        setClaimMessage(`Claimed funds from bill #${debt.billId} to your wallet.`);
+        setDebtMessages((current) => ({
+          ...current,
+          [debtKey]: { tone: "success", message: `Claimed funds from bill #${debt.billId} to your wallet.` },
+        }));
         await refreshBillRegistry();
       } catch (caught) {
         setBillState("error");
         failFlow(errorMessage(caught));
-        setClaimMessageTone("error");
-        setClaimMessage(errorMessage(caught));
+        setDebtMessages((current) => ({ ...current, [debtKey]: { tone: "error", message: errorMessage(caught) } }));
       }
       return;
     }
@@ -1894,24 +1916,26 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
 
     if (amount <= 0n || amount > debt.claimable) {
       setBillState("error");
-      setClaimMessageTone("error");
-      setClaimMessage("Enter an amount up to the claimable balance.");
+      setDebtMessages((current) => ({
+        ...current,
+        [debtKey]: { tone: "error", message: "Enter an amount up to the claimable balance." },
+      }));
       return;
     }
 
     try {
       setBillState("working");
-      setClaimMessageTone("neutral");
-      setClaimMessage("Claiming paid funds.");
+      setDebtMessages((current) => ({ ...current, [debtKey]: { tone: "neutral", message: "Claiming paid funds." } }));
       await claimBillFunds({ ...wallet, billId: debt.billId, amount });
       setBillState("success");
-      setClaimMessageTone("success");
-      setClaimMessage(`Claimed ${billUnitsToUsdc(amount)} USDC from bill #${debt.billId.toString()}.`);
+      setDebtMessages((current) => ({
+        ...current,
+        [debtKey]: { tone: "success", message: `Claimed ${billUnitsToUsdc(amount)} USDC from bill #${debt.billId.toString()}.` },
+      }));
       await refreshBillRegistry(wallet.account);
     } catch (caught) {
       setBillState("error");
-      setClaimMessageTone("error");
-      setClaimMessage(errorMessage(caught));
+      setDebtMessages((current) => ({ ...current, [debtKey]: { tone: "error", message: errorMessage(caught) } }));
     }
   }
 
@@ -2616,6 +2640,10 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
                 <TabButton active={activeTab === "bills"} onClick={() => switchAppTab("bills")}>
                   Bills
                 </TabButton>
+                <TabButton active={activeTab === "settle"} onClick={() => switchAppTab("settle")}>
+                  Settle
+                  {settleCount > 0 ? <span className="spec-chip spec-chip-attn">{settleCount}</span> : null}
+                </TabButton>
                 <TabButton active={activeTab === "recurring"} onClick={() => switchAppTab("recurring")}>
                   Recurring
                 </TabButton>
@@ -2647,7 +2675,31 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
         </div>
       </header>
 
-      <section className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
+      {/* Full-bleed by design — the poster can't live inside the padded, capped
+          wrapper every other tab uses, so it renders as its sibling. */}
+      {activeTab === "settle" ? (
+        <SettleDeck
+          billState={billState}
+          bridgeForDebt={bridgeForDebt}
+          claimAmounts={claimAmounts}
+          claimSplitterFunds={claimSplitterFunds}
+          debtMessages={debtMessages}
+          nowSeconds={nowSeconds}
+          partialPayments={partialPayments}
+          payDebtOnArc={payDebtOnArc}
+          paySocialDebt={paySocialDebt}
+          progressFlow={progressFlow}
+          refundOnArc={refundOnArc}
+          setClaimAmounts={setClaimAmounts}
+          setPartialPayments={setPartialPayments}
+          signedIn={Boolean(me?.walletAddress || registryReadAddress)}
+          socialDebts={socialDebts}
+          splitterBills={splitterBills}
+          walletDebts={activeWalletDebts}
+        />
+      ) : null}
+
+      <section className={`mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8${activeTab === "settle" ? " hidden" : ""}`}>
         <AnimatePresence mode="wait">
         {activeTab === "bills" ? (
           <motion.div
@@ -2718,78 +2770,6 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
                   </div>
                 ) : null}
               </div>
-            ) : null}
-
-            {/* One merged "You owe" card. It stays mounted and is only *hidden*
-                when nothing is pending — never unmounted — so XDebtsPanel keeps
-                fetching and can report its social count up for the summed
-                heading, which is what decides whether this card shows at all. */}
-            <div className={pendingTotal > 0 ? undefined : "hidden"}>
-              <Panel
-                action={
-                  <>
-                    {/* Collapse once the list gets long (>3), so many unpaid bills
-                        don't stretch the page; a tap pins the choice. Also show
-                        the toggle whenever the list is actually collapsed —
-                        otherwise a pinned "collapsed" from a longer list leaves a
-                        short one stuck shut with no way to reopen it. */}
-                    {pendingTotal > 3 || !debtsShown ? (
-                      <button className="secondary-button" onClick={() => setDebtsExpanded(!debtsShown)} type="button">
-                        <ChevronDown className={`transition-transform ${debtsShown ? "rotate-180" : ""}`} size={16} />
-                        {debtsShown ? "Collapse" : "Expand"}
-                      </button>
-                    ) : null}
-                    {registryReadAddress ? (
-                      <button className="secondary-button" onClick={() => refreshBillRegistry()} type="button">
-                        <RefreshCw size={16} />
-                        Refresh
-                      </button>
-                    ) : null}
-                  </>
-                }
-                chip={
-                  <span className="spec-chip spec-chip-attn">
-                    <span className="spec-dot" />${pendingTotalUsd.toFixed(2)} owed
-                  </span>
-                }
-                icon={<AlertTriangle size={15} />}
-                live
-                note="Tagged to your handle or registered to your wallet. Settle each from the matching account — a handle-tagged bill pays from your Splitsy wallet, a wallet-tagged one from the wallet it was written to."
-                step="Inbox · You owe"
-                title={`${pendingTotal} bill${pendingTotal === 1 ? "" : "s"} waiting on you`}
-              >
-                <div className={`space-y-3${debtsShown ? "" : " hidden"}`}>
-                  <XDebtsPanel onCount={setSocialPendingCount} onTotal={setSocialPendingTotalUsd} />
-                  {registryReadAddress ? (
-                    <WalletDebtRows
-                      activeDebts={activeWalletDebts}
-                      arcUsdcBalances={arcUsdcBalances}
-                      arcUsdcBalanceFlash={arcUsdcBalanceFlash}
-                      bridgeForDebt={bridgeForDebt}
-                      bridgeResults={bridgeResults}
-                      billState={billState}
-                      nowSeconds={nowSeconds}
-                      partialPayments={partialPayments}
-                      payDebtOnArc={payDebtOnArc}
-                      refundOnArc={refundOnArc}
-                      debtMessages={debtMessages}
-                      setPartialPayments={setPartialPayments}
-                    />
-                  ) : null}
-                </div>
-              </Panel>
-            </div>
-            {registryReadAddress ? (
-              <ClaimFundsPanel
-                splitterBills={splitterBills}
-                billState={billState}
-                claimAmounts={claimAmounts}
-                claimMessage={claimMessage}
-                claimMessageTone={claimMessageTone}
-                claimSplitterFunds={claimSplitterFunds}
-                nowSeconds={nowSeconds}
-                setClaimAmounts={setClaimAmounts}
-              />
             ) : null}
 
             <div className="space-y-5">
@@ -3426,413 +3406,6 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
       ) : null}
       <XAuthControl />
     </main>
-  );
-}
-
-// The on-chain payable-debt rows, rendered headerless inside the shared
-// "Action needed" window (whose heading/refresh live in the bills tab). The
-// off-chain XDebtsPanel rows render as siblings above these.
-function WalletDebtRows({
-  bridgeForDebt,
-  bridgeResults,
-  billState,
-  arcUsdcBalances,
-  arcUsdcBalanceFlash,
-  activeDebts,
-  debtMessages,
-  nowSeconds,
-  partialPayments,
-  payDebtOnArc,
-  refundOnArc,
-  setPartialPayments,
-}: {
-  bridgeForDebt: (debt: OwnedBillSplitDebt, debtSourceChain: BridgeSourceChain) => void;
-  bridgeResults: Record<string, BridgeSummary>;
-  billState: BillRunState;
-  // Balance per identity wallet (lowercase address key), so each row shows the
-  // balance of the wallet that will actually pay it.
-  arcUsdcBalances: Record<string, bigint>;
-  arcUsdcBalanceFlash: boolean;
-  activeDebts: OwnedBillSplitDebt[];
-  debtMessages: Record<string, { message: string; tone: "error" | "neutral" | "success" }>;
-  // Passed down rather than read here so both the parent's filter and this
-  // component's rendering judge "is it past due" against the same instant.
-  nowSeconds: bigint;
-  partialPayments: Record<string, string>;
-  payDebtOnArc: (debt: OwnedBillSplitDebt) => void;
-  refundOnArc: (debt: OwnedBillSplitDebt) => void;
-  setPartialPayments: (value: Record<string, string>) => void;
-}) {
-  const [fallbackBridgeChains, setFallbackBridgeChains] = useState<Record<string, BridgeSourceChain>>({});
-  // Which debt cards are expanded. A long list of payable bills otherwise makes
-  // the page huge; collapsed by default (a lone bill auto-expands below).
-  const [expandedDebts, setExpandedDebts] = useState<Record<string, boolean>>({});
-  // ponytail: dropped the auto-scroll-to-debt effect — the merged window now
-  // owns placement and social rows sit above; re-add a ref on the shared window
-  // if jump-to-pending is wanted again.
-
-  return (
-    <>
-            {activeDebts.map((debt) => {
-              // Bill AND account: the same bill can be owed by both of a
-              // dual-identity user's wallets, and each row needs its own
-              // amount input and message.
-              const key = settleItemId(debt.billId, debt.account);
-              const bridgeResult = bridgeResults[key];
-              const debtMessage = debtMessages[key];
-              // Debt owed by the user's Circle (DCW) wallet: it lives only on
-              // Arc Testnet, so the CCTP bridge path is irrelevant, and the
-              // server pay route always settles the full remaining debt — no
-              // partial-amount input.
-              const socialWallet = debt.via === "social";
-              const rowBalance = arcUsdcBalances[debt.account.toLowerCase()] ?? null;
-              // All-or-nothing bill that missed its deadline: the creator can
-              // never claim it, and this payer's contribution is theirs to pull
-              // back. Mirrors BillSplitRegistry.refund's preconditions.
-              const refundable = refundableNow(debt, debt.paid, nowSeconds);
-              // Same bill before the deadline: money is committed but not yet
-              // the creator's. Saying so is the point of the toggle.
-              const heldInEscrow =
-                debt.escrowUntilFull && debt.totalPaid < debt.totalOwed && refundable === 0n && debt.paid > 0n;
-              // A lone bill is always expanded; otherwise collapsed until opened.
-              const expanded = expandedDebts[key] ?? activeDebts.length === 1;
-
-              return (
-                <div className="rounded-[var(--radius)] border border-[var(--border)] bg-[var(--surface-strong)] p-3" key={key}>
-                  <button
-                    className="flex w-full items-start justify-between gap-2 text-left"
-                    onClick={() => setExpandedDebts((prev) => ({ ...prev, [key]: !expanded }))}
-                    type="button"
-                  >
-                    <div>
-                      <p className="flex items-center gap-1.5 font-semibold">
-                        <ChevronDown className={`transition-transform ${expanded ? "rotate-180" : ""}`} size={15} />
-                        Bill #{debt.billId.toString()}
-                      </p>
-                      <p className="mt-1 text-sm text-[var(--text-muted)]">
-                        Owed <span className="amount-text">${billUnitsToUsdc(debt.owed)}</span> · paid{" "}
-                        <span className="amount-text">${billUnitsToUsdc(debt.paid)}</span>
-                      </p>
-                      {expanded ? (
-                        <p className="mt-1 break-all text-xs text-[var(--text-muted)]">Splitter {debt.splitter}</p>
-                      ) : null}
-                    </div>
-                    <Metric label="Remaining" value={`$${billUnitsToUsdc(debt.remaining)}`} />
-                  </button>
-
-                  {!expanded ? null : (
-                  <>
-                  <BillVerification billId={debt.billId} metadataHash={debt.metadataHash} />
-
-                  {!socialWallet && debt.remaining > 0n ? (
-                  <div className="mt-3">
-                    <Field
-                      label="Payment amount"
-                      type="number"
-                      value={partialPayments[key] ?? billUnitsToUsdc(debt.remaining)}
-                      onChange={(value) => setPartialPayments({ ...partialPayments, [key]: value })}
-                    />
-                  </div>
-                  ) : null}
-
-                  {debtMessage ? (
-                    <div className="mt-3">
-                      <Message tone={debtMessage.tone}>{debtMessage.message}</Message>
-                    </div>
-                  ) : null}
-
-                  {heldInEscrow ? (
-                    <p className="mt-3 rounded-[var(--radius)] border border-[var(--border)] bg-[var(--surface-muted)] p-3 text-sm text-[var(--text-muted)]">
-                      This bill holds the money until everyone pays. Your{" "}
-                      <span className="amount-text">${billUnitsToUsdc(debt.paid)}</span> is in the bill, not with the
-                      creator — they can&apos;t collect any of it until the group is paid up. If it&apos;s still short on{" "}
-                      {new Date(Number(debt.dueDate) * 1000).toLocaleDateString()}, you can take yours back.
-                    </p>
-                  ) : null}
-
-                  {refundable > 0n ? (
-                    <div className="mt-3 rounded-[var(--radius)] border border-[var(--border)] bg-[var(--surface-muted)] p-3 text-sm">
-                      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                        <div>
-                          <p className="font-semibold text-[var(--text)]">This bill didn&apos;t come together</p>
-                          <p className="mt-1 text-[var(--text-muted)]">
-                            The group never paid it off and the due date has passed, so the creator can&apos;t collect it.
-                            Your <span className="amount-text">${billUnitsToUsdc(refundable)}</span> goes back to your
-                            wallet.
-                          </p>
-                        </div>
-                        <button
-                          className="chain-button chain-button-active sm:min-w-44"
-                          disabled={billState === "working"}
-                          onClick={() => refundOnArc(debt)}
-                          type="button"
-                        >
-                          {billState === "working" ? (
-                            <span className="inline-flex items-center gap-2">
-                              <Loader2 className="animate-spin" size={15} />
-                              Processing…
-                            </span>
-                          ) : (
-                            "Get my money back"
-                          )}
-                        </button>
-                      </div>
-                    </div>
-                  ) : null}
-
-                  {!socialWallet && debt.remaining > 0n ? (
-                  <div className="route-strip mt-3 text-sm">
-                    <div>
-                      <p className="font-semibold text-[var(--text)]">Pay directly on Arc</p>
-                      <p className="mt-1 text-[var(--text-muted)]">One Arc memo payment when your USDC is already on Arc.</p>
-                    </div>
-                    <div className="route-line" aria-hidden="true" />
-                    <div>
-                      <p className="font-semibold text-[var(--text)]">Bridge first from another chain</p>
-                      <p className="mt-1 text-[var(--text-muted)]">CCTP V2 brings USDC to Arc, then you pay on Arc.</p>
-                    </div>
-                  </div>
-                  ) : null}
-
-                  {/* Nothing left to pay on a fully-settled share — the row is
-                      only still here because its refund is waiting. */}
-                  {debt.remaining > 0n ? (
-                  <div className="mt-3 rounded-[var(--radius)] border border-[var(--border)] bg-[var(--surface-muted)] p-3 text-sm">
-                    <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                      <div>
-                        <p className="font-semibold text-[var(--text)]">Pay on Arc</p>
-                        <p className="mt-1 text-[var(--text-muted)]">
-                          {socialWallet
-                            ? "Settles the remaining debt from your Circle wallet on Arc Testnet."
-                            : "Use this after your USDC is already on Arc Testnet."}
-                        </p>
-                      </div>
-                      <div className="flex flex-col items-stretch gap-1 sm:items-end">
-                        <button
-                          className="chain-button chain-button-active sm:min-w-44"
-                          disabled={billState === "working"}
-                          onClick={() => payDebtOnArc(debt)}
-                          type="button"
-                        >
-                          {billState === "working" ? (
-                            <span className="inline-flex items-center gap-2">
-                              <Loader2 className="animate-spin" size={15} />
-                              Processing…
-                            </span>
-                          ) : (
-                            "Pay on Arc Testnet"
-                          )}
-                        </button>
-                        <p className="text-xs text-[var(--text-muted)] sm:text-right">
-                          Balance:{" "}
-                          <span className={`amount-text${arcUsdcBalanceFlash ? " balance-flash" : ""}`}>
-                            ${rowBalance === null ? "—" : billUnitsToUsdc(rowBalance)}
-                          </span>{" "}
-                          USDC on Arc Testnet
-                        </p>
-                      </div>
-                    </div>
-
-                    {!socialWallet ? (
-                    <div className="mt-4 border-t border-[var(--border)] pt-4">
-                      <p className="font-semibold text-[var(--text)]">Bridge USDC to Arc first</p>
-                      <p className="mt-1 text-[var(--text-muted)]">
-                        Bridging from another chain takes 3 transactions: approve USDC, bridge with CCTP V2, then claim the bridged USDC on Arc Testnet.
-                        After that, pay the debt on Arc.
-                      </p>
-                      <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-                      {bridgeSourceChains.map((chain) => (
-                        <button
-                          className={`chain-button ${fallbackBridgeChains[key] === chain.id ? "chain-button-active" : ""}`}
-                          disabled={billState === "working"}
-                          key={chain.id}
-                          onClick={() => {
-                            setFallbackBridgeChains({ ...fallbackBridgeChains, [key]: chain.id });
-                            bridgeForDebt(debt, chain.id);
-                          }}
-                          type="button"
-                        >
-                          Bridge from {chain.label}
-                        </button>
-                      ))}
-                      </div>
-                    </div>
-                    ) : null}
-                  </div>
-                  ) : null}
-
-                  {bridgeResult?.explorerUrls.length ? (
-                    <div className="mt-3 rounded-[var(--radius)] bg-[var(--surface-muted)] p-3 text-sm">
-                      <p className="font-semibold">Testnet explorer</p>
-                      <div className="mt-2 space-y-1">
-                        {bridgeResult.explorerUrls.map((url) => (
-                          <a className="flex items-center gap-2 break-all text-[var(--accent)] underline" href={url} key={url}>
-                            <ExternalLink size={14} />
-                            {url}
-                          </a>
-                        ))}
-                      </div>
-                    </div>
-                  ) : null}
-                  </>
-                  )}
-                </div>
-              );
-            })}
-    </>
-  );
-}
-
-// Creditor POV: claim paid USDC out of the registry. Own panel below the shared
-// pending window (was the second half of the old DebtWorkspace).
-function ClaimFundsPanel({
-  splitterBills,
-  billState,
-  claimAmounts,
-  claimMessage,
-  claimMessageTone,
-  claimSplitterFunds,
-  nowSeconds,
-  setClaimAmounts,
-}: {
-  splitterBills: OwnedBillSplitDebt[];
-  billState: BillRunState;
-  claimAmounts: Record<string, string>;
-  claimMessage: string;
-  claimMessageTone: "error" | "neutral" | "success";
-  claimSplitterFunds: (debt: OwnedBillSplitDebt) => void;
-  nowSeconds: bigint;
-  setClaimAmounts: (value: Record<string, string>) => void;
-}) {
-  const claimableBills = splitterBills.filter((debt) => debt.claimable > 0n);
-  // All-or-nothing bills that missed their deadline. `claimable` is 0 on these
-  // forever, so without a word here they would simply vanish from this panel and
-  // the creator would be left wondering where the money went.
-  const failedBills = splitterBills.filter(
-    (debt) => debt.escrowUntilFull && debt.totalPaid < debt.totalOwed && debt.dueDate !== 0n && nowSeconds >= debt.dueDate,
-  );
-  const claimRef = useRef<HTMLDivElement | null>(null);
-  // Collapse a long claimable list (>3) behind a summary; a tap pins the choice
-  // (persisted across reloads). The toggle also renders whenever the list is
-  // collapsed, so a pin carried over from a longer list can be undone.
-  const [expanded, setExpanded] = usePersistedExpand("splitsy-expand-claims");
-  const shown = expanded ?? claimableBills.length <= 3;
-  const claimableTotalUnits = claimableBills.reduce((sum, debt) => sum + debt.claimable, 0n);
-
-  useEffect(() => {
-    if (claimableBills.length === 0) {
-      return;
-    }
-
-    window.requestAnimationFrame(() => {
-      claimRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
-    });
-  }, [claimableBills.length]);
-
-  if (claimableBills.length === 0 && failedBills.length === 0) {
-    return null;
-  }
-
-  return (
-    <div ref={claimRef}>
-      <Panel
-        action={
-          claimableBills.length > 3 || !shown ? (
-            <button className="secondary-button" onClick={() => setExpanded(!shown)} type="button">
-              <ChevronDown className={`transition-transform ${shown ? "rotate-180" : ""}`} size={16} />
-              {shown ? "Collapse" : "Expand"}
-            </button>
-          ) : null
-        }
-        chip={
-          claimableTotalUnits > 0n ? (
-            <span className="spec-chip spec-chip-live">
-              <span className="spec-dot" />${billUnitsToUsdc(claimableTotalUnits)} ready
-            </span>
-          ) : null
-        }
-        icon={<BadgeDollarSign size={15} />}
-        live={claimableTotalUnits > 0n}
-        note="Money your payers have already settled, sitting in escrow under your name. Claiming moves it to the wallet that created the bill — you can claim part of it and come back for the rest."
-        step="Inbox · Owed to you"
-        title={claimableBills.length > 0 ? "Funds you can collect" : "Nothing to collect"}
-      >
-        {claimMessage ? (
-          <div className="mb-4">
-            <Message tone={claimMessageTone}>{claimMessage}</Message>
-          </div>
-        ) : null}
-        {failedBills.length ? (
-          <div className="mb-4 rounded-[var(--radius)] border border-[var(--border)] bg-[var(--surface-muted)] p-3 text-sm text-[var(--text-muted)]">
-            <p className="font-semibold text-[var(--text)]">
-              {failedBills.length === 1 ? "One bill didn't come together" : `${failedBills.length} bills didn't come together`}
-            </p>
-            <p className="mt-1">
-              Bill {failedBills.map((debt) => `#${debt.billId.toString()}`).join(", ")} held the money until everyone
-              paid, and the due date passed while still short. There is nothing for you to claim — each payer takes
-              their own share back from here.
-            </p>
-          </div>
-        ) : null}
-        {claimableBills.length === 0 ? null : !shown ? (
-          <p className="text-sm text-[var(--text-muted)]">
-            {claimableBills.length} bills ready to claim, total{" "}
-            <span className="amount-text">${billUnitsToUsdc(claimableTotalUnits)}</span>.
-          </p>
-        ) : (
-        <div className="space-y-3">
-          {claimableBills.map((debt) => {
-            // Bill AND account: a dual-identity creator can hold the same bill
-            // on both wallets, and each row needs its own claim input.
-            const key = settleItemId(debt.billId, debt.account);
-            // Bill split by the user's Circle (DCW) wallet: the server claim
-            // route always claims the full claimable balance, so the
-            // partial-amount input is hidden.
-            const socialWallet = debt.via === "social";
-            return (
-              <div className={`relative grid gap-3 overflow-hidden rounded-[var(--radius)] border border-[var(--border)] bg-[var(--surface-strong)] p-3 sm:items-end ${socialWallet ? "sm:grid-cols-[1fr_auto]" : "sm:grid-cols-[1fr_0.4fr_auto]"}`} key={key}>
-                <div>
-                  <p className="font-semibold">Bill #{debt.billId.toString()}</p>
-                  <p className="mt-1 text-sm text-[var(--text-muted)]">
-                    Paid <span className="amount-text">${billUnitsToUsdc(debt.totalPaid)}</span> · claimed{" "}
-                    <span className="amount-text">${billUnitsToUsdc(debt.claimed)}</span>
-                  </p>
-                  <p className="mt-2 text-xs text-[var(--text-muted)]">
-                    {socialWallet
-                      ? `Claim pulls the full $${billUnitsToUsdc(debt.claimable)} paid USDC from the registry to your wallet.`
-                      : "Claim pulls paid USDC from the registry to your Arc wallet."}
-                  </p>
-                </div>
-                {!socialWallet ? (
-                <Field
-                  label="Claim"
-                  type="number"
-                  value={claimAmounts[key] ?? billUnitsToUsdc(debt.claimable)}
-                  onChange={(value) => setClaimAmounts({ ...claimAmounts, [key]: value })}
-                />
-                ) : null}
-                <button
-                  className="primary-button h-11"
-                  disabled={billState === "working"}
-                  onClick={() => claimSplitterFunds(debt)}
-                  type="button"
-                >
-                  {billState === "working" ? (
-                    <span className="inline-flex items-center gap-2">
-                      <Loader2 className="animate-spin" size={15} />
-                      Processing…
-                    </span>
-                  ) : (
-                    "Claim on Arc"
-                  )}
-                </button>
-              </div>
-            );
-          })}
-        </div>
-        )}
-      </Panel>
-    </div>
   );
 }
 
