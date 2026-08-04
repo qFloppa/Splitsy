@@ -45,3 +45,17 @@ alter table onchain_bill_preimages
 insert into storage.buckets (id, name, public)
 values ('onchain-bill-receipts', 'onchain-bill-receipts', true)
 on conflict (id) do nothing;
+
+-- Additive: the public share link's token. Null for every bill created without
+-- the "Anyone can pay" switch, which is what makes that switch gate something
+-- real rather than reveal a URL that always worked.
+--
+-- A second lookup key onto a row that already exists — not a new entity. The
+-- index is partial so the many null rows don't collide with each other, and
+-- unique so a token addresses exactly one bill.
+alter table onchain_bill_preimages
+  add column if not exists share_token text;
+
+create unique index if not exists onchain_bill_preimages_share_token_idx
+  on onchain_bill_preimages (share_token)
+  where share_token is not null;

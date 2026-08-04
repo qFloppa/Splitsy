@@ -10,6 +10,10 @@ export type OnchainBillPreimage = BillPreimage & {
   // Per-participant identity provider, index-aligned with participantLabels.
   // Display/analytics only — NOT part of billMetadataHash.
   participantProviders?: string[];
+  // Public share link token, or absent when the creator left the link off.
+  // Written once with the row (the upsert is ignoreDuplicates), so a link can
+  // never be added to — or swapped on — a bill after it was created.
+  shareToken?: string;
 };
 
 // What a payer's browser reads back: the preimage plus a public URL to the
@@ -76,6 +80,10 @@ export async function publishOnchainBillPreimage(
       // 0 = no due date, matching the column default and the billMetadataHash
       // convention (absent/0 hashes byte-identically to a pre-due-date bill).
       due_date: input.dueDate && input.dueDate > 0 ? input.dueDate : 0,
+      // Null rather than undefined: an absent key would leave the column at its
+      // default, which is the same thing here, but being explicit keeps the row
+      // shape identical between a linked and an unlinked bill.
+      share_token: input.shareToken ?? null,
     },
     { onConflict: "registry_address,bill_id", ignoreDuplicates: true },
   );
@@ -179,5 +187,51 @@ export async function getOnchainBillPreimage(
     receiptUrl,
     dueDate,
     createdAtSeconds,
+  };
+}
+
+// Resolve a public share link back to the bill it addresses. Returns the same
+// shape as getOnchainBillPreimage plus the keys that locate the bill on Arc,
+// because the caller has a token and nothing else — no registry, no bill id.
+//
+// The token is the whole access control on /pay/<token>, so the caller must have
+// validated its shape (isShareToken) before this runs.
+export async function getPreimageByShareToken(
+  token: string,
+): Promise<(PublishedBillPreimage & { registryAddress: string; billId: string }) | null> {
+  const client = createSupabaseServerClient();
+  if (!client) return null;
+
+  const { data, error } = await client
+    .from("onchain_bill_preimages")
+    .select(
+      "registry_address, bill_id, merchant, currency, total_usd, participant_labels, participant_providers, receipt_hash, due_date, created_at",
+    )
+    .eq("share_token", token)
+    .maybeSingle();
+  if (error) throw new Error(`Failed to read bill preimage: ${error.message}`);
+  if (!data) return null;
+
+  const registryAddress = String(data.registry_address);
+  const billId = String(data.bill_id);
+  const receiptHash = data.receipt_hash ?? "";
+  const receiptUrl = receiptHash
+    ? client.storage.from(RECEIPT_BUCKET).getPublicUrl(receiptPath(registryAddress, billId)).data.publicUrl
+    : null;
+  const dueDateRaw = Number(data.due_date ?? 0);
+  const parsedAt = data.created_at ? Date.parse(data.created_at) : NaN;
+
+  return {
+    registryAddress,
+    billId,
+    merchant: data.merchant,
+    currency: data.currency,
+    total: Number(data.total_usd),
+    participantLabels: data.participant_labels ?? [],
+    participantProviders: data.participant_providers ?? [],
+    receiptHash,
+    receiptUrl,
+    dueDate: dueDateRaw > 0 ? dueDateRaw : undefined,
+    createdAtSeconds: Number.isNaN(parsedAt) ? 0 : Math.floor(parsedAt / 1000),
   };
 }
