@@ -3229,8 +3229,21 @@ a.job-trail-tx:hover {
   scroll-snap-type: y mandatory;
   background: var(--pay-poster-bg);
   color: var(--pay-poster-fg);
-  /* No overscroll-behavior: contain — default scroll-chaining is what lets the
-     end card hand off to the document so the site footer stays reachable. */
+}
+
+/* The deck is the ONLY scroller on this tab. A page that also scrolls behind a
+   mandatory-snap container gives two competing scrolls for one gesture, so the
+   shell is pinned to the viewport and the site footer steps aside — its links
+   live in the header's Docs entry and on every other tab. HomeClient sets the
+   attribute on <html> as the tab changes. */
+:root[data-app-tab="settle"] .site-footer {
+  display: none;
+}
+
+:root[data-app-tab="settle"] .app-shell {
+  height: 100dvh;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .settle-section {
@@ -3266,12 +3279,12 @@ a.job-trail-tx:hover {
 }
 
 /* Every reveal below runs off [data-active], so one IntersectionObserver drives
-   the whole surface — no scroll listener, no animation loop. */
-.settle-merchant,
-.settle-label,
-.settle-amount,
-.settle-meta,
-.settle-action {
+   the whole surface — no scroll listener, no animation loop.
+   Scoped to a snapped section on purpose: the same classes are reused inside the
+   portaled sheets, which have no section ancestor to un-clip them and would
+   otherwise render as a blank panel. */
+:is(.settle-section, .settle-divider)
+  :is(.settle-merchant, .settle-label, .settle-amount, .settle-meta, .settle-action) {
   clip-path: inset(0 0 100% 0);
   transform: translateY(0.3em);
   transition:
@@ -3280,7 +3293,8 @@ a.job-trail-tx:hover {
     opacity var(--dur-2) var(--ease-out);
 }
 
-.settle-section[data-active="true"] :is(.settle-merchant, .settle-label, .settle-amount, .settle-meta, .settle-action) {
+:is(.settle-section, .settle-divider)[data-active="true"]
+  :is(.settle-merchant, .settle-label, .settle-amount, .settle-meta, .settle-action) {
   clip-path: inset(0);
   transform: none;
 }
@@ -3476,6 +3490,60 @@ a.job-trail-tx:hover {
 
 .settle-divider[data-active="true"] > hr { width: min(28rem, 60vw); }
 
+/* The facts about the bill that don't belong in the headline: who collects, how
+   far the group has got, what your share is. Wide screens only — on a phone the
+   section is already full, and there is no room to add a column to a fixed-height
+   snap card without clipping it. */
+.settle-aside {
+  display: none;
+}
+
+@media (min-width: 62rem) {
+  .settle-aside {
+    position: absolute;
+    top: 50%;
+    right: clamp(1.5rem, 1rem + 4vw, 5rem);
+    transform: translateY(-50%);
+    width: min(22rem, 32vw);
+    display: grid;
+    gap: 1rem;
+    padding-left: 1.9rem;
+    border-left: 1px solid var(--pay-poster-rule);
+  }
+
+  /* Keep the headline out from under the column. The aside is positioned off the
+     section's own right edge, so padding moves the flow content only. */
+  .settle-section:has(> .settle-aside) {
+    padding-right: calc(min(22rem, 32vw) + clamp(1.5rem, 1rem + 4vw, 5rem) + 3rem);
+  }
+}
+
+.settle-aside-row {
+  display: grid;
+  gap: 0.2rem;
+}
+
+.settle-aside-value {
+  font-family: var(--font-clash), system-ui, sans-serif;
+  font-weight: 300;
+  font-size: 1.05rem;
+  line-height: 1.2;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+.settle-progress {
+  height: 2px;
+  margin-top: 0.45rem;
+  background: var(--pay-poster-rule);
+}
+
+.settle-progress > span {
+  display: block;
+  height: 100%;
+  background: var(--pay-poster-fg);
+}
+
 .settle-steps {
   font-family: var(--font-clash), system-ui, sans-serif;
   font-weight: 300;
@@ -3491,12 +3559,11 @@ a.job-trail-tx:hover {
 
 @media (prefers-reduced-motion: reduce) {
   .settle-deck { scroll-behavior: auto; }
+  /* Matches the scoped reveal selector's specificity, or it would lose to it and
+     leave everything clipped shut. */
   .settle-section,
-  .settle-merchant,
-  .settle-label,
-  .settle-amount,
-  .settle-meta,
-  .settle-action {
+  :is(.settle-section, .settle-divider)
+    :is(.settle-merchant, .settle-label, .settle-amount, .settle-meta, .settle-action) {
     transform: none;
     clip-path: none;
     transition: opacity var(--dur-1) linear;

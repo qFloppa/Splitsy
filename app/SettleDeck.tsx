@@ -38,6 +38,43 @@ export type SettleDeckProps = SettleDeckHandlers & {
 };
 
 const usd = (units: bigint) => `$${billUnitsToUsdc(units)}`;
+const short = (address: string) => `${address.slice(0, 6)}…${address.slice(-4)}`;
+// Whole percent of the group's total that has been paid in. Clamped because a
+// bill can be overpaid, and a bar past 100% reads as a rendering bug.
+const paidPercent = (paid: bigint, owed: bigint) =>
+  owed <= 0n ? 0 : Math.min(100, Math.round((Number(paid) / Number(owed)) * 100));
+
+function AsideRow({ children, label }: { children: ReactNode; label: string }) {
+  return (
+    <div className="settle-aside-row">
+      <span className="settle-label">{label}</span>
+      <span className="settle-aside-value">{children}</span>
+    </div>
+  );
+}
+
+// How far the whole group has got. Shared by the debt and claim sections — both
+// sides of a bill care about the same number.
+function GroupProgress({ debt }: { debt: OwnedDebt }) {
+  const percent = paidPercent(debt.totalPaid, debt.totalOwed);
+  return (
+    <div className="settle-aside-row">
+      <span className="settle-label">group paid</span>
+      <span className="settle-aside-value">
+        {usd(debt.totalPaid)} of {usd(debt.totalOwed)}
+      </span>
+      <span aria-hidden="true" className="settle-progress">
+        <span style={{ width: `${percent}%` }} />
+      </span>
+      <span className="settle-meta" style={{ marginTop: "0.3rem" }}>
+        {percent}% in
+        {debt.participantList.length > 0
+          ? ` · split ${debt.participantList.length} ${debt.participantList.length === 1 ? "way" : "ways"}`
+          : ""}
+      </span>
+    </div>
+  );
+}
 
 // The flow running against THIS section, if any. Everything else in the deck
 // carries on rendering its amount as usual.
@@ -365,6 +402,21 @@ function WalletDebtBody({
       )}
       <DeckMessage deck={deck} id={item.id} />
 
+      <aside className="settle-aside">
+        <GroupProgress debt={debt} />
+        <AsideRow label="your share">
+          {usd(debt.owed)}
+          {debt.paid > 0n ? ` · ${usd(debt.paid)} paid` : ""}
+        </AsideRow>
+        <AsideRow label="collected by">{short(debt.splitter)}</AsideRow>
+        <AsideRow label="paying from">{short(debt.account)}</AsideRow>
+        {debt.escrowUntilFull ? (
+          <p className="settle-meta" style={{ marginTop: 0 }}>
+            All or nothing — the bill holds every payment until the group is square.
+          </p>
+        ) : null}
+      </aside>
+
       <div className="settle-triggers">
         <button
           className="settle-trigger"
@@ -472,6 +524,15 @@ function ClaimBody({ deck, item }: { deck: SettleDeckHandlers; item: ItemOf<"cla
         </>
       )}
       <DeckMessage deck={deck} id={item.id} />
+
+      <aside className="settle-aside">
+        <GroupProgress debt={debt} />
+        <AsideRow label="already collected">{usd(debt.claimed)}</AsideRow>
+        <AsideRow label="collecting to">{short(debt.account)}</AsideRow>
+        {debt.dueDate > 0n ? (
+          <AsideRow label="due">{new Date(Number(debt.dueDate) * 1000).toLocaleDateString()}</AsideRow>
+        ) : null}
+      </aside>
     </>
   );
 }

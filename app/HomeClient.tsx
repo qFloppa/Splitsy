@@ -2601,6 +2601,16 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [address]);
 
+  // Published so CSS can react to the tab: the Settle deck is the only scroller
+  // on its tab, which means pinning the shell to the viewport and hiding the site
+  // footer — neither of which lives inside this component's tree.
+  useEffect(() => {
+    document.documentElement.dataset.appTab = activeTab;
+    return () => {
+      delete document.documentElement.dataset.appTab;
+    };
+  }, [activeTab]);
+
   // The Settle deck sizes itself to the viewport minus the header, and the
   // header is responsive (it stacks below `md`), so its height is measured
   // rather than assumed the way .pay-shell hardcodes 4rem.
@@ -2628,12 +2638,16 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
                   <Image alt="Splitsy" className="logo-crop-image" height={1024} priority src="/splitsy.png" width={1536} />
                 </span>
               </Link>
-              <div className="header-title-row mt-1">
-                <h1 className="app-title">
-                  Split bills, Settle cleanly
-                </h1>
-                <span className="network-stamp">Arc Testnet</span>
-              </div>
+              {/* Every row of header is a row the deck doesn't get, and the
+                  section rail already stamps the network. */}
+              {activeTab === "settle" ? null : (
+                <div className="header-title-row mt-1">
+                  <h1 className="app-title">
+                    Split bills, Settle cleanly
+                  </h1>
+                  <span className="network-stamp">Arc Testnet</span>
+                </div>
+              )}
             </div>
             <div className="flex flex-wrap items-center gap-2 md:justify-end lg:flex-nowrap">
               <div className="segmented-control">
