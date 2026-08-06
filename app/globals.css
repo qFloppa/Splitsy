@@ -41,7 +41,10 @@
      light, ink poster beside the navy roster in dark. */
   --pay-poster-bg: var(--paper-50);
   --pay-poster-fg: var(--ink-950);
-  --pay-poster-dim: rgba(7, 20, 33, 0.6);
+  /* 0.6 cleared 4.5:1 on the cream poster by a hair, which is not enough for
+     what it is asked to carry here: 0.69rem uppercase at weight 300, tracked out
+     to 0.18em. 0.75 takes it to ~8:1. Dark's ink ground never had the problem. */
+  --pay-poster-dim: rgba(7, 20, 33, 0.75);
   --pay-poster-rule: rgba(7, 20, 33, 0.14);
   --pay-poster-settled: #dceee3;
   /* arc-cyan is near-invisible on the light poster; blue carries it there. */
@@ -236,11 +239,11 @@ a {
   background: transparent;
 }
 
-/* Shared page backdrop: soft brand glow behind every page. Mounted once in the
-   root layout as <HeroBackground />. Sizes are viewport-relative (%) and centered
-   just off each corner, and every glow fades to `transparent` at its ending shape
-   (100%) rather than a tight 58–62% — so the zero-alpha ring lands past the
-   viewport edge and never shows the horizontal "cut" it used to mid-screen. */
+/* Shared page backdrop: brand glow behind every page. Mounted once in the root
+   layout as <HeroBackground />. Light mode uses the same liquid-glass stack as
+   the /owe composer — three colour blooms (accent blue + arc-cyan) frosted by a
+   translucent white pane — so the whole app shares that surface. Dark mode keeps
+   the softer, wider glows that read well on the ink canvas. */
 .app-backdrop {
   position: fixed;
   inset: 0;
@@ -248,9 +251,17 @@ a {
   pointer-events: none;
   overflow: hidden;
   background:
-    radial-gradient(85% 115% at 12% -8%, rgba(62, 230, 214, 0.2), transparent),
-    radial-gradient(80% 110% at 104% 16%, rgba(39, 117, 202, 0.16), transparent),
-    radial-gradient(75% 105% at 82% 114%, rgba(62, 230, 214, 0.14), transparent);
+    linear-gradient(
+      180deg,
+      rgba(255, 255, 255, 0.9),
+      rgba(255, 255, 255, 0.32) 16%,
+      rgba(255, 255, 255, 0.46) 60%,
+      rgba(255, 255, 255, 0.72)
+    ),
+    radial-gradient(62% 48% at 6% 2%, color-mix(in srgb, var(--accent) 28%, transparent), transparent 64%),
+    radial-gradient(48% 42% at 92% 8%, color-mix(in srgb, var(--arc-cyan) 32%, transparent), transparent 68%),
+    radial-gradient(70% 52% at 72% 96%, color-mix(in srgb, var(--accent) 18%, transparent), transparent 62%),
+    var(--background);
 }
 
 :root[data-theme="dark"] .app-backdrop {
@@ -318,8 +329,8 @@ a {
   color: var(--text);
   font-family: var(--font-display);
   font-size: clamp(1.2rem, 2vw, 1.72rem);
-  font-weight: 600;
-  letter-spacing: 0;
+  font-weight: 400;
+  letter-spacing: -0.02em;
   line-height: 1.08;
   white-space: nowrap;
 }
@@ -561,6 +572,44 @@ input[type="number"],
 :root[data-theme="dark"] .mode-button-active {
   background: var(--accent-strong);
   color: var(--ink-950);
+}
+
+/* How many bills are waiting on you, on the Settle tab. It sits on top of the
+   active pill — whose fill flips between near-black and bright blue with the
+   theme — so it carries its own solid ground rather than tinting whatever is
+   underneath, which is what made the old chip vanish the moment the tab was
+   selected. The ring is the only thing in the header that moves; an unread count
+   that doesn't move doesn't read as unread. */
+.tab-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.32rem;
+  height: 1.32rem;
+  padding: 0 0.34rem;
+  border-radius: 999px;
+  background: var(--danger-text);
+  color: #ffffff;
+  font-size: 0.72rem;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  animation: tab-count-pulse 2.2s ease-out infinite;
+}
+
+/* Dark's --danger-text is the light end of the pair, so the digit flips with it. */
+:root[data-theme="dark"] .tab-count {
+  color: var(--ink-950);
+}
+
+@keyframes tab-count-pulse {
+  from {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--danger-text) 65%, transparent);
+  }
+  60%,
+  to {
+    box-shadow: 0 0 0 0.55rem color-mix(in srgb, var(--danger-text) 0%, transparent);
+  }
 }
 
 .metric {
@@ -1783,8 +1832,10 @@ input[type="number"],
 }
 
 .pay-modal-title {
+  font-family: var(--font-display);
   font-size: 1.05rem;
-  font-weight: 820;
+  font-weight: 400;
+  letter-spacing: -0.02em;
   color: var(--text);
   line-height: 1.2;
 }
@@ -2326,8 +2377,9 @@ input[type="number"],
   margin-top: 0.75rem;
   font-family: var(--font-display);
   font-size: clamp(1.95rem, 3.6vw, 3.05rem);
-  font-weight: 600;
-  letter-spacing: -0.005em;
+  /* Same display voice as .settle-merchant: Clash at 300, tracked in. */
+  font-weight: 300;
+  letter-spacing: -0.03em;
   line-height: 1.04;
 }
 
@@ -2548,8 +2600,10 @@ input[type="number"],
   margin-top: 0.34rem;
   font-family: var(--font-display);
   font-size: 1.16rem;
-  font-weight: 600;
-  letter-spacing: 0;
+  /* 400, not 300: at card-title size Clash's light weight draws hairlines
+     (same reason .settle-label sits at 500). */
+  font-weight: 400;
+  letter-spacing: -0.02em;
   line-height: 1.2;
 }
 
@@ -3056,7 +3110,8 @@ a.job-trail-tx:hover {
 
 @media (prefers-reduced-motion: reduce) {
   .spec-chip-live .spec-dot,
-  .spec-chip-attn .spec-dot {
+  .spec-chip-attn .spec-dot,
+  .tab-count {
     animation: none;
   }
 }
@@ -3224,11 +3279,37 @@ a.job-trail-tx:hover {
    the scroll position and fights snap. */
 
 .settle-deck {
-  height: calc(100dvh - var(--app-header-h, 0px));
+  height: 100dvh;
   overflow-y: auto;
   scroll-snap-type: y mandatory;
-  background: var(--pay-poster-bg);
+  /* Light mode: same liquid-glass stack as /owe — three accent/cyan blooms frosted
+     by a translucent white pane. Dark mode overrides this back to the flat ink
+     poster below. */
+  background:
+    linear-gradient(
+      180deg,
+      rgba(255, 255, 255, 0.9),
+      rgba(255, 255, 255, 0.32) 16%,
+      rgba(255, 255, 255, 0.46) 60%,
+      rgba(255, 255, 255, 0.72)
+    ),
+    radial-gradient(62% 48% at 6% 2%, color-mix(in srgb, var(--accent) 28%, transparent), transparent 64%),
+    radial-gradient(48% 42% at 92% 8%, color-mix(in srgb, var(--arc-cyan) 32%, transparent), transparent 68%),
+    radial-gradient(70% 52% at 72% 96%, color-mix(in srgb, var(--accent) 18%, transparent), transparent 62%),
+    var(--background);
   color: var(--pay-poster-fg);
+}
+
+:root[data-theme="dark"] .settle-deck {
+  background: var(--pay-poster-bg);
+}
+
+/* The app header scrolls inside the deck rather than standing over it. It needs
+   a snap point of its own: under `mandatory`, a stretch of scroller with no snap
+   area is a stretch the browser refuses to rest in, and the header would be
+   flicked away the moment the deck was touched. */
+.settle-deck > header {
+  scroll-snap-align: start;
 }
 
 /* The deck is the ONLY scroller on this tab. A page that also scrolls behind a
@@ -3263,6 +3344,10 @@ a.job-trail-tx:hover {
 .settle-section[data-active="true"] { opacity: 1; transform: none; }
 .settle-section[data-state="settled"] { opacity: 0.5; }
 
+/* Weight, not colour, is what was failing here: Clash at 300 draws hairlines,
+   and an 11px hairline tracked out to 0.18em is close to invisible on the cream
+   poster whatever you do to its opacity. 500 at 0.72rem is the same mark, legibly
+   drawn. Shared with .settle-label — same type, same job. */
 .settle-rail {
   position: absolute;
   top: clamp(1.5rem, 1rem + 4vw, 5rem);
@@ -3271,8 +3356,8 @@ a.job-trail-tx:hover {
   display: flex;
   justify-content: space-between;
   font-family: var(--font-clash), system-ui, sans-serif;
-  font-size: 0.69rem;
-  font-weight: 300;
+  font-size: 0.72rem;
+  font-weight: 500;
   letter-spacing: 0.18em;
   text-transform: uppercase;
   color: var(--pay-poster-dim);
@@ -3293,9 +3378,16 @@ a.job-trail-tx:hover {
     opacity var(--dur-2) var(--ease-out);
 }
 
+/* Rested, the clip has no job left but to cut ink that sits outside the box, and
+   at line-height 0.9 Clash's descenders do: its content box ends 0.13em under
+   the baseline and the "g" tail runs to 0.18em. inset(0) shaves the last quarter
+   off every tail. So does any tuned margin, eventually — -100% on all four sides
+   opens the clip past anything the box can hold (the .settle-action focus ring
+   at outline-offset 0.6em included, which a horizontal 0 cut off entirely) and
+   still interpolates, which `clip-path: none` would not. */
 :is(.settle-section, .settle-divider)[data-active="true"]
   :is(.settle-merchant, .settle-label, .settle-amount, .settle-meta, .settle-action) {
-  clip-path: inset(0);
+  clip-path: inset(-100%);
   transform: none;
 }
 
@@ -3318,8 +3410,8 @@ a.job-trail-tx:hover {
 
 .settle-label {
   font-family: var(--font-clash), system-ui, sans-serif;
-  font-weight: 300;
-  font-size: 0.69rem;
+  font-weight: 500;
+  font-size: 0.72rem;
   letter-spacing: 0.18em;
   text-transform: uppercase;
   color: var(--pay-poster-dim);
@@ -3494,6 +3586,13 @@ a.job-trail-tx:hover {
    far the group has got, what your share is. Wide screens only — on a phone the
    section is already full, and there is no room to add a column to a fixed-height
    snap card without clipping it. */
+/* One source of truth for the column's width: the section reserves exactly this
+   much right padding below, and the two drifting apart is what runs the headline
+   under the rule. Declared on the section so both rules can read it. */
+.settle-section {
+  --settle-aside-w: min(30rem, 38vw);
+}
+
 .settle-aside {
   display: none;
 }
@@ -3504,37 +3603,49 @@ a.job-trail-tx:hover {
     top: 50%;
     right: clamp(1.5rem, 1rem + 4vw, 5rem);
     transform: translateY(-50%);
-    width: min(22rem, 32vw);
+    width: var(--settle-aside-w);
     display: grid;
-    gap: 1rem;
-    padding-left: 1.9rem;
+    gap: 1.5rem;
+    padding-left: 2.4rem;
     border-left: 1px solid var(--pay-poster-rule);
   }
 
   /* Keep the headline out from under the column. The aside is positioned off the
      section's own right edge, so padding moves the flow content only. */
   .settle-section:has(> .settle-aside) {
-    padding-right: calc(min(22rem, 32vw) + clamp(1.5rem, 1rem + 4vw, 5rem) + 3rem);
+    padding-right: calc(var(--settle-aside-w) + clamp(1.5rem, 1rem + 4vw, 5rem) + 3rem);
   }
 }
 
 .settle-aside-row {
   display: grid;
-  gap: 0.2rem;
+  gap: 0.3rem;
+}
+
+/* The column carries the numbers you check before signing, so it is read at
+   arm's length like the headline — not squinted at like a footnote. */
+.settle-aside .settle-label {
+  font-size: 0.8rem;
+  letter-spacing: 0.16em;
+}
+
+.settle-aside .settle-meta {
+  font-size: 0.92rem;
+  line-height: 1.45;
 }
 
 .settle-aside-value {
   font-family: var(--font-clash), system-ui, sans-serif;
   font-weight: 300;
-  font-size: 1.05rem;
+  font-size: 1.65rem;
   line-height: 1.2;
   font-variant-numeric: tabular-nums;
   overflow-wrap: anywhere;
 }
 
 .settle-progress {
-  height: 2px;
-  margin-top: 0.45rem;
+  height: 3px;
+  margin-top: 0.6rem;
   background: var(--pay-poster-rule);
 }
 
@@ -3571,4 +3682,580 @@ a.job-trail-tx:hover {
   .settle-rule { transform: scaleX(1); transition: none; }
   .settle-divider > hr { width: min(28rem, 60vw); transition: none; }
   .settle-sheet, .settle-sheet-backdrop { animation: none; }
+}
+
+/* ── IOU composer (/owe) ──────────────────────────────────────────────────────
+   The debt as one sentence, set at poster scale, where every variable part of it
+   is a real control rather than a form field pretending. Shares the /pay poster
+   palette and the settle deck's type register (Clash 300 for display, 500 for
+   the small caps) so the three surfaces read as one system.
+
+   Reuses .settle-action for the commit control and .settle-sheet for the PIN
+   sheet outright — those are the same marks doing the same job, and a second
+   copy is how two buttons drift apart. The settle reveal is scoped to a
+   .settle-section ancestor, which does not exist here, so .settle-action lands
+   un-clipped on this page with no override needed. */
+
+/* The one place /owe departs from the /pay poster: its ground.
+   --paper-50 is a warm cream, which is right on a payment link arriving cold
+   from a message, and wrong here — /owe is reached from inside the app, where
+   every other surface is cool grey, so the cream read as a yellow cast. Light
+   mode is built from .tab-hero's palette instead, so the page sits in the app's
+   colours; dark mode never had the problem and keeps the ink poster.
+
+   Read the stack bottom-up and it is a sheet of glass over coloured liquid:
+   the app's mist, three overlapping blooms that are the liquid, then a
+   translucent white pane that frosts them — a bright lip along the very top
+   edge, thinning through the body, settling again at the foot. No
+   backdrop-filter: with nothing behind the page to sample there is nothing for
+   it to blur, and the white pane over saturated blooms IS what frosting does to
+   colour. To dial the effect, the three bloom percentages are the knob.
+
+   --pay-poster-bg stays a flat COLOUR, not the stack: half the rules in this
+   block color-mix() against it, and color-mix has no opinion about gradients. */
+.iou-page {
+  --pay-poster-bg: #f3f8fb;
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  /* Light mode: no local background — the global .app-backdrop already paints
+     the liquid-glass stack, so painting it again here would double the blooms. */
+  color: var(--pay-poster-fg);
+  padding: clamp(1.5rem, 1rem + 4vw, 5rem);
+  gap: clamp(1.5rem, 1rem + 2vw, 2.5rem);
+}
+
+:root[data-theme="dark"] .iou-page {
+  --pay-poster-bg: var(--ink-950);
+  background: var(--pay-poster-bg);
+}
+
+/* Same corner marks as the settle deck, but this page has no snapped section to
+   position them against, so they sit in the flow instead of absolutely. */
+.iou-rail {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  font-family: var(--font-clash), system-ui, sans-serif;
+  font-size: 0.72rem;
+  font-weight: 500;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--pay-poster-dim);
+}
+
+.iou-rail a {
+  color: inherit;
+  text-decoration: none;
+  transition: color var(--dur-1) var(--ease-out);
+}
+
+.iou-rail a:hover, .iou-rail a:focus-visible { color: var(--pay-poster-fg); }
+
+.iou-rail-end {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.9em;
+}
+
+/* Borderless like everything else on this page — the icon is the control. */
+.iou-theme {
+  border: 0;
+  background: none;
+  padding: 0;
+  display: inline-flex;
+  color: inherit;
+  cursor: pointer;
+  transition: color var(--dur-1) var(--ease-out);
+}
+
+.iou-theme:hover, .iou-theme:focus-visible { color: var(--pay-poster-fg); }
+.iou-theme:focus-visible { outline: 1px solid currentColor; outline-offset: 0.35em; }
+
+/* The composer owns the first screen. `justify-content: center` rather than a
+   fixed height so a wrapped three-line sentence on a phone grows into the space
+   instead of overflowing it. */
+.iou-composer {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  min-height: 0;
+}
+
+/* Baseline alignment is the whole job here: the avatar, the "@", the input and
+   the "$" are four different boxes that must sit on one line of type. The
+   0.3em gap reads as a word space — a normal one is nearer 0.25em, but Clash
+   tracked at -0.03em needs the extra to keep tokens from touching. */
+.iou-sentence {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.1em 0.3em;
+  font-family: var(--font-clash), system-ui, sans-serif;
+  font-weight: 300;
+  font-size: clamp(2.4rem, 1.1rem + 5.2vw, 7rem);
+  line-height: 0.98;
+  letter-spacing: -0.03em;
+}
+
+/* Every token inherits the sentence's type. Stated once so the input, the
+   mirror that sizes it and the static words cannot measure differently — a
+   mirror one hair off the input's metrics is a caret that drifts as you type. */
+.iou-sentence :is(.iou-field, .iou-mirror, .iou-compact, .iou-verb, .iou-static) {
+  font: inherit;
+  letter-spacing: inherit;
+  color: inherit;
+}
+
+/* The editable tokens are bare inputs: no chrome, no width of their own — a
+   hidden mirror span measures the value and the wrapper collapses to it. */
+.iou-field {
+  appearance: none;
+  border: 0;
+  background: none;
+  padding: 0;
+  margin: 0;
+  outline: none;
+  min-width: 0;
+}
+
+.iou-field::placeholder {
+  color: color-mix(in srgb, var(--pay-poster-fg) 28%, var(--pay-poster-bg));
+}
+
+/* Auto-sizing: the mirror carries the same text in the same font in normal
+   flow, so the slot takes the mirror's width AND height and the input lies over
+   it. `field-sizing: content` would replace all of this but has no Firefox
+   support yet, and `ch` units mismeasure a proportional face like Clash.
+   The slot is inline-block so its baseline is the mirror's text baseline —
+   that is what keeps a typed name sitting on the same line as the words. */
+.iou-slot {
+  position: relative;
+  display: inline-block;
+}
+
+.iou-mirror {
+  display: block;
+  visibility: hidden;
+  white-space: pre;
+  pointer-events: none;
+}
+
+.iou-slot > .iou-field {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 100%;
+  height: 100%;
+}
+
+/* Compaction. The mirror measures the SHORT text, so the slot collapses to it
+   and the input — still holding all 42 characters — is clipped to that width.
+   Its glyphs go transparent and .iou-compact draws the short form in their
+   place; the caret keeps its own colour, so a focused field still looks focused.
+   Nothing here touches the value: this is a display, not a truncation. */
+.iou-slot[data-compact] > .iou-field {
+  color: transparent;
+  caret-color: var(--pay-poster-fg);
+}
+
+.iou-compact {
+  position: absolute;
+  left: 0;
+  top: 0;
+  white-space: pre;
+  pointer-events: none;
+}
+
+.iou-static { color: inherit; }
+
+/* The direction toggle. Receded like .settle-action, but it is a word inside a
+   sentence rather than a standalone control, so it keeps the sentence's tracking
+   instead of the action's 0.14em — spaced-out type mid-sentence would read as a
+   different voice. */
+.iou-verb {
+  border: 0;
+  background: none;
+  padding: 0;
+  cursor: pointer;
+  color: color-mix(in srgb, var(--pay-poster-fg) 62%, var(--pay-poster-bg));
+  transition: color var(--dur-2) var(--ease-out);
+  text-align: left;
+}
+
+:root[data-theme="dark"] .iou-verb {
+  color: color-mix(in srgb, var(--pay-poster-fg) 58%, var(--pay-poster-bg));
+}
+
+.iou-verb:hover, .iou-verb:focus-visible { color: var(--pay-poster-fg); }
+
+/* Borderless means there is nothing to show focus on. Not optional — but a box
+   is the wrong mark here: an outline around a word set at 7rem draws a rectangle
+   the size of a card and makes the sentence look like a form field, which is the
+   one thing it isn't. So focus is a rule drawn under the token, in the same
+   language as .iou-rule: hairline, from the left, currentColor.
+   Contrast is the text colour on the page background, which already clears
+   1.4.11's 3:1 — the indicator is quieter than a browser default, not weaker. */
+.iou-slot::after, .iou-verb::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  /* At line-height 0.98 the baseline sits ~0.115em above the bottom of the line
+     box, so this lands just under it rather than under the descenders. */
+  bottom: 0.03em;
+  height: max(1px, 0.018em);
+  background: currentColor;
+  transform: scaleX(0);
+  transform-origin: left;
+  transition: transform var(--dur-2) var(--ease-out);
+  pointer-events: none;
+}
+
+.iou-verb { position: relative; }
+
+.iou-slot:has(> .iou-field:focus-visible)::after,
+.iou-verb:focus-visible::after { transform: scaleX(1); }
+
+/* The default ring is replaced, not suppressed — the ::after above IS the
+   indicator, and it is drawn for exactly the same states. */
+.iou-verb:focus-visible, .iou-field:focus-visible { outline: none; }
+
+@media (prefers-contrast: more) {
+  .iou-verb { color: var(--pay-poster-fg); }
+}
+
+/* Avatar + "@" + the sizing slot, kept on one baseline. Same shape as
+   .iou-money: a fixed mark, then the part that grows as you type. */
+.iou-who { display: inline-flex; align-items: baseline; }
+
+/* The "$" is dim until there is a number to qualify, so an empty composer reads
+   as one prompt rather than two. */
+.iou-money { display: inline-flex; align-items: baseline; }
+
+.iou-currency {
+  color: color-mix(in srgb, var(--pay-poster-fg) 38%, var(--pay-poster-bg));
+  transition: color var(--dur-2) var(--ease-out);
+}
+
+.iou-money[data-filled="true"] .iou-currency { color: inherit; }
+
+.iou-amount { font-variant-numeric: tabular-nums; }
+
+/* Cap height, not em: a circle sized to the em box sits visually larger than
+   the capitals beside it. 0.58em matches Clash's cap height closely enough that
+   the avatar reads as a letter in the word. */
+.iou-avatar, .iou-mark {
+  height: 0.58em;
+  width: 0.58em;
+  margin-right: 0.16em;
+  align-self: center;
+}
+
+/* Hidden until it loads: a face that pops in a beat late is better than a
+   broken-image glyph sitting mid-sentence. */
+.iou-avatar {
+  border-radius: 50%;
+  object-fit: cover;
+  opacity: 0;
+}
+
+.iou-avatar[data-loaded="true"] { opacity: 1; }
+
+/* The Discord mark has nothing to load, so it plays its entrance on mount. The
+   overshoot matches the tween the avatar gets on load (back.out), so a handle
+   picks up its mark the same way whichever platform it's on. */
+.iou-mark { animation: iou-mark-in 360ms cubic-bezier(0.34, 1.56, 0.64, 1) both; }
+
+@keyframes iou-mark-in {
+  from { opacity: 0; transform: scale(0.4); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+.iou-rule {
+  height: 1px;
+  background: var(--pay-poster-rule);
+  transform-origin: left;
+  margin: clamp(0.8rem, 0.5rem + 1vw, 1.4rem) 0 0;
+  transition: background var(--dur-1) var(--ease-out);
+}
+
+.iou-sentence:focus-within ~ .iou-rule { background: var(--pay-poster-fg); }
+
+/* The note line. The wrapper owns the type so the input and the ghost behind it
+   inherit one set of metrics and land character-for-character on each other —
+   the same reason .iou-sentence states its type once for all of its tokens. */
+.iou-note-wrap {
+  position: relative;
+  width: 100%;
+  max-width: 40ch;
+  margin-top: clamp(0.7rem, 0.5rem + 0.6vw, 1.1rem);
+  font-family: var(--font-clash), system-ui, sans-serif;
+  font-weight: 300;
+  /* Stated here, not on the input: the note and the ghost behind it must land
+     character-for-character, so they take their metrics from one declaration. */
+  font-size: clamp(1.25rem, 1rem + 1.2vw, 2.2rem);
+  line-height: 1.3;
+  letter-spacing: -0.01em;
+}
+
+.iou-note {
+  font: inherit;
+  letter-spacing: inherit;
+  color: var(--pay-poster-dim);
+  appearance: none;
+  border: 0;
+  background: none;
+  padding: 0;
+  outline: none;
+  width: 100%;
+  display: block;
+  /* Above the ghost, which is absolutely positioned — and transparent-backed,
+     so the suggestion still shows through from behind the caret. */
+  position: relative;
+  transition: color var(--dur-2) var(--ease-out);
+}
+
+.iou-note::placeholder { color: color-mix(in srgb, var(--pay-poster-fg) 28%, var(--pay-poster-bg)); }
+.iou-note:focus { color: var(--pay-poster-fg); }
+
+/* Same underline-not-a-box reasoning as the sentence tokens, drawn on the
+   wrapper because the input fills it. */
+.iou-note-wrap::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -0.28em;
+  height: 1px;
+  background: currentColor;
+  color: var(--pay-poster-fg);
+  transform: scaleX(0);
+  transform-origin: left;
+  transition: transform var(--dur-2) var(--ease-out);
+  pointer-events: none;
+}
+
+.iou-note-wrap:has(.iou-note:focus-visible)::after { transform: scaleX(1); }
+.iou-note:focus-visible { outline: none; }
+
+/* ── The rotating suggestion ──────────────────────────────────────────────────
+   A ghost line behind the note, one span per character so a swap can stagger
+   across the phrase. Written by the client (see OweClient), never by React.
+
+   overflow: hidden makes the box a mask: characters roll up out of the line and
+   the next phrase rolls in from under it, instead of drifting over the sentence
+   above. */
+.iou-ghost {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  white-space: pre;
+  color: color-mix(in srgb, var(--pay-poster-fg) 28%, var(--pay-poster-bg));
+  transition: opacity var(--dur-2) var(--ease-out);
+}
+
+/* A transform does nothing to an inline box, so every character is a block. */
+.iou-ghost-ch { display: inline-block; }
+
+/* Armed only once the effect has put characters in — until then the native
+   placeholder is the one doing the job, which is what a page that never
+   hydrates (or one with JS off) is left with. */
+.iou-ghost:not(:empty) ~ .iou-note::placeholder { color: transparent; }
+
+/* A caret in an empty field dims the suggestion rather than dropping it, so it
+   still reads as a prompt and not as something you typed. Typed text takes the
+   line outright. The two states are mutually exclusive by construction — the
+   focus rule also requires the placeholder to be showing. */
+.iou-note-wrap:has(.iou-note:focus:placeholder-shown) .iou-ghost { opacity: 0.55; }
+.iou-note-wrap:has(.iou-note:not(:placeholder-shown)) .iou-ghost { opacity: 0; }
+
+.iou-error {
+  font-family: var(--font-clash), system-ui, sans-serif;
+  font-size: 0.78rem;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--warning-text);
+  margin-top: 0.9rem;
+  min-height: 1.2em;
+}
+
+/* Which namespace a bare handle belongs to. An email gives itself away and a
+   name does not, so this only appears when the answer is genuinely ambiguous —
+   a picker that is always on screen would be a form control in a page that has
+   worked to have none. Cycles rather than opens a menu: there are two answers. */
+.iou-provider {
+  font-family: var(--font-clash), system-ui, sans-serif;
+  font-size: 0.72rem;
+  font-weight: 500;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  border: 0;
+  background: none;
+  padding: 0.2rem 0;
+  cursor: pointer;
+  color: var(--pay-poster-dim);
+  transition: color var(--dur-1) var(--ease-out);
+}
+
+.iou-provider:hover:not(:disabled), .iou-provider:focus-visible { color: var(--pay-poster-fg); }
+.iou-provider:focus-visible { outline: 1px solid currentColor; outline-offset: 0.3em; }
+
+/* One identity means the footnote is a label, not a control — it still says
+   which wallet signs, it just has nothing to switch to. */
+.iou-provider:disabled { cursor: default; }
+
+.iou-meta {
+  display: flex;
+  align-items: baseline;
+  gap: 1.4rem;
+  flex-wrap: wrap;
+  margin-top: 0.9rem;
+  min-height: 1.6em;
+}
+
+.iou-meta .iou-error { margin-top: 0; }
+
+/* Entrance. The same clip-path wipe the settle deck reveals its cards with, on
+   the same delay ladder, so arriving at /owe feels like arriving at a settle
+   card. Attribute-driven, not a library: the composer holds inputs, and a
+   SplitType pass would shred them into per-word spans. */
+/* The clip is opt-in: it applies only once the client has stamped
+   data-revealed="false" to arm it. A page that never hydrates carries no
+   attribute at all and simply shows its composer, rather than presenting an
+   empty poster because an animation never got the chance to run.
+
+   color and letter-spacing ride along because this selector outranks
+   .settle-action's own transition — without them the commit word would snap
+   between its rest and hover states instead of easing. */
+.iou-composer [data-reveal] {
+  transition:
+    clip-path var(--dur-3) var(--ease-out),
+    transform var(--dur-3) var(--ease-out),
+    color var(--dur-2) var(--ease-out),
+    letter-spacing var(--dur-2) var(--ease-out);
+}
+
+.iou-composer[data-revealed="false"] [data-reveal] {
+  clip-path: inset(0 0 100% 0);
+  transform: translateY(0.3em);
+}
+
+/* inset(-100%), not inset(0): at line-height 0.98 Clash's descenders sit below
+   the content box, and every focus ring on this page is drawn with an
+   outline-offset that a 0 cut would clip away. Same reasoning as .settle-*. */
+.iou-composer[data-revealed="true"] [data-reveal] {
+  clip-path: inset(-100%);
+  transform: none;
+}
+
+.iou-composer[data-revealed="true"] .iou-note-wrap { transition-delay: 140ms; }
+.iou-composer[data-revealed="true"] .iou-meta { transition-delay: 200ms; }
+.iou-composer[data-revealed="true"] .settle-action { transition-delay: 260ms; }
+
+/* ── The ledger ───────────────────────────────────────────────────────────────
+   The same sentence, one line tall. Rows are buttons because tapping one recalls
+   it into the composer. */
+
+.iou-ledger { border-top: 1px solid var(--pay-poster-rule); padding-top: 0.9rem; }
+
+.iou-ledger-head {
+  display: flex;
+  justify-content: space-between;
+  font-family: var(--font-clash), system-ui, sans-serif;
+  font-size: 0.72rem;
+  font-weight: 500;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--pay-poster-dim);
+  margin-bottom: 0.5rem;
+}
+
+.iou-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+  width: 100%;
+  border: 0;
+  background: none;
+  padding: 0.5rem 0;
+  cursor: pointer;
+  text-align: left;
+  font-family: var(--font-clash), system-ui, sans-serif;
+  font-weight: 300;
+  font-size: clamp(0.95rem, 0.85rem + 0.5vw, 1.35rem);
+  letter-spacing: -0.01em;
+  color: color-mix(in srgb, var(--pay-poster-fg) 72%, var(--pay-poster-bg));
+  border-bottom: 1px solid color-mix(in srgb, var(--pay-poster-rule) 45%, transparent);
+  transition: color var(--dur-1) var(--ease-out);
+}
+
+.iou-row:hover:not(:disabled), .iou-row:focus-visible { color: var(--pay-poster-fg); }
+.iou-row:focus-visible { outline: 1px solid currentColor; outline-offset: 0.2em; }
+
+/* A row that can't be recalled is still a row worth reading — it just isn't a
+   control, so it stops claiming to be one. */
+.iou-row:disabled { cursor: default; }
+
+/* Awaiting confirmation from Arc. The same sheen the debt alerts use for the
+   same meaning, so "in flight" looks identical wherever it appears. It must ride
+   an overlay rather than the row: the keyframe animates translateX, which on the
+   row itself would slide the whole line off the page. */
+.iou-row[data-state="pending"] {
+  color: var(--pay-poster-dim);
+  position: relative;
+  overflow: hidden;
+  cursor: progress;
+}
+
+.iou-row[data-state="pending"]::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    color-mix(in srgb, var(--pay-poster-fg) 12%, transparent),
+    transparent
+  );
+  transform: translateX(-120%);
+  animation: debt-sheen 1800ms var(--ease-out) infinite;
+}
+
+.iou-row[data-state="settled"] { opacity: 0.5; }
+.iou-row[data-state="settled"] .iou-row-amount { animation: balance-flash var(--dur-4) var(--ease-out); }
+
+.iou-row-amount { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.iou-row-note { color: var(--pay-poster-dim); font-size: 0.82em; }
+
+.iou-empty {
+  font-family: var(--font-clash), system-ui, sans-serif;
+  font-weight: 300;
+  font-size: 0.9rem;
+  color: var(--pay-poster-dim);
+  padding: 0.5rem 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .iou-rule { transform: scaleX(1) !important; }
+  /* The focus underlines stay — they're the indicator — but they appear rather
+     than draw. Same for the provider mark: visible, not animated in. */
+  .iou-slot::after, .iou-verb::after, .iou-note-wrap::after { transition: none; }
+  .iou-mark { animation: none; }
+  .iou-row[data-state="pending"]::after { animation: none; opacity: 0; }
+  .iou-row[data-state="settled"] .iou-row-amount { animation: none; }
+  /* Matches the reveal selectors' specificity, or it loses to them and leaves
+     the whole composer clipped shut — the same trap the settle deck documents. */
+  .iou-composer [data-reveal],
+  .iou-composer[data-revealed="false"] [data-reveal],
+  .iou-composer[data-revealed="true"] [data-reveal] {
+    clip-path: none;
+    transform: none;
+    transition: none;
+  }
 }

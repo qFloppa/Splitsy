@@ -4,7 +4,7 @@ import * as Dialog from "@radix-ui/react-dialog";
 import confetti from "canvas-confetti";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { billUnitsToUsdc } from "@/lib/bill-split-contracts";
-import { buildSettleItems, type OwnedDebt, type SettleItem, type SocialDebt } from "@/lib/settle-items";
+import { buildSettleItems, clearsSection, type OwnedDebt, type SettleItem, type SocialDebt } from "@/lib/settle-items";
 import { bridgeSourceChains, type BridgeSourceChain } from "@/lib/appkit-bridge";
 import { useBillVerification } from "./BillVerification";
 import type { BillRunState, ProgressFlow } from "./HomeClient";
@@ -28,6 +28,10 @@ export type SettleDeckHandlers = {
 };
 
 export type SettleDeckProps = SettleDeckHandlers & {
+  // The app header, rendered inside the deck's scroller so it scrolls away with
+  // the first card. Outside it, it would stand over every section forever — the
+  // deck is the only thing that scrolls on this tab.
+  header: ReactNode;
   socialDebts: SocialDebt[];
   walletDebts: OwnedDebt[];
   splitterBills: OwnedDebt[];
@@ -84,6 +88,7 @@ function runningFlow(deck: SettleDeckHandlers, id: string): ProgressFlow | null 
 }
 
 export default function SettleDeck({
+  header,
   socialDebts,
   walletDebts,
   splitterBills,
@@ -109,6 +114,10 @@ export default function SettleDeck({
   // Before the observer's first callback nothing is active, which would paint an
   // entirely hidden first section. The top of the deck is the honest default.
   const active = activeId ?? items[0]?.id ?? null;
+  // What is still owed above the end card. A settled section stays mounted and
+  // dimmed until the registry refresh drops it, so the rail's own count would
+  // report back work the user has just finished.
+  const remaining = countedIds.filter((id) => !settledIds.includes(id)).length;
   const { progressFlow } = deck;
 
   useEffect(() => {
@@ -133,16 +142,23 @@ export default function SettleDeck({
   useEffect(() => {
     if (progressFlow?.status !== "success" || !progressFlow.subjectKey) return;
     const settled = progressFlow.subjectKey;
+    // `items` still describes the section as it was before the flow: the
+    // registry refresh is awaited after the flow completes, so it hasn't landed
+    // here yet. A bridge or a part-payment leaves the card exactly where it is.
+    if (!clearsSection(items.find((item) => item.id === settled), progressFlow)) return;
     const timer = setTimeout(() => {
       setSettledIds((current) => (current.includes(settled) ? current : [...current, settled]));
-      // The just-settled section isn't marked in the DOM yet — this render
-      // hasn't happened — so exclude it by id and skip anything already dimmed.
-      const next = deckRef.current?.querySelector(
-        `[data-id]:not([data-id="${settled}"]):not([data-state="settled"])`,
-      );
+      // The next section *below* this one — querying the deck for the first
+      // undimmed section walks back up to the top of the list instead.
+      const sections = Array.from(deckRef.current?.querySelectorAll("[data-id]") ?? []);
+      const from = sections.findIndex((section) => section.getAttribute("data-id") === settled);
+      const next = sections.slice(from + 1).find((section) => section.getAttribute("data-state") !== "settled");
       next?.scrollIntoView({ behavior: "smooth", block: "start" });
     }, 1200);
     return () => clearTimeout(timer);
+    // items is deliberately out: the refresh replaces it mid-timeout, and a
+    // re-run would cancel the advance it is meant to trigger.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [progressFlow?.status, progressFlow?.subjectKey]);
 
   // Fires once, when the deck empties — not per card. Under every section in a
@@ -161,6 +177,7 @@ export default function SettleDeck({
 
   return (
     <div className="settle-deck" ref={deckRef}>
+      {header}
       {items.map((item) => (
         <Section
           active={item.id === active}
@@ -168,6 +185,7 @@ export default function SettleDeck({
           index={countedIds.indexOf(item.id)}
           item={item}
           key={item.id}
+          remaining={remaining}
           settled={settledIds.includes(item.id)}
           settledCount={settledIds.length}
           signedIn={signedIn}
@@ -183,6 +201,7 @@ function Section({
   deck,
   index,
   item,
+  remaining,
   settled,
   settledCount,
   signedIn,
@@ -192,6 +211,7 @@ function Section({
   deck: SettleDeckHandlers;
   index: number;
   item: SettleItem;
+  remaining: number;
   settled: boolean;
   settledCount: number;
   signedIn: boolean;
@@ -210,17 +230,29 @@ function Section({
   }
 
   if (item.kind === "end") {
+    // Scrolling to the bottom is not the same as clearing the deck — you can
+    // pass every section without paying one. The card reports what is actually
+    // left above it, and only claims "all settled" when nothing is.
+    const cleared = settledCount > 0 ? `${settledCount} ${settledCount === 1 ? "bill" : "bills"} cleared just now. ` : "";
     return (
       <section className="settle-section" data-active={active} data-id={item.id}>
         <h2 className="settle-merchant">
-          {settledCount > 0 ? "all settled" : signedIn ? "nothing waiting on you" : "sign in to settle"}
+          {remaining > 0
+            ? `${remaining} still waiting`
+            : settledCount > 0
+              ? "all settled"
+              : signedIn
+                ? "nothing waiting on you"
+                : "sign in to settle"}
         </h2>
         <p className="settle-meta">
-          {settledCount > 0
-            ? `${settledCount} ${settledCount === 1 ? "bill" : "bills"} cleared just now. Nothing else is waiting on you.`
-            : signedIn
-              ? "Bills tagged to your handle or wallet will appear here."
-              : "Sign in or connect a wallet to see the bills tagged to you."}
+          {remaining > 0
+            ? `${cleared}Scroll back up to settle ${remaining === 1 ? "the last one" : "the rest"}.`
+            : settledCount > 0
+              ? `${cleared}Nothing else is waiting on you.`
+              : signedIn
+                ? "Bills tagged to your handle or wallet will appear here."
+                : "Sign in or connect a wallet to see the bills tagged to you."}
         </p>
       </section>
     );
@@ -268,8 +300,24 @@ function FlowSteps({ flow }: { flow: ProgressFlow }) {
 }
 
 // One shared message line, so an error from any path lands in the same place.
+//
+// The flow's own error is the fallback because a step that fails mid-flow — a
+// rejected chain switch, a mint that can't be paid for — reports through
+// failFlow and nothing else. On every other tab ProgressModal shows that text;
+// here the modal is suppressed and the steps unmount the moment the status
+// leaves "running", so without this the failure is silent.
 function DeckMessage({ deck, id }: { deck: SettleDeckHandlers; id: string }) {
-  const message = deck.debtMessages[id];
+  const flow = deck.progressFlow;
+  const failed = flow?.subjectKey === id && flow?.status === "error" ? flow : null;
+  const failedStep = failed?.steps.find((step) => step.state === "error")?.label;
+  const message =
+    deck.debtMessages[id] ??
+    (failed
+      ? {
+          tone: "error" as const,
+          message: `${failedStep ?? "This"} failed — ${failed.errorMessage || "no reason given."}`,
+        }
+      : null);
   if (!message) return null;
   return (
     <p className="settle-meta" style={message.tone === "error" ? { color: "var(--warning-text)" } : undefined}>

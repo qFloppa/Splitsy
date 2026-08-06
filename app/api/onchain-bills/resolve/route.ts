@@ -1,4 +1,8 @@
 import { resolveParticipants } from "@/lib/wallet-resolve";
+// Per-provider handle validity, shared with the /owe composer so the client that
+// submits and the route that accepts can't drift. Still mirrored inline in
+// HomeClient's HandleField.
+import { validHandle } from "@/lib/iou";
 import type { IdentityProvider } from "@/lib/types";
 
 export const runtime = "nodejs";
@@ -6,15 +10,6 @@ export const dynamic = "force-dynamic";
 
 const PROVIDERS: IdentityProvider[] = ["x", "discord", "email"];
 const MAX_PARTICIPANTS = 20;
-
-// Per-provider handle validity — same rules as HomeClient's HandleField.
-function validHandle(provider: IdentityProvider, handle: string): boolean {
-  const h = handle.replace(/^@/, "").trim();
-  if (provider === "x") return /^[a-zA-Z0-9_]{1,15}$/.test(h);
-  if (provider === "email") return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(h);
-  if (provider === "discord") return /^[a-z0-9._]{2,32}$/.test(h.toLowerCase());
-  return false;
-}
 
 export async function POST(request: Request) {
   const body = (await request.json().catch(() => null)) as {

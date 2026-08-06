@@ -58,6 +58,7 @@ import {
   bridgeUsdcToArc,
   BridgeSourceChain,
   type BridgeStepEvent,
+  type BridgeSummary,
   type BrowserWalletSession,
   createBrowserWalletSessionFromConnector,
 } from "@/lib/appkit-bridge";
@@ -340,7 +341,6 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
   // Off-chain (social) history count, reported up by the self-fetching X history
   // panel so the shared History panel can gate across both debt systems.
   const [socialHistoryCount, setSocialHistoryCount] = useState(0);
-  const headerRef = useRef<HTMLElement | null>(null);
   // The off-chain debts owed by the signed-in handle. The Settle deck wants them
   // as data rather than as rows, so the fetch lives here now.
   const { debts: socialDebts, reload: reloadSocialDebts } = useSocialDebts();
@@ -1341,13 +1341,16 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
     if (activeTab !== "settle") fireSuccessConfetti();
   }
 
+  // First error wins. A bridge fails twice on the way out — once as the step that
+  // broke, then again as the result state — and the second report is always the
+  // vaguer of the two.
   function failFlow(message: string) {
     setProgressFlow((current) =>
       current
         ? {
             ...current,
             status: "error",
-            errorMessage: message,
+            errorMessage: current.errorMessage || message,
             steps: current.steps.map((step) => (step.state === "active" ? { ...step, state: "error" } : step)),
           }
         : current,
@@ -1729,12 +1732,10 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
       });
 
       if (result.state === "error") {
-        failFlow("The bridge did not complete. No funds were claimed on Arc.");
+        const message = bridgeFailureMessage(result);
+        failFlow(message);
         setBillState("error");
-        setDebtMessages((current) => ({
-          ...current,
-          [debtKey]: { tone: "error", message: "Bridge failed." },
-        }));
+        setDebtMessages((current) => ({ ...current, [debtKey]: { tone: "error", message } }));
         return;
       }
 
@@ -1833,9 +1834,10 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
       });
 
       if (result.state === "error") {
-        failFlow("The bridge did not complete. No funds were claimed on Arc.");
+        const message = bridgeFailureMessage(result);
+        failFlow(message);
         setRecurringState("error");
-        setRecurringMessage("Bridge failed.");
+        setRecurringMessage(message);
         return;
       }
 
@@ -2555,6 +2557,12 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
   }
 
   function switchAppTab(tab: AppTab) {
+    // A flow's modal belongs to the surface that started it. The Settle deck
+    // suppresses the modal in favour of in-section steps, so a flow that ended
+    // there is never dismissed — and would otherwise greet you on the next tab
+    // as a popup about something you finished with minutes ago.
+    closeFlow();
+
     const transitionDocument = document as Document & {
       startViewTransition?: (callback: () => void) => void;
     };
@@ -2611,83 +2619,78 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
     };
   }, [activeTab]);
 
-  // The Settle deck sizes itself to the viewport minus the header, and the
-  // header is responsive (it stacks below `md`), so its height is measured
-  // rather than assumed the way .pay-shell hardcodes 4rem.
-  useEffect(() => {
-    const node = headerRef.current;
-    if (!node) return;
-    const observer = new ResizeObserver(([entry]) => {
-      document.documentElement.style.setProperty("--app-header-h", `${entry.contentRect.height}px`);
-    });
-    observer.observe(node);
-    return () => observer.disconnect();
-  }, []);
-
-  return (
-    <main className="app-shell min-h-screen text-[var(--text)]">
-      <header
-        ref={headerRef}
-        className={`${activeTab === "settle" ? "sticky top-0" : "static"} z-30 border-b border-[var(--border)] bg-[color:var(--header-bg)] backdrop-blur-xl`}
-      >
-        <div className="mx-auto max-w-[88rem] px-4 py-3 sm:px-6 lg:px-8">
-          <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-            <div className="min-w-0 shrink">
-              <Link aria-label="Splitsy home" className="brand-lockup" href="/">
-                <span className="logo-crop logo-crop-app">
-                  <Image alt="Splitsy" className="logo-crop-image" height={1024} priority src="/splitsy.png" width={1536} />
-                </span>
+  // On the Settle tab this rides inside the deck's own scroller (see SettleDeck's
+  // `header` prop) so it scrolls away with the first card rather than standing
+  // over every section. Everywhere else it is the page's first block as usual.
+  const appHeader = (
+    <header className="z-30 border-b border-[var(--border)] bg-[color:var(--header-bg)] backdrop-blur-xl">
+      <div className="mx-auto max-w-[88rem] px-4 py-3 sm:px-6 lg:px-8">
+        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+          <div className="min-w-0 shrink">
+            <Link aria-label="Splitsy home" className="brand-lockup" href="/">
+              <span className="logo-crop logo-crop-app">
+                <Image alt="Splitsy" className="logo-crop-image" height={1024} priority src="/splitsy.png" width={1536} />
+              </span>
+            </Link>
+            {/* Every row of header is a row the deck doesn't get, and the
+                section rail already stamps the network. */}
+            {activeTab === "settle" ? null : (
+              <div className="header-title-row mt-1">
+                <h1 className="app-title">
+                  Split bills, Settle cleanly
+                </h1>
+                <span className="network-stamp">Arc Testnet</span>
+              </div>
+            )}
+          </div>
+          <div className="flex flex-wrap items-center gap-2 md:justify-end lg:flex-nowrap">
+            <div className="segmented-control">
+              <TabButton active={activeTab === "bills" || activeTab === "recurring"} onClick={() => switchAppTab("bills")}>
+                Bills
+              </TabButton>
+              <TabButton active={activeTab === "settle"} onClick={() => switchAppTab("settle")}>
+                Settle
+                {settleCount > 0 ? (
+                  <span aria-label={`${settleCount} waiting on you`} className="tab-count">
+                    {settleCount}
+                  </span>
+                ) : null}
+              </TabButton>
+              <Link className="tab-button" href="/owe">
+                IOU
               </Link>
-              {/* Every row of header is a row the deck doesn't get, and the
-                  section rail already stamps the network. */}
-              {activeTab === "settle" ? null : (
-                <div className="header-title-row mt-1">
-                  <h1 className="app-title">
-                    Split bills, Settle cleanly
-                  </h1>
-                  <span className="network-stamp">Arc Testnet</span>
-                </div>
-              )}
+              <TabButton active={activeTab === "dashboard"} onClick={() => switchAppTab("dashboard")}>
+                Dashboard
+              </TabButton>
+              <TabButton active={activeTab === "agents"} onClick={() => switchAppTab("agents")}>
+                Agents
+              </TabButton>
+              <Link className="tab-button" href="/docs">
+                <BookOpen size={16} />
+                Docs
+              </Link>
             </div>
-            <div className="flex flex-wrap items-center gap-2 md:justify-end lg:flex-nowrap">
-              <div className="segmented-control">
-                <TabButton active={activeTab === "bills"} onClick={() => switchAppTab("bills")}>
-                  Bills
-                </TabButton>
-                <TabButton active={activeTab === "settle"} onClick={() => switchAppTab("settle")}>
-                  Settle
-                  {settleCount > 0 ? <span className="spec-chip spec-chip-attn">{settleCount}</span> : null}
-                </TabButton>
-                <TabButton active={activeTab === "recurring"} onClick={() => switchAppTab("recurring")}>
-                  Recurring
-                </TabButton>
-                <TabButton active={activeTab === "dashboard"} onClick={() => switchAppTab("dashboard")}>
-                  Dashboard
-                </TabButton>
-                <TabButton active={activeTab === "agents"} onClick={() => switchAppTab("agents")}>
-                  Agents
-                </TabButton>
-                <Link className="tab-button" href="/docs">
-                  <BookOpen size={16} />
-                  Docs
-                </Link>
-              </div>
-              <div className="flex flex-nowrap items-center gap-2">
-                <SignInMenu />
-                <ConnectButton accountStatus="address" chainStatus="icon" showBalance={false} />
-                <button
-                  aria-label={`Switch to ${theme === "light" ? "dark" : "light"} mode`}
-                  className="icon-button shrink-0"
-                  onClick={() => setTheme((current) => (current === "light" ? "dark" : "light"))}
-                  type="button"
-                >
-                  {theme === "light" ? <Moon size={17} /> : <Sun size={17} />}
-                </button>
-              </div>
+            <div className="flex flex-nowrap items-center gap-2">
+              <SignInMenu />
+              <ConnectButton accountStatus="address" chainStatus="icon" showBalance={false} />
+              <button
+                aria-label={`Switch to ${theme === "light" ? "dark" : "light"} mode`}
+                className="icon-button shrink-0"
+                onClick={() => setTheme((current) => (current === "light" ? "dark" : "light"))}
+                type="button"
+              >
+                {theme === "light" ? <Moon size={17} /> : <Sun size={17} />}
+              </button>
             </div>
           </div>
         </div>
-      </header>
+      </div>
+    </header>
+  );
+
+  return (
+    <main className="app-shell min-h-screen text-[var(--text)]">
+      {activeTab === "settle" ? null : appHeader}
 
       {/* Full-bleed by design — the poster can't live inside the padded, capped
           wrapper every other tab uses, so it renders as its sibling. */}
@@ -2695,6 +2698,7 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
         <SettleDeck
           billState={billState}
           bridgeForDebt={bridgeForDebt}
+          header={appHeader}
           claimAmounts={claimAmounts}
           claimSplitterFunds={claimSplitterFunds}
           debtMessages={debtMessages}
@@ -2715,15 +2719,34 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
 
       <section className={`mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8${activeTab === "settle" ? " hidden" : ""}`}>
         <AnimatePresence mode="wait">
-        {activeTab === "bills" ? (
+        {activeTab === "bills" || activeTab === "recurring" ? (
           <motion.div
             animate={{ opacity: 1, y: 0 }}
             className="space-y-5"
             exit={{ opacity: 0, y: 8 }}
             initial={{ opacity: 0, y: 8 }}
-            key="bills"
+            key="bills-section"
             transition={{ duration: 0.22, ease: "easeOut" }}
           >
+            {/* Sub-tab toggle — One-off bill vs standing recurring split */}
+            <div className="segmented-control">
+              <TabButton active={activeTab === "bills"} onClick={() => switchAppTab("bills")}>
+                One-off
+              </TabButton>
+              <TabButton active={activeTab === "recurring"} onClick={() => switchAppTab("recurring")}>
+                Recurring
+              </TabButton>
+            </div>
+            <AnimatePresence mode="wait">
+            {activeTab === "bills" ? (
+            <motion.div
+              animate={{ opacity: 1, y: 0 }}
+              className="space-y-5"
+              exit={{ opacity: 0, y: 8 }}
+              initial={{ opacity: 0, y: 8 }}
+              key="one-off"
+              transition={{ duration: 0.22, ease: "easeOut" }}
+            >
             <TabHero
               eyebrow="Receipt to settlement"
               icon={<ReceiptText size={13} />}
@@ -3248,17 +3271,17 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
                 ) : null}
               </AnimatePresence>
             </div>
-          </motion.div>
-        ) : activeTab === "recurring" ? (
-          <motion.div
-            animate={{ opacity: 1, y: 0 }}
-            className="space-y-5"
-            exit={{ opacity: 0, y: 8 }}
-            initial={{ opacity: 0, y: 8 }}
-            key="recurring"
-            transition={{ duration: 0.22, ease: "easeOut" }}
-          >
-          <TabHero
+            </motion.div>
+            ) : (
+            <motion.div
+              animate={{ opacity: 1, y: 0 }}
+              className="space-y-5"
+              exit={{ opacity: 0, y: 8 }}
+              initial={{ opacity: 0, y: 8 }}
+              key="recurring"
+              transition={{ duration: 0.22, ease: "easeOut" }}
+            >
+            <TabHero
             eyebrow="Standing splits"
             icon={<RefreshCw size={13} />}
             legend={[
@@ -3314,6 +3337,9 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
             updateRecurringMember={updateRecurringMember}
             walletTabs={walletTabs}
           />
+            </motion.div>
+            )}
+            </AnimatePresence>
           </motion.div>
         ) : activeTab === "agents" ? (
           <motion.div
@@ -4446,6 +4472,11 @@ function ProgressModal({ flow, onClose }: { flow: ProgressFlow; onClose: () => v
   const succeeded = flow.status === "success";
   const isBridge = flow.kind === "bridge";
   const isClaim = flow.kind === "claim";
+  // A bridge that got past its burn+attestation step and then failed has not
+  // lost the money, but it has not left it where the payer can reach it either:
+  // it is burned on the source chain and claimable only against the attestation.
+  // "No funds were lost" is true of a reverted payment and misleading here.
+  const burned = isBridge && flow.steps.find((step) => step.key === "bridge")?.state === "done";
 
   const headIcon = succeeded ? (
     <CheckCircle2 size={22} />
@@ -4579,6 +4610,11 @@ function ProgressModal({ flow, onClose }: { flow: ProgressFlow; onClose: () => v
                 <>
                   <CheckCircle2 size={15} />
                   All transactions confirmed
+                </>
+              ) : burned ? (
+                <>
+                  <AlertTriangle size={15} />
+                  Burned on the source chain — the USDC is still waiting to be claimed on Arc
                 </>
               ) : (
                 <>
@@ -5057,6 +5093,17 @@ function conciseError(caught: unknown, fallback: string) {
   const base = (typeof shortMessage === "string" && shortMessage.trim()) || fallback;
   const firstLine = base.split("\n")[0].trim();
   return firstLine.length > 180 ? `${firstLine.slice(0, 177)}…` : firstLine;
+}
+
+// A failed bridge step is reported in the result, not thrown and not emitted over
+// the event bus, so this is the only place its reason is legible. Name the step:
+// a failure at Mint means the USDC is already burned on the source chain and is
+// sitting in CCTP waiting to be claimed, which is not the same situation as a
+// failed approval, however similar the two look from the modal.
+function bridgeFailureMessage(result: BridgeSummary) {
+  return result.error
+    ? `${result.error.step} failed — ${result.error.message}`
+    : "The bridge did not complete. No funds were claimed on Arc.";
 }
 
 function errorMessage(caught: unknown) {

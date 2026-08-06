@@ -1,6 +1,13 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { buildSettleItems, settleItemId, type OwnedDebt, type SettleItem, type SocialDebt } from "./settle-items.ts";
+import {
+  buildSettleItems,
+  clearsSection,
+  settleItemId,
+  type OwnedDebt,
+  type SettleItem,
+  type SocialDebt,
+} from "./settle-items.ts";
 
 const ACCOUNT_A = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" as const;
 const ACCOUNT_B = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" as const;
@@ -154,6 +161,27 @@ test("an escrowed bill past its due date and still short becomes a failed claim 
   const failed = pick(items, "claim-failed");
   assert.equal(failed.length, 1);
   assert.equal(failed[0].debt.billId, 8n);
+});
+
+test("only a flow that covers the whole section clears it", () => {
+  const items = buildSettleItems({
+    socialDebts: [social()],
+    walletDebts: [debt({ billId: 3n, remaining: 3_030_000n })],
+    splitterBills: [debt({ billId: 7n, claimable: 60_000_000n })],
+    nowSeconds: 0n,
+  });
+  const wallet = pick(items, "debt-wallet")[0];
+  const claim = pick(items, "claim")[0];
+  const socialItem = pick(items, "debt-social")[0];
+
+  assert.equal(clearsSection(wallet, { kind: "pay", amountLabel: "3.03" }), true);
+  assert.equal(clearsSection(wallet, { kind: "pay", amountLabel: "2.00" }), false);
+  // Bridging moves USDC to Arc — the debt is untouched, whatever the amount.
+  assert.equal(clearsSection(wallet, { kind: "bridge", amountLabel: "3.03" }), false);
+  assert.equal(clearsSection(claim, { kind: "claim", amountLabel: "60.00" }), true);
+  assert.equal(clearsSection(claim, { kind: "claim", amountLabel: "20.00" }), false);
+  assert.equal(clearsSection(socialItem, { kind: "pay", amountLabel: "5.00" }), true);
+  assert.equal(clearsSection(undefined, { kind: "pay", amountLabel: "5.00" }), false);
 });
 
 test("the end card is always last, even when nothing is pending", () => {

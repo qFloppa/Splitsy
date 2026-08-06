@@ -14,7 +14,7 @@ import { createViemAdapterFromProvider, resolveChainIdentifier } from "@circle-f
 import { CCTPV2BridgingProvider } from "@circle-fin/provider-cctp-v2";
 import type { AppKitActions } from "@circle-fin/app-kit";
 import type { Connector } from "wagmi";
-import { parseUnits, type EIP1193Provider } from "viem";
+import { createPublicClient, http, parseUnits, type Chain, type EIP1193Provider, type PublicClient } from "viem";
 import {
   bridgeWithPaymaster,
   getNativeBalance,
@@ -48,6 +48,35 @@ export type BrowserWalletSession = {
   walletName: string;
 };
 
+const ARC_TESTNET_CHAIN_ID = 5042002;
+
+const supportedChains = [
+  ArbitrumSepolia,
+  AvalancheFuji,
+  BaseSepolia,
+  EthereumSepolia,
+  OptimismSepolia,
+  PolygonAmoy,
+  ArcTestnet,
+];
+
+// The SDK's own Arc Testnet definition hardcodes an RPC endpoint that does not
+// answer, and it is not configurable: kit.bridge resolves "Arc_Testnet" from the
+// SDK's registry, so overriding the chain we pass in capabilities changes
+// nothing. Every read the adapter makes on Arc then dies as "Network connection
+// failed for Arc Testnet" — including the mint receipt, which fails *after* the
+// burn has already spent the USDC on the source chain.
+//
+// This hook is the one seam the adapter offers. Arc gets the endpoint the rest
+// of the app uses; every other chain keeps the SDK's default.
+const arcRpcUrl = process.env.NEXT_PUBLIC_ARC_TESTNET_RPC_URL ?? "https://rpc.testnet.arc.network";
+
+const getPublicClient = ({ chain }: { chain: Chain }) =>
+  createPublicClient({
+    chain,
+    transport: chain.id === ARC_TESTNET_CHAIN_ID ? http(arcRpcUrl) : http(),
+  }) as PublicClient;
+
 export async function createBrowserWalletSessionFromConnector({
   connector,
   connectedAddress,
@@ -63,17 +92,8 @@ export async function createBrowserWalletSessionFromConnector({
 
   const adapter = await createViemAdapterFromProvider({
     provider,
-    capabilities: {
-      supportedChains: [
-        ArbitrumSepolia,
-        AvalancheFuji,
-        BaseSepolia,
-        EthereumSepolia,
-        OptimismSepolia,
-        PolygonAmoy,
-        ArcTestnet,
-      ],
-    },
+    getPublicClient,
+    capabilities: { supportedChains },
   });
 
   return {
@@ -87,6 +107,12 @@ export type BridgeSummary = {
   state: string;
   explorerUrls: string[];
   steps: string[];
+  // Why it failed, when it did. kit.bridge resolves rather than throws on a
+  // failed step, and it does not emit an error over the event bus either — the
+  // reason exists only on the step object in the returned result. Dropping it
+  // (as summarize once did) leaves "the bridge did not complete" as the only
+  // thing anyone can say about a burn that never minted.
+  error?: { step: string; message: string };
 };
 
 // Live, per-transaction progress emitted by the CCTP v2 provider while a bridge
@@ -119,11 +145,14 @@ type BridgeResultLike = {
     state?: string;
     txHash?: string;
     explorerUrl?: string;
+    errorMessage?: string;
+    errorCategory?: string;
     values?: {
       explorerUrl?: string;
       txHash?: string;
       name?: string;
       state?: string;
+      errorMessage?: string;
     };
     data?: {
       explorerUrl?: string;
@@ -167,17 +196,8 @@ export async function connectBrowserWallet(): Promise<BrowserWalletSession> {
 
   const adapter = await createViemAdapterFromProvider({
     provider: selectedWallet.provider,
-    capabilities: {
-      supportedChains: [
-        ArbitrumSepolia,
-        AvalancheFuji,
-        BaseSepolia,
-        EthereumSepolia,
-        OptimismSepolia,
-        PolygonAmoy,
-        ArcTestnet,
-      ],
-    },
+    getPublicClient,
+    capabilities: { supportedChains },
   });
 
   return {
@@ -348,9 +368,20 @@ function summarizeBridgeResult(result: BridgeResultLike): BridgeSummary {
   const explorerUrls = steps
     .map((step) => step.explorerUrl ?? step.values?.explorerUrl ?? step.data?.explorerUrl)
     .filter((value): value is string => Boolean(value));
+  const failed = steps.find((step) => (step.state ?? step.values?.state) === "error");
+  const error = failed
+    ? {
+        step: failed.name ?? failed.values?.name ?? "step",
+        message:
+          failed.errorMessage ??
+          failed.values?.errorMessage ??
+          `${failed.errorCategory ?? "unknown"} error, no message given`,
+      }
+    : undefined;
 
   return {
     state: result.state ?? "unknown",
+    error,
     explorerUrls,
     steps: steps.map((step) => `${step.name ?? step.values?.name ?? "step"}: ${step.state ?? step.values?.state ?? "unknown"}`),
   };

@@ -413,6 +413,30 @@ export async function approveBillRegistry({ walletClient, account, amount }: Bil
   return assertReceiptSuccess(await publicClient.waitForTransactionReceipt({ hash }), "USDC approval");
 }
 
+// A plain USDC transfer on Arc, signed in the user's own wallet — the browser
+// counterpart to transferUsdcOnArc's Circle DCW call. No registry, no escrow: an
+// "I owe you" can't be a bill (createBill makes msg.sender the splitter, i.e.
+// the creditor), so the debtor paying it just pays.
+export async function transferArcUsdc({
+  walletClient,
+  account,
+  to,
+  amount,
+}: BillSplitWallet & { to: `0x${string}`; amount: bigint }) {
+  await assertUsdcBalance(account, amount);
+
+  const hash = await walletClient.writeContract({
+    address: ARC_USDC_ADDRESS,
+    abi: usdcAbi,
+    functionName: "transfer",
+    args: [to, amount],
+    account,
+    chain: arcTestnet,
+  });
+
+  return assertReceiptSuccess(await publicClient.waitForTransactionReceipt({ hash }), "USDC transfer");
+}
+
 export async function payBillDebt({
   walletClient,
   account,

@@ -57,6 +57,27 @@ function compare(a: SortKey, b: SortKey): number {
 const UNITS = 1_000_000; // USDC has 6 decimals
 const toUsd = (units: bigint) => Number(units) / UNITS;
 
+// Did a flow that just succeeded finish this section off? A bridge only moves
+// USDC onto Arc and pays no one, and a partial payment leaves the rest owed —
+// treating either as "done" dims the card and scrolls away from live work.
+export function clearsSection(
+  item: SettleItem | undefined,
+  flow: { kind: string; amountLabel: string },
+): boolean {
+  if (!item || flow.kind === "bridge") return false;
+  const paid = Number(flow.amountLabel);
+  const outstanding =
+    item.kind === "debt-social"
+      ? item.debt.amountUsd
+      : item.kind === "debt-wallet"
+        ? toUsd(item.action === "refund" ? item.refundable : item.debt.remaining)
+        : item.kind === "claim"
+          ? toUsd(item.debt.claimable)
+          : // divider, end and failed-claim rows carry no flow and never clear.
+            Infinity;
+  return Number.isFinite(paid) && paid >= outstanding;
+}
+
 export function buildSettleItems(input: {
   socialDebts: SocialDebt[];
   walletDebts: OwnedDebt[];
