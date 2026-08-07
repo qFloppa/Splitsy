@@ -250,25 +250,27 @@ a {
   z-index: -10;
   pointer-events: none;
   overflow: hidden;
+  /* Liquid-glass stack: the white pane frosts the coloured blooms below it.
+     Lower opacity on the white lets the accent/cyan come through more visibly. */
   background:
     linear-gradient(
       180deg,
-      rgba(255, 255, 255, 0.9),
-      rgba(255, 255, 255, 0.32) 16%,
-      rgba(255, 255, 255, 0.46) 60%,
-      rgba(255, 255, 255, 0.72)
+      rgba(255, 255, 255, 0.72),
+      rgba(255, 255, 255, 0.14) 16%,
+      rgba(255, 255, 255, 0.26) 60%,
+      rgba(255, 255, 255, 0.54)
     ),
-    radial-gradient(62% 48% at 6% 2%, color-mix(in srgb, var(--accent) 28%, transparent), transparent 64%),
-    radial-gradient(48% 42% at 92% 8%, color-mix(in srgb, var(--arc-cyan) 32%, transparent), transparent 68%),
-    radial-gradient(70% 52% at 72% 96%, color-mix(in srgb, var(--accent) 18%, transparent), transparent 62%),
+    radial-gradient(62% 48% at 6% 2%, color-mix(in srgb, var(--accent) 38%, transparent), transparent 64%),
+    radial-gradient(48% 42% at 92% 8%, color-mix(in srgb, var(--accent) 26%, transparent), transparent 68%),
+    radial-gradient(70% 52% at 72% 96%, color-mix(in srgb, var(--accent) 28%, transparent), transparent 62%),
     var(--background);
 }
 
 :root[data-theme="dark"] .app-backdrop {
   background:
-    radial-gradient(85% 115% at 12% -8%, rgba(62, 230, 214, 0.14), transparent),
+    radial-gradient(85% 115% at 12% -8%, rgba(98, 168, 241, 0.14), transparent),
     radial-gradient(80% 110% at 104% 16%, rgba(39, 117, 202, 0.2), transparent),
-    radial-gradient(75% 105% at 82% 114%, rgba(62, 230, 214, 0.1), transparent);
+    radial-gradient(75% 105% at 82% 114%, rgba(98, 168, 241, 0.10), transparent);
 }
 
 /* Faint tiled noise dithers the gradients so 8-bit color banding (the stepped
@@ -340,10 +342,10 @@ a {
   width: fit-content;
   align-items: center;
   gap: 0.38rem;
-  border: 1px solid color-mix(in srgb, var(--arc-cyan) 68%, var(--accent));
+  border: 1px solid color-mix(in srgb, var(--accent) 52%, var(--border));
   border-radius: 7px;
   background:
-    linear-gradient(135deg, color-mix(in srgb, var(--arc-cyan) 20%, transparent), transparent 62%),
+    linear-gradient(135deg, color-mix(in srgb, var(--accent) 14%, transparent), transparent 62%),
     color-mix(in srgb, var(--surface-strong) 86%, transparent);
   color: var(--accent-strong);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.45), 0 10px 24px rgba(7, 20, 33, 0.08);
@@ -359,8 +361,8 @@ a {
   width: 0.44rem;
   height: 0.44rem;
   border-radius: 999px;
-  background: var(--arc-cyan);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--arc-cyan) 22%, transparent);
+  background: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent);
 }
 
 .segmented-control {
@@ -990,7 +992,7 @@ input[type="number"],
   inset-inline: 0;
   top: -18%;
   height: 22%;
-  background: linear-gradient(180deg, transparent, rgba(62, 230, 214, 0.58), transparent);
+  background: linear-gradient(180deg, transparent, rgba(98, 168, 241, 0.52), transparent);
   filter: blur(0.5px);
   animation: receipt-scan 1.7s cubic-bezier(0.65, 0, 0.35, 1) infinite;
 }
@@ -1096,7 +1098,7 @@ input[type="number"],
 .docs-shell[data-docs-theme="dark"] .docs-hero {
   background:
     linear-gradient(180deg, rgba(16, 31, 48, 0.96), rgba(8, 17, 27, 0.98)),
-    radial-gradient(circle at 20% 12%, rgba(62, 230, 214, 0.11), transparent 34%);
+    radial-gradient(circle at 20% 12%, rgba(98, 168, 241, 0.11), transparent 34%);
 }
 
 .docs-topbar {
@@ -2141,6 +2143,62 @@ input[type="number"],
   text-wrap: pretty;
 }
 
+/* ── Liquid glass surface tokens scoped to the landing ───────────────────────
+   The backdrop already paints accent/cyan blooms; these overrides make every
+   section card more translucent so the blurred bloom shows through rather than
+   being swallowed by an opaque white fill. The top-edge highlight is the "rim"
+   that makes glass read as glass. */
+.lp-root {
+  --surface: rgba(255, 255, 255, 0.48);
+  --surface-strong: rgba(255, 255, 255, 0.68);
+  --surface-muted: rgba(238, 243, 246, 0.52);
+  --shadow-soft:
+    0 1px 0 rgba(255, 255, 255, 0.88) inset,
+    0 2px 8px rgba(39, 117, 202, 0.07),
+    0 18px 42px rgba(7, 20, 33, 0.07);
+}
+
+:root[data-theme="dark"] .lp-root {
+  --surface: rgba(13, 29, 44, 0.48);
+  --surface-strong: rgba(19, 43, 66, 0.68);
+  --surface-muted: rgba(16, 34, 53, 0.55);
+  --shadow-soft:
+    0 1px 0 rgba(255, 255, 255, 0.07) inset,
+    0 2px 8px rgba(0, 0, 0, 0.22),
+    0 18px 42px rgba(0, 0, 0, 0.24);
+}
+
+/* Explicit glass-card class for major section containers (browser mock, market
+   table, dev teaser card). Apply wherever you want the full frosted treatment. */
+.lp-glass {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  /* Top rim: bright highlight simulates light refracting through the glass edge */
+  border-top-color: rgba(255, 255, 255, 0.78);
+  border-radius: calc(var(--radius) + 4px);
+  backdrop-filter: blur(28px) saturate(1.5);
+  -webkit-backdrop-filter: blur(28px) saturate(1.5);
+  box-shadow: var(--shadow-soft);
+}
+
+:root[data-theme="dark"] .lp-glass {
+  border-top-color: rgba(255, 255, 255, 0.12);
+}
+
+/* Within the landing, boost the browser mock and any explicitly-blurred element
+   to the full glass level (stronger blur + saturation pop). */
+.lp-root .lp-browser {
+  backdrop-filter: blur(28px) saturate(1.6);
+  -webkit-backdrop-filter: blur(28px) saturate(1.6);
+  /* Glass rim on the browser chrome */
+  border-top-color: rgba(255, 255, 255, 0.72);
+  box-shadow: var(--shadow-soft);
+}
+
+:root[data-theme="dark"] .lp-root .lp-browser {
+  border-top-color: rgba(255, 255, 255, 0.1);
+}
+
 /* SplitType wraps hero lines in .line > .word. Each line gets its own clip
    mask so words can slide up "out of nothing" — the reveal reads as printing,
    not fading. GSAP owns the word transforms (set below the mask pre-reveal);
@@ -2178,16 +2236,16 @@ input[type="number"],
   }
 }
 
-/* Accent line of the headline picks up the settlement gradient. */
+/* Accent line of the headline: blue-to-light-blue gradient — no teal/green. */
 .lp-headline-accent {
-  background: linear-gradient(92deg, var(--usdc-blue) 8%, var(--arc-cyan) 92%);
+  background: linear-gradient(92deg, var(--usdc-blue) 8%, #93c5fd 92%);
   background-clip: text;
   -webkit-background-clip: text;
   color: transparent;
 }
 
 :root[data-theme="dark"] .lp-headline-accent {
-  background: linear-gradient(92deg, #7db8f5 8%, var(--arc-cyan) 92%);
+  background: linear-gradient(92deg, #7db8f5 8%, #bfdbfe 92%);
   background-clip: text;
   -webkit-background-clip: text;
 }
@@ -2250,7 +2308,7 @@ input[type="number"],
 
 .lp-browser:hover .lp-browser-dots span:nth-child(1) { background: #ff5f57; }
 .lp-browser:hover .lp-browser-dots span:nth-child(2) { background: #febc2e; }
-.lp-browser:hover .lp-browser-dots span:nth-child(3) { background: #28c840; }
+.lp-browser:hover .lp-browser-dots span:nth-child(3) { background: var(--accent); }
 
 .lp-browser-url {
   display: inline-flex;
@@ -2270,7 +2328,7 @@ input[type="number"],
 
 .lp-browser-url svg {
   flex: none;
-  color: var(--success);
+  color: var(--accent);
 }
 
 /* Demo typing caret — blinks while the timeline "types", hidden otherwise. */

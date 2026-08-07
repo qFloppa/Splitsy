@@ -47,6 +47,12 @@ export function Nav() {
           >
             Docs
           </Link>
+          <Link
+            className="rounded-md px-3 py-2 text-sm font-semibold text-[var(--text-soft)] no-underline transition-colors duration-[var(--dur-1)] hover:text-[var(--text)]"
+            href="/api"
+          >
+            API
+          </Link>
           <button
             aria-label={`Switch to ${theme === "light" ? "dark" : "light"} mode`}
             className="icon-button shrink-0"

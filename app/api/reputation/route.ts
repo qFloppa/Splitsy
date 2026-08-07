@@ -2,23 +2,31 @@ import type { IdentityProvider } from "@/lib/types";
 import { getUserByProviderHandle } from "@/lib/users-repo";
 import { getPendingWallet } from "@/lib/pending-wallets-repo";
 import { getReputationSummary } from "@/lib/reputation-repo";
+import { PRICES } from "@/lib/x402/pricing";
+import { withGateway } from "@/lib/x402/seller";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+
+const ENDPOINT = "/api/reputation";
 
 const isProvider = (v: string | null): v is IdentityProvider =>
   v === "x" || v === "discord" || v === "email";
 const looksLikeAddress = (v: string) => /^0x[a-fA-F0-9]{40}$/.test(v);
 
-// Aggregate ERC-8004 payment reputation for a wallet or a tagged handle, for
-// the bill-creation badge. Read-only: resolving a handle here must never mint
-// a wallet (that only happens when a bill is actually created), so this walks
-// users → pending_wallets and stops. Returns only the aggregate — not the
-// wallet address — so it isn't a handle→address oracle.
+// Aggregate ERC-8004 payment reputation for a wallet or a tagged handle, sold
+// as a paid service at $0.001. Any agent — a DeFi app, another expense
+// splitter, a counterparty-risk evaluator — can buy a verdict without needing a
+// Splitsy account.
+//
+// Resolving a handle here must never mint a wallet (that only happens when a
+// bill is actually created), so this walks users → pending_wallets and stops.
+// Returns only the aggregate — not the wallet address — so it isn't a
+// handle→address oracle.
 //
 // status "none" covers both "person unknown" and "wallet known, no payments":
 // under the consent policy those are deliberately the same neutral answer.
-export async function GET(request: Request) {
+async function handler(request: Request) {
   const url = new URL(request.url);
   const address = url.searchParams.get("address");
   const provider = url.searchParams.get("provider");
@@ -47,3 +55,5 @@ export async function GET(request: Request) {
     lastPaidAt: summary.lastPaidAt,
   });
 }
+
+export const GET = withGateway(handler, PRICES[ENDPOINT], ENDPOINT);

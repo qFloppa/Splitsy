@@ -1,11 +1,10 @@
 // What a self-run agent reads to find work: the bills this wallet owes on that
 // its own on-chain mandate would let an agent pay right now.
 //
-// PUBLIC AND UNAUTHENTICATED, on purpose and without leaking anything. Every
-// field here is already public: BillSplitRegistry is readable on chain by
-// anyone, and /api/onchain-bills/preimage already serves preimages with no
-// session. Auth would also defeat the point — this exists so an agent running on
-// the user's own machine, holding no Splitsy session, can find work.
+// x402-paywalled at $0.001. The payment IS the access mechanism — any agent with
+// Gateway-compatible USDC can call this without a Splitsy account or session.
+// Every field returned is already public on chain; the paywall recovers
+// infrastructure cost and signals this is a production API, not a dev endpoint.
 //
 // The counterpart to /api/agents/skill, which teaches an agent how to use this.
 import {
@@ -21,11 +20,15 @@ import { shapeQueue, type QueueCandidate } from "@/lib/agent-queue";
 import { getOnchainBillPreimage } from "@/lib/onchain-bill-preimage-repo";
 import { getReputationSummaryForWallets } from "@/lib/reputation-repo";
 import { billMetadataHash } from "@/lib/bill-metadata";
+import { PRICES } from "@/lib/x402/pricing";
+import { withGateway } from "@/lib/x402/seller";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-export async function GET(request: Request) {
+const ENDPOINT = "/api/agents/queue";
+
+async function handler(request: Request) {
   const debtor = (new URL(request.url).searchParams.get("debtor") ?? "").toLowerCase();
   if (!/^0x[a-f0-9]{40}$/.test(debtor)) {
     return Response.json({ error: "debtor must be a 0x wallet address" }, { status: 400 });
@@ -90,3 +93,5 @@ export async function GET(request: Request) {
     bills: shapeQueue(candidates).sort((a, b) => Number(a.billId) - Number(b.billId)),
   });
 }
+
+export const GET = withGateway(handler, PRICES[ENDPOINT], ENDPOINT);

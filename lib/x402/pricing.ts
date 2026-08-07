@@ -10,6 +10,11 @@ export const PRICES = {
   // before every settlement. Priced well under the $0.01 job fee so the Settler
   // is still ahead on a job it completes.
   "/api/agents/review": "$0.002",
+  // External-agent services: any agent pays to consume these.
+  "/api/agents/queue": "$0.001",
+  "/api/reputation": "$0.001",
+  "/api/agents/netting": "$0.001",
+  "/api/agents/dunning/verdict": "$0.001",
 } as const;
 
 export type PaidEndpoint = keyof typeof PRICES;

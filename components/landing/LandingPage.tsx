@@ -16,6 +16,7 @@ import { SectionAnyone } from "./SectionAnyone";
 import { SectionOnchain } from "./SectionOnchain";
 import { SectionTreasury } from "./SectionTreasury";
 import { SectionStack } from "./SectionStack";
+import { SectionDevTeaser } from "./SectionDevTeaser";
 import { FinalCTA } from "./FinalCTA";
 
 gsap.registerPlugin(ScrollTrigger);
@@ -50,6 +51,7 @@ export default function LandingPage() {
           <SectionAgent />
           <SectionAutopay />
           <SectionMarket />
+          <SectionDevTeaser />
           <SectionAnyone />
           <SectionOnchain />
           <SectionTreasury />

@@ -37,6 +37,34 @@ const ENDPOINTS = [
     buyer: "The Settler",
     when: "before every settlement",
   },
+  {
+    path: "/api/agents/queue",
+    price: PRICES["/api/agents/queue"],
+    seller: "Splitsy",
+    buyer: "any agent",
+    when: "fetch payable bills for a debtor wallet",
+  },
+  {
+    path: "/api/reputation",
+    price: PRICES["/api/reputation"],
+    seller: "Splitsy",
+    buyer: "any agent",
+    when: "ERC-8004 reputation lookup",
+  },
+  {
+    path: "/api/agents/netting",
+    price: PRICES["/api/agents/netting"],
+    seller: "Splitsy",
+    buyer: "any agent",
+    when: "minimum-transfer settlement solver",
+  },
+  {
+    path: "/api/agents/dunning/verdict",
+    price: PRICES["/api/agents/dunning/verdict"],
+    seller: "Splitsy",
+    buyer: "any creditor agent",
+    when: "nudge / escalate / collect decision",
+  },
 ];
 
 export function SectionMarket() {
@@ -82,7 +110,7 @@ export function SectionMarket() {
         The market
       </p>
       <h2 className="lp-display-lg mt-3 max-w-3xl" data-market-heading id="market-heading">
-        Three endpoints. <span className="lp-headline-accent">Priced in half-cents.</span>
+        Seven endpoints. <span className="lp-headline-accent">Priced in half-cents.</span>
       </h2>
       <p className="lp-lede mt-5 max-w-2xl" data-market-heading>
         Splitsy&apos;s paid APIs answer HTTP 402 with their own terms. Any agent that signs an offchain
@@ -90,7 +118,7 @@ export function SectionMarket() {
         facilitator settles the payment in a batch rather than a transaction.
       </p>
 
-      <div className="mt-12 overflow-hidden rounded-[calc(var(--radius)+4px)] border border-[var(--border)] bg-[var(--surface)] shadow-[var(--shadow-soft)] backdrop-blur-xl">
+      <div className="lp-glass mt-12 overflow-hidden">
         <ul className="list-none p-0">
           {/* Path and price share the first line at every width — the price is
               the claim, and pushing it onto a wrapped line separates it from what
