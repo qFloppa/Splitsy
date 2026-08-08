@@ -1,16 +1,16 @@
-import { getSession } from "@/lib/session";
+import { getSessionUser } from "@/lib/session";
 import { listAutopayLog } from "@/lib/agents-repo";
 
 export const runtime = "nodejs";
 
-export async function GET(request: Request) {
-  const session = await getSession(request);
-  if (!session) {
+export async function GET() {
+  const user = await getSessionUser();
+  if (!user) {
     return Response.json({ error: "Unauthorized" }, { status: 401 });
   }
 
   try {
-    const log = await listAutopayLog(session.userId, 10);
+    const log = await listAutopayLog(user.id, 10);
     return Response.json({ log });
   } catch (err) {
     console.error("[autopay-log] failed:", err);
