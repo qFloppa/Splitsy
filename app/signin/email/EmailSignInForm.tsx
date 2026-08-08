@@ -3,7 +3,8 @@
 import { ArrowLeft, Loader2, Mail } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
-import { useState } from "react";
+import { useState, useRef } from "react";
+import { Turnstile } from "@marsidev/react-turnstile";
 
 // Dedicated Email-OTP sign-in flow (its own page, not a header popup). Two steps:
 // enter email → enter the 6-digit code. On success /api/auth/email/verify sets
@@ -18,8 +19,17 @@ export default function EmailSignInForm() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [turnstileToken, setTurnstileToken] = useState<string | null>(null);
+  const turnstileRef = useRef<any>(null);
+
+  const siteKey = process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY;
 
   async function sendCode() {
+    if (!turnstileToken) {
+      setError("Please complete the verification.");
+      return;
+    }
+
     setBusy(true);
     setError(null);
     setNotice(null);
@@ -27,17 +37,21 @@ export default function EmailSignInForm() {
       const res = await fetch("/api/auth/email/start", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email }),
+        body: JSON.stringify({ email, turnstileToken }),
       });
       const data = await res.json();
       if (!res.ok) {
         setError(data.error ?? "Could not send the code.");
+        turnstileRef.current?.reset();
+        setTurnstileToken(null);
         return;
       }
       setPhase("code");
       setNotice(`We sent a 6-digit code to ${email}.`);
     } catch {
       setError("Network error — please try again.");
+      turnstileRef.current?.reset();
+      setTurnstileToken(null);
     } finally {
       setBusy(false);
     }
@@ -98,14 +112,26 @@ export default function EmailSignInForm() {
                 placeholder="name@email.com"
                 value={email}
                 onChange={(e) => setEmail(e.target.value.trim())}
-                onKeyDown={(e) => e.key === "Enter" && email && sendCode()}
+                onKeyDown={(e) => e.key === "Enter" && email && turnstileToken && sendCode()}
                 className="field-control"
               />
             </label>
+            {siteKey ? (
+              <div className="mt-4 flex justify-center">
+                <Turnstile
+                  ref={turnstileRef}
+                  siteKey={siteKey}
+                  onSuccess={setTurnstileToken}
+                  onError={() => setTurnstileToken(null)}
+                  onExpire={() => setTurnstileToken(null)}
+                  options={{ theme: "dark", size: "normal" }}
+                />
+              </div>
+            ) : null}
             <button
               type="button"
               onClick={sendCode}
-              disabled={busy || !email}
+              disabled={busy || !email || !turnstileToken}
               className="primary-button mt-4 w-full justify-center disabled:opacity-50"
             >
               {busy ? <Loader2 size={16} className="animate-spin" /> : <Mail size={16} />}
@@ -144,6 +170,8 @@ export default function EmailSignInForm() {
                 setCode("");
                 setError(null);
                 setNotice(null);
+                setTurnstileToken(null);
+                turnstileRef.current?.reset();
               }}
               className="mt-3 w-full text-center text-xs font-medium text-[var(--text-muted)] underline"
             >

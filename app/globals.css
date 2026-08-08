@@ -3339,11 +3339,11 @@ a.job-trail-tx:hover {
   bottom: 0;
   z-index: 10;
   display: flex;
-  align-items: center;
+  align-items: flex-end;
   justify-content: space-between;
-  gap: 1rem;
+  gap: 2rem;
   flex-wrap: wrap;
-  padding: 0.9rem clamp(1.25rem, 0.8rem + 1.6vw, 2.5rem);
+  padding: clamp(1.5rem, 1rem + 2vw, 2.5rem) clamp(1.25rem, 0.8rem + 1.6vw, 2.5rem);
   border-top: 1px solid var(--pay-poster-rule);
   background: var(--pay-poster-bg);
   color: var(--pay-poster-fg);
@@ -3599,6 +3599,29 @@ a.job-trail-tx:hover {
   gap: 2rem;
 }
 
+/* Pay bar triggers - relative positioned variant for the pay bar */
+.pay-bar-triggers {
+  position: relative;
+  display: flex;
+  gap: 2rem;
+}
+
+/* Pay bar actions - horizontal layout for all buttons */
+.pay-bar-actions {
+  display: flex;
+  align-items: center;
+  gap: 3rem;
+}
+
+.pay-bar-actions .settle-trigger {
+  white-space: nowrap;
+}
+
+.pay-bar-actions .settle-action {
+  margin-left: 1rem;
+}
+
+
 .settle-trigger {
   font-family: var(--font-clash), system-ui, sans-serif;
   font-weight: 300;
@@ -3615,6 +3638,36 @@ a.job-trail-tx:hover {
 
 .settle-trigger:hover, .settle-trigger:focus-visible { color: var(--pay-poster-fg); border-color: currentColor; }
 .settle-trigger[data-tone="warning"] { color: var(--warning-text); border-color: currentColor; }
+
+/* Dropdown styling for settle-trigger */
+select.settle-trigger {
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  padding-right: 1.2rem;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='none' stroke='%23697989' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round' d='M3 5l3 3 3-3'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right center;
+}
+
+:root[data-theme="dark"] select.settle-trigger {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='none' stroke='%239fb2c4' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round' d='M3 5l3 3 3-3'/%3E%3C/svg%3E");
+}
+
+select.settle-trigger:hover {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='none' stroke='%23071421' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round' d='M3 5l3 3 3-3'/%3E%3C/svg%3E");
+}
+
+:root[data-theme="dark"] select.settle-trigger:hover {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='none' stroke='%23f7f3ea' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round' d='M3 5l3 3 3-3'/%3E%3C/svg%3E");
+}
+
+select.settle-trigger option {
+  background: var(--pay-poster-bg);
+  color: var(--pay-poster-fg);
+  padding: 0.5rem;
+}
+
 
 .settle-sheet-backdrop {
   position: fixed;

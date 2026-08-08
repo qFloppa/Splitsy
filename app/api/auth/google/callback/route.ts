@@ -21,8 +21,11 @@ export const dynamic = "force-dynamic";
 // merged "email" provider (keyed by the email address, not Google's sub).
 export async function GET(request: NextRequest) {
   const params = request.nextUrl.searchParams;
-  const clear = (res: NextResponse) =>
+  const clear = (res: NextResponse) => {
     clearOauthCookies(res, GOOGLE_OAUTH_STATE_COOKIE, GOOGLE_OAUTH_VERIFIER_COOKIE);
+    res.cookies.set("oauth_return_to", "", { path: "/", maxAge: 0 });
+    return res;
+  };
 
   const oauthError = params.get("error");
   if (oauthError) {
@@ -139,6 +142,7 @@ export async function GET(request: NextRequest) {
       },
       request,
       sessionSecret,
+      returnTo: request.cookies.get("oauth_return_to")?.value,
     });
     return clear(response);
   } catch (caught) {

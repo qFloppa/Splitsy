@@ -14,7 +14,8 @@ export const dynamic = "force-dynamic";
 
 // GET /api/auth/google — start the Sign in with Google flow. Generates a PKCE
 // pair and CSRF state, stashes them in short-lived httpOnly cookies, then
-// redirects the browser to Google's authorization screen.
+// redirects the browser to Google's authorization screen. If ?returnTo is
+// present, stores it in a cookie so the callback can redirect there instead of /app.
 export async function GET(request: NextRequest) {
   const clientId = process.env.GOOGLE_CLIENT_ID;
   if (!clientId) {
@@ -44,6 +45,12 @@ export async function GET(request: NextRequest) {
 
   response.cookies.set(GOOGLE_OAUTH_STATE_COOKIE, state, cookieOptions);
   response.cookies.set(GOOGLE_OAUTH_VERIFIER_COOKIE, verifier, cookieOptions);
+
+  // Store returnTo path if present, so the callback can redirect there
+  const returnTo = request.nextUrl.searchParams.get("returnTo");
+  if (returnTo && returnTo.startsWith("/")) {
+    response.cookies.set("oauth_return_to", returnTo, cookieOptions);
+  }
 
   return response;
 }

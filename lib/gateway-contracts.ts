@@ -66,8 +66,8 @@ export const ethereumContracts: ChainConfig = {
 
 // Map UI-friendly names to contract configs
 export const CHAIN_CONFIGS: Record<string, ChainConfig> = {
-  Polygon: avalancheContracts, // Using Avalanche as fallback since Polygon not in testnet
   Avalanche: avalancheContracts,
   Base: baseContracts,
   Ethereum: ethereumContracts,
+  Arbitrum: baseContracts, // Placeholder - update when Arbitrum testnet config available
 };

@@ -7,8 +7,9 @@ import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import { arcTestnet } from "viem/chains";
-import { useAccount, useConnect, useSwitchChain } from "wagmi";
+import { useAccount, useSwitchChain } from "wagmi";
 import { getWalletClient } from "wagmi/actions";
+import { ConnectButton } from "@rainbow-me/rainbowkit";
 import { billMetadataHash } from "@/lib/bill-metadata";
 import {
   BILL_SPLIT_REGISTRY_ADDRESS,
@@ -147,6 +148,7 @@ export default function OweClient() {
   const [reload, setReload] = useState(0);
   const [preferred, setPreferred] = useState<IouSigner>(savedSigner);
   const [targetFocused, setTargetFocused] = useState(false);
+  const [socialOpen, setSocialOpen] = useState(false);
   const { theme, setTheme } = useTheme();
 
   const sentenceRef = useRef<HTMLDivElement>(null);
@@ -159,7 +161,6 @@ export default function OweClient() {
   const seq = useRef(0);
 
   const { address, connector } = useAccount();
-  const { connectAsync, connectors } = useConnect();
   const { switchChainAsync } = useSwitchChain();
 
   const set = (patch: Partial<Draft>) => setDraft((d) => ({ ...d, ...patch }));
@@ -557,26 +558,10 @@ export default function OweClient() {
   // HomeClient's connectWallets minus everything this page has no use for — no
   // recurring tabs, no bridge session, no registry sweep.
   async function connectWallet() {
-    const active = connector ?? connectors[0];
-    if (!active) throw new Error("No browser wallet found — install one, then try again.");
-    if (!address) await connectAsync({ connector: active, chainId: arcTestnet.id });
+    if (!connector) throw new Error("No browser wallet connected.");
+    if (!address) throw new Error("Wallet address not available.");
     await switchChainAsync({ chainId: arcTestnet.id });
     return createBillSplitWallet(await getWalletClient(wagmiConfig, { chainId: arcTestnet.id }));
-  }
-
-  // The way in for someone holding their own keys. /owe has no sign-in menu, and
-  // before this the page had nothing to offer them at all.
-  async function connectFromMeta() {
-    if (busy) return;
-    setBusy(true);
-    setError("");
-    try {
-      await connectWallet();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Couldn't connect that wallet.");
-    } finally {
-      setBusy(false);
-    }
   }
 
   // Server-signed: a one-participant bill in the registry. I'm the splitter, so
@@ -944,9 +929,33 @@ export default function OweClient() {
               as {signerLabel}
             </button>
           ) : (
-            <button className="iou-provider" disabled={busy} onClick={connectFromMeta} type="button">
-              connect a wallet
-            </button>
+            <div className="iou-connect-row">
+              <ConnectButton.Custom>
+                {({ openConnectModal }) => (
+                  <button className="iou-provider" onClick={openConnectModal} type="button">
+                    connect a wallet
+                  </button>
+                )}
+              </ConnectButton.Custom>
+              <div className="iou-social-expand">
+                <button
+                  aria-expanded={socialOpen}
+                  className="iou-provider"
+                  onClick={() => setSocialOpen((o) => !o)}
+                  type="button"
+                >
+                  sign in socially
+                </button>
+                {socialOpen && (
+                  <div className="iou-social-options">
+                    <a href="/api/auth/twitter?returnTo=/owe" className="settle-trigger">X</a>
+                    <a href="/api/auth/discord?returnTo=/owe" className="settle-trigger">Discord</a>
+                    <a href="/api/auth/google?returnTo=/owe" className="settle-trigger">Google</a>
+                    <Link href="/signin/email" className="settle-trigger">Email</Link>
+                  </div>
+                )}
+              </div>
+            </div>
           )}
         </div>
 

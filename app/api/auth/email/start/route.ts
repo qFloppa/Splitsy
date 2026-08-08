@@ -8,20 +8,38 @@ import {
   OTP_TTL_MS,
 } from "@/lib/email-otp";
 import { upsertOtp } from "@/lib/otp-repo";
+import { verifyTurnstile } from "@/lib/turnstile";
+import { checkEmailRateLimit, checkIpRateLimit } from "@/lib/rate-limit";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-// POST /api/auth/email/start — begin Email-OTP sign-in. Body: { email }.
+// POST /api/auth/email/start — begin Email-OTP sign-in. Body: { email, turnstileToken }.
 // Generates a 6-digit code, stores its hash, and emails the plaintext. Always
 // returns 200 for a well-formed email (don't leak whether an address exists);
 // only misconfiguration/validation errors surface.
 export async function POST(request: Request) {
-  const body = (await request.json().catch(() => null)) as { email?: unknown } | null;
+  const body = (await request.json().catch(() => null)) as { email?: unknown; turnstileToken?: unknown } | null;
   const email = normalizeEmail(String(body?.email ?? ""));
+  const turnstileToken = String(body?.turnstileToken ?? "");
 
   if (!isValidEmail(email)) {
     return Response.json({ error: "Enter a valid email address." }, { status: 400 });
+  }
+
+  // Verify Turnstile token
+  const ip = request.headers.get("cf-connecting-ip") ?? request.headers.get("x-forwarded-for")?.split(",")[0] ?? "";
+  const turnstileValid = await verifyTurnstile(turnstileToken, ip);
+  if (!turnstileValid) {
+    return Response.json({ error: "Verification failed. Please try again." }, { status: 400 });
+  }
+
+  // Rate limiting: per-email and per-IP
+  if (!checkEmailRateLimit(email)) {
+    return Response.json({ error: "Too many requests for this email. Wait a minute." }, { status: 429 });
+  }
+  if (ip && !checkIpRateLimit(ip)) {
+    return Response.json({ error: "Too many requests from your network. Wait a minute." }, { status: 429 });
   }
 
   const code = generateOtpCode();

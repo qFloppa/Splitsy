@@ -20,8 +20,11 @@ export const dynamic = "force-dynamic";
 // to the shared finishProviderLogin (upsert + debts + wallet + session).
 export async function GET(request: NextRequest) {
   const params = request.nextUrl.searchParams;
-  const clear = (res: NextResponse) =>
+  const clear = (res: NextResponse) => {
     clearOauthCookies(res, DISCORD_OAUTH_STATE_COOKIE, DISCORD_OAUTH_VERIFIER_COOKIE);
+    res.cookies.set("oauth_return_to", "", { path: "/", maxAge: 0 });
+    return res;
+  };
 
   const oauthError = params.get("error");
   if (oauthError) {
@@ -124,6 +127,7 @@ export async function GET(request: NextRequest) {
       },
       request,
       sessionSecret,
+      returnTo: request.cookies.get("oauth_return_to")?.value,
     });
     return clear(response);
   } catch (caught) {

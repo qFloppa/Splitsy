@@ -20,7 +20,11 @@ export const dynamic = "force-dynamic";
 // session). Errors render a plain HTML result page.
 export async function GET(request: NextRequest) {
   const params = request.nextUrl.searchParams;
-  const clear = (res: NextResponse) => clearOauthCookies(res, OAUTH_STATE_COOKIE, OAUTH_VERIFIER_COOKIE);
+  const clear = (res: NextResponse) => {
+    clearOauthCookies(res, OAUTH_STATE_COOKIE, OAUTH_VERIFIER_COOKIE);
+    res.cookies.set("oauth_return_to", "", { path: "/", maxAge: 0 });
+    return res;
+  };
 
   const oauthError = params.get("error");
   if (oauthError) {
@@ -123,6 +127,7 @@ export async function GET(request: NextRequest) {
       },
       request,
       sessionSecret,
+      returnTo: request.cookies.get("oauth_return_to")?.value,
     });
     return clear(response);
   } catch (caught) {

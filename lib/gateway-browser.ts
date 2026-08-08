@@ -51,6 +51,32 @@ const gatewayMinterAbi = [
   },
 ] as const;
 
+const gatewayWalletAbi = [
+  {
+    type: "function",
+    name: "deposit",
+    inputs: [
+      { name: "token", type: "address" },
+      { name: "value", type: "uint256" },
+    ],
+    outputs: [],
+    stateMutability: "nonpayable",
+  },
+] as const;
+
+const usdcAbi = [
+  {
+    type: "function",
+    name: "approve",
+    inputs: [
+      { name: "spender", type: "address" },
+      { name: "amount", type: "uint256" },
+    ],
+    outputs: [{ type: "bool" }],
+    stateMutability: "nonpayable",
+  },
+] as const;
+
 export type GatewayTransferResult = {
   success: boolean;
   transactionHash?: string;
@@ -63,6 +89,12 @@ export type GatewayTransferResult = {
   };
 };
 
+export type GatewayDepositResult = {
+  success: boolean;
+  transactionHash?: string;
+  error?: string;
+};
+
 function randomHex32(): Hex {
   const bytes = new Uint8Array(32);
   crypto.getRandomValues(bytes);
@@ -73,6 +105,66 @@ function randomHex32(): Hex {
 
 function evmAddressToBytes32(address: Hex): Hex {
   return pad(address.toLowerCase() as Hex, { size: 32 });
+}
+
+/**
+ * Deposit USDC into Gateway on a source chain.
+ * Must be called before initiateGatewayTransfer.
+ */
+export async function depositToGateway(params: {
+  walletClient: WalletClient;
+  sourceChain: string;
+  amountUsdc: string;
+}): Promise<GatewayDepositResult> {
+  try {
+    const sourceChainConfig = CHAIN_CONFIGS[params.sourceChain];
+    if (!sourceChainConfig?.testnet) {
+      return {
+        success: false,
+        error: `Chain ${params.sourceChain} not supported`,
+      };
+    }
+
+    const sourceChain = sourceChainConfig.testnet;
+    const evmAddress = params.walletClient.account?.address;
+
+    if (!evmAddress) {
+      return { success: false, error: "No wallet address" };
+    }
+
+    const amount = parseUnits(params.amountUsdc, 6);
+
+    // Step 1: Approve GatewayWallet to spend USDC
+    const approveHash = await params.walletClient.writeContract({
+      address: sourceChain.USDCAddress as Hex,
+      abi: usdcAbi,
+      functionName: "approve",
+      args: [sourceChain.GatewayWallet as Hex, amount],
+      account: evmAddress,
+      chain: sourceChain.ViemChain,
+    });
+
+    // Step 2: Deposit into GatewayWallet
+    const depositHash = await params.walletClient.writeContract({
+      address: sourceChain.GatewayWallet as Hex,
+      abi: gatewayWalletAbi,
+      functionName: "deposit",
+      args: [sourceChain.USDCAddress as Hex, amount],
+      account: evmAddress,
+      chain: sourceChain.ViemChain,
+    });
+
+    return {
+      success: true,
+      transactionHash: depositHash,
+    };
+  } catch (err) {
+    console.error("[gateway-browser] deposit failed:", err);
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : "Gateway deposit failed",
+    };
+  }
 }
 
 /**
@@ -107,8 +199,8 @@ export async function initiateGatewayTransfer(params: {
 
     // Build EIP-712 burn intent
     const burnIntent = {
-      maxBlockHeight: maxUint64.toString(),
-      maxFee: MAX_FEE.toString(),
+      maxBlockHeight: maxUint64,
+      maxFee: MAX_FEE,
       spec: {
         version: 1,
         sourceDomain: sourceChainConfig.domain,
@@ -121,7 +213,7 @@ export async function initiateGatewayTransfer(params: {
         destinationRecipient: evmAddressToBytes32(recipient),
         sourceSigner: evmAddressToBytes32(evmAddress),
         destinationCaller: evmAddressToBytes32(zeroAddress),
-        value: transferAmount.toString(),
+        value: transferAmount,
         salt: randomHex32(),
         hookData: "0x" as Hex,
       },

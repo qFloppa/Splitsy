@@ -7,6 +7,7 @@ import Lenis from "lenis";
 import { ArrowUpRight } from "lucide-react";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Nav } from "./Nav";
+import { SectionApiUseCases } from "./SectionApiUseCases";
 import { SectionApiDocs } from "./SectionApiDocs";
 
 gsap.registerPlugin(ScrollTrigger);
@@ -72,6 +73,9 @@ export function DevelopersPage() {
               </a>
             </div>
           </section>
+
+          {/* ── plain-English use-case cards ─────────────────────────────── */}
+          <SectionApiUseCases />
 
           {/* ── full interactive service explorer ────────────────────────── */}
           <SectionApiDocs />

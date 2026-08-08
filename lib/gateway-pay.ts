@@ -59,7 +59,7 @@ export async function payViaGateway(input: {
       amount: [amountUsdc],
       destinationAddress: input.recipientAddress,
       fee: { type: "level", config: { feeLevel: "MEDIUM" } },
-    } as Parameters<typeof client.createTransaction>[0]);
+    } as any);
 
     const txId = res.data?.id ?? "unknown";
     return { success: true, transaction: txId };

@@ -41,8 +41,10 @@ export async function finishProviderLogin(params: {
   // signed out of that login — it only needs the account to exist, so the wallet
   // has an agent of its own to show. See /api/auth/wallet.
   setSession?: boolean;
+  // Path to redirect to after successful login, defaults to /app
+  returnTo?: string;
 }): Promise<NextResponse> {
-  const { provider, profile, request, sessionSecret, mode = "redirect", setSession = true } = params;
+  const { provider, profile, request, sessionSecret, mode = "redirect", setSession = true, returnTo } = params;
 
   let appUser;
   try {
@@ -103,10 +105,11 @@ export async function finishProviderLogin(params: {
     }
   }
 
+  const redirectPath = returnTo && returnTo.startsWith("/") ? returnTo : "/app";
   const response =
     mode === "json"
       ? NextResponse.json({ ok: true })
-      : NextResponse.redirect(new URL("/app", request.nextUrl.origin));
+      : NextResponse.redirect(new URL(redirectPath, request.nextUrl.origin));
   // Untouched rather than cleared when setSession is false: the browser keeps the
   // session it already had. Clearing would be its own kind of sign-out.
   if (setSession) {
