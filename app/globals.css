@@ -3113,6 +3113,14 @@ a.job-trail-tx:hover {
   text-decoration: underline;
 }
 
+.job-trail-block[data-decision='pay'] {
+  color: color-mix(in srgb, var(--success) 78%, var(--text));
+}
+
+.job-trail-block[data-decision='skip'] {
+  color: var(--warning-text);
+}
+
 .job-trail-error {
   color: var(--warning-text, var(--text-muted));
   font-size: 0.72rem;
@@ -3243,6 +3251,30 @@ a.job-trail-tx:hover {
 }
 
 .pay-poster[data-settled="true"] .pay-progress > span { background: var(--success); }
+
+.escrow-badge {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+  padding: 0.5rem 0.75rem;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--warning-bg) 15%, transparent);
+  border: 1px solid color-mix(in srgb, var(--warning-text) 34%, transparent);
+  font-size: 0.75rem;
+  line-height: 1.4;
+  color: var(--warning-text);
+}
+
+.escrow-badge[data-released='true'] {
+  background: color-mix(in srgb, var(--success-soft) 15%, transparent);
+  border-color: color-mix(in srgb, var(--success) 52%, transparent);
+  color: color-mix(in srgb, var(--success) 78%, var(--text));
+}
+
+.escrow-badge svg {
+  flex-shrink: 0;
+}
 
 .pay-roster {
   padding: clamp(1.25rem, 0.8rem + 1.6vw, 2.5rem);

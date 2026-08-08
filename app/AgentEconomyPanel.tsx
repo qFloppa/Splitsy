@@ -28,10 +28,30 @@ type Payment = {
   createdAt: string;
 };
 
+type DecisionLogRow = {
+  billId: string;
+  debtorAddress: string;
+  decision: "pay" | "skip";
+  reason: string;
+  amountUsdc: number;
+  txHash: string | null;
+  createdAt: string;
+};
+
 const usdc = (v: number) => `${v.toFixed(3)} USDC`;
 
 export default function AgentEconomyPanel() {
   const [stats, setStats] = useState<Stats | null>(null);
+  const [decisionLog, setDecisionLog] = useState<DecisionLogRow[]>([]);
+
+  useEffect(() => {
+    fetch("/api/agents/autopay/log")
+      .then((r) => r.json())
+      .then((data) => {
+        if (data.log) setDecisionLog(data.log);
+      })
+      .catch(() => {});
+  }, []);
 
   useEffect(() => {
     let live = true;
@@ -112,6 +132,42 @@ export default function AgentEconomyPanel() {
             </div>
           ))}
         </div>
+
+        {decisionLog.length > 0 ? (
+          <details className="job-trail">
+            <summary className="spec-chip job-trail-summary">
+              <ChevronRight className="job-trail-caret" size={12} />
+              <span>Autopay decisions (last {decisionLog.length})</span>
+            </summary>
+            <div className="job-trail-body">
+              <ul className="job-trail-pay">
+                {decisionLog.map((d, i) => (
+                  <li key={`${d.billId}-${d.debtorAddress}-${i}`}>
+                    <span className="job-trail-step">
+                      Bill #{d.billId} · {d.debtorAddress.slice(0, 6)}…{d.debtorAddress.slice(-4)}
+                    </span>
+                    <span className="job-trail-block" data-decision={d.decision}>
+                      {d.decision === "pay" ? "✓" : "⊗"} {d.decision} · {d.reason.replace(/_/g, " ")}
+                    </span>
+                    {d.txHash ? (
+                      <a
+                        className="job-trail-link"
+                        href={`https://testnet.arcscan.app/tx/${d.txHash}`}
+                        rel="noreferrer"
+                        target="_blank"
+                      >
+                        {usdc(d.amountUsdc)}
+                        <ExternalLink size={10} />
+                      </a>
+                    ) : (
+                      <span className="job-trail-link">—</span>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          </details>
+        ) : null}
 
         {/* The payments behind the tiles. Every one links to Circle's own
             receipt for it — these settle in batches, so there is no per-payment

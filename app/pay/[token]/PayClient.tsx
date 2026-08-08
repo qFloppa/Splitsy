@@ -1,7 +1,7 @@
 "use client";
 
 import { ConnectButton } from "@rainbow-me/rainbowkit";
-import { Loader2, Moon, Sun } from "lucide-react";
+import { CheckCircle2, Loader2, Lock, Moon, Sun } from "lucide-react";
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { getWalletClient } from "wagmi/actions";
@@ -66,6 +66,7 @@ export default function PayClient({ token }: { token: string }) {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [rowStates, setRowStates] = useState<Record<string, RowState>>({});
   const [paying, setPaying] = useState(false);
+  const [payMethod, setPayMethod] = useState<"arc" | "splitsy" | "gateway">("arc");
   const [message, setMessage] = useState<string>("");
 
   // Returns the bill it loaded so a payment run can ask the fresh read which of
@@ -132,6 +133,11 @@ export default function PayClient({ token }: { token: string }) {
   const paidUnits = BigInt(bill.totalPaidUnits);
   const remainingUnits = owedUnits > paidUnits ? owedUnits - paidUnits : 0n;
   const pct = owedUnits > 0n ? Number((paidUnits * 100n) / owedUnits) : 100;
+
+  const paidCount = bill.rows.filter((r) => BigInt(r.remainingUnits) === 0n).length;
+  const totalCount = bill.rows.length;
+  const inEscrow = bill.escrowUntilFull && paidCount < totalCount && paidUnits > 0n;
+  const escrowReleased = bill.escrowUntilFull && paidCount === totalCount;
 
   function toggle(address: string) {
     setSelected((current) => {
@@ -282,6 +288,58 @@ export default function PayClient({ token }: { token: string }) {
     }
   }
 
+  // Gateway: server-side USDC settlement via Circle DCW (Arc Testnet).
+  // The "sourceChain" annotation is forwarded to the route for demo traceability;
+  // the actual settlement always lands on Arc Testnet from the server wallet.
+  async function payWithGateway() {
+    const legs = bill!.rows.filter((r) => selected.has(r.address) && BigInt(r.remainingUnits) > 0n);
+    if (legs.length === 0) return;
+
+    setPaying(true);
+    setMessage("");
+    setRowStates(Object.fromEntries(legs.map((l) => [l.address, { status: "pending" } as RowState])));
+
+    try {
+      const sourceChain = "Polygon_PoS"; // hardcoded for MVP demo
+
+      for (const leg of legs) {
+        setRowStates((prev) => ({ ...prev, [leg.address]: { status: "signing" } }));
+
+        const res = await fetch(`/api/pay/${token}/gateway`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            debtor: leg.address,
+            amount: leg.remainingUnits,
+            sourceChain,
+          }),
+        });
+
+        const data = await res.json().catch(() => ({}));
+
+        if (res.ok && data.ok) {
+          setRowStates((prev) => ({
+            ...prev,
+            [leg.address]: { status: "paid", txHash: data.gatewayTx },
+          }));
+        } else {
+          setRowStates((prev) => ({
+            ...prev,
+            [leg.address]: { status: "failed", error: data.error ?? "Gateway payment failed" },
+          }));
+        }
+      }
+
+      await load();
+      setSelected(new Set());
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "Gateway payment failed");
+      setRowStates({});
+    } finally {
+      setPaying(false);
+    }
+  }
+
   return (
     <>
       <header className="flex items-center justify-between border-b border-[var(--border)] bg-[color:var(--header-bg)] px-5 py-3 backdrop-blur-xl">
@@ -322,6 +380,19 @@ export default function PayClient({ token }: { token: string }) {
             <div className="pay-progress">
               <span style={{ width: `${Math.min(100, pct)}%` }} />
             </div>
+            {inEscrow ? (
+              <div className="escrow-badge">
+                <Lock size={14} />
+                <span>
+                  {paidCount}/{totalCount} paid — funds held in escrow until all shares are covered
+                </span>
+              </div>
+            ) : escrowReleased ? (
+              <div className="escrow-badge" data-released="true">
+                <CheckCircle2 size={14} />
+                <span>All shares paid — {bill.creator.label ?? "creator"} can claim {usd(bill.totalOwedUnits)}</span>
+              </div>
+            ) : null}
           </div>
           <div className="text-[0.72rem] leading-relaxed text-[var(--pay-poster-dim)]">
             <p>✓ Details verified against Arc</p>
@@ -426,6 +497,15 @@ export default function PayClient({ token }: { token: string }) {
               type="button"
             >
               Pay with Splitsy wallet
+            </button>
+            <button
+              className="secondary-button"
+              disabled={paying || selected.size === 0}
+              onClick={() => void payWithGateway()}
+              title="Fast chains only: Polygon, Avalanche, Solana (~8s confirmation)"
+              type="button"
+            >
+              Pay via Gateway
             </button>
             <button
               className="primary-button"
