@@ -59,8 +59,8 @@ const stack = [
   ["Application interface", "A responsive web experience for receipt upload, bill review, split creation, wallet connection, and recurring payment management."],
   ["Typed transaction layer", "Strongly typed contract reads and writes for USDC payments, approvals, event history, and Arc Testnet wallet interactions."],
   ["Solidity contracts", "Bill registry and recurring tab contracts define the accounting rules that keep payments verifiable onchain."],
-  ["Circle AppKit", "Browser-wallet USDC bridging into Arc Testnet through Circle bridge capability."],
-  ["CCTP", "Native USDC burn-and-mint movement between supported source chains and Arc."],
+  ["Circle Gateway", "Permissionless cross-chain USDC payments from Avalanche, Base, or Ethereum into Arc Testnet using EIP-712 burn intents and Gateway attestation."],
+  ["CCTP", "Native USDC burn-and-mint movement between supported source chains and Arc, underpinning the Gateway flow."],
   ["Settlement automation", "Protected automation checks recurring tabs on a schedule so payers do not need to press a settle button each cycle."],
   ["Agent economy", "Per-account autopay agents settle debtor shares as ERC-8183 jobs, with an independent evaluator releasing the escrowed fee and paid bill review bought over x402."],
 ];
@@ -71,7 +71,7 @@ export const dynamic = "force-dynamic";
 
 export const metadata = {
   title: "Splitsy Docs",
-  description: "User and technical documentation for Splitsy bill splitting, recurring payments, Circle AppKit bridging, and Arc settlement.",
+  description: "User and technical documentation for Splitsy bill splitting, recurring payments, Circle Gateway cross-chain payments, and Arc settlement.",
 };
 
 export default function DocsPage() {
@@ -125,8 +125,8 @@ export default function DocsPage() {
               <strong>One-time bills and recurring tabs</strong>
             </div>
             <div>
-              <span>Bridge provider</span>
-              <strong>Circle AppKit with CCTP</strong>
+              <span>Cross-chain payment</span>
+              <strong>Circle Gateway (Avalanche, Base, Ethereum → Arc)</strong>
             </div>
           </aside>
         </div>
@@ -166,9 +166,9 @@ export default function DocsPage() {
                 Browser wallets sign contract transactions. The app uses EIP-1193/EIP-6963 provider discovery and Viem wallet
                 clients for Arc Testnet interactions.
               </InfoCard>
-              <InfoCard icon={<Route />} title="Bridge when needed">
-                If a payer has USDC on another supported source chain, Splitsy can route them through Circle AppKit bridge flows
-                into Arc Testnet.
+              <InfoCard icon={<Route />} title="Pay cross-chain with Gateway">
+                Payers with USDC on Avalanche, Base, or Ethereum can pay directly from those chains to Arc Testnet. Gateway burns
+                on the source chain, fetches an attestation, and mints on Arc — all in one two-step flow with no bridge UI.
               </InfoCard>
               <InfoCard icon={<CalendarClock />} title="Automated recurring settlement">
                 Once a payer has approved a recurring tab, Splitsy checks due cycles automatically so users do not manually press
@@ -822,24 +822,28 @@ export default function DocsPage() {
             <SectionHeading icon={<Route size={20} />} title="Circle and Arc" />
             <p>
               Splitsy uses Circle and Arc technology for USDC movement and settlement. Arc Testnet is the destination network for
-              the app&apos;s contracts. Circle AppKit is used when a payer needs to bridge USDC from another supported source chain
-              into Arc before paying.
+              the app&apos;s contracts. Circle Gateway enables cross-chain USDC payments from any supported source chain
+              directly to Arc Testnet in one flow.
             </p>
             <div className="docs-card-grid">
-              <InfoCard icon={<Route />} title="Circle AppKit Bridge">
-                The app creates a Viem adapter from the connected browser wallet and calls <code>kit.bridge()</code> with a source
-                chain, <code>Arc_Testnet</code> as the destination, recipient address, amount, and token <code>USDC</code>.
+              <InfoCard icon={<Route />} title="Circle Gateway">
+                Pay from <strong>any supported testnet</strong> (Avalanche Fuji, Base Sepolia, Ethereum Sepolia) and settle on Arc.
+                Two-step flow: sign an EIP-712 burn intent on the source chain (gas-free), then execute the mint transaction on Arc.
+                No bridge UI, no waiting — native USDC moves chain-to-chain in seconds.
               </InfoCard>
               <InfoCard icon={<CircleDollarSign />} title="CCTP">
-                Circle&apos;s CCTP moves native USDC by burning on the source chain and minting on the destination chain. Arc&apos;s docs
-                describe the bridge lifecycle as approve, burn, fetch attestation, and mint.
+                Circle&apos;s Cross-Chain Transfer Protocol burns USDC on the source chain and mints it on the destination chain.
+                Gateway wraps CCTP with a permissionless API that returns an attestation, so the payer&apos;s wallet can execute
+                the mint directly without holding for manual attestation fetching.
               </InfoCard>
               <InfoCard icon={<WalletCards />} title="Browser wallets">
                 Splitsy discovers wallets with EIP-6963 announcements, requests accounts through EIP-1193, prefers MetaMask when
-                available, and uses the wallet provider for signing.
+                available, and uses the wallet provider for signing. Gateway payment requires the wallet to switch chains twice:
+                once to sign the burn intent on the source chain, once to execute the mint on Arc.
               </InfoCard>
               <InfoCard icon={<Landmark />} title="Arc properties">
                 Arc is EVM-compatible, uses USDC as its gas token in the Arc environment, and supports CCTP-based USDC bridging.
+                Gateway&apos;s GatewayMinter contract on Arc (<code>0x0022222A...</code>) handles the final mint step after attestation.
               </InfoCard>
             </div>
             <SourceList />
@@ -1644,11 +1648,10 @@ function SourceList() {
   return (
     <div className="docs-sources">
       <strong>External references</strong>
+      <a href="https://developers.circle.com/gateway">Circle Gateway documentation</a>
       <a href="https://developers.circle.com/cctp">Circle CCTP documentation</a>
-      <a href="https://developers.circle.com/bridge-kit">Circle Bridge Kit / Arc App Kit migration note</a>
-      <a href="https://docs.arc.io/app-kit/bridge">Arc App Kit Bridge documentation</a>
       <a href="https://docs.arc.io/integrate/infrastructure/bridges">Arc bridge infrastructure notes</a>
-      <a href="https://docs.arc.io/app-kit/references/bridge-error-recovery">Arc bridge lifecycle and recovery reference</a>
+      <a href="https://developers.circle.com/gateway/references/supported-blockchains">Gateway supported blockchains</a>
     </div>
   );
 }

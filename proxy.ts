@@ -37,6 +37,7 @@ export function proxy(request: NextRequest) {
     "base-uri 'self'",
     "object-src 'none'",
     "frame-ancestors 'none'",
+    "frame-src https://challenges.cloudflare.com",
     "form-action 'self'",
     `img-src 'self' data: blob: https://pbs.twimg.com https://abs.twimg.com https://unavatar.io https://cdn.discordapp.com https://lh3.googleusercontent.com${supabaseOrigin ? ` ${supabaseOrigin}` : ""}`,
     "font-src 'self' data:",

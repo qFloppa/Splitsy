@@ -8,7 +8,7 @@ Splitsy is a Next.js prototype for scanning receipts, splitting shared costs, an
 - Equal or manual bill splitting.
 - Onchain bill submission and wallet-based debt discovery.
 - Arc transaction memos for bill payment reconciliation.
-- Circle AppKit bridging from supported CCTP source chains into Arc Testnet.
+- **Circle Gateway** for cross-chain USDC payments from Avalanche, Base, or Ethereum directly to Arc Testnet.
 - Recurring USDC tabs with cycle settings and allowance-based collection.
 - Net-settlement treasury: every open position collapsed to one net figure per counterparty, settled atomically on Circle SCA wallets.
 - Debtor-side autopay: each account gets its own **user-funded** agent that settles the account's shares as ERC-8183 jobs, audited by a second Splitsy agent that is paid over x402 to check the work.
@@ -17,7 +17,7 @@ Splitsy is a Next.js prototype for scanning receipts, splitting shared costs, an
 
 - Next.js `16.2.9` with the App Router.
 - React `19.2.4`.
-- Circle AppKit and Viem for wallet, bridge, and chain interactions.
+- Circle Gateway for cross-chain USDC payments, and Viem for wallet and chain interactions.
 - `@circle-fin/x402-batching` for the x402 buyer clients (Scout, the Settler) and the seller facilitator.
 - ERC-8004 (identity + reputation) on Arc's pre-deployed registries, and ERC-8183 (job escrow) on the already-deployed `AgenticCommerce` contract — no Splitsy agent contracts.
 - Hardhat 3 for contract tests and Arc Testnet deployment.
@@ -65,6 +65,9 @@ SELLER_ADDRESS=0x...              # Splitsy treasury DCW — receives x402 earni
 SCOUT_DAILY_CAP_USDC=1            # Scout's daily spend ceiling in USDC (default 1)
 SCOUT_ERC8004_TOKEN_ID=...        # set after scout-setup.ts registers Scout on Arc
 NEXT_PUBLIC_BASE_URL=https://your-deployment.vercel.app
+
+# Circle Gateway (cross-chain payments — optional, increases rate limits)
+NEXT_PUBLIC_CIRCLE_GATEWAY_API_KEY=...  # from https://developers.circle.com — omit for basic usage
 
 # Agent economy (ERC-8183 settlement jobs)
 SETTLER_PRIVATE_KEY=0x...                      # the Splitsy Settler EOA; x402 + ERC-8183 signer
@@ -134,7 +137,7 @@ npm run agents:setup     # ERC-8004 identities for the Auditor and the Validator
 4. Split equally or enter manual payer amounts.
 5. Submit the split bill.
 6. Debtors connect the matching wallet and see unpaid debt in the app.
-7. Debtors pay fully or partially on Arc with a transaction memo, or bridge USDC from a supported CCTP source chain first.
+7. Debtors pay fully or partially on Arc with a transaction memo, or use **Circle Gateway** to pay from Avalanche, Base, or Ethereum in a two-step flow (sign burn intent on source chain, then mint on Arc).
 8. The splitter claims paid funds from the registry.
 9. Open the Treasury view on the dashboard: every open debt and credit collapses to one net figure per counterparty. Hit "Settle net" — Circle SCA wallets execute one atomic `executeBatch` transaction; browser wallets run a sequential approve + pay + claim loop.
 10. Create weekly, monthly, or custom recurring tabs on Arc Testnet.
@@ -142,6 +145,45 @@ npm run agents:setup     # ERC-8004 identities for the Auditor and the Validator
 12. Fund your own agent from the settlement-agents panel and switch autopay on. The next bill raised against you is settled by that agent as an ERC-8183 job — expand the log row to see every ceremony transaction, the live job status, and the x402 payments that gated it.
 
 The repository includes a small sample image at `.tmp/test-receipt.png` for local receipt-scan testing.
+
+## Circle Gateway (Cross-Chain Payments)
+
+Payers with USDC on Avalanche Fuji, Base Sepolia, or Ethereum Sepolia can pay
+bills on Arc Testnet directly from those chains using Circle's Gateway contracts —
+no separate bridge UI, no wrapping.
+
+### Two-step flow
+
+1. **Sign burn intent** — the payer's wallet signs an EIP-712 `BurnIntent` on the
+   source chain (gas-free, just a signature).
+2. **Mint on Arc** — Splitsy calls the Gateway API, receives an attestation, prompts
+   the wallet to switch to Arc Testnet, and executes `gatewayMint` on the
+   `GatewayMinter` contract.
+
+The settlement lands on Arc within seconds. The entire flow is client-side — no
+server-side keys involved.
+
+### Key files
+
+| File | Purpose |
+|---|---|
+| `lib/gateway-contracts.ts` | Gateway contract addresses and chain configs for all supported testnets |
+| `lib/gateway-browser.ts` | EIP-712 signing, Gateway API attestation, mint transaction data |
+| `app/pay/[token]/PayClient.tsx` | "Pay via Gateway" button, chain picker, two-step UI |
+
+### Supported chains (testnet)
+
+| Chain | Source domain | USDC |
+|---|---|---|
+| Avalanche Fuji | 1 | `0x5425...Bc65` |
+| Base Sepolia | 6 | `0x036C...CF7e` |
+| Ethereum Sepolia | 0 | `0x1c7D...7238` |
+
+The destination is always **Arc Testnet** (domain 26). Gateway is permissionless —
+no API key is required for basic usage. Set `NEXT_PUBLIC_CIRCLE_GATEWAY_API_KEY`
+to increase rate limits.
+
+See `docs/gateway-browser-wallet-integration.md` for the full implementation guide.
 
 ## Scout Agent (x402 Nanopayments)
 
