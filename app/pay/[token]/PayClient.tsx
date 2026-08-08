@@ -1,7 +1,7 @@
 "use client";
 
 import { ConnectButton } from "@rainbow-me/rainbowkit";
-import { Loader2, Moon, Sun } from "lucide-react";
+import { CheckCircle2, Loader2, Lock, Moon, Sun } from "lucide-react";
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { getWalletClient } from "wagmi/actions";
@@ -132,6 +132,11 @@ export default function PayClient({ token }: { token: string }) {
   const paidUnits = BigInt(bill.totalPaidUnits);
   const remainingUnits = owedUnits > paidUnits ? owedUnits - paidUnits : 0n;
   const pct = owedUnits > 0n ? Number((paidUnits * 100n) / owedUnits) : 100;
+
+  const paidCount = bill.rows.filter((r) => BigInt(r.remainingUnits) === 0n).length;
+  const totalCount = bill.rows.length;
+  const inEscrow = bill.escrowUntilFull && paidCount < totalCount && paidUnits > 0n;
+  const escrowReleased = bill.escrowUntilFull && paidCount === totalCount;
 
   function toggle(address: string) {
     setSelected((current) => {
@@ -322,6 +327,19 @@ export default function PayClient({ token }: { token: string }) {
             <div className="pay-progress">
               <span style={{ width: `${Math.min(100, pct)}%` }} />
             </div>
+            {inEscrow ? (
+              <div className="escrow-badge">
+                <Lock size={14} />
+                <span>
+                  {paidCount}/{totalCount} paid — funds held in escrow until all shares are covered
+                </span>
+              </div>
+            ) : escrowReleased ? (
+              <div className="escrow-badge" data-released="true">
+                <CheckCircle2 size={14} />
+                <span>All shares paid — {bill.creator.label ?? "creator"} can claim {usd(bill.totalOwedUnits)}</span>
+              </div>
+            ) : null}
           </div>
           <div className="text-[0.72rem] leading-relaxed text-[var(--pay-poster-dim)]">
             <p>✓ Details verified against Arc</p>
