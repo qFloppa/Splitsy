@@ -3214,7 +3214,7 @@ a.job-trail-tx:hover {
 
 .pay-merchant {
   font-family: var(--font-clash), system-ui, sans-serif;
-  font-weight: 600;
+  font-weight: 300;
   letter-spacing: -0.03em;
   line-height: 0.92;
   font-size: clamp(2.8rem, 1.2rem + 6.4vw, 7.5rem);
@@ -3226,6 +3226,7 @@ a.job-trail-tx:hover {
 
 .pay-amount {
   font-family: var(--font-clash), system-ui, sans-serif;
+  font-weight: 300;
   font-variant-numeric: tabular-nums;
   font-weight: 600;
   letter-spacing: -0.03em;
@@ -4197,6 +4198,35 @@ a.job-trail-tx:hover {
 /* One identity means the footnote is a label, not a control — it still says
    which wallet signs, it just has nothing to switch to. */
 .iou-provider:disabled { cursor: default; }
+
+/* Connect column: wallet on top, social below, when no identity is active */
+.iou-connect-row {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.35rem;
+}
+
+.iou-connect-row .iou-provider {
+  white-space: nowrap;
+}
+
+/* Wraps the "sign in socially" toggle and its inline option list */
+.iou-social-expand {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.45rem;
+}
+
+/* The four provider links that expand below the toggle */
+.iou-social-options {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.25rem;
+}
+
 
 .iou-meta {
   display: flex;

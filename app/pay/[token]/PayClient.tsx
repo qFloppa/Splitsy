@@ -4,7 +4,8 @@ import { ConnectButton } from "@rainbow-me/rainbowkit";
 import { CheckCircle2, Loader2, Lock, Moon, Sun } from "lucide-react";
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
-import { getWalletClient } from "wagmi/actions";
+import { useAccount } from "wagmi";
+import { getWalletClient, switchChain, writeContract, waitForTransactionReceipt } from "wagmi/actions";
 import { arcTestnet } from "viem/chains";
 import SignInMenu from "@/app/SignInMenu";
 import XAuthControl from "@/app/XAuthControl";
@@ -22,6 +23,12 @@ import {
   isBillRegistryConfigured,
   payBillDebtFor,
 } from "@/lib/bill-split-contracts";
+import { initiateGatewayTransfer } from "@/lib/gateway-browser";
+
+// Pay page uses Clash Display for the merchant name
+if (typeof document !== "undefined") {
+  document.documentElement.style.setProperty("--font-display", "var(--font-clash)");
+}
 
 type Row = {
   address: string;
@@ -49,7 +56,7 @@ type Bill = {
 
 // Per-row progress during a payment run. `pending` rows are queued behind the
 // row currently signing — shown as queued rather than as failures.
-type RowState = { status: "idle" | "pending" | "signing" | "paid" | "failed"; txHash?: string; error?: string };
+type RowState = { status: "idle" | "pending" | "signing" | "minting" | "paid" | "failed"; txHash?: string; error?: string };
 
 const usd = (units: string) => `$${Number(billUnitsToUsdc(BigInt(units))).toFixed(2)}`;
 
@@ -61,6 +68,7 @@ const KNOWN_PROVIDERS = new Set(["x", "discord", "email", "wallet"]);
 
 export default function PayClient({ token }: { token: string }) {
   const { theme, setTheme } = useTheme();
+  const account = useAccount();
   const [bill, setBill] = useState<Bill | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -68,6 +76,7 @@ export default function PayClient({ token }: { token: string }) {
   const [paying, setPaying] = useState(false);
   const [payMethod, setPayMethod] = useState<"arc" | "splitsy" | "gateway">("arc");
   const [message, setMessage] = useState<string>("");
+  const [gatewayChain, setGatewayChain] = useState<string>("Polygon");
 
   // Returns the bill it loaded so a payment run can ask the fresh read which of
   // its failed rows someone else covered — see settleRun.
@@ -289,43 +298,75 @@ export default function PayClient({ token }: { token: string }) {
   }
 
   // Gateway: server-side USDC settlement via Circle DCW (Arc Testnet).
-  // The "sourceChain" annotation is forwarded to the route for demo traceability;
-  // the actual settlement always lands on Arc Testnet from the server wallet.
+  // Gateway cross-chain payment using browser wallet (client-side signing).
+  // Two-step flow: 1) Sign burn intent on source chain, 2) Execute mint on Arc Testnet
   async function payWithGateway() {
     const legs = bill!.rows.filter((r) => selected.has(r.address) && BigInt(r.remainingUnits) > 0n);
     if (legs.length === 0) return;
+
+    if (!account.address) {
+      setMessage("Connect your wallet to use Gateway");
+      return;
+    }
 
     setPaying(true);
     setMessage("");
     setRowStates(Object.fromEntries(legs.map((l) => [l.address, { status: "pending" } as RowState])));
 
     try {
-      const sourceChain = "Polygon_PoS"; // hardcoded for MVP demo
+      const walletClient = await getWalletClient(wagmiConfig, { account: account.address });
+      if (!walletClient) {
+        setMessage("Wallet not connected");
+        setPaying(false);
+        return;
+      }
 
       for (const leg of legs) {
         setRowStates((prev) => ({ ...prev, [leg.address]: { status: "signing" } }));
 
-        const res = await fetch(`/api/pay/${token}/gateway`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            debtor: leg.address,
-            amount: leg.remainingUnits,
-            sourceChain,
-          }),
+        // Convert bill units to USDC string (6 decimals)
+        const amountUsdc = (Number(leg.remainingUnits) / 1_000_000).toFixed(6);
+
+        // Step 1: Sign burn intent on source chain
+        const result = await initiateGatewayTransfer({
+          walletClient,
+          sourceChain: gatewayChain,
+          amountUsdc,
+          recipientAddress: leg.address,
         });
 
-        const data = await res.json().catch(() => ({}));
-
-        if (res.ok && data.ok) {
+        if (!result.success || !result.mintData) {
           setRowStates((prev) => ({
             ...prev,
-            [leg.address]: { status: "paid", txHash: data.gatewayTx },
+            [leg.address]: { status: "failed", error: result.error ?? "Gateway signing failed" },
           }));
-        } else {
+          continue;
+        }
+
+        // Step 2: Switch to Arc Testnet and execute mint
+        setRowStates((prev) => ({ ...prev, [leg.address]: { status: "minting" } }));
+
+        try {
+          // Switch to Arc Testnet
+          await switchChain(wagmiConfig, { chainId: arcTestnet.id });
+
+          // Execute the mint transaction
+          const mintHash = await writeContract(wagmiConfig, result.mintData);
+
+          // Wait for confirmation
+          await waitForTransactionReceipt(wagmiConfig, { hash: mintHash });
+
           setRowStates((prev) => ({
             ...prev,
-            [leg.address]: { status: "failed", error: data.error ?? "Gateway payment failed" },
+            [leg.address]: { status: "paid", txHash: mintHash },
+          }));
+        } catch (mintErr) {
+          setRowStates((prev) => ({
+            ...prev,
+            [leg.address]: {
+              status: "failed",
+              error: mintErr instanceof Error ? mintErr.message : "Mint failed on Arc",
+            },
           }));
         }
       }
@@ -432,7 +473,7 @@ export default function PayClient({ token }: { token: string }) {
                     >
                       {done ? (
                         <span className="w-[34px] shrink-0" />
-                      ) : state === "signing" ? (
+                      ) : state === "signing" || state === "minting" ? (
                         <Loader2 className="shrink-0 animate-spin text-[var(--accent)]" size={18} />
                       ) : (
                         <Switch
@@ -494,19 +535,34 @@ export default function PayClient({ token }: { token: string }) {
               className="secondary-button"
               disabled={paying || selected.size === 0}
               onClick={() => void payWithSplitsyWallet()}
+              title="Splitsy wallet (Arc Testnet only) — uses your DCW wallet"
               type="button"
             >
               Pay with Splitsy wallet
             </button>
-            <button
-              className="secondary-button"
-              disabled={paying || selected.size === 0}
-              onClick={() => void payWithGateway()}
-              title="Fast chains only: Polygon, Avalanche, Solana (~8s confirmation)"
-              type="button"
-            >
-              Pay via Gateway
-            </button>
+            <div className="flex items-center gap-1">
+              <select
+                className="rounded border border-[var(--border)] bg-[var(--surface-1)] px-2 py-1.5 text-xs text-[var(--text)]"
+                disabled={paying}
+                onChange={(e) => setGatewayChain(e.target.value)}
+                value={gatewayChain}
+              >
+                <option value="Polygon">Polygon</option>
+                <option value="Avalanche">Avalanche</option>
+                <option value="Solana">Solana</option>
+                <option value="Arbitrum">Arbitrum</option>
+                <option value="Base">Base</option>
+              </select>
+              <button
+                className="secondary-button"
+                disabled={paying || selected.size === 0}
+                onClick={() => void payWithGateway()}
+                title="Cross-chain payment via Circle Gateway (connect wallet on source chain)"
+                type="button"
+              >
+                Pay via Gateway
+              </button>
+            </div>
             <button
               className="primary-button"
               disabled={paying || selected.size === 0}

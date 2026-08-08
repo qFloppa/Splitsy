@@ -50,16 +50,18 @@ export async function payViaGateway(input: {
     // Convert 6-decimal units → human USDC string
     const amountUsdc = (Number(input.amount) / 1_000_000).toFixed(6);
 
-    const res = await (client as unknown as { createTransaction: (p: unknown) => Promise<{ data?: { transaction?: { id?: string } } }> }).createTransaction({
+    // ponytail: cast the whole input — SDK 9.2.0's transfer union types lag the API
+    // (ARC-TESTNET missing). Shape verified against Circle's createTransaction docs.
+    const res = await client.createTransaction({
       walletId: input.fromWalletId,
       blockchain: "ARC-TESTNET",
       tokenAddress: ARC_USDC_ADDRESS,
       amount: [amountUsdc],
       destinationAddress: input.recipientAddress,
       fee: { type: "level", config: { feeLevel: "MEDIUM" } },
-    });
+    } as Parameters<typeof client.createTransaction>[0]);
 
-    const txId = res?.data?.transaction?.id ?? "unknown";
+    const txId = res.data?.id ?? "unknown";
     return { success: true, transaction: txId };
   } catch (err) {
     console.error("[gateway-pay] transfer failed:", err);
