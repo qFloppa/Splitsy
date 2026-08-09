@@ -5,6 +5,7 @@ import {
   AGENT_PROFILE,
   feedbackDedupeKey,
   feedbackHashFor,
+  imageUriForCid,
   isSelfMint,
   parseDebtPaidLog,
   SERVICE_AGENTS,
@@ -166,6 +167,39 @@ test("each role describes its own job — no shared boilerplate across the roles
   }
 });
 
+// The reputation identity and the autopay agent are two different NFTs doing two
+// different things, and they shipped describing themselves the same way: both
+// opened "Settles its owner's ... Splitsy bills" and both claimed
+// debt_settlement. A payer who got the reputation NFT for paying a bill read it
+// as the autopay agent's, which is the confusion this pins shut.
+//
+// The distinction is not cosmetic. The reputation identity is a passive holder
+// of scores — its owner pays from their own wallet, and under the consent policy
+// that self-payment is the ONLY thing that authorizes a score. An identity that
+// advertises itself as settling bills on someone's behalf describes the opposite
+// arrangement, permanently, because minted metadata is immutable.
+test("the reputation identity does not describe itself as settling bills", () => {
+  const reputation = AGENT_PROFILE["splitsy-payer"];
+  const autopay = AGENT_PROFILE["splitsy-user-agent"];
+
+  assert.match(reputation.title, /Reputation/, "the reputation identity must say so in its name");
+  assert.doesNotMatch(reputation.title, /Payer|Autopay/, "reads as the agent that pays, which is the autopay one");
+
+  // "Settles its owner's …" was the shared opening. Neither the claim nor the
+  // capability that encodes it belongs on an identity that never moves money.
+  assert.doesNotMatch(reputation.description, /\bSettles its owner/i);
+  assert.ok(
+    !reputation.capabilities.includes("debt_settlement"),
+    "debt_settlement is the autopay agent's job, not the reputation identity's",
+  );
+  assert.ok(reputation.capabilities.includes("payment_reputation"));
+
+  // And the autopay agent keeps the settling role, so this stays a real split
+  // rather than a rename that quietly left both of them saying nothing.
+  assert.match(autopay.description, /\bSettles its owner/i);
+  assert.ok(autopay.capabilities.includes("debt_settlement"));
+});
+
 // The one-identity-per-wallet guard. An agent wallet must hold exactly one
 // ERC-8004 identity; four piled up on one because a failed finalize left a real
 // NFT with no recorded id, and the stale-claim takeover minted again. The
@@ -186,6 +220,39 @@ test("a wallet minting for itself is guarded; a registrar minting for others is 
   // The registrar minting on a browser payer's behalf: it already holds other
   // payers' tokens, so a balance check would refuse every mint after the first.
   assert.equal(isSelfMint(payer, registrar), false);
+});
+
+// The image URI baked into an immutable NFT. A bare ipfs:// image rendered
+// nowhere: Arcscan rewrites it to dweb.link, and no public gateway can retrieve
+// a Pinata pin of this size (dweb.link and ipfs.io both time out after 30s),
+// while Pinata's own gateway serves it in under two seconds. So when a dedicated
+// gateway is configured the URI must be an https one pointing at it — and must
+// still carry the CID, or the artwork stops being content-addressed.
+test("an image CID becomes an https URI on the dedicated gateway, falling back to ipfs://", () => {
+  const cid = "QmQ9JoJNMctbHwkW2QGjroUnZX5syioCNQUgLPK3RmkNh6";
+  const before = process.env.PINATA_GATEWAY;
+  try {
+    delete process.env.PINATA_GATEWAY;
+    assert.equal(imageUriForCid(cid), `ipfs://${cid}`);
+
+    process.env.PINATA_GATEWAY = "amaranth-awful-trout-784.mypinata.cloud";
+    assert.equal(imageUriForCid(cid), `https://amaranth-awful-trout-784.mypinata.cloud/ipfs/${cid}`);
+
+    // A gateway pasted from a browser carries a scheme and/or a trailing slash.
+    // Left in, they mint "https://https://host//ipfs/Qm…" into an immutable
+    // token — a dead image link nobody can fix without re-pointing the URI.
+    for (const messy of [
+      "https://amaranth-awful-trout-784.mypinata.cloud",
+      "amaranth-awful-trout-784.mypinata.cloud/",
+      "https://amaranth-awful-trout-784.mypinata.cloud/",
+    ]) {
+      process.env.PINATA_GATEWAY = messy;
+      assert.equal(imageUriForCid(cid), `https://amaranth-awful-trout-784.mypinata.cloud/ipfs/${cid}`, messy);
+    }
+  } finally {
+    if (before === undefined) delete process.env.PINATA_GATEWAY;
+    else process.env.PINATA_GATEWAY = before;
+  }
 });
 
 // Which service wallets get an identity of their own. The registrar's absence is

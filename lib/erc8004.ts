@@ -177,6 +177,22 @@ const publicClient = createPublicClient({
   transport: http(process.env.NEXT_PUBLIC_ARC_TESTNET_RPC_URL ?? "https://rpc.testnet.arc.network"),
 });
 
+// The URI an image CID goes into the metadata as. Deliberately NOT ipfs:// when
+// PINATA_GATEWAY names a dedicated gateway, because a bare ipfs:// image did not
+// render anywhere: explorers rewrite it to a PUBLIC gateway (Arcscan uses
+// dweb.link), and a public gateway cannot retrieve these pins — dweb.link and
+// ipfs.io both time out after 30s on every agent image we have minted, while
+// Pinata's own gateway serves the same CID in under two seconds. Reaching a
+// pinned file from outside Pinata means a DHT lookup, and a 324 KB multi-block
+// JPEG on a free plan loses that race, so the artwork was broken for everyone.
+// The CID is still in the path, so the image stays content-addressed.
+// ponytail: trades gateway-independence for actually rendering — if the gateway
+// host ever changes, re-point the URIs with scripts/reputation-backfill.ts
+export function imageUriForCid(cid: string): string {
+  const gateway = (process.env.PINATA_GATEWAY ?? "").replace(/^https?:\/\//, "").replace(/\/+$/, "");
+  return gateway ? `https://${gateway}/ipfs/${cid}` : `ipfs://${cid}`;
+}
+
 // The identity NFT artwork: the Splitsy medallion template with the agent's
 // wallet + registration date stamped into its lower band (lib/agent-nft-image),
 // pinned to IPFS as a JPEG per agent — explorers won't render data:/SVG image
@@ -205,7 +221,7 @@ async function uploadAgentImage(
     });
     if (!res.ok) throw new Error(`Pinata image upload failed (${res.status})`);
     const { IpfsHash } = (await res.json()) as { IpfsHash: string };
-    return `ipfs://${IpfsHash}`;
+    return imageUriForCid(IpfsHash);
   } catch (err) {
     console.error("agent image compose/upload failed, metadata will have no image:", err);
     return null;
@@ -233,10 +249,10 @@ export type AgentType =
 // it has said what it does.
 export const AGENT_PROFILE: Record<AgentType, { title: string; description: string; capabilities: string[] }> = {
   "splitsy-payer": {
-    title: "Payer Agent",
+    title: "Reputation Agent",
     description:
-      "Settles its owner's share of Splitsy bills on Arc and carries the reputation earned by doing it: one ERC-8004 feedback entry per bill, scored on whether the money arrived before the due date.",
-    capabilities: ["payment_verification", "debt_settlement"],
+      "Carries the ERC-8004 payment reputation of one Splitsy payer: one feedback entry per bill they settled themselves, scored on whether the money arrived before the due date. It settles nothing on its own — its owner pays from their own wallet, and paying is the consent that lets a score be recorded at all.",
+    capabilities: ["payment_reputation", "payment_verification"],
   },
   "splitsy-user-agent": {
     title: "Autopay Agent",
@@ -529,7 +545,42 @@ export async function ensureAgent(
       );
     }
   }
+
+  await requestExplorerMetadataRefetch(agentId);
   return agentId;
+}
+
+// Ask Arcscan to read a freshly minted token's metadata now.
+//
+// This is the difference between a payer seeing their agent and seeing nothing.
+// Blockscout indexes token metadata on a background queue, and on Arc Testnet
+// that queue runs a day or more behind THIS registry — it mints thousands of
+// AgentIdentity NFTs a day. Until the queue reaches a token, its page shows a
+// bare "AgentIdentity" with no name, description or image, so a correct mint
+// (tokenURI set, JSON pinned, image reachable) still reads as broken. Blockscout
+// exposes a per-token refetch that jumps the queue, and it populates in seconds.
+//
+// Best-effort in every direction. The instance may not be indexed for a moment
+// yet, hence the second attempt; an explorer that never answers must never fail
+// a registration, so nothing here throws.
+const EXPLORER_URL = process.env.ARC_TESTNET_EXPLORER_URL ?? "https://testnet.arcscan.app";
+
+async function requestExplorerMetadataRefetch(agentId: string): Promise<void> {
+  const url = `${EXPLORER_URL}/api/v2/tokens/${IDENTITY_REGISTRY}/instances/${agentId}/refetch-metadata`;
+  for (const wait of [0, 15_000]) {
+    if (wait) await new Promise((r) => setTimeout(r, wait));
+    const ok = await fetch(url, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: "{}",
+    })
+      .then((res) => res.ok)
+      .catch(() => false);
+    if (ok) return;
+  }
+  console.error(
+    `reputation: explorer would not refetch metadata for agent ${agentId} — its page will stay bare until the indexer catches up`,
+  );
 }
 
 // Another path holds the registration claim; wait for it to finalize. The

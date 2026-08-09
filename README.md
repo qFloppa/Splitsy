@@ -490,6 +490,8 @@ Setup:
 
 **Optional IPFS metadata:** For full ERC-8004 compliance with discoverable agent profiles, set `PINATA_JWT` in `.env.local` with a Pinata API key that has **pinFileToIPFS** permission (create at https://app.pinata.cloud). Without it, registration falls back to `data:` URIs — reputation still works, just without off-chain metadata discovery.
 
+Also set `PINATA_GATEWAY` to your dedicated gateway host (e.g. `your-name.mypinata.cloud`, shown on Pinata's Gateways page). The agent artwork is written into the NFT as an `https://` URL on that gateway rather than `ipfs://`, because explorers resolve `ipfs://` through a public gateway and public gateways cannot retrieve these pins — dweb.link and ipfs.io both time out on a 324 KB image that Pinata's own gateway serves in under two seconds. Without it the metadata is still correct and the image link still carries its CID, but the picture won't render. Tokens minted before it was set can be re-pointed with `scripts/reputation-backfill.ts`.
+
 ## Recurring Collection
 
 The recurring tab is designed for subscriptions such as weekly shared bills or monthly services.

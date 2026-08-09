@@ -6,6 +6,11 @@
 // is logged and skipped rather than aborting the rest.
 //
 //   node --env-file=.env.local --experimental-strip-types scripts/reputation-backfill.ts
+//
+// Pass agent ids to repair only those — worth having when the rest are fine and
+// each extra agent is an on-chain write paid for out of somebody's wallet:
+//
+//   … scripts/reputation-backfill.ts 870086
 import { createPublicClient, encodeFunctionData, http } from "viem";
 import { arcTestnet } from "viem/chains";
 import { executeContractOnArc, getOrCreateArcWallet } from "../lib/circle-dcw.ts";
@@ -64,6 +69,8 @@ async function findWalletIdByAddress(address: string): Promise<string | null> {
   return json.data?.wallets?.[0]?.id ?? null;
 }
 
+const only = new Set(process.argv.slice(2));
+
 const { data: agents, error } = await supabase
   .from("reputation_agents")
   .select("wallet_address, agent_id, created_at, agent_type")
@@ -76,6 +83,7 @@ for (const agent of (agents ?? []) as {
   created_at: string;
   agent_type: AgentType | null;
 }[]) {
+  if (only.size > 0 && !only.has(agent.agent_id)) continue;
   try {
     const tokenId = BigInt(agent.agent_id);
     const owner = (
@@ -115,6 +123,14 @@ for (const agent of (agents ?? []) as {
       encodeFunctionData({ abi: ABI, functionName: "setAgentURI", args: [tokenId, uri] }),
     );
     console.log(`  setAgentURI ok (${uri.slice(0, 64)}…)`);
+
+    // The explorer caches the OLD metadata, so a re-pointed URI changes nothing
+    // a human can see until Blockscout re-reads it — and its own queue runs days
+    // behind this registry. Ask it directly; best-effort, never fatal.
+    await fetch(
+      `${process.env.ARC_TESTNET_EXPLORER_URL ?? "https://testnet.arcscan.app"}/api/v2/tokens/${IDENTITY_REGISTRY}/instances/${tokenId}/refetch-metadata`,
+      { method: "PATCH", headers: { "Content-Type": "application/json" }, body: "{}" },
+    ).catch(() => undefined);
 
     // 2. Hand registrar-held NFTs to the payer they identify.
     if (owner === registrar.address.toLowerCase() && agent.wallet_address.toLowerCase() !== owner) {
