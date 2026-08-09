@@ -3465,7 +3465,120 @@ a.job-trail-tx:hover {
 }
 
 .settle-section[data-active="true"] { opacity: 1; transform: none; }
-.settle-section[data-state="settled"] { opacity: 0.5; }
+
+/* ── Settled: the card stays, the controls die ─────────────────────────────────
+   A paid bill is not a disabled bill, so it is not dimmed to a grey ghost. It
+   keeps its full type and stays scrollable-to; what changes is the temperature —
+   a green wash under it, a green figure, a stamp over it, and a tick where the
+   button was. The wash is a ::before rather than a background so it can fade in
+   on its own timing over whatever the deck's own gradient is doing beneath it. */
+.settle-section[data-state="settled"] {
+  --pay-poster-rule: color-mix(in srgb, var(--success) 34%, transparent);
+  /* Both layers sit at z-index -1 so the type stays over them without the
+     children needing to be lifted — .settle-rail, .settle-aside and
+     .settle-triggers are absolutely positioned and would break if this rule
+     touched their `position`. An inactive section is transformed and makes its
+     own stacking context; an active one is not, and without isolation its
+     negative-z children would slide behind the deck's background gradient. */
+  isolation: isolate;
+}
+
+.settle-section[data-state="settled"]::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background:
+    radial-gradient(58% 44% at 14% 8%, color-mix(in srgb, var(--success) 15%, transparent), transparent 68%),
+    radial-gradient(64% 50% at 88% 92%, color-mix(in srgb, var(--success) 11%, transparent), transparent 66%);
+  animation: settle-wash-in var(--dur-4) var(--ease-out) both;
+}
+
+/* Behind the type, over the wash. One pass, on arrival — a light that kept
+   sweeping would turn a receipt into a slot machine.
+   ponytail: background-position, not transform. A translated full-bleed pseudo
+   element overflows the section, and the deck scrolls x as well as y, so the
+   cheaper animation is also the one that doesn't add a horizontal scrollbar. */
+.settle-section[data-state="settled"]::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background: linear-gradient(
+    100deg,
+    transparent 42%,
+    color-mix(in srgb, var(--success) 20%, transparent) 50%,
+    transparent 58%
+  );
+  background-size: 300% 100%;
+  animation: settle-sweep 1.15s var(--ease-out) 120ms both;
+}
+
+@keyframes settle-wash-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes settle-sweep {
+  from { background-position: 100% 0; opacity: 1; }
+  to { background-position: 0% 0; opacity: 0; }
+}
+
+/* The mark. Outlined, not filled: a solid word at this size fights the merchant
+   name it sits beside, and an outline reads as something pressed onto the card
+   rather than printed with it. -webkit-text-stroke has no standard equivalent
+   with this support, and the fallback (no stroke on a transparent fill) would be
+   invisible — hence the colour first, overridden only where the stroke lands. */
+.settle-stamp {
+  position: absolute;
+  top: clamp(4.5rem, 3rem + 6vw, 9rem);
+  right: clamp(1.5rem, 1rem + 4vw, 5rem);
+  margin: 0;
+  z-index: 1;
+  pointer-events: none;
+  font-family: var(--font-clash), system-ui, sans-serif;
+  font-weight: 500;
+  font-size: clamp(2.4rem, 1rem + 4.4vw, 5.5rem);
+  line-height: 1;
+  letter-spacing: 0.06em;
+  text-transform: lowercase;
+  color: color-mix(in srgb, var(--success) 26%, transparent);
+  transform: rotate(-9deg);
+  animation: settle-stamp-in 520ms var(--ease-spring) 180ms both;
+}
+
+@supports (-webkit-text-stroke: 1px black) {
+  .settle-stamp {
+    color: transparent;
+    -webkit-text-stroke: 1.5px color-mix(in srgb, var(--success) 52%, transparent);
+  }
+}
+
+/* Lands like a stamp: overshoots in scale, settles, no bounce back up. */
+@keyframes settle-stamp-in {
+  from { opacity: 0; transform: rotate(-9deg) scale(1.5); }
+  to { opacity: 1; transform: rotate(-9deg) scale(1); }
+}
+
+/* On a phone the section is already full at this type scale — the stamp would
+   land on the amount. It becomes a line above the rail instead. */
+@media (max-width: 40rem) {
+  .settle-stamp {
+    top: auto;
+    bottom: clamp(1.5rem, 1rem + 4vw, 5rem);
+    right: clamp(1.5rem, 1rem + 4vw, 5rem);
+    font-size: 1.6rem;
+    transform: none;
+    animation-name: settle-stamp-fade;
+  }
+
+  @keyframes settle-stamp-fade {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+}
 
 /* Weight, not colour, is what was failing here: Clash at 300 draws hairlines,
    and an 11px hairline tracked out to 0.18em is close to invisible on the cream
@@ -3562,6 +3675,17 @@ a.job-trail-tx:hover {
 .settle-amount::-webkit-outer-spin-button,
 .settle-amount::-webkit-inner-spin-button { appearance: none; margin: 0; }
 
+/* The figure is the thing the user came to change, so it is the thing that goes
+   green when they have. Colour is not carrying this alone — the stamp, the
+   label ("you paid"), the meta line and the button all say it in words.
+   ponytail: a colour transition, not a scale one. The reveal above animates
+   `transform` on this element, and a filled animation would pin it at its own
+   end state and cancel the reveal's 0.3em rise for good. */
+.settle-amount[data-settled] {
+  color: var(--success);
+  transition: color var(--dur-4) var(--ease-out);
+}
+
 .settle-rule {
   height: 1px;
   max-width: 12ch;
@@ -3574,6 +3698,7 @@ a.job-trail-tx:hover {
 .settle-section[data-active="true"] .settle-rule { transform: scaleX(1); }
 .settle-amount:focus + .settle-rule { background: var(--pay-poster-fg); height: 2px; }
 .settle-rule[data-tone="warning"] { background: var(--warning-text); }
+.settle-rule[data-tone="settled"] { background: var(--success); height: 2px; }
 
 .settle-meta {
   font-size: 0.75rem;
@@ -3605,8 +3730,10 @@ a.job-trail-tx:hover {
   color: color-mix(in srgb, var(--pay-poster-fg) 58%, var(--pay-poster-bg));
 }
 
-.settle-action:hover:not(:disabled),
-.settle-action:focus-visible {
+/* aria-disabled, not disabled, on the settled variant — so it stays focusable —
+   which means these two have to opt out of it by hand. */
+.settle-action:hover:not(:disabled, [aria-disabled="true"]),
+.settle-action:focus-visible:not([aria-disabled="true"]) {
   color: var(--pay-poster-fg);
   letter-spacing: 0.1em;
 }
@@ -3618,6 +3745,50 @@ a.job-trail-tx:hover {
 }
 
 .settle-action:disabled { opacity: 0.4; cursor: not-allowed; }
+
+/* The dead control. Full opacity, not the 0.4 a merely-unavailable button gets:
+   this one is not waiting for anything, it is the receipt. Default cursor
+   because there is nothing here to refuse — "not-allowed" over a finished
+   payment reads as an error. */
+.settle-action[data-settled] {
+  display: flex;
+  align-items: center;
+  gap: 0.4em;
+  opacity: 1;
+  cursor: default;
+  color: var(--success);
+  letter-spacing: 0.1em;
+}
+
+.settle-tick {
+  display: inline-flex;
+  width: 0.72em;
+  height: 0.72em;
+  border-radius: 999px;
+  align-items: center;
+  justify-content: center;
+  padding: 0.14em;
+  border: 1.5px solid currentColor;
+  animation: settle-tick-in 460ms var(--ease-spring) 60ms both;
+}
+
+.settle-tick > svg {
+  width: 100%;
+  height: 100%;
+  /* Drawn on, not faded in. 30 covers the path at any rendered size. */
+  stroke-dasharray: 30;
+  animation: settle-tick-draw 420ms var(--ease-out) 300ms both;
+}
+
+@keyframes settle-tick-in {
+  from { opacity: 0; transform: scale(0.3); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+@keyframes settle-tick-draw {
+  from { stroke-dashoffset: 30; }
+  to { stroke-dashoffset: 0; }
+}
 
 @media (prefers-contrast: more) {
   .settle-action { color: var(--pay-poster-fg); }
@@ -3829,7 +4000,10 @@ select.settle-trigger option {
   display: block;
   height: 100%;
   background: var(--pay-poster-fg);
+  transition: width var(--dur-4) var(--ease-out), background var(--dur-3) var(--ease-out);
 }
+
+.settle-progress > span[data-settled] { background: var(--success); }
 
 .settle-steps {
   font-family: var(--font-clash), system-ui, sans-serif;
@@ -3858,6 +4032,16 @@ select.settle-trigger option {
   .settle-rule { transform: scaleX(1); transition: none; }
   .settle-divider > hr { width: min(28rem, 60vw); transition: none; }
   .settle-sheet, .settle-sheet-backdrop { animation: none; }
+  /* The settled state is colour and words, both of which survive this. Only the
+     entrances go — except the tick, which is drawn by an animation and would
+     stay an empty ring without one, so it is given its end state outright. */
+  .settle-section[data-state="settled"]::before,
+  .settle-section[data-state="settled"]::after,
+  .settle-stamp,
+  .settle-tick { animation: none; }
+  .settle-amount[data-settled] { transition: none; }
+  .settle-section[data-state="settled"]::after { content: none; }
+  .settle-tick > svg { animation: none; stroke-dashoffset: 0; }
 }
 
 /* ── IOU composer (/owe) ──────────────────────────────────────────────────────

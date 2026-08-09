@@ -4,6 +4,7 @@ import {
   buildSettleItems,
   clearsSection,
   settleItemId,
+  withHeldSections,
   type OwnedDebt,
   type SettleItem,
   type SocialDebt,
@@ -206,6 +207,58 @@ test("only a flow that covers the whole section clears it", () => {
   assert.equal(clearsSection(claim, { kind: "claim", amountLabel: "20.00" }), false);
   assert.equal(clearsSection(socialItem, { kind: "pay", amountLabel: "5.00" }), true);
   assert.equal(clearsSection(undefined, { kind: "pay", amountLabel: "5.00" }), false);
+});
+
+test("a settled section is held in its old slot after the refresh drops it", () => {
+  const before = buildSettleItems({
+    socialDebts: [],
+    walletDebts: [debt({ billId: 1n }), debt({ billId: 2n }), debt({ billId: 3n })],
+    splitterBills: [],
+    nowSeconds: 0n,
+  });
+  const paid = before[1];
+  // What the next registry read looks like once bill 2 is settled: gone.
+  const after = before.filter((item) => item.id !== paid.id);
+  const held = withHeldSections(after, [{ index: 1, item: paid }]);
+
+  assert.deepEqual(
+    held.map((item) => item.id),
+    before.map((item) => item.id),
+  );
+});
+
+test("a held section is dropped once the live read carries it again", () => {
+  const items = buildSettleItems({
+    socialDebts: [],
+    walletDebts: [debt({ billId: 1n }), debt({ billId: 2n })],
+    splitterBills: [],
+    nowSeconds: 0n,
+  });
+  // A partial payment leaves the row live; the snapshot must not double it.
+  const held = withHeldSections(items, [{ index: 0, item: items[0] }]);
+  assert.equal(held.length, items.length);
+  assert.equal(new Set(held.map((item) => item.id)).size, held.length);
+});
+
+test("several held sections keep their order, and a stale index still lands", () => {
+  const before = buildSettleItems({
+    socialDebts: [],
+    walletDebts: [debt({ billId: 1n }), debt({ billId: 2n }), debt({ billId: 3n })],
+    splitterBills: [],
+    nowSeconds: 0n,
+  });
+  const held = withHeldSections(
+    [before.at(-1)!],
+    // Deliberately out of order, and index 2 is past the end of a one-item list.
+    [
+      { index: 2, item: before[2] },
+      { index: 0, item: before[0] },
+    ],
+  );
+  assert.deepEqual(
+    held.map((item) => item.id),
+    [before[0].id, before.at(-1)!.id, before[2].id],
+  );
 });
 
 test("the end card is always last, even when nothing is pending", () => {

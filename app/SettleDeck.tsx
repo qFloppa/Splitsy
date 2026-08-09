@@ -4,7 +4,15 @@ import * as Dialog from "@radix-ui/react-dialog";
 import confetti from "canvas-confetti";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { billUnitsToUsdc } from "@/lib/bill-split-contracts";
-import { buildSettleItems, clearsSection, type OwnedDebt, type SettleItem, type SocialDebt } from "@/lib/settle-items";
+import {
+  buildSettleItems,
+  clearsSection,
+  withHeldSections,
+  type HeldSection,
+  type OwnedDebt,
+  type SettleItem,
+  type SocialDebt,
+} from "@/lib/settle-items";
 import { bridgeSourceChains, type BridgeSourceChain } from "@/lib/appkit-bridge";
 import { useBillVerification } from "./BillVerification";
 import type { BillRunState, ProgressFlow } from "./HomeClient";
@@ -59,16 +67,21 @@ function AsideRow({ children, label }: { children: ReactNode; label: string }) {
 
 // How far the whole group has got. Shared by the debt and claim sections — both
 // sides of a bill care about the same number.
-function GroupProgress({ debt }: { debt: OwnedDebt }) {
-  const percent = paidPercent(debt.totalPaid, debt.totalOwed);
+//
+// `plus` credits a payment the registry read doesn't know about yet: a settled
+// card is a snapshot taken before the refresh dropped it, so without this the
+// bar the user just filled would sit at where it was before they paid.
+function GroupProgress({ debt, plus = 0n }: { debt: OwnedDebt; plus?: bigint }) {
+  const totalPaid = debt.totalPaid + plus;
+  const percent = paidPercent(totalPaid, debt.totalOwed);
   return (
     <div className="settle-aside-row">
       <span className="settle-label">group paid</span>
       <span className="settle-aside-value">
-        {usd(debt.totalPaid)} of {usd(debt.totalOwed)}
+        {usd(totalPaid)} of {usd(debt.totalOwed)}
       </span>
       <span aria-hidden="true" className="settle-progress">
-        <span style={{ width: `${percent}%` }} />
+        <span data-settled={plus > 0n || undefined} style={{ width: `${percent}%` }} />
       </span>
       <span className="settle-meta" style={{ marginTop: "0.3rem" }}>
         {percent}% in
@@ -96,27 +109,29 @@ export default function SettleDeck({
   signedIn,
   ...deck
 }: SettleDeckProps) {
-  const items = useMemo(
+  const fresh = useMemo(
     () => buildSettleItems({ socialDebts, walletDebts, splitterBills, nowSeconds }),
     [socialDebts, walletDebts, splitterBills, nowSeconds],
   );
+
+  const deckRef = useRef<HTMLDivElement | null>(null);
+  const [activeId, setActiveId] = useState<string | null>(null);
+  // Sections whose flow succeeded this session. They stay on the deck — paid, in
+  // place, with every control dead — until the tab is left, and the count tells
+  // the end card whether the user emptied the deck or it simply arrived empty.
+  const [settled, setSettled] = useState<HeldSection[]>([]);
+  const settledIds = settled.map((entry) => entry.item.id);
+  const settledCount = settled.length;
+  const items = withHeldSections(fresh, settled);
   // The rail counts payable items only — the divider and end card are chrome.
   // Ids, not items: `.filter` narrows the element type, so indexOf on the array
   // itself would reject a plain SettleItem.
   const countedIds = items.filter((item) => item.kind !== "divider" && item.kind !== "end").map((item) => item.id);
-
-  const deckRef = useRef<HTMLDivElement | null>(null);
-  const [activeId, setActiveId] = useState<string | null>(null);
-  // Sections whose flow succeeded this session. They stay mounted and dimmed
-  // until the registry refresh drops them, and the count tells the end card
-  // whether the user emptied the deck or it simply arrived empty.
-  const [settledIds, setSettledIds] = useState<string[]>([]);
   // Before the observer's first callback nothing is active, which would paint an
   // entirely hidden first section. The top of the deck is the honest default.
   const active = activeId ?? items[0]?.id ?? null;
-  // What is still owed above the end card. A settled section stays mounted and
-  // dimmed until the registry refresh drops it, so the rail's own count would
-  // report back work the user has just finished.
+  // What is still owed above the end card. A settled section stays on the deck,
+  // so the rail's own count would report back work the user has just finished.
   const remaining = countedIds.filter((id) => !settledIds.includes(id)).length;
   const { progressFlow } = deck;
 
@@ -134,24 +149,28 @@ export default function SettleDeck({
     return () => observer.disconnect();
   }, [items]);
 
-  // The settled section stays mounted through the advance. Unmounting it the
-  // instant the payment lands would pull the snap point out from under the
-  // user's thumb mid-scroll — so hold for a beat, then move on. Marking it
-  // settled inside the timeout (rather than on the success render) is also what
-  // keeps this out of the synchronous-setState-in-an-effect trap.
+  // The settled section stays on the deck through the advance and for the rest of
+  // the session. Unmounting it the instant the payment lands would pull the snap
+  // point out from under the user's thumb mid-scroll, and the registry refresh
+  // that follows drops the debt entirely — so the card is captured here, at the
+  // index it holds, and put back by withHeldSections. Marking it inside the
+  // timeout (rather than on the success render) is also what keeps this out of
+  // the synchronous-setState-in-an-effect trap.
   useEffect(() => {
     if (progressFlow?.status !== "success" || !progressFlow.subjectKey) return;
-    const settled = progressFlow.subjectKey;
+    const key = progressFlow.subjectKey;
     // `items` still describes the section as it was before the flow: the
     // registry refresh is awaited after the flow completes, so it hasn't landed
     // here yet. A bridge or a part-payment leaves the card exactly where it is.
-    if (!clearsSection(items.find((item) => item.id === settled), progressFlow)) return;
+    const index = items.findIndex((item) => item.id === key);
+    const item = items[index];
+    if (!clearsSection(item, progressFlow)) return;
     const timer = setTimeout(() => {
-      setSettledIds((current) => (current.includes(settled) ? current : [...current, settled]));
+      setSettled((current) => (current.some((entry) => entry.item.id === key) ? current : [...current, { index, item }]));
       // The next section *below* this one — querying the deck for the first
       // undimmed section walks back up to the top of the list instead.
       const sections = Array.from(deckRef.current?.querySelectorAll("[data-id]") ?? []);
-      const from = sections.findIndex((section) => section.getAttribute("data-id") === settled);
+      const from = sections.findIndex((section) => section.getAttribute("data-id") === key);
       const next = sections.slice(from + 1).find((section) => section.getAttribute("data-state") !== "settled");
       next?.scrollIntoView({ behavior: "smooth", block: "start" });
     }, 1200);
@@ -161,10 +180,11 @@ export default function SettleDeck({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [progressFlow?.status, progressFlow?.subjectKey]);
 
-  // Fires once, when the deck empties — not per card. Under every section in a
-  // deck it is noise rather than a reward.
+  // Fires once, when the last unpaid section clears — not per card. Under every
+  // section in a deck it is noise rather than a reward. Counts `remaining`, not
+  // the deck length: settled cards stay mounted now, so the deck never empties.
   useEffect(() => {
-    if (countedIds.length > 0 || settledIds.length === 0) return;
+    if (remaining > 0 || settledCount === 0) return;
     if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) return;
     void confetti({
       colors: ["#2775ca", "#3ee6d6", "#17a56b"],
@@ -173,7 +193,7 @@ export default function SettleDeck({
       spread: 68,
       startVelocity: 36,
     });
-  }, [countedIds.length, settledIds.length]);
+  }, [remaining, settledCount]);
 
   return (
     <div className="settle-deck" ref={deckRef}>
@@ -187,7 +207,7 @@ export default function SettleDeck({
           key={item.id}
           remaining={remaining}
           settled={settledIds.includes(item.id)}
-          settledCount={settledIds.length}
+          settledCount={settledCount}
           signedIn={signedIn}
           total={countedIds.length}
         />
@@ -258,6 +278,16 @@ function Section({
     );
   }
 
+  // One word for what the section became, in the register the deck already
+  // speaks. Stamped over the card and reused as the dead button's label, so the
+  // mark and the control never disagree about what happened.
+  const done =
+    item.kind === "claim"
+      ? "collected"
+      : item.kind === "debt-wallet" && item.action === "refund"
+        ? "refunded"
+        : "paid";
+
   return (
     <section
       className="settle-section"
@@ -270,12 +300,18 @@ function Section({
         <span>{total > 1 ? `${String(index + 1).padStart(2, "0")} / ${String(total).padStart(2, "0")}` : ""}</span>
         <span>arc testnet</span>
       </div>
+      {/* Decorative: every settled body says the same word in prose below. */}
+      {settled ? (
+        <p aria-hidden="true" className="settle-stamp">
+          {done}
+        </p>
+      ) : null}
       {item.kind === "debt-social" ? (
-        <SocialDebtBody deck={deck} item={item} />
+        <SocialDebtBody deck={deck} item={item} settled={settled} />
       ) : item.kind === "debt-wallet" ? (
-        <WalletDebtBody active={active} deck={deck} item={item} />
+        <WalletDebtBody active={active} deck={deck} item={item} settled={settled} />
       ) : item.kind === "claim" ? (
-        <ClaimBody deck={deck} item={item} />
+        <ClaimBody deck={deck} item={item} settled={settled} />
       ) : (
         <FailedClaimBody item={item} />
       )}
@@ -326,7 +362,33 @@ function DeckMessage({ deck, id }: { deck: SettleDeckHandlers; id: string }) {
   );
 }
 
-function SocialDebtBody({ deck, item }: { deck: SettleDeckHandlers; item: ItemOf<"debt-social"> }) {
+// What stands where the button was once the money has moved. Still a <button>,
+// still focusable: a control that vanishes leaves the user wondering whether
+// they pressed it, and `disabled` would drop the focus they had on it at the
+// moment it settled. aria-disabled announces it as unavailable; with no handler
+// there is nothing for a click to do.
+function SettledAction({ label }: { label: string }) {
+  return (
+    <button aria-disabled="true" className="settle-action" data-settled="true" type="button">
+      <span aria-hidden="true" className="settle-tick">
+        <svg fill="none" stroke="currentColor" strokeWidth="1.5" viewBox="0 0 24 24">
+          <path d="M4 12.5 9.5 18 20 6.5" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      </span>
+      {label}
+    </button>
+  );
+}
+
+function SocialDebtBody({
+  deck,
+  item,
+  settled,
+}: {
+  deck: SettleDeckHandlers;
+  item: ItemOf<"debt-social">;
+  settled: boolean;
+}) {
   const flow = runningFlow(deck, item.id);
   return (
     <>
@@ -339,17 +401,29 @@ function SocialDebtBody({ deck, item }: { deck: SettleDeckHandlers; item: ItemOf
         <FlowSteps flow={flow} />
       ) : (
         <>
-          <p className="settle-label">you pay</p>
-          <p className="settle-amount">${item.debt.amountUsd.toFixed(2)}</p>
-          <p className="settle-meta">settles in full from your splitsy wallet</p>
-          <button
-            className="settle-action"
-            disabled={deck.billState === "working"}
-            onClick={() => deck.paySocialDebt(item.debt)}
-            type="button"
-          >
-            Pay →
-          </button>
+          <p className="settle-label">{settled ? "you paid" : "you pay"}</p>
+          <p className="settle-amount" data-settled={settled || undefined}>
+            ${item.debt.amountUsd.toFixed(2)}
+          </p>
+          <p className="settle-meta">
+            {settled
+              ? `settled in full from your splitsy wallet — nothing left owing to ${
+                  item.debt.creator?.handle ?? "the creator"
+                }`
+              : "settles in full from your splitsy wallet"}
+          </p>
+          {settled ? (
+            <SettledAction label="Paid" />
+          ) : (
+            <button
+              className="settle-action"
+              disabled={deck.billState === "working"}
+              onClick={() => deck.paySocialDebt(item.debt)}
+              type="button"
+            >
+              Pay →
+            </button>
+          )}
         </>
       )}
       <DeckMessage deck={deck} id={item.id} />
@@ -361,10 +435,12 @@ function WalletDebtBody({
   active,
   deck,
   item,
+  settled,
 }: {
   active: boolean;
   deck: SettleDeckHandlers;
   item: ItemOf<"debt-wallet">;
+  settled: boolean;
 }) {
   const { debt, action, refundable } = item;
   const verification = useBillVerification(debt.billId, debt.metadataHash);
@@ -372,7 +448,9 @@ function WalletDebtBody({
   // A mismatch or an altered total is a red warning, not a detail — it opens
   // itself rather than waiting behind a click, because Pay is right there. Only
   // for the section in view: a modal thrown from off-screen is a jump scare.
-  const unsafe = verification.status === "mismatch" || verification.audit.state === "altered";
+  // Settled, the money has already moved and the warning has nothing left to
+  // stop — it stays available under the trigger, but it stops throwing itself.
+  const unsafe = !settled && (verification.status === "mismatch" || verification.audit.state === "altered");
   // null = follow the warning; an explicit open or close pins it. Same shape as
   // BillVerification's receipt toggle, and it needs no effect to do it.
   const [sheet, setSheet] = useState<"verified" | "bridge" | "none" | null>(null);
@@ -383,7 +461,9 @@ function WalletDebtBody({
   const remainingLabel = billUnitsToUsdc(debt.remaining);
   const typed = Number(deck.partialPayments[item.id] ?? remainingLabel);
   const overpaying = action === "pay" && Number.isFinite(typed) && typed > Number(remainingLabel);
-  const editing = item.editable && action === "pay";
+  // The input is a live control; once the bill is settled there is nothing left
+  // to type an amount against, so the figure goes back to being a figure.
+  const editing = item.editable && action === "pay" && !settled;
   // A partly-paid all-or-nothing bill before its deadline: the money is
   // committed but is not yet the creator's, and saying so is the whole point.
   const heldInEscrow = debt.escrowUntilFull && debt.totalPaid < debt.totalOwed && refundable === 0n && debt.paid > 0n;
@@ -396,7 +476,9 @@ function WalletDebtBody({
         <FlowSteps flow={flow} />
       ) : (
         <>
-          <p className="settle-label">{action === "refund" ? "you get back" : "you pay"}</p>
+          <p className="settle-label">
+            {settled ? (action === "refund" ? "you got back" : "you paid") : action === "refund" ? "you get back" : "you pay"}
+          </p>
           {editing ? (
             <>
               <input
@@ -413,34 +495,44 @@ function WalletDebtBody({
             </>
           ) : (
             <>
-              <p className="settle-amount">{usd(action === "refund" ? refundable : debt.remaining)}</p>
-              <span className="settle-rule" />
+              <p className="settle-amount" data-settled={settled || undefined}>
+                {usd(action === "refund" ? refundable : debt.remaining)}
+              </p>
+              <span className="settle-rule" data-tone={settled ? "settled" : undefined} />
             </>
           )}
           <p className="settle-meta">
-            {action === "refund"
-              ? "this bill didn't come together — your share goes back to your wallet"
-              : heldInEscrow
-                ? `your ${usd(debt.paid)} is in the bill, not with the creator — they can't collect until the group is paid up${
-                    debt.dueDate > 0n
-                      ? `, and you can take yours back after ${new Date(Number(debt.dueDate) * 1000).toLocaleDateString()}`
-                      : ""
-                  }`
-                : `of ${usd(debt.owed)} owed${
-                    debt.dueDate > 0n ? ` · due ${new Date(Number(debt.dueDate) * 1000).toLocaleDateString()}` : ""
-                  }`}
+            {settled
+              ? action === "refund"
+                ? "your share is back in your wallet — this bill is closed for you"
+                : `your ${usd(debt.owed)} share of bill #${debt.billId.toString()} is settled on Arc`
+              : action === "refund"
+                ? "this bill didn't come together — your share goes back to your wallet"
+                : heldInEscrow
+                  ? `your ${usd(debt.paid)} is in the bill, not with the creator — they can't collect until the group is paid up${
+                      debt.dueDate > 0n
+                        ? `, and you can take yours back after ${new Date(Number(debt.dueDate) * 1000).toLocaleDateString()}`
+                        : ""
+                    }`
+                  : `of ${usd(debt.owed)} owed${
+                      debt.dueDate > 0n ? ` · due ${new Date(Number(debt.dueDate) * 1000).toLocaleDateString()}` : ""
+                    }`}
           </p>
-          {!item.editable && action === "pay" ? (
+          {!item.editable && action === "pay" && !settled ? (
             <p className="settle-meta">settles in full from your splitsy wallet</p>
           ) : null}
-          <button
-            className="settle-action"
-            disabled={deck.billState === "working" || overpaying}
-            onClick={() => (action === "refund" ? deck.refundOnArc(debt) : deck.payDebtOnArc(debt))}
-            type="button"
-          >
-            {action === "refund" ? "Get it back" : "Pay"} →
-          </button>
+          {settled ? (
+            <SettledAction label={action === "refund" ? "Refunded" : "Paid"} />
+          ) : (
+            <button
+              className="settle-action"
+              disabled={deck.billState === "working" || overpaying}
+              onClick={() => (action === "refund" ? deck.refundOnArc(debt) : deck.payDebtOnArc(debt))}
+              type="button"
+            >
+              {action === "refund" ? "Get it back" : "Pay"} →
+            </button>
+          )}
           {overpaying ? (
             <p className="settle-meta" style={{ color: "var(--warning-text)" }}>
               more than the {usd(debt.remaining)} remaining
@@ -451,13 +543,14 @@ function WalletDebtBody({
       <DeckMessage deck={deck} id={item.id} />
 
       <aside className="settle-aside">
-        <GroupProgress debt={debt} />
+        {/* Settled from this card = the remaining share went in, so credit it. */}
+        <GroupProgress debt={debt} plus={settled && action === "pay" ? debt.remaining : 0n} />
         <AsideRow label="your share">
           {usd(debt.owed)}
-          {debt.paid > 0n ? ` · ${usd(debt.paid)} paid` : ""}
+          {settled ? " · paid in full" : debt.paid > 0n ? ` · ${usd(debt.paid)} paid` : ""}
         </AsideRow>
         <AsideRow label="collected by">{short(debt.splitter)}</AsideRow>
-        <AsideRow label="paying from">{short(debt.account)}</AsideRow>
+        <AsideRow label={settled ? "paid from" : "paying from"}>{short(debt.account)}</AsideRow>
         {debt.escrowUntilFull ? (
           <p className="settle-meta" style={{ marginTop: 0 }}>
             All or nothing — the bill holds every payment until the group is square.
@@ -475,8 +568,8 @@ function WalletDebtBody({
           {verification.status === "loading" ? "checking…" : unsafe ? "⌃ doesn't match arc" : "⌃ verified on arc"}
         </button>
         {/* Bridging pays from the browser wallet; a Circle-wallet debt has
-            nothing to bridge into. */}
-        {item.editable ? (
+            nothing to bridge into, and a settled one has nothing left to pay. */}
+        {item.editable && !settled ? (
           <button className="settle-trigger" onClick={() => setSheet("bridge")} type="button">
             ⌃ bridge
           </button>
@@ -518,7 +611,15 @@ function WalletDebtBody({
   );
 }
 
-function ClaimBody({ deck, item }: { deck: SettleDeckHandlers; item: ItemOf<"claim"> }) {
+function ClaimBody({
+  deck,
+  item,
+  settled,
+}: {
+  deck: SettleDeckHandlers;
+  item: ItemOf<"claim">;
+  settled: boolean;
+}) {
   const { debt } = item;
   const flow = runningFlow(deck, item.id);
   const claimableLabel = billUnitsToUsdc(debt.claimable);
@@ -528,13 +629,13 @@ function ClaimBody({ deck, item }: { deck: SettleDeckHandlers; item: ItemOf<"cla
   return (
     <>
       <p className="settle-label">bill #{debt.billId.toString()}</p>
-      <h2 className="settle-merchant">ready to collect</h2>
+      <h2 className="settle-merchant">{settled ? "collected" : "ready to collect"}</h2>
       {flow ? (
         <FlowSteps flow={flow} />
       ) : (
         <>
-          <p className="settle-label">you collect</p>
-          {item.editable ? (
+          <p className="settle-label">{settled ? "you collected" : "you collect"}</p>
+          {item.editable && !settled ? (
             <>
               <input
                 aria-label={`Amount to collect from bill ${debt.billId.toString()}`}
@@ -548,22 +649,30 @@ function ClaimBody({ deck, item }: { deck: SettleDeckHandlers; item: ItemOf<"cla
             </>
           ) : (
             <>
-              <p className="settle-amount">{usd(debt.claimable)}</p>
-              <span className="settle-rule" />
+              <p className="settle-amount" data-settled={settled || undefined}>
+                {usd(debt.claimable)}
+              </p>
+              <span className="settle-rule" data-tone={settled ? "settled" : undefined} />
             </>
           )}
           <p className="settle-meta">
-            paid {usd(debt.totalPaid)} · claimed {usd(debt.claimed)}
+            {settled
+              ? `it's in your wallet — ${usd(debt.claimed + debt.claimable)} collected from this bill in total`
+              : `paid ${usd(debt.totalPaid)} · claimed ${usd(debt.claimed)}`}
           </p>
-          {!item.editable ? <p className="settle-meta">collects in full to your splitsy wallet</p> : null}
-          <button
-            className="settle-action"
-            disabled={deck.billState === "working" || overclaiming}
-            onClick={() => deck.claimSplitterFunds(debt)}
-            type="button"
-          >
-            Collect →
-          </button>
+          {!item.editable && !settled ? <p className="settle-meta">collects in full to your splitsy wallet</p> : null}
+          {settled ? (
+            <SettledAction label="Collected" />
+          ) : (
+            <button
+              className="settle-action"
+              disabled={deck.billState === "working" || overclaiming}
+              onClick={() => deck.claimSplitterFunds(debt)}
+              type="button"
+            >
+              Collect →
+            </button>
+          )}
           {overclaiming ? (
             <p className="settle-meta" style={{ color: "var(--warning-text)" }}>
               more than the {usd(debt.claimable)} ready
@@ -575,8 +684,8 @@ function ClaimBody({ deck, item }: { deck: SettleDeckHandlers; item: ItemOf<"cla
 
       <aside className="settle-aside">
         <GroupProgress debt={debt} />
-        <AsideRow label="already collected">{usd(debt.claimed)}</AsideRow>
-        <AsideRow label="collecting to">{short(debt.account)}</AsideRow>
+        <AsideRow label="already collected">{usd(settled ? debt.claimed + debt.claimable : debt.claimed)}</AsideRow>
+        <AsideRow label={settled ? "collected to" : "collecting to"}>{short(debt.account)}</AsideRow>
         {debt.dueDate > 0n ? (
           <AsideRow label="due">{new Date(Number(debt.dueDate) * 1000).toLocaleDateString()}</AsideRow>
         ) : null}

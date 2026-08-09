@@ -84,6 +84,27 @@ export function clearsSection(
   return Number.isFinite(paid) && paid >= outstanding;
 }
 
+// A section the user settled this session, plus the slot it occupied. The
+// registry refresh drops a paid debt from the read, so without a snapshot the
+// card the user just paid unmounts under their thumb — which reads as a glitch
+// rather than a confirmation.
+export type HeldSection = { index: number; item: SettleItem };
+
+// Put the held cards back where they were. A held id that is still live is
+// dropped: the fresh row is the truthful one, and two sections with one id would
+// break the deck's key and its scroll targeting alike.
+export function withHeldSections(fresh: SettleItem[], held: HeldSection[]): SettleItem[] {
+  const live = new Set(fresh.map((item) => item.id));
+  const ghosts = held.filter((entry) => !live.has(entry.item.id));
+  if (ghosts.length === 0) return fresh;
+  const out = [...fresh];
+  // Ascending, so each splice lands before the next one shifts the list under it.
+  for (const { index, item } of [...ghosts].sort((a, b) => a.index - b.index)) {
+    out.splice(Math.min(index, out.length), 0, item);
+  }
+  return out;
+}
+
 export function buildSettleItems(input: {
   socialDebts: SocialDebt[];
   walletDebts: OwnedDebt[];
