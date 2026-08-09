@@ -2826,7 +2826,7 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
               >
                 <form className="space-y-4" onSubmit={parseBill}>
                   <label
-                    className={`scan-surface upload-focus flex min-h-[28rem] cursor-pointer flex-col items-center justify-center rounded-[var(--radius)] border border-dashed bg-[var(--receipt)] p-6 text-center text-[var(--receipt-text)] transition hover:border-[var(--accent)] sm:min-h-[34rem] ${
+                    className={`scan-surface upload-focus receipt-glass flex min-h-[28rem] cursor-pointer flex-col items-center justify-center rounded-[var(--radius)] border border-dashed p-6 text-center text-[var(--receipt-text)] transition hover:border-[var(--accent)] sm:min-h-[34rem] ${
                       isDraggingBill ? "border-[var(--accent)]" : "border-[var(--border-strong)]"
                     }`}
                     data-scanning={ocrState === "reading"}
@@ -2924,7 +2924,7 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
                       step="02 · Verify"
                       title={billIsScanned ? "What the scan read" : "Enter the bill"}
                     >
-                      <div className="receipt-card p-4 sm:p-5" ref={receiptPrintRef}>
+                      <div className="receipt-card receipt-glass p-4 sm:p-5" ref={receiptPrintRef}>
                         {billIsScanned ? (
                           <>
                             {/* A USD bill needs no conversion notice — there is
@@ -3070,7 +3070,7 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
                   </div>
                 ) : null}
 
-                <div className="receipt-card mt-4 p-4">
+                <div className="receipt-card receipt-glass mt-4 p-4">
                   {displayParticipants.map((participant) => {
                     return (
                       <div className="receipt-divider py-3 first:border-t-0 first:pt-0" key={participant.id}>

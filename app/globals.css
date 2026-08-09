@@ -758,6 +758,38 @@ input[type="number"],
   opacity: 0.5;
 }
 
+/* Liquid-glass fill for panel interiors — .tab-hero's surface (an accent bloom
+   over a translucent pane) inset one level, so it reads as glass sitting inside
+   a .spec-card rather than beside it. Fill only, no border: the upload dropzone
+   recolours its own dashed border on drag.
+   Opt-in rather than folded into .receipt-card, because the landing demo's
+   dragged receipt is a paper receipt and paper is the point there. */
+.receipt-glass {
+  background:
+    radial-gradient(120% 140% at 0% 0%, color-mix(in srgb, var(--accent) 9%, transparent), transparent 60%),
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--surface-strong) 72%, transparent),
+      color-mix(in srgb, var(--surface-muted) 60%, transparent)
+    );
+  backdrop-filter: blur(28px) saturate(1.5);
+  -webkit-backdrop-filter: blur(28px) saturate(1.5);
+}
+
+/* The paper affordances leave with the cream: ruled lines were in the background
+   just replaced, the torn bottom edge is here. Top rim is what reads as glass. */
+.receipt-card.receipt-glass {
+  border-top-color: rgba(255, 255, 255, 0.78);
+}
+
+.receipt-card.receipt-glass::after {
+  content: none;
+}
+
+:root[data-theme="dark"] .receipt-card.receipt-glass {
+  border-top-color: rgba(255, 255, 255, 0.12);
+}
+
 .receipt-divider {
   border-top: 1px dashed var(--receipt-dash);
 }
