@@ -44,8 +44,8 @@ Checked from Arc docs:
 
 ## Current deployment
 
-- `RecurringTabFactory`: `0x6c4d980f7a9250e3892a3541b5a62420b628f3c1`
-- Arcscan: `https://testnet.arcscan.app/address/0x6c4d980f7a9250e3892a3541b5a62420b628f3c1`
+- `RecurringTabFactory`: `0x9Cc377C957255582BCa8084a950F52e59fB0a41E`
+- Arcscan: `https://testnet.arcscan.app/address/0x9Cc377C957255582BCa8084a950F52e59fB0a41E`
 - Constructor USDC address: `0x3600000000000000000000000000000000000000`
 
 > The audited contract is allowance/pull-based and differs from the older prepaid (deposit-based) tab deployment. Redeploy `RecurringTabFactory` and update `NEXT_PUBLIC_RECURRING_TAB_FACTORY_ADDRESS` before testing recurring collection against the new behavior.

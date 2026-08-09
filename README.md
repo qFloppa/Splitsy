@@ -45,8 +45,8 @@ RECEIPT_SCANNER_MODEL=receipt-scanner-model
 
 ARC_TESTNET_RPC_URL=https://rpc.testnet.arc.network
 ARC_TESTNET_USDC_ADDRESS=0x3600000000000000000000000000000000000000
-NEXT_PUBLIC_RECURRING_TAB_FACTORY_ADDRESS=0x6c4d980f7a9250e3892a3541b5a62420b628f3c1
-NEXT_PUBLIC_BILL_SPLIT_REGISTRY_ADDRESS=0x0000000000000000000000000000000000000000
+NEXT_PUBLIC_RECURRING_TAB_FACTORY_ADDRESS=0x9Cc377C957255582BCa8084a950F52e59fB0a41E
+NEXT_PUBLIC_BILL_SPLIT_REGISTRY_ADDRESS=0x924Cf4331741401cBc720770937C132A974E1a3b
 
 DEPLOYER_PRIVATE_KEY=0x... # only needed for factory deployment
 RECURRING_SETTLER_PRIVATE_KEY=0x... # server wallet that pays gas for recurring settlement
@@ -227,9 +227,19 @@ continues to use DCWs; Scout's EOA is only its x402 payment signer.
 `/api/ocr` and `/api/fx` are wrapped by `lib/x402/seller.ts`'s `withGateway`
 HOF. Unauthenticated requests receive HTTP 402 with a `PAYMENT-REQUIRED`
 challenge. The facilitator is Circle's `BatchFacilitatorClient`
-(`@circle-fin/x402-batching`). `maxTimeoutSeconds` is set to `345600` (7 days)
-because Circle's SDK default of 4 days is shorter than the Gateway's auth
-validity window on Arc.
+(`@circle-fin/x402-batching`).
+
+`maxTimeoutSeconds` is **not** hardcoded. The seller calls `getSupported()` once
+and reads Arc's `minValiditySeconds` from the facilitator itself, then adds a
+one-hour margin (`VALIDITY_MARGIN_SECONDS`) because Gateway checks the validity
+*remaining* at verification time, not at signing time. If `getSupported()` fails,
+it falls back to `604800` (7 days) — Gateway's current minimum for Arc — and
+retries on the next request.
+
+That fallback is deliberately **not** the `345600` (4 days) that the SDK's own
+middleware hardcodes: the buyer signs `validBefore = now + maxTimeoutSeconds`, so
+anything under the facilitator's minimum is rejected as
+`authorization_validity_too_short` and no payment can ever settle.
 
 ### ERC-8004 identity
 
@@ -420,12 +430,27 @@ Both flows build on a set of shared, audited security primitives instead of exte
 The current Arc Testnet deployment is:
 
 ```text
-RecurringTabFactory: 0x6c4d980f7a9250e3892a3541b5a62420b628f3c1
-Arcscan: https://testnet.arcscan.app/address/0x6c4d980f7a9250e3892a3541b5a62420b628f3c1
-USDC: 0x3600000000000000000000000000000000000000
-ERC-8004 IdentityRegistry: 0x8004A818BFB912233c491871b3d84c89A494BD9e
-Gateway Wallet: 0x0077777d7EBA4688BDeF3E311b846F25870A19B9
+BillSplitRegistry:   0x924Cf4331741401cBc720770937C132A974E1a3b
+RecurringTabFactory: 0x9Cc377C957255582BCa8084a950F52e59fB0a41E
+AutopayMandate:      0xb5703Db1dc62DDf8CBd6cb39F9f93F03Ca1C8Aff
+USDC:                0x3600000000000000000000000000000000000000
+Gateway Wallet:      0x0077777d7EBA4688BDeF3E311b846F25870A19B9
 ```
+
+Pre-deployed on Arc, not ours — see the full table under
+[Arc Testnet Constants](#arc-testnet-constants):
+
+```text
+ERC-8004 IdentityRegistry: 0x8004A818BFB912233c491871b3d84c89A494BD9e
+AgenticCommerce (ERC-8183): 0x0747EEf0706327138c69792bF28Cd525089e4583
+```
+
+Browse any of them on Arcscan at `https://testnet.arcscan.app/address/<address>`.
+
+An earlier registry lives at `0x867051b5F840F045B3c72a091B1b6453c86E120B`. It
+predates `payDebtFor`, `authorizeCollect`, `collectDebt`, and `refund`, so this
+codebase will not work against it — point
+`NEXT_PUBLIC_BILL_SPLIT_REGISTRY_ADDRESS` at the address above.
 
 More details are in `docs/snapsplit-contract.md`.
 
