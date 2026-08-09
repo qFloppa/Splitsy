@@ -42,9 +42,15 @@ export function settleItemId(billId: bigint, account: string): string {
   return `${billId.toString()}:${account.toLowerCase()}`;
 }
 
-// Sort: refund-only rows last, then dated before undated, earliest date first,
-// then larger amounts first. Tuple compare keeps it readable and stable.
-type SortKey = [refundLast: 0 | 1, undated: 0 | 1, due: bigint, negAmount: bigint];
+// Sort: newest bill on top, older ones below — the deck reads top-down as a
+// timeline, so the bill you just made is the first thing under your thumb.
+// Registry ids only count up, so a higher billId IS a newer bill.
+//
+// Refund-only rows still sort last: money coming back is not work the deck is
+// asking for. Off-chain social debts share no clock with the chain, so they keep
+// the newest-first order /api/bills returns them in (stable sort) and follow the
+// on-chain run. Tuple compare keeps it readable.
+type SortKey = [refundLast: 0 | 1, offChain: 0 | 1, negBillId: bigint];
 
 function compare(a: SortKey, b: SortKey): number {
   for (let i = 0; i < a.length; i += 1) {
@@ -86,11 +92,13 @@ export function buildSettleItems(input: {
 }): SettleItem[] {
   const { socialDebts, walletDebts, splitterBills, nowSeconds } = input;
 
-  // Social debts carry no due date on the wire, so they sort as undated.
+  // Social debts have no bill id to rank by — they arrive newest-first from
+  // /api/bills (created_at desc) and Array.sort is stable, so tying every one of
+  // them on the same key preserves that order.
   const socialItems: DebtItem[] = socialDebts.map((debt) => ({
     kind: "debt-social",
     id: `social:${debt.id}`,
-    sortKey: [0, 1, 0n, -BigInt(Math.round(debt.amountUsd * UNITS))],
+    sortKey: [0, 1, 0n],
     debt,
     editable: false,
   }));
@@ -103,12 +111,7 @@ export function buildSettleItems(input: {
     return {
       kind: "debt-wallet",
       id: settleItemId(debt.billId, debt.account),
-      sortKey: [
-        action === "refund" ? 1 : 0,
-        debt.dueDate === 0n ? 1 : 0,
-        debt.dueDate,
-        -(action === "refund" ? refundable : debt.remaining),
-      ],
+      sortKey: [action === "refund" ? 1 : 0, 0, -debt.billId],
       debt,
       // The server-signed routes read the debt from chain and ignore any client
       // amount, so only a browser-wallet row can be partially paid.
@@ -138,7 +141,10 @@ export function buildSettleItems(input: {
     )
     .map((debt) => ({ kind: "claim-failed", id: settleItemId(debt.billId, debt.account), debt }));
 
-  const rightSide: SettleItem[] = [...claimItems, ...failedItems];
+  // The claim run reads newest-first too — same rule as the debt run above.
+  const rightSide: SettleItem[] = [...claimItems, ...failedItems].sort((a, b) =>
+    compare([0, 0, -a.debt.billId], [0, 0, -b.debt.billId]),
+  );
   const divider: SettleItem[] =
     debtItems.length > 0 && rightSide.length > 0
       ? [

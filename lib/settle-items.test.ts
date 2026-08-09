@@ -74,20 +74,44 @@ test("social debts are never editable, wallet debts are", () => {
   assert.equal(wallets.find((d) => d.debt.via === "wallet")?.editable, true);
 });
 
-test("dated debts sort before undated, earliest first, then by amount descending", () => {
+test("the newest bill sorts first, whatever its due date or amount", () => {
   const items = buildSettleItems({
     socialDebts: [],
     walletDebts: [
       debt({ billId: 1n, dueDate: 0n, remaining: 30_000_000n }),
-      debt({ billId: 2n, dueDate: 500n }),
-      debt({ billId: 3n, dueDate: 100n }),
-      debt({ billId: 4n, dueDate: 0n, remaining: 90_000_000n }),
+      debt({ billId: 4n, dueDate: 500n }),
+      debt({ billId: 2n, dueDate: 100n }),
+      debt({ billId: 3n, dueDate: 0n, remaining: 90_000_000n }),
     ],
     splitterBills: [],
     nowSeconds: 0n,
   });
   const ids = pick(items, "debt-wallet").map((i) => i.debt.billId);
-  assert.deepEqual(ids, [3n, 2n, 4n, 1n]);
+  assert.deepEqual(ids, [4n, 3n, 2n, 1n]);
+});
+
+test("off-chain social debts keep their newest-first arrival order, under the on-chain run", () => {
+  const items = buildSettleItems({
+    socialDebts: [social({ id: "new" }), social({ id: "old" })],
+    walletDebts: [debt({ billId: 1n }), debt({ billId: 2n })],
+    splitterBills: [],
+    nowSeconds: 0n,
+  });
+  const ids = items.filter((i) => i.kind === "debt-wallet" || i.kind === "debt-social").map((i) => i.id);
+  assert.deepEqual(ids, [`2:${ACCOUNT_A.toLowerCase()}`, `1:${ACCOUNT_A.toLowerCase()}`, "social:new", "social:old"]);
+});
+
+test("claims read newest-first as well", () => {
+  const items = buildSettleItems({
+    socialDebts: [],
+    walletDebts: [],
+    splitterBills: [debt({ billId: 5n, claimable: 1n }), debt({ billId: 9n, claimable: 1n })],
+    nowSeconds: 0n,
+  });
+  assert.deepEqual(
+    pick(items, "claim").map((i) => i.debt.billId),
+    [9n, 5n],
+  );
 });
 
 test("a refund-only row survives and sorts to the end of the debt run", () => {
