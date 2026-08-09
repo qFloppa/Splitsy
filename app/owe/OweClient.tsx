@@ -2,7 +2,7 @@
 
 import confetti from "canvas-confetti";
 import gsap from "gsap";
-import { Mail, Moon, Sun, Wallet } from "lucide-react";
+import { ExternalLink, Mail, Moon, Sun, Wallet } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { flushSync } from "react-dom";
@@ -10,6 +10,7 @@ import { arcTestnet } from "viem/chains";
 import { useAccount, useSwitchChain } from "wagmi";
 import { getWalletClient } from "wagmi/actions";
 import { ConnectButton } from "@rainbow-me/rainbowkit";
+import { explorerTxUrl, waitForCircleTxUrl } from "@/lib/arc-explorer";
 import { billMetadataHash } from "@/lib/bill-metadata";
 import {
   BILL_SPLIT_REGISTRY_ADDRESS,
@@ -31,6 +32,7 @@ import {
   nextProvider,
   pickSigner,
   planIou,
+  shortAddress,
   targetName,
   typableAmount,
   type IouDirection,
@@ -51,10 +53,21 @@ type Me = { id: string; provider?: AccountProvider | null; handle: string; walle
 // `note` is kept because the ledger's server rows are netted per counterparty
 // and have no description to show — this is the only place the sentence
 // survives verbatim.
-type RecentRow = IouLedgerRow & { note: string; state: "pending" | "settled" };
+// `txUrl` is the explorer link for the transaction this row became, once there is
+// one: absent while it's in flight, and absent for good on a Circle transfer
+// whose hash never surfaced inside waitForCircleTxUrl's window.
+type RecentRow = IouLedgerRow & { note: string; state: "pending" | "settled"; txUrl?: string };
+
+// What a rail hands back about the transaction it just made. A browser-signed
+// rail has the hash in hand; a Circle-signed transfer only learns it a few
+// seconds later, so that one hands back the wait instead of blocking on it.
+type TxRef = { url: string } | { pending: Promise<string | null> } | null;
 
 const reduced = () => window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
 const money = (n: number) => n.toFixed(2);
+// Both producers build "<explorer>/tx/<hash>", so the tail is the hash — shown
+// short, the same form an address takes everywhere else on this page.
+const txLabel = (url: string) => shortAddress(url.slice(url.lastIndexOf("/") + 1));
 
 // The composer's fields, snapshotted so a failed commit can put them back
 // exactly as typed rather than making the user retype a sentence we lost.
@@ -516,10 +529,11 @@ export default function OweClient() {
   }
 
   // Tapping a row re-states it in the composer. One handler for every row rather
-  // than a closure each: the row already carries its id as an attribute for the
-  // flip to find it by, so the click can read the same one.
+  // than a closure each: the button carries its row's id, so the click can read
+  // it back off the element. Its own attribute, not the row's — the flip
+  // measures [data-iou-row], which is now the wrapper around this button.
   function recallRow(event: React.MouseEvent<HTMLButtonElement>) {
-    const id = event.currentTarget.dataset.iouRow;
+    const id = event.currentTarget.dataset.recall;
     const row = rows.find((r) => r.id === id);
     if (!row) return;
     promote(
@@ -566,7 +580,7 @@ export default function OweClient() {
 
   // Server-signed: a one-participant bill in the registry. I'm the splitter, so
   // I'm the one who can claim it — which is exactly what "owes me" means.
-  async function sendAsk(plan: IouPlan) {
+  async function sendAsk(plan: IouPlan): Promise<TxRef> {
     const res = await fetch("/api/onchain-bills/create", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -574,6 +588,7 @@ export default function OweClient() {
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(data.error || "Couldn't put that on Arc.");
+    return data.txHash ? { url: explorerTxUrl(data.txHash) } : null;
   }
 
   // A direct transfer. The registry can't hold "I owe you" — createBill makes
@@ -584,7 +599,7 @@ export default function OweClient() {
   // ponytail: no deferred "I owe" — that needs an off-chain row against a
   // creditor who may not have an account. Add bill_debts-backed IOUs when
   // someone actually asks to record a debt they can't yet pay.
-  async function settleNow(plan: IouPlan) {
+  async function settleNow(plan: IouPlan): Promise<TxRef> {
     const to = await resolveTarget(plan);
 
     const res = await fetch("/api/wallet/send", {
@@ -602,13 +617,16 @@ export default function OweClient() {
             : data.error || "Transfer failed.",
       );
     }
+    // Circle answers before the transfer mines, so the hash arrives later — the
+    // row links itself once it does rather than holding the whole commit up.
+    return data.txId ? { pending: waitForCircleTxUrl(data.txId) } : null;
   }
 
   // The same ask, signed in the user's own wallet instead of their Splitsy one.
   // It has to build the bill EXACTLY as app/api/onchain-bills/create does —
   // "@handle" label, no receipt, no due date — because those fields are the
   // metadataHash, and a payer verifies an IOU by recomputing it.
-  async function askWithWallet(plan: IouPlan) {
+  async function askWithWallet(plan: IouPlan): Promise<TxRef> {
     if (!isBillRegistryConfigured()) throw new Error("The bill registry isn't configured yet.");
     const wallet = await connectWallet();
     const to = await resolveTarget(plan);
@@ -654,17 +672,32 @@ export default function OweClient() {
         if (!r.ok) console.error("Publishing the IOU preimage failed:", r.status, await r.text());
       })
       .catch(() => {});
+
+    return { url: explorerTxUrl(created.hash) };
   }
 
   // The settle, signed in the user's own wallet: one USDC transfer on Arc. Same
   // reasoning as settleNow — an "I owe you" has no registry shape — only the
   // signature comes from the browser rather than the server.
-  async function settleWithWallet(plan: IouPlan) {
+  async function settleWithWallet(plan: IouPlan): Promise<TxRef> {
     const wallet = await connectWallet();
     const to = await resolveTarget(plan);
     if (to.toLowerCase() === wallet.account.toLowerCase()) throw new Error("That handle is your own wallet.");
     await ensureBillSplitWalletOnArc(wallet);
-    await transferArcUsdc({ ...wallet, to, amount: usdcToBillUnits(plan.amountUsd.toFixed(2)) });
+    const receipt = await transferArcUsdc({ ...wallet, to, amount: usdcToBillUnits(plan.amountUsd.toFixed(2)) });
+    return { url: explorerTxUrl(receipt.transactionHash) };
+  }
+
+  // Hang the explorer link on the row this transaction became. A pending hash
+  // resolves later, and the row may already be gone by then — a server refresh
+  // replaces it with the netted version — so the update is a no-op miss rather
+  // than a resurrection.
+  function stampTx(rowId: string, tx: TxRef) {
+    if (!tx) return;
+    const attach = (url: string | null) =>
+      url && setRecent((r) => r.map((x) => (x.id === rowId ? { ...x, txUrl: url } : x)));
+    if ("url" in tx) attach(tx.url);
+    else void tx.pending.then(attach).catch(() => {});
   }
 
   async function commit() {
@@ -706,9 +739,12 @@ export default function OweClient() {
     try {
       // Four rails, one grid: the sentence picks ask-vs-settle, the signer picks
       // who writes it.
-      if (plan.kind === "ask") await (signer === "wallet" ? askWithWallet(plan) : sendAsk(plan));
-      else await (signer === "wallet" ? settleWithWallet(plan) : settleNow(plan));
+      const tx =
+        plan.kind === "ask"
+          ? await (signer === "wallet" ? askWithWallet(plan) : sendAsk(plan))
+          : await (signer === "wallet" ? settleWithWallet(plan) : settleNow(plan));
       setRecent((r) => r.map((x) => (x.id === id ? { ...x, state: "settled" } : x)));
+      stampTx(id, tx);
       if (plan.kind === "settle" && !reduced()) {
         void confetti({
           colors: ["#2775ca", "#3ee6d6", "#17a56b"],
@@ -982,26 +1018,34 @@ export default function OweClient() {
             const mine = row.direction === "i-owe";
             const note = "note" in row ? row.note : "";
             const state = "state" in row ? row.state : undefined;
+            const txUrl = "txUrl" in row ? row.txUrl : undefined;
             // A counterparty the dashboard could only label by address renders
             // as "0xab12…cdef", which is not a handle and can't go back into the
             // sentence. Those rows read; they don't recall.
             const recallable = !row.label.includes("…") && state !== "pending";
             return (
-              <button
-                className="iou-row"
-                data-iou-row={row.id}
-                data-state={state}
-                disabled={!recallable}
-                key={row.id}
-                onClick={recallRow}
-                type="button"
-              >
-                <span>
+              // A div, not a button: the tx link is interactive content, and
+              // nesting that inside a button is invalid and untappable. The
+              // recall gesture moves onto its own button beside it.
+              <div className="iou-row" data-iou-row={row.id} data-state={state} key={row.id}>
+                <button
+                  className="iou-row-recall"
+                  data-recall={row.id}
+                  disabled={!recallable}
+                  onClick={recallRow}
+                  type="button"
+                >
                   {mine ? `I owe ${row.label}` : `${row.label} owes me`}
                   {note ? <span className="iou-row-note"> · {note}</span> : null}
-                </span>
+                </button>
+                {txUrl ? (
+                  <a className="iou-row-tx" href={txUrl} rel="noreferrer" target="_blank">
+                    {txLabel(txUrl)}
+                    <ExternalLink size={11} />
+                  </a>
+                ) : null}
                 <span className="iou-row-amount">${money(row.amountUsd)}</span>
-              </button>
+              </div>
             );
           })
         )}

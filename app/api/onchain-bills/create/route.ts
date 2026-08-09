@@ -99,9 +99,12 @@ export async function POST(request: Request) {
 
   const metadataHash = billMetadataHash({ merchant, currency, total, participantLabels: labels, receiptHash, dueDate });
 
-  // Execute createBill from the creator's DCW.
+  // Execute createBill from the creator's DCW. The hash is kept so callers can
+  // link the creation on the explorer — it is null only if the poll timed out
+  // before Circle reported one, which the caller reads as "no link".
+  let txHash: string | null = null;
   try {
-    await executeContractOnArc(user.circle_wallet_id, REGISTRY_ADDRESS, encodeCreateBill(metadataHash, addresses, owed, BigInt(dueDate ?? 0), escrowUntilFull));
+    ({ txHash } = await executeContractOnArc(user.circle_wallet_id, REGISTRY_ADDRESS, encodeCreateBill(metadataHash, addresses, owed, BigInt(dueDate ?? 0), escrowUntilFull)));
   } catch (err) {
     if (err instanceof InsufficientFundsError) return Response.json({ error: "insufficient_funds" }, { status: 402 });
     return Response.json({ error: err instanceof Error ? err.message : "createBill failed" }, { status: 502 });
@@ -120,7 +123,7 @@ export async function POST(request: Request) {
     // fall through — creation succeeded even if we can't pin the id right now
   }
   if (billId === null) {
-    return Response.json({ error: "Bill created, but its id could not be confirmed. Refresh to see it." }, { status: 202 });
+    return Response.json({ error: "Bill created, but its id could not be confirmed. Refresh to see it.", txHash }, { status: 202 });
   }
 
   // Publish the preimage (best-effort) so payers can verify. Reuses the server
@@ -145,5 +148,5 @@ export async function POST(request: Request) {
     console.error("Preimage publish failed (bill still created):", err);
   }
 
-  return Response.json({ billId: billId.toString() });
+  return Response.json({ billId: billId.toString(), txHash });
 }

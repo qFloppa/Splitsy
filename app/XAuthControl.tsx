@@ -19,6 +19,7 @@ import {
 } from "lucide-react";
 import Image from "next/image";
 import { useEffect, useRef, useState } from "react";
+import { waitForCircleTxUrl } from "@/lib/arc-explorer";
 import { readArcUsdcBalance, billUnitsToUsdc } from "@/lib/bill-split-contracts";
 import { providerDisplay } from "@/lib/provider-display";
 import type { AccountProvider } from "@/lib/types";
@@ -587,19 +588,8 @@ function SendTab({ balance, onSent }: { balance: string | null; onSent: () => vo
       // The on-chain hash lands a few seconds after Circle accepts the tx; poll
       // the history endpoint to surface an explorer link once it's available.
       if (data.txId) {
-        for (let i = 0; i < 6; i++) {
-          await new Promise((r) => setTimeout(r, 2500));
-          try {
-            const h = await fetch("/api/wallet/transactions").then((r) => r.json());
-            const match = (h.transactions as WalletTx[] | undefined)?.find((t) => t.id === data.txId);
-            if (match?.txHash) {
-              setSentTxUrl(`${h.explorer ?? "https://testnet.arcscan.app"}/tx/${match.txHash}`);
-              break;
-            }
-          } catch {
-            break;
-          }
-        }
+        const url = await waitForCircleTxUrl(data.txId);
+        if (url) setSentTxUrl(url);
       }
     } catch {
       setMessage("Network error — please try again.");

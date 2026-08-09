@@ -4379,17 +4379,16 @@ select.settle-trigger option {
   margin-bottom: 0.5rem;
 }
 
+/* The row is the line and the rule; the sentence inside it is the control. They
+   are separate elements because a row can also carry a link to the transaction
+   it became, and an anchor inside a button is neither valid nor clickable. */
 .iou-row {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
   gap: 1rem;
   width: 100%;
-  border: 0;
-  background: none;
   padding: 0.5rem 0;
-  cursor: pointer;
-  text-align: left;
   font-family: var(--font-clash), system-ui, sans-serif;
   font-weight: 300;
   font-size: clamp(0.95rem, 0.85rem + 0.5vw, 1.35rem);
@@ -4399,12 +4398,46 @@ select.settle-trigger option {
   transition: color var(--dur-1) var(--ease-out);
 }
 
-.iou-row:hover:not(:disabled), .iou-row:focus-visible { color: var(--pay-poster-fg); }
-.iou-row:focus-visible { outline: 1px solid currentColor; outline-offset: 0.2em; }
+/* Takes the row's own width so the amount stays hard right, and the type it
+   inherits — a button opts out of both by default. */
+.iou-row-recall {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  background: none;
+  padding: 0;
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+  letter-spacing: inherit;
+  color: inherit;
+  transition: color var(--dur-1) var(--ease-out);
+}
+
+.iou-row-recall:hover:not(:disabled), .iou-row-recall:focus-visible { color: var(--pay-poster-fg); }
+.iou-row-recall:focus-visible { outline: 1px solid currentColor; outline-offset: 0.2em; }
 
 /* A row that can't be recalled is still a row worth reading — it just isn't a
    control, so it stops claiming to be one. */
-.iou-row:disabled { cursor: default; }
+.iou-row-recall:disabled { cursor: default; }
+
+/* The receipt: this line is on Arc, and here is the transaction. Mono and dim,
+   like every other hash on the page — it's evidence to check, not a headline. */
+.iou-row-tx {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3em;
+  flex: none;
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  letter-spacing: 0.02em;
+  color: var(--pay-poster-dim);
+  text-decoration: none;
+  transition: color var(--dur-1) var(--ease-out);
+}
+
+.iou-row-tx:hover, .iou-row-tx:focus-visible { color: var(--pay-poster-fg); text-decoration: underline; }
+.iou-row-tx:focus-visible { outline: 1px solid currentColor; outline-offset: 0.2em; }
 
 /* Awaiting confirmation from Arc. The same sheen the debt alerts use for the
    same meaning, so "in flight" looks identical wherever it appears. It must ride
