@@ -115,7 +115,9 @@ style: |
   section.tight table { font-size: 19px; }
   section.tight td, section.tight th { padding: 6px 15px; }
   /* Chapter dividers. */
-  section.chapter { text-align: center; padding: 74px; }
+  /* Dividers carry two lines of text, so they centre vertically instead of
+     inheriting the top-pinned flow the dense content slides need. */
+  section.chapter { text-align: center; padding: 74px; justify-content: center; }
   section.chapter h1, section.chapter h2 {
     position: static; top: auto; left: auto; right: auto;
   }

@@ -3215,9 +3215,46 @@ a.job-trail-tx:hover {
 }
 
 /* ── Public pay page (/pay/[token]) ───────────────────────────────────────────
-   Two zones: a fixed ink poster carrying the headline amount, and a scrolling
-   roster of payer rows. The poster never leaves the viewport on desktop so the
-   figure you are working against stays visible while you pick rows. */
+   Two zones: a poster carrying the headline amount, and a scrolling roster of
+   payer rows. The poster never leaves the viewport on desktop so the figure you
+   are working against stays visible while you pick rows.
+
+   Light mode is the app's liquid glass, not a printed card. The poster was
+   --paper-50 cream beside a pure-white roster, which is the exact mismatch
+   .iou-page documents and fixes for itself: cream is a warm surface, every
+   other surface in this app is cool, and the two halves read as two different
+   products sharing a URL. Both halves are panes over the shared .app-backdrop
+   blooms now — the poster frosted lightly so the colour comes through, the
+   roster harder so rows of numbers stay flat and readable, the bar hardest
+   because it floats over content. Dark mode never had the problem: the blooms
+   are already dark there and the ink poster is the language the settle deck
+   speaks in, so every rule below hands dark its flat ground back.
+
+   --pay-poster-bg stays a flat COLOUR, not the glass stack: the rules below
+   color-mix() against it and color-mix has no opinion about gradients. Same
+   override, for the same reason, as .iou-page. */
+
+.pay-shell,
+.pay-bar {
+  --pay-poster-bg: #f3f8fb;
+}
+
+:root[data-theme="dark"] :is(.pay-shell, .pay-bar) {
+  --pay-poster-bg: var(--ink-950);
+}
+
+/* Every small uppercase mark on this page. Sibling of .settle-label, and here
+   for the same finding: Clash at 300 draws hairlines, and an 11px hairline
+   tracked out to 0.18em is close to invisible whatever you do to its opacity.
+   500 is the same mark, legibly drawn. */
+.pay-label {
+  font-family: var(--font-clash), system-ui, sans-serif;
+  font-weight: 500;
+  font-size: 0.72rem;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--pay-poster-dim);
+}
 
 .pay-shell {
   display: grid;
@@ -3238,11 +3275,62 @@ a.job-trail-tx:hover {
   justify-content: space-between;
   gap: 2rem;
   padding: clamp(2rem, 1rem + 3vw, 4rem);
-  background: var(--pay-poster-bg);
+  /* .receipt-glass's fill — an accent bloom over a translucent pane — so the
+     poster is a pane of the app's own surface rather than a card beside it. */
+  background:
+    radial-gradient(120% 92% at 0% 0%, color-mix(in srgb, var(--accent) 13%, transparent), transparent 62%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.6), rgba(255, 255, 255, 0.34));
+  backdrop-filter: blur(28px) saturate(1.5);
+  -webkit-backdrop-filter: blur(28px) saturate(1.5);
+  border-right: 1px solid var(--pay-poster-rule);
   color: var(--pay-poster-fg);
 }
 
-.pay-poster[data-settled="true"] { background: var(--pay-poster-settled); }
+:root[data-theme="dark"] .pay-poster {
+  background: var(--pay-poster-bg);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  border-right-color: transparent;
+}
+
+/* Settled turns the temperature of the glass, not its material — the same wash
+   the settle deck lays under a paid card, over the pane already here. */
+.pay-poster[data-settled="true"] {
+  background:
+    radial-gradient(120% 92% at 0% 0%, color-mix(in srgb, var(--success) 22%, transparent), transparent 66%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.56), rgba(255, 255, 255, 0.32));
+}
+
+:root[data-theme="dark"] .pay-poster[data-settled="true"] { background: var(--pay-poster-settled); }
+
+/* The fine print carries the only claim on this page a stranger has to take on
+   trust — that the figures above are the ones on Arc — so it is set as text: the
+   text face, at a size text is read at, on a 44ch measure. It was 0.72rem of
+   Clash Light, which is the display face at caption size and a hairline on a
+   bright ground. */
+.pay-fine {
+  display: grid;
+  gap: 0.32rem;
+  max-width: 44ch;
+  font-size: 0.8rem;
+  line-height: 1.5;
+  color: var(--pay-poster-dim);
+}
+
+/* The verification is the claim, so it is the one line allowed a colour. Not
+   colour alone: the tick is a second channel and the words are a third. */
+.pay-verified {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-weight: 600;
+  color: color-mix(in srgb, var(--success) 72%, var(--pay-poster-fg));
+}
+
+.pay-verified > svg {
+  flex: none;
+  color: var(--success);
+}
 
 .pay-merchant {
   font-family: var(--font-clash), system-ui, sans-serif;
@@ -3256,11 +3344,14 @@ a.job-trail-tx:hover {
   margin: 0.6rem 0 1.4rem;
 }
 
+/* 300, matching .settle-amount — this figure and the deck's are the same object
+   seen from two sides. It carried both a 300 and a 600 declaration, and only
+   looked right because the injected stylesheet in PayClient was forcing 300 over
+   the top of the 600; with that gone the weight has to be stated once, here. */
 .pay-amount {
   font-family: var(--font-clash), system-ui, sans-serif;
   font-weight: 300;
   font-variant-numeric: tabular-nums;
-  font-weight: 600;
   letter-spacing: -0.03em;
   line-height: 1;
   font-size: clamp(3.6rem, 1.5rem + 8.6vw, 9.5rem);
@@ -3309,9 +3400,18 @@ a.job-trail-tx:hover {
   flex-shrink: 0;
 }
 
+/* The roster is a harder pane than the poster: it holds rows of names and
+   figures, and a bloom coming up through a column of numbers is noise. Whiter
+   fill, same blur — glass, further from the light. */
 .pay-roster {
   padding: clamp(1.25rem, 0.8rem + 1.6vw, 2.5rem);
-  background: var(--surface-strong);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.78), rgba(255, 255, 255, 0.62));
+  backdrop-filter: blur(28px) saturate(1.4);
+  -webkit-backdrop-filter: blur(28px) saturate(1.4);
+}
+
+:root[data-theme="dark"] .pay-roster {
+  background: var(--surface);
 }
 
 .pay-row {
@@ -3335,19 +3435,27 @@ a.job-trail-tx:hover {
 .pay-row[data-state="paid"] { opacity: 0.45; }
 .pay-row[data-state="paid"] .pay-row-name { text-decoration: line-through; }
 
+/* 400: these are names, not headlines. 600 is what the stylesheet asked for and
+   never got — the injected 300 was overriding it — and at 2.4rem it prints a
+   roster in bold beside a 300-weight poster. 400 reads as the same voice. */
 .pay-row-name {
   font-family: var(--font-clash), system-ui, sans-serif;
-  font-weight: 600;
+  font-weight: 400;
   letter-spacing: -0.02em;
   font-size: clamp(1.35rem, 1rem + 1.4vw, 2.4rem);
 }
 
+/* --text-soft, not --text-muted: muted measures 4.08:1 against the roster pane,
+   and this line carries the amount each person still owes at 0.82rem. */
 .pay-row-meta {
   font-family: var(--font-geist-mono), ui-monospace, monospace;
   font-size: 0.82rem;
-  color: var(--text-muted);
+  color: var(--text-soft);
   margin-top: 0.15rem;
 }
+
+/* A row that failed says so in this line, so the line takes the tone. */
+.pay-row[data-state="failed"] .pay-row-meta { color: var(--danger-text); }
 
 .pay-row-amount {
   font-family: var(--font-geist-mono), ui-monospace, monospace;
@@ -3366,33 +3474,252 @@ a.job-trail-tx:hover {
   padding: 0.15rem 0.4rem;
 }
 
+/* ── The action bar ───────────────────────────────────────────────────────────
+   What the payer is about to spend, and the ways to spend it. It floats over the
+   roster, so it is the hardest pane on the page — anything more translucent and
+   row text reads through the figure.
+
+   Three things were wrong with it and all three were the same mistake: it was
+   built out of parts borrowed from a full-bleed poster. It was 5rem tall because
+   its padding was poster padding; the primary action dwarfed everything because
+   .settle-action is sized for a section that is nothing but a headline; and the
+   three methods were baseline-aligned hairline underlines sitting under a
+   4.4rem word, so they read as debris rather than as a control. Each is now
+   sized for a bar: a fixed-height row, a capped action, and methods that are
+   chips with real borders. */
 .pay-bar {
   position: sticky;
   bottom: 0;
   z-index: 10;
   display: flex;
-  align-items: flex-end;
+  align-items: center;
   justify-content: space-between;
-  gap: 2rem;
+  gap: clamp(1rem, 0.5rem + 2vw, 2.5rem);
   flex-wrap: wrap;
-  padding: clamp(1.5rem, 1rem + 2vw, 2.5rem) clamp(1.25rem, 0.8rem + 1.6vw, 2.5rem);
+  padding: clamp(0.8rem, 0.6rem + 0.7vw, 1.15rem) clamp(1.25rem, 0.8rem + 1.6vw, 2.5rem);
   border-top: 1px solid var(--pay-poster-rule);
-  background: var(--pay-poster-bg);
+  /* Brighter and less transparent than the roster it floats over: this pane is
+     nearest the light, and its job is to stay readable against whatever scrolls
+     beneath it. */
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.88), rgba(255, 255, 255, 0.8));
+  backdrop-filter: blur(30px) saturate(1.5);
+  -webkit-backdrop-filter: blur(30px) saturate(1.5);
+  box-shadow: 0 -1px 0 rgba(255, 255, 255, 0.7) inset, 0 -18px 44px rgba(7, 20, 33, 0.07);
   color: var(--pay-poster-fg);
+}
+
+:root[data-theme="dark"] .pay-bar {
+  background: color-mix(in srgb, var(--pay-poster-bg) 88%, transparent);
+  box-shadow: 0 -1px 0 rgba(255, 255, 255, 0.06) inset, 0 -18px 44px rgba(0, 0, 0, 0.32);
+}
+
+/* Figure and share count on one baseline under the label, so the block is two
+   lines instead of three — the bar's height is set by this column. */
+.pay-bar-sum {
+  display: grid;
+  gap: 0.1rem;
+}
+
+.pay-bar-figure {
+  display: flex;
+  align-items: baseline;
+  gap: 0.55rem;
+  flex-wrap: wrap;
 }
 
 .pay-bar-total {
   font-family: var(--font-clash), system-ui, sans-serif;
   font-variant-numeric: tabular-nums;
   font-weight: 600;
-  font-size: clamp(1.65rem, 1.2rem + 1.5vw, 2.8rem);
+  letter-spacing: -0.02em;
+  line-height: 1;
+  font-size: clamp(1.5rem, 1.2rem + 1vw, 2.2rem);
+  /* Nothing selected is not a price — dimming it keeps the eye on the roster,
+     where the next thing to do is. 52%, not the 45% that reads better as "off":
+     at this size 3:1 is the floor and 45% lands exactly on it. */
+  color: color-mix(in srgb, var(--pay-poster-fg) 52%, var(--pay-poster-bg));
+  transition: color var(--dur-2) var(--ease-out);
 }
+
+.pay-bar-sum[data-armed="true"] .pay-bar-total { color: var(--pay-poster-fg); }
+
+.pay-bar-count {
+  font-size: 0.78rem;
+  color: var(--pay-poster-dim);
+}
+
+/* Methods, then the action. Baseline is the wrong axis for a bar — a hairline
+   caption and a 2rem word share no useful baseline — so everything here is
+   centred on the row instead. */
+.pay-bar-actions {
+  display: flex;
+  align-items: center;
+  gap: clamp(0.9rem, 0.5rem + 1.4vw, 2rem);
+  flex-wrap: wrap;
+}
+
+/* The alternates. Labelled as a group because that is what they are: without the
+   label, three payment buttons in a row are three equal choices and the payer
+   has to read all of them to find the ordinary one. */
+.pay-methods {
+  display: grid;
+  gap: 0.3rem;
+}
+
+.pay-methods > .pay-label {
+  font-size: 0.62rem;
+  letter-spacing: 0.16em;
+}
+
+.pay-method-row {
+  display: flex;
+  align-items: stretch;
+  gap: 0.45rem;
+  flex-wrap: wrap;
+}
+
+/* A chip, not an underline. .settle-trigger's borderless hairline is right on a
+   poster with nothing else on it; over a bright pane, under a word four times
+   its size, it disappeared — which is what the bar was reported for. */
+.pay-method {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  min-height: 2.1rem;
+  padding: 0 0.7rem;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  /* background-color, not the shorthand: select.pay-method below puts a chevron
+     in background-image, and a shorthand here (or in :hover) resets it. */
+  background-color: color-mix(in srgb, var(--surface-strong) 62%, transparent);
+  font-family: var(--font-clash), system-ui, sans-serif;
+  font-weight: 500;
+  font-size: 0.78rem;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+  color: var(--pay-poster-fg);
+  transition:
+    border-color var(--dur-1) var(--ease-out),
+    background-color var(--dur-1) var(--ease-out),
+    color var(--dur-1) var(--ease-out);
+}
+
+.pay-method:hover:not(:disabled),
+.pay-method:focus-visible:not(:disabled) {
+  border-color: color-mix(in srgb, var(--accent) 68%, var(--border-strong));
+  background-color: color-mix(in srgb, var(--accent-soft) 80%, var(--surface-strong));
+}
+
+/* Stated, not left to opacity or to the UA's own washed-out grey — between them
+   those are what made these unreadable, and the bar ARRIVES disabled because no
+   shares are picked yet, so this is the state most payers see first. 65% clears
+   5.7:1 on the bar in light and 7.4:1 in dark: an unavailable control still has
+   to say what it is, because reading it is how you learn to make it available.
+   The border carries the disabled-ness instead, dropping to the faint rule. */
+.pay-method:disabled {
+  color: color-mix(in srgb, var(--pay-poster-fg) 65%, var(--pay-poster-bg));
+  border-color: var(--border);
+  background-color: transparent;
+  cursor: not-allowed;
+}
+
+/* Gateway needs a source chain, and the chain picker used to float loose between
+   the two method buttons — reading as a third, co-equal way to pay rather than
+   as an input to one of them. Joined into a single segmented control, so which
+   button the chain belongs to is answered by the shape. */
+.pay-method-pair {
+  display: inline-flex;
+  align-items: stretch;
+}
+
+/* No padding-right here: the first half is the chain select, and its chevron
+   needs the room that select.pay-method reserves — this selector outranks it. */
+.pay-method-pair > .pay-method:first-child {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+.pay-method-pair > .pay-method:last-child {
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+  padding-left: 0.6rem;
+  /* One rule between the halves, not two stacked borders. */
+  border-left-color: var(--border);
+  margin-left: -1px;
+}
+
+/* appearance:none plus a background-image chevron, the same treatment (and the
+   same asset) as select.settle-trigger — scoped rather than inherited, because
+   that rule's padding is sized for a borderless underline and this one has a
+   chip's fill to sit inside. No hover variant: the chip's own border and fill
+   already answer the pointer, so the arrow has nothing left to say. */
+select.pay-method {
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  padding-right: 1.7rem;
+  color: var(--pay-poster-fg);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='none' stroke='%23697989' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round' d='M3 5l3 3 3-3'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 0.55rem center;
+}
+
+:root[data-theme="dark"] select.pay-method {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='none' stroke='%239fb2c4' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round' d='M3 5l3 3 3-3'/%3E%3C/svg%3E");
+}
+
+select.pay-method option {
+  background: var(--surface-strong);
+  color: var(--text);
+}
+
+/* In the bar the action keeps its voice — borderless Clash, tracked out, the
+   page's one big word — at a size a 3rem-tall row can hold. Its poster margin
+   goes: that 4rem top margin was pushing it off the row's centre line, which is
+   the misalignment against the methods beside it. */
+.pay-bar .settle-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3em;
+  margin: 0;
+  align-self: center;
+  font-size: clamp(1.45rem, 1.1rem + 1vw, 2.1rem);
+  letter-spacing: 0.08em;
+  /* Stronger than the deck's 62%: there, the word is alone on a screen and can
+     afford to recede. Here it shares a dense row with four other controls, and
+     the receding is what let the chips out-shout the primary action. */
+  color: color-mix(in srgb, var(--pay-poster-fg) 82%, var(--pay-poster-bg));
+}
+
+.pay-bar .settle-action:hover:not(:disabled),
+.pay-bar .settle-action:focus-visible {
+  letter-spacing: 0.06em;
+}
+
+/* Same finding as .pay-method:disabled, and it mattered more here: 0.4 opacity
+   over an already-receded colour made the page's primary action the faintest
+   thing on the page, in the state the page loads in. 58% is ~4.5:1 at this size
+   and still visibly quieter than the 82% it goes to once shares are picked. */
+.pay-bar .settle-action:disabled {
+  opacity: 1;
+  color: color-mix(in srgb, var(--pay-poster-fg) 58%, var(--pay-poster-bg));
+}
+
+.pay-bar .settle-action:focus-visible { outline-offset: 0.35em; }
 
 @media (max-width: 860px) {
   .pay-shell { grid-template-columns: minmax(0, 1fr); }
   .pay-poster { position: static; height: auto; }
   .pay-bar { position: fixed; left: 0; right: 0; bottom: 0; }
-  .pay-roster { padding-bottom: 6rem; }
+  .pay-roster { padding-bottom: 11rem; }
+}
+
+/* Under ~34rem the bar is the whole screen's width and the two columns can't
+   share a row: the action drops to its own line, full width, where a thumb is. */
+@media (max-width: 34rem) {
+  .pay-bar { align-items: stretch; }
+  .pay-bar-actions { width: 100%; justify-content: space-between; }
+  .pay-bar .settle-action { align-self: stretch; text-align: right; }
 }
 
 /* ── Settle deck (/app → Settle tab) ──────────────────────────────────────────
@@ -3801,29 +4128,6 @@ a.job-trail-tx:hover {
   display: flex;
   gap: 2rem;
 }
-
-/* Pay bar triggers - relative positioned variant for the pay bar */
-.pay-bar-triggers {
-  position: relative;
-  display: flex;
-  gap: 2rem;
-}
-
-/* Pay bar actions - horizontal layout for all buttons */
-.pay-bar-actions {
-  display: flex;
-  align-items: center;
-  gap: 3rem;
-}
-
-.pay-bar-actions .settle-trigger {
-  white-space: nowrap;
-}
-
-.pay-bar-actions .settle-action {
-  margin-left: 1rem;
-}
-
 
 .settle-trigger {
   font-family: var(--font-clash), system-ui, sans-serif;
