@@ -7,6 +7,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useAccount } from "wagmi";
 import { getWalletClient, switchChain, writeContract, waitForTransactionReceipt } from "wagmi/actions";
 import { arcTestnet } from "viem/chains";
+import { formatUnits } from "viem";
 import SignInMenu from "@/app/SignInMenu";
 import XAuthControl from "@/app/XAuthControl";
 import { Switch } from "@/app/SettlementAgentsPanel";
@@ -23,23 +24,20 @@ import {
   isBillRegistryConfigured,
   payBillDebtFor,
 } from "@/lib/bill-split-contracts";
-import { depositToGateway, initiateGatewayTransfer } from "@/lib/gateway-browser";
+import {
+  GATEWAY_MAX_FEE,
+  depositToGateway,
+  initiateGatewayTransfer,
+  waitForGatewayBalance,
+} from "@/lib/gateway-browser";
 import { CHAIN_CONFIGS } from "@/lib/gateway-contracts";
 
-// Pay page uses Clash Display Light for all text
-if (typeof document !== "undefined") {
-  document.documentElement.style.setProperty("--font-display", "var(--font-clash)");
-  // Apply Clash Display Light globally on this page
-  const style = document.createElement("style");
-  style.textContent = `
-    .pay-shell,
-    .pay-shell * {
-      font-family: var(--font-clash), system-ui, sans-serif !important;
-      font-weight: 300 !important;
-    }
-  `;
-  document.head.appendChild(style);
-}
+// Clash is asked for per class in globals.css (.pay-merchant, .pay-amount,
+// .pay-row-name, .pay-label, .pay-method, .settle-action) rather than injected
+// over the page. The injection that used to live here forced weight 300 on
+// .pay-shell *, which flattened every weight the stylesheet asks for — the PAID
+// stamp's 700, the row names' 600, the figures' 600 — into hairlines, and set
+// --font-display on <html>, so it leaked to every page reached from this one.
 
 type Row = {
   address: string;
@@ -85,7 +83,6 @@ export default function PayClient({ token }: { token: string }) {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [rowStates, setRowStates] = useState<Record<string, RowState>>({});
   const [paying, setPaying] = useState(false);
-  const [payMethod, setPayMethod] = useState<"arc" | "splitsy" | "gateway">("arc");
   const [message, setMessage] = useState<string>("");
   const [gatewayChain, setGatewayChain] = useState<string>("Avalanche");
 
@@ -308,9 +305,18 @@ export default function PayClient({ token }: { token: string }) {
     }
   }
 
-  // Gateway: cross-chain payment using browser wallet only (client-side signing).
-  // Three-step flow: 1) Switch to source chain & deposit USDC into Gateway, 2) Sign burn intent on source chain, 3) Execute mint on Arc Testnet
+  // Gateway: bring USDC from another testnet chain onto Arc, then settle the
+  // selected rows through the registry exactly as "Pay on Arc" does.
+  //
+  // The mint lands in the PAYER's own Arc wallet, not the debtor's. Paying a
+  // debtor's address directly moves USDC but leaves the registry untouched:
+  // the bill still reads unpaid, escrow never releases, and the creator can
+  // never claim. Gateway is the funding step; payDebtFor is the payment.
   async function payWithGateway() {
+    if (!isBillRegistryConfigured()) {
+      setMessage("Bill registry is not configured.");
+      return;
+    }
     const legs = bill!.rows.filter((r) => selected.has(r.address) && BigInt(r.remainingUnits) > 0n);
     if (legs.length === 0) return;
 
@@ -321,108 +327,132 @@ export default function PayClient({ token }: { token: string }) {
 
     setPaying(true);
     setMessage("");
-    setRowStates(Object.fromEntries(legs.map((l) => [l.address, { status: "pending" } as RowState])));
+    const states: Record<string, RowState> = Object.fromEntries(
+      legs.map((l) => [l.address, { status: "pending" } as RowState]),
+    );
+    setRowStates({ ...states });
 
     try {
       const sourceChainConfig = CHAIN_CONFIGS[gatewayChain];
       if (!sourceChainConfig?.testnet) {
         setMessage(`Chain ${gatewayChain} not supported`);
         setRowStates({});
-        setPaying(false);
         return;
       }
 
-      // Step 0: Switch to source chain
-      setMessage(`Switching to ${gatewayChain}...`);
+      const payer = account.address;
+      const total = legs.reduce((sum, leg) => sum + BigInt(leg.remainingUnits), 0n);
+      // Gateway decrements the balance by value + fee when it attests, so the
+      // deposit has to cover both or the transfer is rejected for insufficient
+      // funds. Unused fee headroom stays credited for the next payment.
+      const funding = total + GATEWAY_MAX_FEE;
+
+      setMessage(`Switching to ${gatewayChain}…`);
       try {
-        await switchChain(wagmiConfig, { chainId: sourceChainConfig.testnet.ViemChain.id as any });
-      } catch (switchErr) {
+        // Every chain in CHAIN_CONFIGS is registered in wagmiConfig, so this id
+        // really is one of its chains — ViemChain.id is just typed as `number`.
+        await switchChain(wagmiConfig, {
+          chainId: sourceChainConfig.testnet.ViemChain.id as (typeof wagmiConfig)["chains"][number]["id"],
+        });
+      } catch {
         setMessage(`Failed to switch to ${gatewayChain}. Please switch manually and try again.`);
         setRowStates({});
-        setPaying(false);
         return;
       }
 
-      const walletClient = await getWalletClient(wagmiConfig, { account: account.address });
+      const walletClient = await getWalletClient(wagmiConfig, { account: payer });
       if (!walletClient) {
         setMessage("Wallet not connected");
-        setPaying(false);
+        setRowStates({});
         return;
       }
 
-      // Calculate total amount needed for all selected legs
-      const totalAmount = legs.reduce((sum, leg) => sum + BigInt(leg.remainingUnits), 0n);
-      const totalAmountUsdc = (Number(totalAmount) / 1_000_000).toFixed(6);
-
-      // Step 1: Deposit USDC into Gateway on source chain
-      setMessage(`Depositing ${totalAmountUsdc} USDC into Gateway on ${gatewayChain}...`);
-      const depositResult = await depositToGateway({
+      setMessage(`Depositing into Gateway on ${gatewayChain}…`);
+      const deposit = await depositToGateway({
         walletClient,
         sourceChain: gatewayChain,
-        amountUsdc: totalAmountUsdc,
+        amountUsdc: formatUnits(funding, 6),
       });
 
-      if (!depositResult.success) {
-        setMessage(`Deposit failed: ${depositResult.error}`);
+      if (!deposit.success) {
+        setMessage(`Deposit failed: ${deposit.error}`);
         setRowStates({});
-        setPaying(false);
         return;
       }
 
-      setMessage("Deposit confirmed, now processing transfers...");
-
-      for (const leg of legs) {
-        setRowStates((prev) => ({ ...prev, [leg.address]: { status: "signing" } }));
-
-        // Convert bill units to USDC string (6 decimals)
-        const amountUsdc = (Number(leg.remainingUnits) / 1_000_000).toFixed(6);
-
-        // Step 2: Sign burn intent on source chain
-        const result = await initiateGatewayTransfer({
-          walletClient,
-          sourceChain: gatewayChain,
-          amountUsdc,
-          recipientAddress: leg.address,
+      // A deposit is only spendable once its events finalize — seconds on Fuji,
+      // but up to ~19 minutes on the Sepolia-family chains. Transferring before
+      // then fails with an opaque insufficient-balance error, so wait and say so.
+      if (!deposit.alreadyFunded) {
+        setMessage(`Waiting for ${gatewayChain} to finalize the deposit — this can take a few minutes…`);
+        const funded = await waitForGatewayBalance({
+          domain: sourceChainConfig.domain,
+          depositor: payer,
+          needed: funding,
+          onWait: (elapsed) =>
+            setMessage(
+              `Waiting for ${gatewayChain} to finalize the deposit (${Math.round(elapsed / 1000)}s). ` +
+                `Your USDC is safe in Gateway — you can leave this page and pay again later.`,
+            ),
         });
-
-        if (!result.success || !result.mintData) {
-          setRowStates((prev) => ({
-            ...prev,
-            [leg.address]: { status: "failed", error: result.error ?? "Gateway signing failed" },
-          }));
-          continue;
-        }
-
-        // Step 3: Switch to Arc Testnet and execute mint
-        setRowStates((prev) => ({ ...prev, [leg.address]: { status: "minting" } }));
-
-        try {
-          // Switch to Arc Testnet
-          await switchChain(wagmiConfig, { chainId: arcTestnet.id });
-
-          // Execute the mint transaction
-          const mintHash = await writeContract(wagmiConfig, result.mintData);
-
-          // Wait for confirmation
-          await waitForTransactionReceipt(wagmiConfig, { hash: mintHash });
-
-          setRowStates((prev) => ({
-            ...prev,
-            [leg.address]: { status: "paid", txHash: mintHash },
-          }));
-        } catch (mintErr) {
-          setRowStates((prev) => ({
-            ...prev,
-            [leg.address]: {
-              status: "failed",
-              error: mintErr instanceof Error ? mintErr.message : "Mint failed on Arc",
-            },
-          }));
+        if (!funded) {
+          setMessage(
+            `${gatewayChain} hasn't finalized the deposit yet. Your USDC is credited to Gateway and nothing was lost — ` +
+              `reopen this link in a few minutes and tap Pay via Gateway again to finish.`,
+          );
+          setRowStates({});
+          return;
         }
       }
 
-      await load();
-      setSelected(new Set());
+      // One burn intent for the whole selection: the fee is charged per intent,
+      // so N rows funded one-by-one would pay it N times.
+      setMessage("Signing the transfer to Arc…");
+      const transfer = await initiateGatewayTransfer({
+        walletClient,
+        sourceChain: gatewayChain,
+        amountUsdc: formatUnits(total, 6),
+        recipientAddress: payer,
+      });
+
+      if (!transfer.success || !transfer.mintData) {
+        setMessage(transfer.error ?? "Gateway signing failed");
+        setRowStates({});
+        return;
+      }
+
+      setMessage("Minting on Arc…");
+      await switchChain(wagmiConfig, { chainId: arcTestnet.id });
+      const mintHash = await writeContract(wagmiConfig, transfer.mintData);
+      await waitForTransactionReceipt(wagmiConfig, { hash: mintHash });
+
+      // From here the money is on Arc in the payer's wallet, so this is the
+      // ordinary browser-wallet settlement — same approve-then-payDebtFor shape.
+      const wallet = await createBillSplitWallet(
+        await getWalletClient(wagmiConfig, { chainId: arcTestnet.id }),
+      );
+      await ensureBillSplitWalletOnArc(wallet);
+
+      setMessage("Approving USDC…");
+      await approveBillRegistry({ ...wallet, amount: total });
+
+      for (const leg of legs) {
+        states[leg.address] = { status: "signing" };
+        setRowStates({ ...states });
+        try {
+          const receipt = await payBillDebtFor({
+            ...wallet,
+            billId: BigInt(bill!.billId),
+            debtor: leg.address as `0x${string}`,
+            amount: BigInt(leg.remainingUnits),
+          });
+          states[leg.address] = { status: "paid", txHash: receipt.transactionHash };
+        } catch (err) {
+          states[leg.address] = { status: "failed", error: err instanceof Error ? err.message : "Payment failed" };
+        }
+        setRowStates({ ...states });
+      }
+      await settleRun(states);
     } catch (err) {
       setMessage(err instanceof Error ? err.message : "Gateway payment failed");
       setRowStates({});
@@ -454,9 +484,7 @@ export default function PayClient({ token }: { token: string }) {
       <main className="pay-shell">
         <aside className="pay-poster" data-settled={bill.settled}>
           <div>
-            <p className="text-[0.72rem] font-semibold uppercase tracking-[0.14em] text-[var(--pay-poster-dim)]">
-              Bill #{bill.billId} · Arc Testnet
-            </p>
+            <p className="pay-label">Bill #{bill.billId} · Arc Testnet</p>
             <h1 className="pay-merchant">{bill.merchant || "Bill"}</h1>
             {bill.settled ? (
               <p className="pay-amount" data-settled="true">
@@ -485,8 +513,14 @@ export default function PayClient({ token }: { token: string }) {
               </div>
             ) : null}
           </div>
-          <div className="text-[0.72rem] leading-relaxed text-[var(--pay-poster-dim)]">
-            <p>✓ Details verified against Arc</p>
+          <div className="pay-fine">
+            {/* An icon, not a "✓" glyph: the character is drawn by whatever font
+                falls through for it, at whatever weight, and this is the line
+                asserting the bill is real. */}
+            <p className="pay-verified">
+              <CheckCircle2 size={14} strokeWidth={2.2} />
+              Details verified against Arc
+            </p>
             <p>
               Created by {bill.creator.label ?? `${bill.creator.address.slice(0, 6)}…${bill.creator.address.slice(-4)}`}
               {bill.dueDate > 0 ? ` · due ${new Date(bill.dueDate * 1000).toLocaleDateString()}` : ""}
@@ -506,7 +540,7 @@ export default function PayClient({ token }: { token: string }) {
             </div>
           ) : (
             <>
-              <p className="text-[0.72rem] font-semibold uppercase tracking-[0.14em] text-[var(--text-muted)]">
+              <p className="pay-label">
                 {paying ? "Settling — don't close this tab" : "Choose who you're covering"}
               </p>
               {message ? <p className="mt-2 text-sm text-[var(--warning-text)]">{message}</p> : null}
@@ -571,45 +605,59 @@ export default function PayClient({ token }: { token: string }) {
 
       {bill.settled ? null : (
         <div className="pay-bar">
-          <div>
-            <span className="text-[0.72rem] font-semibold uppercase tracking-[0.14em] text-[var(--pay-poster-dim)]">
-              You pay
-            </span>
-            <div className="pay-bar-total">{usd(selectedTotal.toString())}</div>
-            <span className="text-xs text-[var(--pay-poster-dim)]">
-              · {selected.size} row{selected.size === 1 ? "" : "s"}
-            </span>
+          <div className="pay-bar-sum" data-armed={selected.size > 0}>
+            <span className="pay-label">You pay</span>
+            <div className="pay-bar-figure">
+              <span className="pay-bar-total">{usd(selectedTotal.toString())}</span>
+              <span className="pay-bar-count">
+                {selected.size === 0
+                  ? "no shares picked yet"
+                  : `${selected.size} share${selected.size === 1 ? "" : "s"} selected`}
+              </span>
+            </div>
           </div>
           <div className="pay-bar-actions">
-            <button
-              className="settle-trigger"
-              disabled={paying || selected.size === 0}
-              onClick={() => void payWithSplitsyWallet()}
-              title="Splitsy wallet (Arc Testnet only) — uses your DCW wallet"
-              type="button"
-            >
-              Pay with Splitsy wallet
-            </button>
-            <select
-              className="settle-trigger"
-              disabled={paying}
-              onChange={(e) => setGatewayChain(e.target.value)}
-              value={gatewayChain}
-            >
-              <option value="Avalanche">Avalanche</option>
-              <option value="Base">Base</option>
-              <option value="Ethereum">Ethereum</option>
-              <option value="Arbitrum">Arbitrum</option>
-            </select>
-            <button
-              className="settle-trigger"
-              disabled={paying || selected.size === 0}
-              onClick={() => void payWithGateway()}
-              title="Cross-chain payment via Circle Gateway (browser wallet only)"
-              type="button"
-            >
-              Pay via Gateway
-            </button>
+            {/* Labelled as alternates so the ordinary path stays the one big
+                word on the right, and reading all three is opt-in. */}
+            <div className="pay-methods">
+              <span className="pay-label">Other ways</span>
+              <div className="pay-method-row">
+                <button
+                  className="pay-method"
+                  disabled={paying || selected.size === 0}
+                  onClick={() => void payWithSplitsyWallet()}
+                  title="Splitsy wallet (Arc Testnet only) — uses your DCW wallet"
+                  type="button"
+                >
+                  Splitsy wallet
+                </button>
+                {/* One segmented control: the chain is Gateway's input, not a
+                    third way to pay. */}
+                <div className="pay-method-pair">
+                  <select
+                    aria-label="Chain to bridge from via Gateway"
+                    className="pay-method"
+                    disabled={paying}
+                    onChange={(e) => setGatewayChain(e.target.value)}
+                    value={gatewayChain}
+                  >
+                    <option value="Avalanche">Avalanche</option>
+                    <option value="Base">Base</option>
+                    <option value="Ethereum">Ethereum</option>
+                    <option value="Arbitrum">Arbitrum</option>
+                  </select>
+                  <button
+                    className="pay-method"
+                    disabled={paying || selected.size === 0}
+                    onClick={() => void payWithGateway()}
+                    title="Cross-chain payment via Circle Gateway (browser wallet only)"
+                    type="button"
+                  >
+                    via Gateway
+                  </button>
+                </div>
+              </div>
+            </div>
             <button
               className="settle-action"
               disabled={paying || selected.size === 0}
