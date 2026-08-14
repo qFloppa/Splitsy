@@ -186,10 +186,22 @@ const publicClient = createPublicClient({
 // pinned file from outside Pinata means a DHT lookup, and a 324 KB multi-block
 // JPEG on a free plan loses that race, so the artwork was broken for everyone.
 // The CID is still in the path, so the image stays content-addressed.
+//
+// The host DEFAULTS rather than coming only from PINATA_GATEWAY, because an env
+// var that is merely usually present is the wrong place for a value that gets
+// carved into a token URI: 16 of the 20 identities minted so far point at
+// ipfs:// and show the explorer's placeholder forever, minted by a process whose
+// env had PINATA_JWT but not PINATA_GATEWAY. There is nothing secret here — the
+// host is published in every tokenURI — and a pin without its gateway is a dead
+// image, so the two are not independently optional.
 // ponytail: trades gateway-independence for actually rendering — if the gateway
 // host ever changes, re-point the URIs with scripts/reputation-backfill.ts
+const DEFAULT_PINATA_GATEWAY = "amaranth-awful-trout-784.mypinata.cloud";
+
 export function imageUriForCid(cid: string): string {
-  const gateway = (process.env.PINATA_GATEWAY ?? "").replace(/^https?:\/\//, "").replace(/\/+$/, "");
+  const gateway = (process.env.PINATA_GATEWAY || DEFAULT_PINATA_GATEWAY)
+    .replace(/^https?:\/\//, "")
+    .replace(/\/+$/, "");
   return gateway ? `https://${gateway}/ipfs/${cid}` : `ipfs://${cid}`;
 }
 

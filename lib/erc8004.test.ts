@@ -228,12 +228,16 @@ test("a wallet minting for itself is guarded; a registrar minting for others is 
 // while Pinata's own gateway serves it in under two seconds. So when a dedicated
 // gateway is configured the URI must be an https one pointing at it — and must
 // still carry the CID, or the artwork stops being content-addressed.
-test("an image CID becomes an https URI on the dedicated gateway, falling back to ipfs://", () => {
+//
+// A MISSING env var must give the same https URI, not a bare ipfs:// one: that
+// silent fallback is what minted 16 placeholder NFTs, and every one of them is a
+// paid on-chain write to repair.
+test("an image CID becomes an https URI on the dedicated gateway, env var or not", () => {
   const cid = "QmQ9JoJNMctbHwkW2QGjroUnZX5syioCNQUgLPK3RmkNh6";
   const before = process.env.PINATA_GATEWAY;
   try {
     delete process.env.PINATA_GATEWAY;
-    assert.equal(imageUriForCid(cid), `ipfs://${cid}`);
+    assert.equal(imageUriForCid(cid), `https://amaranth-awful-trout-784.mypinata.cloud/ipfs/${cid}`);
 
     process.env.PINATA_GATEWAY = "amaranth-awful-trout-784.mypinata.cloud";
     assert.equal(imageUriForCid(cid), `https://amaranth-awful-trout-784.mypinata.cloud/ipfs/${cid}`);
