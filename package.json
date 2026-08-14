@@ -23,7 +23,7 @@
     "test:landing": "node --test --experimental-strip-types lib/landing-ledger.test.ts",
     "test:pay-link": "node --test --experimental-strip-types lib/pay-link.test.ts app/api/pay/build-rows.test.ts",
     "test:gateway": "node --test --experimental-strip-types lib/gateway-browser.test.ts",
-    "test:settle": "node --test --experimental-strip-types lib/settle-items.test.ts",
+    "test:settle": "node --test --experimental-strip-types lib/settle-items.test.ts lib/arc-read.test.ts",
     "test:iou": "node --test --experimental-strip-types lib/iou.test.ts",
     "test:dashboard-create": "node --test --experimental-strip-types app/api/onchain-bills/create/route.test.ts",
     "test:docs-search": "node --test --experimental-strip-types app/docs/search-score.test.ts",

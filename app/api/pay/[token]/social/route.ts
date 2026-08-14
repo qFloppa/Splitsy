@@ -5,7 +5,7 @@ import { isShareToken } from "@/lib/pay-link";
 import { getPreimageByShareToken } from "@/lib/onchain-bill-preimage-repo";
 import { encodeApprove, encodePayDebtFor } from "@/lib/registry-calldata";
 import { executeContractOnArc, InsufficientFundsError } from "@/lib/circle-dcw";
-import { REGISTRY_ADDRESS, getParticipantsOnchain } from "@/lib/arc-read";
+import { REGISTRY_ADDRESS, getParticipantsOnchain, usdcShortfallMessage } from "@/lib/arc-read";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -79,6 +79,12 @@ export async function POST(request: Request, ctx: RouteContext<"/api/pay/[token]
   }
 
   const total = legs.reduce((sum, leg) => sum + leg.amount, 0n);
+
+  // Covering other people is the same revert with the same silence (see
+  // usdcShortfallMessage), so it gets the same up-front answer — and the figure
+  // named is the whole selection's, matching the single approval below.
+  const shortfall = await usdcShortfallMessage(user.wallet_address as `0x${string}`, total);
+  if (shortfall) return Response.json({ error: shortfall }, { status: 402 });
 
   // One approval covering every leg, then one payDebtFor per person. The
   // registry has no batch pay-for-others: settle() batches, but its pay loop is

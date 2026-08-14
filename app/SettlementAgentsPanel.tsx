@@ -811,7 +811,7 @@ export default function SettlementAgentsPanel() {
                         {" · "}
                         <a
                           className="underline-offset-2 hover:underline"
-                          href={`https://testnet.arcscan.app/token/${IDENTITY_REGISTRY_ADDRESS}?a=${agentWallet.tokenId}`}
+                          href={`https://testnet.arcscan.app/token/${IDENTITY_REGISTRY_ADDRESS}/instance/${agentWallet.tokenId}`}
                           rel="noreferrer"
                           target="_blank"
                         >

@@ -1,7 +1,7 @@
 // Server-side (Node runtime) reads of BillSplitRegistry. Mirrors the publicClient
 // pattern in app/api/onchain-bills/preimage/route.ts. Kept separate from the
 // "use client" lib/bill-split-contracts.ts so server routes never pull client code.
-import { createPublicClient, decodeEventLog, http, parseAbiItem } from "viem";
+import { createPublicClient, decodeEventLog, formatUnits, http, parseAbiItem } from "viem";
 import { arcTestnet } from "viem/chains";
 
 export const REGISTRY_ADDRESS = (process.env.NEXT_PUBLIC_BILL_SPLIT_REGISTRY_ADDRESS ??
@@ -253,6 +253,30 @@ export async function getUsdcBalanceOnchain(addr: `0x${string}`): Promise<bigint
     functionName: "balanceOf",
     args: [addr],
   });
+}
+
+// Why this is a pre-check and not a nicer error afterwards: payDebt reverts
+// inside USDC.transferFrom when the payer is short, and neither a receipt nor
+// Circle's transaction state carries a reason string out of a revert — the
+// server-signed paths could only report the bare "Contract execution failed"
+// that Circle hands back. So the shortfall has to be established up front or
+// not at all. Same reasoning, and deliberately the same wording, as the
+// browser-side assertUsdcBalance in lib/bill-split-contracts.ts.
+//
+// Split in two so the sentence is testable without a chain: this half does the
+// arithmetic, usdcShortfallMessage does the read.
+export function usdcShortfall(balance: bigint, needed: bigint): string | null {
+  if (balance >= needed) return null;
+  const usd = (v: bigint) => Number(formatUnits(v, 6)).toFixed(2);
+  return (
+    `Not enough USDC: this needs ${usd(needed)} but your wallet holds ${usd(balance)}. ` +
+    `Top up on Arc Testnet (gas is paid in USDC too, so leave a little headroom) and try again.`
+  );
+}
+
+/** null when the wallet can cover `needed`, else the reason to show the user. */
+export async function usdcShortfallMessage(addr: `0x${string}`, needed: bigint): Promise<string | null> {
+  return usdcShortfall(await getUsdcBalanceOnchain(addr), needed);
 }
 
 // How much of `owner`'s USDC `spender` may still pull. The mandate's caps bound

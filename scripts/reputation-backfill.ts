@@ -1,9 +1,13 @@
 // One-off backfill for identity NFTs minted before the ownership + artwork
 // fixes: re-points every registered agent's URI at fresh metadata (which now
-// includes the image), then transfers registrar-held NFTs to the payer wallet
-// they identify — so every payer owns their own agent NFT. Safe to re-run:
-// already-transferred agents just get a metadata refresh, and a failing agent
-// is logged and skipped rather than aborting the rest.
+// includes the image), then sends each NFT to the wallet its row names — a payer
+// owns their own reputation NFT, an autopay agent holds its own identity. Safe
+// to re-run: already-correct agents just get a metadata refresh, and a failing
+// agent is logged and skipped rather than aborting the rest.
+//
+// The CURRENT holder signs the transfer, so that wallet needs faucet USDC for
+// gas (Arc bills gas in USDC) — including a signin DCW holding an autopay
+// agent's identity by mistake.
 //
 //   node --env-file=.env.local --experimental-strip-types scripts/reputation-backfill.ts
 //
@@ -132,18 +136,28 @@ for (const agent of (agents ?? []) as {
       { method: "PATCH", headers: { "Content-Type": "application/json" }, body: "{}" },
     ).catch(() => undefined);
 
-    // 2. Hand registrar-held NFTs to the payer they identify.
-    if (owner === registrar.address.toLowerCase() && agent.wallet_address.toLowerCase() !== owner) {
+    // 2. Send the NFT to the wallet the row NAMES, whoever is holding it.
+    //
+    // Not just registrar-held ones, which is all this used to cover. An identity
+    // belongs in the account it identifies, and there is a second way for it to
+    // end up elsewhere: user-agent.ts used to hand each autopay agent's identity
+    // on to the owner's signin wallet, copying the reputation handover it is not.
+    // That left 'splitsy-user-agent' rows naming an agent wallet whose NFT sits
+    // in a person's wallet. One rule fixes both, and any future misplacement:
+    // owner != wallet_address means move it back. signerWalletId is already the
+    // CURRENT owner's wallet — nobody else can sign this — and an owner we do not
+    // control was skipped above rather than transferred from.
+    if (owner !== agent.wallet_address.toLowerCase()) {
       await executeContractOnArc(
-        registrar.walletId,
+        signerWalletId,
         IDENTITY_REGISTRY,
         encodeFunctionData({
           abi: ABI,
           functionName: "transferFrom",
-          args: [registrar.address as `0x${string}`, agent.wallet_address as `0x${string}`, tokenId],
+          args: [owner as `0x${string}`, agent.wallet_address as `0x${string}`, tokenId],
         }),
       );
-      console.log(`  transferred to ${agent.wallet_address} ok`);
+      console.log(`  transferred ${owner} → ${agent.wallet_address} ok`);
     }
   } catch (err) {
     console.error(`  FAIL agent ${agent.agent_id}:`, err instanceof Error ? err.message : err);

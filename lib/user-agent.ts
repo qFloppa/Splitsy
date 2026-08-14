@@ -1,5 +1,5 @@
-// The user's own agent: a Circle DCW they fund, with an ERC-8004 identity that
-// ends up in their own wallet.
+// The user's own agent: a Circle DCW they fund, holding an ERC-8004 identity of
+// its own.
 //
 // ONE PER ACCOUNT, not per wallet. The refId is 'agent:<userId>', so a person
 // who signs in socially AND links a browser wallet has one agent, one balance
@@ -12,43 +12,13 @@
 // also pays the bill share, and then its BALANCE is the cap: an agent holding
 // 5 USDC can never spend 6. That is a simpler and more honest ceiling than a
 // mandate, and it needs no contract.
-import { createPublicClient, encodeFunctionData, http } from "viem";
-import { arcTestnet } from "viem/chains";
 import { getUsdcAllowanceOnchain, getUsdcBalanceOnchain } from "./arc-read.ts";
 import { executeContractOnArc, getOrCreateArcWallet } from "./circle-dcw.ts";
-import { ensureAgent, IDENTITY_REGISTRY } from "./erc8004.ts";
+import { ensureAgent } from "./erc8004.ts";
 import { encodeApprove } from "./registry-calldata.ts";
 import { setUserAgentWallet } from "./users-repo.ts";
-import { ARC_TESTNET_RPC } from "./x402/constants.ts";
 
 export type UserAgent = { address: `0x${string}`; walletId: string };
-
-const publicClient = createPublicClient({ chain: arcTestnet, transport: http(ARC_TESTNET_RPC) });
-
-// Just the two ERC-721 calls this file needs. Not imported from erc8004.ts's
-// ERC8004_ABI because that one is not exported; two fragments are cheaper than
-// widening another module's public surface for them.
-// ponytail: these two fragments duplicate erc8004.ts's unexported ERC8004_ABI and drift if the registry ABI changes — export ERC8004_ABI and import it when that bites
-const NFT_ABI = [
-  {
-    type: "function",
-    name: "transferFrom",
-    stateMutability: "nonpayable",
-    inputs: [
-      { name: "from", type: "address" },
-      { name: "to", type: "address" },
-      { name: "tokenId", type: "uint256" },
-    ],
-    outputs: [],
-  },
-  {
-    type: "function",
-    name: "ownerOf",
-    stateMutability: "view",
-    inputs: [{ name: "tokenId", type: "uint256" }],
-    outputs: [{ name: "", type: "address" }],
-  },
-] as const;
 
 const ARC_USDC_ADDRESS = (process.env.ARC_TESTNET_USDC_ADDRESS ??
   "0x3600000000000000000000000000000000000000") as `0x${string}`;
@@ -173,50 +143,24 @@ export async function ensureAgentAllowance(
   }
 }
 
-// The agent's ERC-8004 identity, minted once and then owned by the USER.
+// The agent's ERC-8004 identity, minted once and KEPT BY THE AGENT.
 //
 // Keyed on the AGENT's address, not the user's: the user's main wallet already
 // carries their own 'splitsy-payer' identity from paying bills, and reusing it
 // would mean the agent has no identity of its own at all.
 //
-// The transfer to the user's wallet is best-effort and deliberately so — a
-// failed transfer leaves the NFT with the agent, which is a cosmetic loss, and
-// must never block a settlement. Same posture as ensureAgent's own transfer.
-// ponytail: nothing ever retries the handover, so a failed transfer strands the NFT at the agent forever — sweep unowned identities from a cron or the agent settings route if that starts happening
-export async function ensureUserAgentIdentity(
-  agent: UserAgent,
-  ownerWallet: string | null,
-): Promise<string | null> {
+// It is not handed on to the user's wallet, and that is the point. This NFT is
+// the agent's identity — the thing that signs jobs and accrues the agent's own
+// feedback — so the agent must hold it, exactly as an ERC-8004 identity is
+// meant to sit in the account it names. The REPUTATION NFT is the one that
+// belongs to the person: erc8004.ts mints that from the registrar and transfers
+// it on to the payer. Two different NFTs, two different owners; this used to
+// copy the reputation handover and left the agent identity-less.
+export async function ensureUserAgentIdentity(agent: UserAgent): Promise<string | null> {
   try {
-    const agentId = await ensureAgent(agent.address, agent.walletId, undefined, "splitsy-user-agent");
-    if (!ownerWallet || ownerWallet.toLowerCase() === agent.address.toLowerCase()) return agentId;
-
-    // Already handed over on an earlier run? ensureAgent is idempotent but the
-    // transfer is not, so ask the registry who owns it before sending again.
-    // An unreadable owner is a skip, not a licence to send: if the NFT is in
-    // fact already there the transfer reverts, and we would have spent the
-    // agent's USDC on gas to report a failure for an identity that is correct.
-    const owner = await currentOwner(BigInt(agentId));
-    if (!owner || owner.toLowerCase() === ownerWallet.toLowerCase()) return agentId;
-
-    await executeContractOnArc(
-      agent.walletId,
-      IDENTITY_REGISTRY,
-      encodeFunctionData({
-        abi: NFT_ABI,
-        functionName: "transferFrom",
-        args: [agent.address, ownerWallet as `0x${string}`, BigInt(agentId)],
-      }),
-    );
-    return agentId;
+    return await ensureAgent(agent.address, agent.walletId, undefined, "splitsy-user-agent");
   } catch (err) {
     console.error("user-agent: identity registration failed (settlement continues):", err);
     return null;
   }
-}
-
-async function currentOwner(tokenId: bigint): Promise<string | null> {
-  return publicClient
-    .readContract({ address: IDENTITY_REGISTRY, abi: NFT_ABI, functionName: "ownerOf", args: [tokenId] })
-    .catch(() => null);
 }

@@ -135,7 +135,17 @@ export async function executeContractOnArc(
     // Deliberately UNTAGGED. DENIED and CANCELLED never reached the chain, and a
     // FAILED transaction reverted — it burned gas but moved no USDC. All three
     // mean the money did not move and never will.
-    if (terminalBad.has(state)) throw new Error(`Contract execution ${state.toLowerCase()}`);
+    //
+    // Circle fills errorReason/errorDetails on FAILED, and the bare state alone
+    // reads as "something went wrong" to whoever is holding the bill. It still
+    // won't name a revert's cause (a revert carries no reason string), so the
+    // predictable ones are pre-checked instead — see usdcShortfallMessage.
+    if (terminalBad.has(state)) {
+      const why = [tx.data?.transaction?.errorReason, tx.data?.transaction?.errorDetails]
+        .filter(Boolean)
+        .join(" — ");
+      throw new Error(`Contract execution ${state.toLowerCase()}${why ? `: ${why}` : ""}`);
+    }
     await new Promise((r) => setTimeout(r, 2000));
   }
   // Still pending after the cap — return what we have; the caller decides.

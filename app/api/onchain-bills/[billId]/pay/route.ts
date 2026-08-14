@@ -4,7 +4,7 @@ import { getSessionUser } from "@/lib/session";
 import { verifyWalletUnlock, WALLET_UNLOCK_COOKIE } from "@/lib/session-core";
 import { encodeApprove, encodePayDebt } from "@/lib/registry-calldata";
 import { executeContractOnArc, InsufficientFundsError } from "@/lib/circle-dcw";
-import { REGISTRY_ADDRESS, getParticipantOnchain } from "@/lib/arc-read";
+import { REGISTRY_ADDRESS, getParticipantOnchain, usdcShortfallMessage } from "@/lib/arc-read";
 import { recordPaidFeedbackSafely } from "@/lib/erc8004";
 
 export const runtime = "nodejs";
@@ -37,6 +37,12 @@ export async function POST(_request: Request, { params }: { params: Promise<{ bi
   if (!part.exists) return Response.json({ error: "You're not a participant on this bill." }, { status: 403 });
   const remaining = part.owed - part.paid;
   if (remaining <= 0n) return Response.json({ error: "Already paid" }, { status: 409 });
+
+  // Before spending gas on a payDebt that would revert with nothing to say for
+  // itself. Sent as the message, not the "insufficient_funds" sentinel, because
+  // the sentinel's generic client-side text is the vagueness being fixed.
+  const shortfall = await usdcShortfallMessage(user.wallet_address as `0x${string}`, remaining);
+  if (shortfall) return Response.json({ error: shortfall }, { status: 402 });
 
   // approve(registry, remaining) then payDebt(billId, remaining), both from the DCW.
   try {

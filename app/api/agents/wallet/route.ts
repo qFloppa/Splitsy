@@ -55,7 +55,7 @@ export async function GET(request: Request) {
   // mint another. after() keeps the function alive until it finishes. A failure
   // still leaves the agent perfectly able to settle; it just has no NFT yet.
   if (!identity?.agent_id && balance > 0n) {
-    after(() => ensureUserAgentIdentity(agent, user.wallet_address));
+    after(() => ensureUserAgentIdentity(agent));
   }
 
   return Response.json({
