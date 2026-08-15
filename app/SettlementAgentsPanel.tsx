@@ -25,7 +25,7 @@
 // Distinct from app/AgentEconomyPanel.tsx, which is Scout's x402 nanopayment
 // ledger. Same design tokens, different agents.
 import { useCallback, useEffect, useState } from "react";
-import { Ban, Bot, CalendarClock, Check, Link2, Loader2, Plus, ShieldCheck, Wallet, X } from "lucide-react";
+import { Ban, Bot, CalendarClock, Check, ChevronRight, Link2, Loader2, Plus, ShieldCheck, Wallet, X } from "lucide-react";
 import { useAccount, useSignMessage } from "wagmi";
 import { getWalletClient } from "wagmi/actions";
 import { createPublicClient, http } from "viem";
@@ -34,6 +34,9 @@ import { wagmiConfig } from "@/lib/wagmi";
 import { assertReceiptSuccess } from "@/lib/bill-split-contracts";
 import { ARC_USDC_ADDRESS, publicClient, usdcAbi } from "@/lib/recurring-contracts";
 import { buildLinkMessage, buildSigninMessage, SESSION_ENDED_EVENT } from "@/lib/agent-link";
+// Type-only, so nothing from the decision core is bundled into this client
+// component — it is imported to keep REASONS below exhaustive, not to run.
+import type { AutopayDecision } from "@/lib/autopay";
 import { encodeRevokeMandate } from "@/lib/registry-calldata";
 import JobTrail from "./JobTrail";
 
@@ -151,7 +154,26 @@ type GrantsResponse = {
 // Every skip reason decideAutopay can return, in the user's words. An unmapped
 // reason falls back to the raw slug rather than being hidden — a decision the
 // user cannot read is worse than an ugly one.
-const REASONS: Record<string, string> = {
+// Every slug app/api/agents/autopay/route.ts can write. The union is
+// load-bearing rather than documentation: the trail reads an UNMAPPED reason as
+// the reviewer's own sentence (see `modelWrote`), so a new decideAutopay reason
+// that nobody adds a line for here would be dressed up as something a model
+// wrote about the user's bill. Typed against lib/autopay.ts, that fails the
+// build instead.
+type ReasonSlug =
+  | AutopayDecision["reason"]
+  // Written by the route rather than by decideAutopay: the mandate-mode
+  // allowance check, the reviewer failing to reach a verdict at all, and the
+  // ways a settlement can break after the rules had already passed.
+  | "allowance_short"
+  | "review_unavailable"
+  | "agent_out_of_funds"
+  | "agent_wallet_unavailable"
+  | "agent_unfunded"
+  | "job_failed"
+  | "tx_failed";
+
+const REASONS: Record<ReasonSlug, string> = {
   ok: "Paid",
   disabled: "Autopay is off",
   nothing_owed: "Already settled",
@@ -170,6 +192,15 @@ const REASONS: Record<string, string> = {
   job_failed: "The on-chain job could not be completed, so nothing was paid",
   tx_failed: "The payment transaction failed",
 };
+
+// A reason no slug above claims can only have come from one line in the whole
+// system: logSkip(verdict.reason) in app/api/agents/autopay/route.ts, where the
+// bought review refused in prose. That makes "unmapped" an exact test for "a
+// model wrote this about your bill", with nothing new stored to support it.
+//
+// Object.hasOwn, not `in`: `in` walks the prototype, so a one-sentence verdict
+// that happened to read "toString" would be shown as a rule the agent applied.
+const modelWrote = (reason: string) => !Object.hasOwn(REASONS, reason);
 
 export default function SettlementAgentsPanel() {
   const [grant, setGrant] = useState<Grant | null>(null);
@@ -1201,9 +1232,79 @@ export default function SettlementAgentsPanel() {
               {/* Deliberately does not promise a line-item check: lib/autopay-review.ts
                   is given the headline fields only, and the receipt image is never sent. */}
               <span className="spec-hint">
-                The agent weighs the merchant, total and your share against each other, and refuses if the
-                numbers don&rsquo;t hang together. It has no line items, so it cannot tell who ordered what.
+                A model reads the bill and refuses if the numbers don&rsquo;t hang together — it weighs the merchant,
+                total and your share against each other. It has no line items, so it cannot tell who ordered what.
               </span>
+
+              {/* The one check on this page that is not a rule, so it is the one
+                  that has to show its working. Every line below is a claim about
+                  lib/autopay-review.ts and has to stay true to it: the field list
+                  is that prompt's inputs, the two lists are its refuse/do-not-refuse
+                  instructions, and "cannot answer" is FAIL_CLOSED. Nothing here may
+                  promise judgment the model was not given the data to make.
+
+                  A real <details>, like JobTrail: no state, keyboard and find-in-page
+                  for free. Collapsed by default — someone who just wants the toggle
+                  should not have to read an essay to reach it. */}
+              <details className="job-trail">
+                <summary className="spec-chip job-trail-summary">
+                  <ChevronRight className="job-trail-caret" size={12} />
+                  <span>how the model judges your bill · $0.002 per review</span>
+                </summary>
+
+                <div className="job-trail-body">
+                  {/* Said first because it is the part nobody assumes: the verdict is
+                      bought from a different wallet, so refusing costs the Settler
+                      money it does not recover. */}
+                  <p className="job-trail-desc">
+                    Bought, not asked for. Your Settler pays the Auditor $0.002 over x402 for each verdict, out of the
+                    settlement fee — two different wallets, so the one that judges the bill is not the one that gets
+                    paid to settle it.
+                  </p>
+
+                  <section>
+                    <h4 className="job-trail-head">what it is given</h4>
+                    <span className="spec-hint">
+                      The merchant, the currency, the bill total, how many people are on it, what an even split would
+                      be, your share in USDC, the creator&rsquo;s reputation score, and the names on the bill.{" "}
+                      <strong>Never the receipt image, and never the line items.</strong>
+                    </span>
+                  </section>
+
+                  <section>
+                    <h4 className="job-trail-head">it refuses when</h4>
+                    <ul className="spec-hint list-disc space-y-1 pl-4">
+                      <li>the total is wildly implausible for that kind of merchant</li>
+                      <li>your share is more than the entire bill</li>
+                      <li>your share is so far above an even split that no ordering would explain it</li>
+                      <li>the names on the bill contradict how many people it says are on it</li>
+                    </ul>
+                  </section>
+
+                  {/* As load-bearing as the list above it. A reviewer people believe
+                      is trigger-happy gets switched off, and the prompt is explicit
+                      about both of these. */}
+                  <section>
+                    <h4 className="job-trail-head">it will not refuse for</h4>
+                    <ul className="spec-hint list-disc space-y-1 pl-4">
+                      <li>a share above the even split, on its own — uneven is the point of splitting a bill</li>
+                      <li>a creator with no reputation history yet</li>
+                    </ul>
+                  </section>
+
+                  <section>
+                    <h4 className="job-trail-head">when it cannot answer</h4>
+                    <span className="spec-hint">
+                      A timeout, an error, or a verdict it cannot parse is a <strong>refusal, never a payment</strong>.
+                      It also runs last, after your ceilings — a bill those already stopped never costs a review.
+                    </span>
+                  </section>
+
+                  <span className="spec-hint">
+                    When it refuses, its own sentence is what you read in the trail below.
+                  </span>
+                </div>
+              </details>
             </div>
             <Switch
               checked={grant.requireBillReview}
@@ -1296,7 +1397,8 @@ export default function SettlementAgentsPanel() {
             <h3 className="spec-title">What {mergedTrail ? "your agents" : "the agent"} decided</h3>
             <p className="spec-note">
               Every run, including the ones it declined. A skip and its reason is the proof the ceilings above are
-              real.
+              real. A row marked <strong>reviewer</strong> is the model&rsquo;s own sentence about that bill rather than
+              a rule it matched.
               {mergedTrail
                 ? " Both of your agents are here, each row marked with the one that decided it — the ceilings above bind only the first."
                 : ""}
@@ -1345,8 +1447,19 @@ export default function SettlementAgentsPanel() {
                           {agentWallet?.otherAgent ? short(agentWallet.otherAgent.address) : "your other agent"}
                         </span>
                       ) : null}
+                      {/* Without this the model's sentence sits in the same slot as
+                          "Above your per-bill cap" and reads as one more canned
+                          string. The badge is the whole difference between a rule
+                          the agent applied and a judgment it made. */}
+                      {modelWrote(entry.reason) ? <span className="spec-badge">reviewer</span> : null}
                     </span>
-                    <span className="spec-hint">{REASONS[entry.reason] ?? entry.reason}</span>
+                    {/* Quoted, because it is a quotation. The cast is safe on this
+                        branch and only on it: modelWrote is the hasOwn check, so a
+                        mapped slug is exactly what is left — which is also why the
+                        old `?? entry.reason` fallback is gone rather than moved. */}
+                    <span className="spec-hint">
+                      {modelWrote(entry.reason) ? `“${entry.reason}”` : REASONS[entry.reason as ReasonSlug]}
+                    </span>
                     {/* Only a payment opens a job, so this line appears on pay
                         rows alone. A skip keeps the model's own sentence above
                         and nothing else — there is no job to point at. */}
