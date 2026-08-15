@@ -2,7 +2,7 @@
 
 import confetti from "canvas-confetti";
 import gsap from "gsap";
-import { ExternalLink, Mail, Moon, Sun, Wallet } from "lucide-react";
+import { ExternalLink, Mail, Wallet } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { flushSync } from "react-dom";
@@ -42,10 +42,8 @@ import {
 } from "@/lib/iou";
 import { providerDisplay } from "@/lib/provider-display";
 import type { AccountProvider, IdentityProvider } from "@/lib/types";
-import { useTheme } from "@/lib/use-theme";
 import { wagmiConfig } from "@/lib/wagmi";
-import { DISCORD_PATH } from "../ProviderTag";
-import XAuthControl from "../XAuthControl";
+import { DISCORD_PATH } from "./ProviderTag";
 
 type Me = { id: string; provider?: AccountProvider | null; handle: string; walletAddress: string | null };
 
@@ -150,7 +148,7 @@ function flip(nodes: Element[], mutate: () => void, duration = 0.55) {
 const scaleBetween = (from: Element, to: Element) =>
   parseFloat(getComputedStyle(to).fontSize) / parseFloat(getComputedStyle(from).fontSize);
 
-export default function OweClient() {
+export default function IouClient({ onReceipts }: { onReceipts: () => void }) {
   const [me, setMe] = useState<Me | null>(null);
   const [draft, setDraft] = useState<Draft>(EMPTY);
   const [error, setError] = useState("");
@@ -162,7 +160,6 @@ export default function OweClient() {
   const [preferred, setPreferred] = useState<IouSigner>(savedSigner);
   const [targetFocused, setTargetFocused] = useState(false);
   const [socialOpen, setSocialOpen] = useState(false);
-  const { theme, setTheme } = useTheme();
 
   const sentenceRef = useRef<HTMLDivElement>(null);
   const ruleRef = useRef<HTMLDivElement>(null);
@@ -862,22 +859,13 @@ export default function OweClient() {
   return (
     <main className="iou-page">
       <div className="iou-rail">
-        <Link href="/app">← receipts</Link>
-        <span className="iou-rail-end">
-          arc testnet
-          {/* This page is its own surface — there is no app chrome around it to
-              carry the switch, so it sits at the end of the rail it already has.
-              Same hook and same Moon/Sun pair as the landing nav, so the choice
-              is remembered across both. */}
-          <button
-            aria-label={`Switch to ${theme === "light" ? "dark" : "light"} mode`}
-            className="iou-theme"
-            onClick={() => setTheme((current) => (current === "light" ? "dark" : "light"))}
-            type="button"
-          >
-            {theme === "light" ? <Moon size={14} /> : <Sun size={14} />}
-          </button>
-        </span>
+        {/* A tab now, not a page, so "back" is a tab switch rather than a link —
+            and the app header above carries the theme switch this rail used to
+            have to provide for itself. */}
+        <button onClick={onReceipts} type="button">
+          ← receipts
+        </button>
+        <span className="iou-rail-end">arc testnet</span>
       </div>
 
       <div className="iou-composer" data-revealed={revealed === null ? undefined : revealed}>
@@ -984,9 +972,9 @@ export default function OweClient() {
                 </button>
                 {socialOpen && (
                   <div className="iou-social-options">
-                    <a href="/api/auth/twitter?returnTo=/owe" className="settle-trigger">X</a>
-                    <a href="/api/auth/discord?returnTo=/owe" className="settle-trigger">Discord</a>
-                    <a href="/api/auth/google?returnTo=/owe" className="settle-trigger">Google</a>
+                    <a href="/api/auth/twitter?returnTo=/app" className="settle-trigger">X</a>
+                    <a href="/api/auth/discord?returnTo=/app" className="settle-trigger">Discord</a>
+                    <a href="/api/auth/google?returnTo=/app" className="settle-trigger">Google</a>
                     <Link href="/signin/email" className="settle-trigger">Email</Link>
                   </div>
                 )}
@@ -1050,8 +1038,6 @@ export default function OweClient() {
           })
         )}
       </div>
-
-      <XAuthControl />
     </main>
   );
 }

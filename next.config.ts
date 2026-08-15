@@ -35,10 +35,12 @@ const nextConfig: NextConfig = {
   },
   // Terms and Privacy were merged into a single /legal page. Redirect the old
   // paths (still registered as the X app's Terms/Privacy URLs) so they resolve.
+  // /owe became the app's default IOU tab, so its old route resolves there too.
   async redirects() {
     return [
       { source: "/privacy", destination: "/legal", permanent: true },
       { source: "/terms", destination: "/legal", permanent: true },
+      { source: "/owe", destination: "/app", permanent: true },
     ];
   },
 };

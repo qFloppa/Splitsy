@@ -48,6 +48,7 @@ import XAuthControl from "./XAuthControl";
 import SignInMenu from "./SignInMenu";
 import XHistoryPanel from "./XHistoryPanel";
 import DashboardPanel from "./DashboardPanel";
+import IouClient from "./IouClient";
 import AgentEconomyPanel from "./AgentEconomyPanel";
 import { gatewayReceiptUrl } from "./JobTrail";
 import SettlementAgentsPanel, { Switch } from "./SettlementAgentsPanel";
@@ -171,7 +172,7 @@ type ScoutReport = {
 type OcrState = "idle" | "reading" | "ready" | "error";
 export type BillRunState = "idle" | "connecting" | "working" | "success" | "error";
 type RecurringRunState = "idle" | "connecting" | "working" | "error" | "success";
-type AppTab = "bills" | "settle" | "recurring" | "dashboard" | "agents";
+type AppTab = "bills" | "settle" | "recurring" | "dashboard" | "agents" | "iou";
 type RecurringCycle = "test" | "weekly" | "monthly" | "custom";
 type RecurringMemberInput = {
   id: string;
@@ -292,7 +293,7 @@ type OwnedBillSplitDebt = OwnedDebt;
 type CreatorIdentity = "wallet" | "social";
 const CREATOR_IDENTITY_KEY = "splitsy-creator-identity";
 
-export default function HomeClient({ testCycleEnabled = false }: { testCycleEnabled?: boolean }) {  const [activeTab, setActiveTab] = useState<AppTab>("dashboard");
+export default function HomeClient({ testCycleEnabled = false }: { testCycleEnabled?: boolean }) {  const [activeTab, setActiveTab] = useState<AppTab>("iou");
   const { theme, setTheme } = useTheme();
   const [ocrState, setOcrState] = useState<OcrState>("idle");
   const [error, setError] = useState("");
@@ -2609,15 +2610,10 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [address]);
 
-  // Published so CSS can react to the tab: the Settle deck is the only scroller
-  // on its tab, which means pinning the shell to the viewport and hiding the site
-  // footer — neither of which lives inside this component's tree.
-  useEffect(() => {
-    document.documentElement.dataset.appTab = activeTab;
-    return () => {
-      delete document.documentElement.dataset.appTab;
-    };
-  }, [activeTab]);
+  // Settle and IOU are both full-bleed posters: they render as siblings of the
+  // capped section every other tab lives in, and neither wants the header's
+  // title row or the site footer competing with the poster for the first screen.
+  const posterTab = activeTab === "settle" || activeTab === "iou";
 
   // On the Settle tab this rides inside the deck's own scroller (see SettleDeck's
   // `header` prop) so it scrolls away with the first card rather than standing
@@ -2634,7 +2630,7 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
             </Link>
             {/* Every row of header is a row the deck doesn't get, and the
                 section rail already stamps the network. */}
-            {activeTab === "settle" ? null : (
+            {posterTab ? null : (
               <div className="header-title-row mt-1">
                 <h1 className="app-title">
                   Split bills, Settle cleanly
@@ -2656,9 +2652,9 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
                   </span>
                 ) : null}
               </TabButton>
-              <Link className="tab-button" href="/owe">
+              <TabButton active={activeTab === "iou"} onClick={() => switchAppTab("iou")}>
                 IOU
-              </Link>
+              </TabButton>
               <TabButton active={activeTab === "dashboard"} onClick={() => switchAppTab("dashboard")}>
                 Dashboard
               </TabButton>
@@ -2689,7 +2685,7 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
   );
 
   return (
-    <main className="app-shell min-h-screen text-[var(--text)]">
+    <main className="app-shell min-h-screen text-[var(--text)]" data-app-tab={activeTab}>
       {activeTab === "settle" ? null : appHeader}
 
       {/* Full-bleed by design — the poster can't live inside the padded, capped
@@ -2717,7 +2713,9 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
         />
       ) : null}
 
-      <section className={`mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8${activeTab === "settle" ? " hidden" : ""}`}>
+      {activeTab === "iou" ? <IouClient onReceipts={() => switchAppTab("bills")} /> : null}
+
+      <section className={`mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8${posterTab ? " hidden" : ""}`}>
         <AnimatePresence mode="wait">
         {activeTab === "bills" || activeTab === "recurring" ? (
           <motion.div
@@ -3368,7 +3366,7 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
             <SettlementAgentsPanel />
             <AgentEconomyPanel />
           </motion.div>
-        ) : (
+        ) : activeTab === "iou" ? null : (
           <motion.div
             animate={{ opacity: 1, y: 0 }}
             className="space-y-5"

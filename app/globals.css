@@ -3765,16 +3765,35 @@ select.pay-method option {
 /* The deck is the ONLY scroller on this tab. A page that also scrolls behind a
    mandatory-snap container gives two competing scrolls for one gesture, so the
    shell is pinned to the viewport and the site footer steps aside — its links
-   live in the header's Docs entry and on every other tab. HomeClient sets the
-   attribute on <html> as the tab changes. */
-:root[data-app-tab="settle"] .site-footer {
+   live in the header's Docs entry and on every other tab.
+   HomeClient stamps the tab on .app-shell itself, so these apply from the first
+   server-rendered byte. The footer is a sibling of the shell (both are children
+   of <body>), which is what the :has() is for — an effect writing the attribute
+   onto <html> after hydration would flash the footer on IOU, the default tab. */
+body:has(.app-shell[data-app-tab="settle"]) .site-footer,
+body:has(.app-shell[data-app-tab="iou"]) .site-footer {
   display: none;
 }
 
-:root[data-app-tab="settle"] .app-shell {
+.app-shell[data-app-tab="settle"] {
   height: 100dvh;
   min-height: 0;
   overflow: hidden;
+}
+
+/* IOU is a poster too, but it keeps the page's own scroll: the composer is one
+   screen and the ledger below it grows with the rows. So instead of settle's
+   pinning, the shell becomes the flex column and the poster claims what's left
+   under the header — which is what .iou-page's own 100dvh meant back when it was
+   a standalone route with no header above it. */
+.app-shell[data-app-tab="iou"] {
+  display: flex;
+  flex-direction: column;
+}
+
+.app-shell[data-app-tab="iou"] .iou-page {
+  min-height: 0;
+  flex: 1;
 }
 
 .settle-section {
@@ -4408,33 +4427,34 @@ select.settle-trigger option {
   color: var(--pay-poster-dim);
 }
 
-.iou-rail a {
+/* Borderless like everything else on this rail — the word is the control. The
+   font resets are what a <button> needs to sit on the rail as plain type; the
+   back-link is a button now because "receipts" is a sibling tab, not a route. */
+.iou-rail a,
+.iou-rail button {
   color: inherit;
   text-decoration: none;
   transition: color var(--dur-1) var(--ease-out);
 }
 
-.iou-rail a:hover, .iou-rail a:focus-visible { color: var(--pay-poster-fg); }
+.iou-rail button {
+  border: 0;
+  background: none;
+  padding: 0;
+  font: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  cursor: pointer;
+}
+
+.iou-rail a:hover, .iou-rail a:focus-visible,
+.iou-rail button:hover, .iou-rail button:focus-visible { color: var(--pay-poster-fg); }
 
 .iou-rail-end {
   display: inline-flex;
   align-items: center;
   gap: 0.9em;
 }
-
-/* Borderless like everything else on this page — the icon is the control. */
-.iou-theme {
-  border: 0;
-  background: none;
-  padding: 0;
-  display: inline-flex;
-  color: inherit;
-  cursor: pointer;
-  transition: color var(--dur-1) var(--ease-out);
-}
-
-.iou-theme:hover, .iou-theme:focus-visible { color: var(--pay-poster-fg); }
-.iou-theme:focus-visible { outline: 1px solid currentColor; outline-offset: 0.35em; }
 
 /* The composer owns the first screen. `justify-content: center` rather than a
    fixed height so a wrapped three-line sentence on a phone grows into the space
@@ -4533,6 +4553,12 @@ select.settle-trigger option {
 }
 
 .iou-static { color: inherit; }
+
+/* Same 0.16em the avatar and platform marks use: at -0.03em tracking Clash's
+   round "@" sits right on the next letter. Scoped to .iou-who so the sentence's
+   own static words ("I") keep taking their space from the flex gap. Outside the
+   sizing slot, so the caret is unaffected. */
+.iou-who > .iou-static { margin-right: 0.16em; }
 
 /* The direction toggle. Receded like .settle-action, but it is a word inside a
    sentence rather than a standalone control, so it keeps the sentence's tracking
