@@ -348,37 +348,22 @@ async function settleOne(input: {
     return logSkip("allowance_short");
   }
 
-  // The contents check, last among the free rules: it is the only step that
-  // costs money and latency, so nothing already rejected reaches it. Fails
-  // closed — a timeout, a 402, or an unparseable verdict skips rather than pays.
-  if (decision.pay && rules?.requireBillReview !== false) {
-    // Nothing to review is not permission to skip reviewing. requireVerifiedHash
-    // and requireBillReview are independent: with the hash check off,
-    // decideAutopay no longer returns 'unverifiable', so falling through here
-    // would leave the payment with neither check.
-    if (!input.preimage) return logSkip(REVIEW_UNAVAILABLE);
+  // Non-null exactly when the contents check is required AND has something to
+  // judge, which is what gates the paid call further down. Null when the user
+  // turned the check off; the missing-preimage case returns below instead.
+  const reviewPreimage = rules?.requireBillReview === false ? null : input.preimage;
 
-    const verdict = await buyReview(
-      input.baseUrl,
-      {
-        preimage: input.preimage,
-        shareUsdc: usdc(decision.amount),
-        // The on-chain roster, not the published labels: undercounting inflates
-        // the even split the model compares the share against.
-        participantCount: input.participantCount,
-        creatorScore: input.creatorScore,
-      },
-      // Tags the spend row with the bill it was bought for, so the audit trail
-      // can show the review next to the job it gated. The seller's matching
-      // 'earned' row carries no bill: withGateway settles before the handler
-      // runs and never sees one.
-      billKey,
-    );
-    if (!verdict.approve) {
-      // The model's own sentence goes straight into the log when it reached a
-      // verdict; REVIEW_UNAVAILABLE when it could not. Both are refusals.
-      return logSkip(verdict.reason);
-    }
+  // Nothing to review is not permission to skip reviewing. requireVerifiedHash
+  // and requireBillReview are independent: with the hash check off,
+  // decideAutopay no longer returns 'unverifiable', so falling through here
+  // would leave the payment with neither check.
+  //
+  // This free half stays ahead of the claim while the PAID call has moved below
+  // the funding check. It has to: REVIEW_UNAVAILABLE is in agents-repo's
+  // UNDECIDED list precisely so a redelivery can overturn it once the preimage
+  // publishes, and a row already claimed 'ok' could never be overturned that way.
+  if (decision.pay && rules?.requireBillReview !== false && !reviewPreimage) {
+    return logSkip(REVIEW_UNAVAILABLE);
   }
 
   const amountUsdc = usdc(decision.amount);
@@ -386,6 +371,8 @@ async function settleOne(input: {
   // Claim first. The unique key on (registry, bill, debtor) is the idempotency
   // lock, taken BEFORE createJob so a redelivered webhook cannot even open a
   // second job — the existing lock covers the new ceremony without widening.
+  // It is now also taken before the PAID review, so a redelivery cannot buy a
+  // second verdict either.
   const claimed = await claimAutopayDecision({
     userId,
     registryAddress: REGISTRY_ADDRESS,
@@ -420,6 +407,46 @@ async function settleOne(input: {
   if (balance < need) {
     await releaseSpend(billKey, debtor, "agent_unfunded");
     return { debtor, decision: "skip", reason: "agent_unfunded", amountUsdc: 0 };
+  }
+
+  // The contents check, and deliberately the LAST gate: it is the only step that
+  // spends money to decide, so everything that can reject for free runs first.
+  //
+  // It used to sit ahead of the claim, which charged the Settler for verdicts it
+  // could never use — a redelivered webhook bought a second one the lock then
+  // discarded, and an unfunded agent bought one it could not act on. Neither
+  // opened a job, so neither was ever recovered from a fee.
+  //
+  // Fails closed exactly as before: a timeout, a 402, or an unparseable verdict
+  // refuses. The row is already claimed by now, so a refusal FLIPS it with
+  // releaseSpend rather than writing it fresh — which keeps the model's own
+  // sentence as the reason and leaves REVIEW_UNAVAILABLE reclaimable by a later
+  // delivery, exactly as logSkip did.
+  //
+  // The one cost of claiming first: between the claim and a refusal this share
+  // counts against the day's spend in Funded mode. That is the safe direction —
+  // a sibling participant briefly sees less headroom, never more.
+  if (reviewPreimage) {
+    const verdict = await buyReview(
+      input.baseUrl,
+      {
+        preimage: reviewPreimage,
+        shareUsdc: amountUsdc,
+        // The on-chain roster, not the published labels: undercounting inflates
+        // the even split the model compares the share against.
+        participantCount: input.participantCount,
+        creatorScore: input.creatorScore,
+      },
+      // Tags the spend row with the bill it was bought for, so the audit trail
+      // can show the review next to the job it gated. The seller's matching
+      // 'earned' row carries no bill: withGateway settles before the handler
+      // runs and never sees one.
+      billKey,
+    );
+    if (!verdict.approve) {
+      await releaseSpend(billKey, debtor, verdict.reason);
+      return { debtor, decision: "skip", reason: verdict.reason, amountUsdc: 0 };
+    }
   }
 
   // How far the settlement got, filled in by runJob as it goes. Read only on

@@ -56,9 +56,15 @@ autopaying participants costs four jobs and 24 transactions.
 | autopay on, agent **skips** | 0 |
 | autopay on, agent **pays** | 6 |
 
-A skip costs nothing at all — the decision happens before `createJob`, so a
+A skip costs no transactions at all — every gate runs before `createJob`, so a
 refused bill never opens a job. That is the whole reason the ordering is what it
 is.
+
+Only the last gate costs money: the $0.002 review. It is bought **after** the
+idempotency claim and **after** the agent's funding check, so a redelivered
+webhook cannot buy a second verdict the lock will discard, and an unfunded agent
+cannot buy one it could never act on. Both used to happen, charged to the Settler
+with no job to recover them from.
 
 Two USDC `approve` transactions sit outside that six. They are lazy — sent only
 when the current allowance is short, for 100× the amount being spent — so they
@@ -71,8 +77,9 @@ amortise across roughly a hundred settlements rather than landing on each one.
 ### The job ceremony
 
 ```
-0. decide       the rules in lib/autopay.ts, then a bill review BOUGHT from
-                the Auditor over x402.  Any skip stops here: no job, 0 tx.
+0. decide       the free rules in lib/autopay.ts, then the claim, then the
+                agent's funding, and LAST the bill review BOUGHT from the
+                Auditor over x402.  Any refusal stops here: no job, 0 tx.
 1. createJob    the user's agent          ← client
 2. setBudget    the Settler               ← the provider prices its own work
 3. fund         the user's agent          → the fee into escrow
