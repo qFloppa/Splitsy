@@ -13,8 +13,9 @@
 // Deliberately NOT behind the wallet-unlock cookie, for the same reason the
 // settings panel isn't: UNLINKING must never be harder than linking.
 import { getSessionUser } from "@/lib/session";
-import { getAutopayGrant, setGrantDebtorAddress } from "@/lib/agents-repo";
+import { getAutopayGrant, getWalletOwnerAccount, setGrantDebtorAddress } from "@/lib/agents-repo";
 import { verifyLinkSignature } from "@/lib/agent-link";
+import { describeAccount } from "@/lib/provider-display";
 import { agentToAdopt, wasAgentAdoptedFrom } from "@/lib/user-agent";
 import { getUserByProviderHandle, setUserAgentWallet } from "@/lib/users-repo";
 
@@ -73,8 +74,17 @@ export async function POST(request: Request) {
     // debtor -> user lookup ambiguous, so the second one is refused.
     const errText = err instanceof Error ? err.message : "";
     if (errText.includes("autopay_grants_debtor_idx") || errText.includes("23505")) {
+      // Say WHICH account, for the same reason the sign-in refusal does: the user
+      // has to know whose login already holds this wallet to do anything about
+      // it. Falls back to the anonymous wording if the holder can't be read —
+      // the refusal itself does not depend on naming them.
+      const holder = await getWalletOwnerAccount(address).catch(() => null);
       return Response.json(
-        { error: "That wallet is already linked to another Splitsy account." },
+        {
+          error: holder
+            ? `That wallet is already linked to ${describeAccount({ provider: holder.provider, handle: holder.handle })}.`
+            : "That wallet is already linked to another Splitsy account.",
+        },
         { status: 409 },
       );
     }

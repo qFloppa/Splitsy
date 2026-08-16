@@ -5,6 +5,8 @@ import type { AutopayDecision, AutopayGrant, MoneyMode } from "./autopay.ts";
 import { REVIEW_UNAVAILABLE } from "./autopay-review.ts";
 import type { DunningAction } from "./dunning.ts";
 import { createSupabaseServerClient } from "./supabase.ts";
+import type { AppUser } from "./types.ts";
+import { getUserById } from "./users-repo.ts";
 
 // Re-exported so consumers of the repo layer do not have to reach past it for
 // the shape of a column it already hands them.
@@ -118,6 +120,19 @@ export async function getGrantsByDebtorAddresses(
     result.set(row.debtor_address.toLowerCase(), { userId: String(row.user_id) });
   }
   return result;
+}
+
+// Which ACCOUNT holds this wallet, row and all. Two routes refuse a wallet that
+// someone else already linked (POST /api/auth/wallet, POST /api/agents/link), and
+// both have to name the holder in the refusal — otherwise the user is told to
+// "sign in there" with no idea where "there" is. One lookup, one place.
+export async function getWalletOwnerAccount(address: string): Promise<AppUser | null> {
+  const owner = (await getGrantsByDebtorAddresses([address])).get(address.toLowerCase());
+  if (!owner) return null;
+  // Never fail the caller's own job over a missing holder row: both callers treat
+  // "unknown" as "no collision to report", which is what the grant row without a
+  // user would be anyway.
+  return getUserById(owner.userId).catch(() => null);
 }
 
 // Link or unlink the browser wallet. Written only by POST/DELETE

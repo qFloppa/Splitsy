@@ -15,12 +15,13 @@
 // here rather than handed a second account, with a second agent and a second
 // balance to fund. That is the exact confusion linking exists to prevent.
 import type { NextRequest } from "next/server";
-import { getGrantsByDebtorAddresses, setGrantDebtorAddress } from "@/lib/agents-repo";
+import { getWalletOwnerAccount, setGrantDebtorAddress } from "@/lib/agents-repo";
 import { verifySigninSignature } from "@/lib/agent-link";
 import { finishProviderLogin } from "@/lib/oauth-callback";
+import { describeAccount } from "@/lib/provider-display";
 import { getSessionUser, signWalletProof, WALLET_PROOF_COOKIE, WALLET_PROOF_TTL } from "@/lib/session";
 import { getOrCreateUserAgent } from "@/lib/user-agent";
-import { getUserById, getUserByProviderHandle } from "@/lib/users-repo";
+import { getUserByProviderHandle } from "@/lib/users-repo";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -62,20 +63,19 @@ export async function POST(request: NextRequest) {
   // Not a sign-in path for that account either: linking proved control of the
   // wallet to widen an account's reach, which is not consent for the key to
   // become a login for the social identity behind it.
-  const owner = (await getGrantsByDebtorAddresses([address])).get(address);
-  if (owner) {
-    const holder = await getUserById(owner.userId).catch(() => null);
-    const isOwnAccount = holder?.provider === "wallet" && holder.provider_user_id === address;
-    if (holder && !isOwnAccount) {
-      return Response.json(
-        {
-          error:
-            `That wallet is already linked to a Splitsy account on ${holder.provider}. Sign in there — ` +
-            `its agent already settles this wallet's bills.`,
-        },
-        { status: 409 },
-      );
-    }
+  const holder = await getWalletOwnerAccount(address);
+  const isOwnAccount = holder?.provider === "wallet" && holder.provider_user_id === address;
+  if (holder && !isOwnAccount) {
+    return Response.json(
+      {
+        // Name the account, not just its provider: "sign in there" is only
+        // actionable if the user can tell which login "there" is.
+        error:
+          `That wallet is already linked to ${describeAccount({ provider: holder.provider, handle: holder.handle })}. ` +
+          `Sign in there — its agent already settles this wallet's bills.`,
+      },
+      { status: 409 },
+    );
   }
 
   // KEEP A SOCIAL SESSION. There is one session cookie, so signing this wallet in

@@ -71,3 +71,17 @@ export function providerDisplay(person: ProviderPerson): ProviderDisplay {
     prefix: "@",
   };
 }
+
+// The same identity as one phrase — "@alice on X" — for prose rather than a tag.
+// Written for the wallet-collision refusals, which tell the user to go sign in on
+// the account that already holds this wallet: naming the provider alone ("on x")
+// left them to guess WHICH account of that provider's, which is the one thing
+// they need to act on.
+export function describeAccount(person: ProviderPerson): string {
+  const d = providerDisplay(person);
+  // A wallet account has no platform to be "on" — the address is the whole
+  // identity, so it names itself.
+  if (d.provider === "wallet") return `the wallet account ${d.label}`;
+  const platform = d.provider === "x" ? "X" : d.provider[0].toUpperCase() + d.provider.slice(1);
+  return `${d.prefix}${d.label} on ${platform}`;
+}
