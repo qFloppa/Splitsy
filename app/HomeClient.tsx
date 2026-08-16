@@ -2615,6 +2615,11 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
   // title row or the site footer competing with the poster for the first screen.
   const posterTab = activeTab === "settle" || activeTab === "iou";
 
+  // IOU's narrow header — logo + tabs, no title row — is the app default. Bills
+  // is the only tab that keeps the tall variant: it's where the pitch and the
+  // network stamp still earn their row, since it's the tab you land on to create.
+  const billsTab = activeTab === "bills" || activeTab === "recurring";
+
   // On the Settle tab this rides inside the deck's own scroller (see SettleDeck's
   // `header` prop) so it scrolls away with the first card rather than standing
   // over every section. Everywhere else it is the page's first block as usual.
@@ -2628,20 +2633,20 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
                 <Image alt="Splitsy" className="logo-crop-image" height={1024} priority src="/splitsy.png" width={1536} />
               </span>
             </Link>
-            {/* Every row of header is a row the deck doesn't get, and the
+            {/* Every row of header is a row the content doesn't get, and the
                 section rail already stamps the network. */}
-            {posterTab ? null : (
+            {billsTab ? (
               <div className="header-title-row mt-1">
                 <h1 className="app-title">
                   Split bills, Settle cleanly
                 </h1>
                 <span className="network-stamp">Arc Testnet</span>
               </div>
-            )}
+            ) : null}
           </div>
           <div className="flex flex-wrap items-center gap-2 md:justify-end lg:flex-nowrap">
             <div className="segmented-control">
-              <TabButton active={activeTab === "bills" || activeTab === "recurring"} onClick={() => switchAppTab("bills")}>
+              <TabButton active={billsTab} onClick={() => switchAppTab("bills")}>
                 Bills
               </TabButton>
               <TabButton active={activeTab === "settle"} onClick={() => switchAppTab("settle")}>
@@ -2717,7 +2722,7 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
 
       <section className={`mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8${posterTab ? " hidden" : ""}`}>
         <AnimatePresence mode="wait">
-        {activeTab === "bills" || activeTab === "recurring" ? (
+        {billsTab ? (
           <motion.div
             animate={{ opacity: 1, y: 0 }}
             className="space-y-5"
