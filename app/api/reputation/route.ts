@@ -1,7 +1,4 @@
-import type { IdentityProvider } from "@/lib/types";
-import { getUserByProviderHandle } from "@/lib/users-repo";
-import { getPendingWallet } from "@/lib/pending-wallets-repo";
-import { getReputationSummary } from "@/lib/reputation-repo";
+import { reputationResponse } from "@/lib/reputation-lookup";
 import { PRICES } from "@/lib/x402/pricing";
 import { withGateway } from "@/lib/x402/seller";
 
@@ -10,50 +7,11 @@ export const dynamic = "force-dynamic";
 
 const ENDPOINT = "/api/reputation";
 
-const isProvider = (v: string | null): v is IdentityProvider =>
-  v === "x" || v === "discord" || v === "email";
-const looksLikeAddress = (v: string) => /^0x[a-fA-F0-9]{40}$/.test(v);
-
-// Aggregate ERC-8004 payment reputation for a wallet or a tagged handle, sold
-// as a paid service at $0.001. Any agent — a DeFi app, another expense
-// splitter, a counterparty-risk evaluator — can buy a verdict without needing a
-// Splitsy account.
+// The reputation aggregate sold as a paid service at $0.001. Any agent — a DeFi
+// app, another expense splitter, a counterparty-risk evaluator — can buy a
+// verdict without needing a Splitsy account.
 //
-// Resolving a handle here must never mint a wallet (that only happens when a
-// bill is actually created), so this walks users → pending_wallets and stops.
-// Returns only the aggregate — not the wallet address — so it isn't a
-// handle→address oracle.
-//
-// status "none" covers both "person unknown" and "wallet known, no payments":
-// under the consent policy those are deliberately the same neutral answer.
-async function handler(request: Request) {
-  const url = new URL(request.url);
-  const address = url.searchParams.get("address");
-  const provider = url.searchParams.get("provider");
-  const handle = url.searchParams.get("handle");
-
-  let wallet: string | null = null;
-  if (address) {
-    if (!looksLikeAddress(address)) return Response.json({ error: "bad address" }, { status: 400 });
-    wallet = address;
-  } else if (handle && isProvider(provider)) {
-    const user = await getUserByProviderHandle(provider, handle);
-    wallet = user?.wallet_address ?? (await getPendingWallet(provider, handle))?.wallet_address ?? null;
-  } else {
-    return Response.json({ error: "pass ?address= or ?provider=&handle=" }, { status: 400 });
-  }
-
-  if (!wallet) return Response.json({ status: "none" });
-
-  const summary = await getReputationSummary(wallet);
-  if (summary.count === 0) return Response.json({ status: "none" });
-  return Response.json({
-    status: "scored",
-    count: summary.count,
-    avgScore: summary.avgScore,
-    lateCount: summary.lateCount,
-    lastPaidAt: summary.lastPaidAt,
-  });
-}
-
-export const GET = withGateway(handler, PRICES[ENDPOINT], ENDPOINT);
+// The answer itself is built in lib/reputation-lookup; what this route adds is
+// the price and the x402 handshake. Splitsy's own UI reads the same answer
+// unpaid at /api/reputation/lookup — see the note there.
+export const GET = withGateway(reputationResponse, PRICES[ENDPOINT], ENDPOINT);
