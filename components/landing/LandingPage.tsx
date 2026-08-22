@@ -25,6 +25,12 @@ gsap.registerPlugin(ScrollTrigger);
 // Lenis smooths the wheel, ScrollTrigger reads Lenis's scroll position, and
 // GSAP's ticker drives Lenis so all three share a single clock. Every section
 // below only *authors* its own timeline — it never touches scroll plumbing.
+//
+// `.lp-paper` is the whole redesign in one class: it hands the page the app's
+// poster ground (--pay-poster-bg / -fg), which is all the spec-sheet system needs
+// to resolve here. Every section below is a .bill-poster, every label a
+// .settle-label, every tab a .bill-toggle, every call a .settle-action — the same
+// classes the five app tabs are built from, not lookalikes of them.
 export default function LandingPage() {
   useEffect(() => {
     if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
@@ -43,7 +49,7 @@ export default function LandingPage() {
 
   return (
     <TooltipProvider>
-      <div className="lp-root">
+      <div className="lp-paper">
         <Nav />
         <main id="main">
           <Hero />

@@ -319,24 +319,8 @@ a {
   object-fit: contain;
 }
 
-.header-title-row {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 0.55rem;
-}
-
-.app-title {
-  max-width: none;
-  color: var(--text);
-  font-family: var(--font-display);
-  font-size: clamp(1.2rem, 2vw, 1.72rem);
-  font-weight: 400;
-  letter-spacing: -0.02em;
-  line-height: 1.08;
-  white-space: nowrap;
-}
-
+/* The landing page's chip. The app header used to draw one too, next to a second
+   display title; both are gone — see .app-masthead for what replaced them. */
 .network-stamp {
   display: inline-flex;
   width: fit-content;
@@ -363,16 +347,6 @@ a {
   border-radius: 999px;
   background: var(--accent);
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent);
-}
-
-.segmented-control {
-  display: inline-flex;
-  gap: 0.125rem;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--surface-strong) 84%, transparent);
-  padding: 0.25rem;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.35);
 }
 
 .field-control {
@@ -450,8 +424,6 @@ input[type="number"],
 
 .primary-button,
 .secondary-button,
-.tab-button,
-.mode-button,
 .chain-button {
   display: inline-flex;
   min-height: 2.55rem;
@@ -487,9 +459,7 @@ input[type="number"],
 .primary-button:hover,
 .secondary-button:hover,
 .chain-button:hover,
-.icon-button:hover,
-.tab-button:hover,
-.mode-button:hover {
+.icon-button:hover {
   transform: translateY(-1px);
 }
 
@@ -498,11 +468,6 @@ input[type="number"],
 .chain-button:disabled {
   opacity: 0.58;
   transform: none;
-}
-
-.scan-receipt-button {
-  min-height: 3.45rem;
-  font-size: 0.96rem;
 }
 
 .secondary-button,
@@ -544,74 +509,6 @@ input[type="number"],
     transform 150ms ease,
     background-color 160ms ease,
     border-color 160ms ease;
-}
-
-.tab-button,
-.mode-button {
-  color: var(--text-muted);
-}
-
-.tab-button {
-  min-height: 2.2rem;
-  border-radius: 999px;
-  padding: 0 1rem;
-}
-
-.mode-button {
-  min-height: 2.05rem;
-  border-radius: 6px;
-  padding: 0 0.78rem;
-}
-
-.tab-button-active,
-.mode-button-active {
-  background: var(--ink-950);
-  color: #ffffff;
-  box-shadow: 0 10px 24px rgba(7, 20, 33, 0.16);
-}
-
-:root[data-theme="dark"] .tab-button-active,
-:root[data-theme="dark"] .mode-button-active {
-  background: var(--accent-strong);
-  color: var(--ink-950);
-}
-
-/* How many bills are waiting on you, on the Settle tab. It sits on top of the
-   active pill — whose fill flips between near-black and bright blue with the
-   theme — so it carries its own solid ground rather than tinting whatever is
-   underneath, which is what made the old chip vanish the moment the tab was
-   selected. The ring is the only thing in the header that moves; an unread count
-   that doesn't move doesn't read as unread. */
-.tab-count {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 1.32rem;
-  height: 1.32rem;
-  padding: 0 0.34rem;
-  border-radius: 999px;
-  background: var(--danger-text);
-  color: #ffffff;
-  font-size: 0.72rem;
-  font-weight: 800;
-  font-variant-numeric: tabular-nums;
-  line-height: 1;
-  animation: tab-count-pulse 2.2s ease-out infinite;
-}
-
-/* Dark's --danger-text is the light end of the pair, so the digit flips with it. */
-:root[data-theme="dark"] .tab-count {
-  color: var(--ink-950);
-}
-
-@keyframes tab-count-pulse {
-  from {
-    box-shadow: 0 0 0 0 color-mix(in srgb, var(--danger-text) 65%, transparent);
-  }
-  60%,
-  to {
-    box-shadow: 0 0 0 0.55rem color-mix(in srgb, var(--danger-text) 0%, transparent);
-  }
 }
 
 .metric {
@@ -758,38 +655,6 @@ input[type="number"],
   opacity: 0.5;
 }
 
-/* Liquid-glass fill for panel interiors — .tab-hero's surface (an accent bloom
-   over a translucent pane) inset one level, so it reads as glass sitting inside
-   a .spec-card rather than beside it. Fill only, no border: the upload dropzone
-   recolours its own dashed border on drag.
-   Opt-in rather than folded into .receipt-card, because the landing demo's
-   dragged receipt is a paper receipt and paper is the point there. */
-.receipt-glass {
-  background:
-    radial-gradient(120% 140% at 0% 0%, color-mix(in srgb, var(--accent) 9%, transparent), transparent 60%),
-    linear-gradient(
-      180deg,
-      color-mix(in srgb, var(--surface-strong) 72%, transparent),
-      color-mix(in srgb, var(--surface-muted) 60%, transparent)
-    );
-  backdrop-filter: blur(28px) saturate(1.5);
-  -webkit-backdrop-filter: blur(28px) saturate(1.5);
-}
-
-/* The paper affordances leave with the cream: ruled lines were in the background
-   just replaced, the torn bottom edge is here. Top rim is what reads as glass. */
-.receipt-card.receipt-glass {
-  border-top-color: rgba(255, 255, 255, 0.78);
-}
-
-.receipt-card.receipt-glass::after {
-  content: none;
-}
-
-:root[data-theme="dark"] .receipt-card.receipt-glass {
-  border-top-color: rgba(255, 255, 255, 0.12);
-}
-
 .receipt-divider {
   border-top: 1px dashed var(--receipt-dash);
 }
@@ -883,63 +748,9 @@ input[type="number"],
   animation: bill-items-open 180ms ease-out;
 }
 
-/* History tab — expandable bill records */
-.history-record {
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: var(--surface-strong);
-  overflow: hidden;
-}
-
-.history-record-toggle {
-  display: flex;
-  width: 100%;
-  align-items: center;
-  justify-content: space-between;
-  gap: 1rem;
-  padding: 0.75rem;
-  text-align: left;
-  background: transparent;
-  color: inherit;
-  cursor: pointer;
-  transition: background-color 160ms ease;
-}
-
-.history-record-toggle:hover {
-  background: var(--surface-muted);
-}
-
-.history-record-badge {
-  display: inline-flex;
-  flex-shrink: 0;
-  align-items: center;
-  gap: 0.6rem;
-}
-
-/* The paid/claimed stamp is normally an absolute overlay; render it inline
-   beside the chevron inside the history toggle. */
-.history-record-badge .paid-bill-stamp {
-  position: static;
-  inset: auto;
-  width: clamp(2.8rem, 7vw, 3.6rem);
-  transform: rotate(-6deg);
-}
-
-.history-chevron {
-  color: var(--accent);
-  transition: transform 180ms ease;
-}
-
-.history-record[data-open="true"] .history-chevron {
-  transform: rotate(180deg);
-}
-
-.history-detail {
-  border-top: 1px solid var(--border);
-  padding: 0.85rem;
-  animation: bill-items-open 180ms ease-out;
-}
-
+/* Detail inside an opened record row (see .bill-record). The shells moved to the
+   poster grammar; these are the innards — what the chain said — kept as
+   footnotes and re-toned to the poster's dim. */
 .history-detail-grid {
   display: grid;
   gap: 0.85rem;
@@ -952,35 +763,35 @@ input[type="number"],
 }
 
 .history-detail-label {
-  font-size: 0.7rem;
-  font-weight: 700;
+  font-family: var(--font-clash), system-ui, sans-serif;
+  font-size: 0.68rem;
+  font-weight: 500;
   text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: var(--text-muted);
+  letter-spacing: 0.16em;
+  color: var(--pay-poster-dim);
 }
 
 .history-event-row {
   display: flex;
-  align-items: center;
+  align-items: baseline;
   justify-content: space-between;
   gap: 0.75rem;
+  border-bottom: 1px solid color-mix(in srgb, var(--pay-poster-rule) 45%, transparent);
+  padding-bottom: 0.35rem;
 }
 
+.history-event-row:last-child { border-bottom: 0; }
+
+/* A hash is evidence to open, not a headline: mono, dim, underlined. */
 .history-tx-link {
-  color: var(--accent);
-  font-weight: 600;
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
   text-decoration: underline;
-  text-underline-offset: 2px;
+  text-underline-offset: 0.25em;
 }
 
 .history-tx-link:hover {
-  color: var(--accent-strong);
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .history-detail {
-    animation: none;
-  }
+  color: var(--pay-poster-fg);
 }
 
 .receipt-index {
@@ -998,24 +809,6 @@ input[type="number"],
   box-shadow:
     inset 0 1px 0 color-mix(in srgb, var(--receipt-text) 12%, transparent),
     0 22px 58px rgba(7, 20, 33, 0.13);
-}
-
-.manual-entry-link {
-  display: inline-flex;
-  width: 100%;
-  justify-content: center;
-  border: 0;
-  background: transparent;
-  color: var(--accent);
-  font-size: 0.92rem;
-  font-weight: 780;
-  text-decoration: underline;
-  text-underline-offset: 0.22em;
-  cursor: pointer;
-}
-
-.manual-entry-link:hover {
-  color: color-mix(in srgb, var(--accent) 78%, var(--arc-cyan));
 }
 
 .scan-surface[data-scanning="true"]::after {
@@ -2081,52 +1874,336 @@ input[type="number"],
   }
 }
 
+/* ============================================================================
+   The colophon (site footer)
+   ==========================================================================
+
+   A printed spec sheet ends with a colophon: what the thing is, and the details
+   you would need to check it. This is the site's.
+
+   It was the last surface still wearing the pre-redesign skin — a
+   --surface-muted slab of centred text with blue underlined links — at the foot
+   of a site where nothing else draws a box, nothing else centres, and no link is
+   blue. So it is rebuilt out of the same four pieces every section above it is
+   built from: .lp-measure for the column, a hairline for a boundary,
+   .settle-label for a caps rail, and .bill-toggle for a link whose rule draws
+   itself when you reach it. Everything below is the layout those pieces sit in;
+   none of it is a new vocabulary invented for the footer.
+
+   Height is a first-class constraint here, not an afterthought. This block
+   renders under every route, so every row it adds is a row the reader pays for on
+   all of them. Three bands is the ceiling: a link rail carrying the network, a
+   ledger, and the legal band. The first draft spent 727px — most of a laptop
+   viewport — on a wordmark the masthead already carries, a display-type
+   restatement of the hero's own sentence, two vertical link columns that were
+   five rows tall to a rail's one, and six contract rows. All of it is gone; what
+   it said is either said elsewhere or was not worth a row.
+
+   The name is load-bearing: the settle and IOU tabs hide the footer by
+   `.site-footer` (see the display:none pair further down) because those two own
+   the whole viewport. */
 .site-footer {
+  /* Every dim below is a color-mix against the ground, and this ground is the
+     app's mist — not the cream :root hands the /pay poster. The same correction
+     .lp-paper, .bill-poster and .app-masthead each make locally; without it the
+     footer's dims are mixed against a colour it is not painted on.
+
+     The footer paints nothing of its own. A tinted band was tried here and taken
+     back out: a footer is the same sheet of paper as the page above it, and a slab
+     in a different shade reads as a component dropped onto the page rather than
+     the end of it. The boundary does that job by itself — the rule below is what
+     got heavier instead. */
+  --pay-poster-bg: var(--background);
+  /* One measure for the whole block's vertical rhythm, so slimming the footer is
+     one number rather than six clamps kept in sync by hand. Every band's gap is
+     this or a stated fraction of it. Tuned against the measured height: 1.75rem
+     put the footer at 42% of a 900px viewport and 1.35rem at 36%, both of which
+     are still a footer you scroll into rather than arrive at. */
+  --foot-gap: clamp(0.8rem, 0.65rem + 0.5vw, 1.1rem);
   margin-top: auto;
-  border-top: 1px solid var(--border);
-  background: var(--surface-muted);
-  color: var(--text-muted);
-  padding: 1.5rem 1.25rem 2rem;
+  color: var(--pay-poster-fg);
+  padding-bottom: var(--foot-gap);
+}
+
+/* ── The top boundary ─────────────────────────────────────────────────────────
+   The only thing separating footer from page, so it is the one rule on this page
+   drawn heavier than a hairline: 2px at 38% ink, against the 1px at 14% every
+   section divider above it uses. That contrast is the point — a boundary the same
+   weight as the dividers *inside* the page cannot say the page has ended.
+
+   `--pay-poster-fg` at an opacity rather than a colour-mix: the fg token already
+   flips ink→cream with the theme, so one declaration covers both, and there is no
+   color-mix() of two var()s for Lightning CSS to emit a broken fallback for.
+
+   It still draws itself — the same `lp-draw` keyframe on the same view() timeline
+   the section rules use, so the footer arrives the way every section above it did
+   and there is no JS to schedule. The range ends later than a section's
+   (cover 20%) because the footer is the last thing on the page: by the time the
+   scroll can go no further it must be fully drawn. */
+.site-footer-inner::before {
+  content: "";
+  display: block;
+  height: 2px;
+  background: var(--pay-poster-fg);
+  opacity: 0.38;
+  transform-origin: left;
+  animation: lp-draw 0.9s var(--ease-out) both;
+  animation-timeline: view();
+  animation-range: entry 2% cover 34%;
+}
+
+/* ── The top row ──────────────────────────────────────────────────────────────
+   Every link in the footer on one baseline, with the network at the far end.
+
+   This row used to be two: a display-type signature line above, the rail below.
+   The line is gone — "Split a bill. Settle in USDC." is the hero's sentence, and
+   restating it at display size at the foot of the page was the footer's tallest
+   element earning nothing — and the network label came down onto the rail rather
+   than being left alone on a row of its own. The network stays because it is the
+   one fact in this footer that changes what the money on screen means.
+
+   That label is a bare .settle-label, not the old .network-stamp chip: that one is
+   a bordered, gradient-filled, drop-shadowed pill, and the landing dropped it for
+   exactly the reason it cannot come back here. */
+.site-footer-top {
   display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 0.75rem;
-  text-align: center;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.35rem clamp(1.5rem, 1rem + 2vw, 3rem);
+  padding-top: var(--foot-gap);
+}
+
+/* ── The link rail ────────────────────────────────────────────────────────────
+   The links that are only in the footer, on one baseline. It used to be two
+   groups — the product's own nav beside the developer links — and the product
+   half is gone: "How it works", "Agents", "Market" and "Launch app" are the
+   masthead's four links, and a reader who scrolled past the masthead to reach
+   this rail did not need them offered a second time. Docs went with them; it is
+   in the masthead too. What is left is what has nowhere else to be.
+
+   No margin of its own: it is a child of .site-footer-top, which owns the row. */
+.site-footer-rail {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.3rem clamp(1.1rem, 0.8rem + 1vw, 1.75rem);
+}
+
+/* A caps link that is also a link out. It declares its own inline-flex rather
+   than relying on the rail's blockification: a flex *item* becomes a block box,
+   and `gap` on a block box does nothing. Neither .iou-provider nor .bill-toggle
+   sets `display`, so this is not fighting them on source order. */
+.site-footer-out {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.35rem;
+}
+
+/* ── The on-chain band ────────────────────────────────────────────────────────
+   The one thing in this footer that is not boilerplate: the addresses the site
+   actually writes to, each one checkable on the explorer.
+
+   Set as a ledger, because that is what it is — the same ruled row the IOU tab
+   lists a debt in: name on the left, value on the right, a hairline under each,
+   nothing drawn around the group.
+
+   Two rows, not six. Arc's own predeploys, the mandate and AgenticCommerce are
+   real and the app uses them, but a footer is not a deployment manifest — the
+   README is — and this band is the difference between a colophon and a config
+   dump. */
+.site-footer-chain {
+  margin-top: var(--foot-gap);
+  border-top: 1px solid var(--pay-poster-rule);
+  padding-top: calc(var(--foot-gap) * 0.55);
+}
+
+.site-footer-chain > h2 {
+  margin: 0 0 0.15rem;
+}
+
+.site-footer-ledger {
+  display: grid;
+  /* Narrower than the other bands' gap on purpose: this one is what decides
+     whether the columns fit, and every rem of it is 2rem off the width the
+     breakpoint below needs. */
+  gap: 0 clamp(1rem, 0.7rem + 1.5vw, 2.5rem);
+  grid-template-columns: minmax(0, 1fr);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* One row of two, declared rather than left to auto-fit, and both counts here
+   divide two exactly so neither can leave a rule hanging with nothing beside it.
+   (auto-fit with a 19rem floor chose three columns while there were five rows,
+   which is exactly that bug.)
+
+   640px is measured, not guessed: the widest row is "RecurringTabFactory" beside a
+   15-character address, which needs ~268px, and at 640 the measure gives each of
+   two columns ~280. It was 940 while this band had three columns; keeping that
+   number would have stacked two rows that fit side by side for another 300px of
+   viewport, and a stacked row costs the footer height on every route. */
+@media (min-width: 640px) {
+  .site-footer-ledger {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+/* .iou-row's grammar at footer scale. Its own size rather than that one's clamp:
+   .iou-row is tuned for a debt you are about to settle, and a contract address
+   is a reference, not a figure. */
+.site-footer-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.45rem 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--pay-poster-rule) 45%, transparent);
+  color: color-mix(in srgb, var(--pay-poster-fg) 72%, var(--pay-poster-bg));
+  text-decoration: none;
+  transition: color var(--dur-1) var(--ease-out), border-color var(--dur-1) var(--ease-out);
+}
+
+/* The whole row lights and its rule goes to ink — what a focused .bill-cell does
+   and what a.lp-row does. No wash behind it: these rows are a third of the
+   measure and a tint that narrow reads as a button, which is the one thing they
+   are not. */
+.site-footer-row:hover,
+.site-footer-row:focus-visible {
+  color: var(--pay-poster-fg);
+  border-bottom-color: var(--pay-poster-fg);
+}
+
+.site-footer-row:focus-visible {
+  outline: 1px solid currentColor;
+  outline-offset: 0.35em;
+}
+
+.site-footer-row-name {
+  font-family: var(--font-clash), system-ui, sans-serif;
+  font-weight: 300;
+  font-size: 0.95rem;
+  letter-spacing: -0.01em;
+}
+
+/* Mono and tabular, so every row's 0x starts on the same stem and the
+   truncations line up down the column — the reason the app sets every hash in
+   mono too. It inherits the row's colour on hover so the row lights as one
+   thing; at rest it is dim, because the name is the content and the address is
+   the reference. */
+.site-footer-row-addr {
+  display: inline-flex;
+  flex: none;
+  align-items: baseline;
+  gap: 0.4rem;
+  font-family: var(--font-mono);
+  font-size: 0.74rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--pay-poster-dim);
+  transition: color var(--dur-1) var(--ease-out);
+}
+
+.site-footer-row:hover .site-footer-row-addr,
+.site-footer-row:focus-visible .site-footer-row-addr {
+  color: inherit;
+}
+
+/* ── The legal band ───────────────────────────────────────────────────────────
+   The disclaimer is the one thing here that must not get quieter: it is what
+   tells a reader the USDC on screen is not money. So it keeps the standfirst's
+   size and .bill-poster-note's measure instead of the 0.75rem small print the
+   old footer set it at, and the rule above it is at full weight rather than the
+   ledger's 45%.
+
+   It is one line now rather than four. The clause-by-clause notice — the brands
+   named individually, the trademark acknowledgment — is on /disclaimer and
+   /legal, and both are linked in the row directly beside this paragraph; setting
+   it in full here spent four lines under every route to say what a reader who
+   cares is one click from reading properly. What is left is the part that has to
+   land without a click, and it keeps its full size to do it. */
+.site-footer-legal {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: calc(var(--foot-gap) * 0.6) clamp(1.5rem, 1rem + 3vw, 4rem);
+  margin-top: var(--foot-gap);
+  border-top: 1px solid var(--pay-poster-rule);
+  padding-top: calc(var(--foot-gap) * 0.55);
+}
+
+/* The paragraph leaves the right half of the measure empty — which is exactly
+   the width the two legal rows need. */
+@media (min-width: 900px) {
+  .site-footer-legal {
+    grid-template-columns: minmax(0, 78ch) minmax(0, auto);
+    justify-content: space-between;
+  }
 }
 
 .site-footer-disclaimer {
-  max-width: 64rem;
+  max-width: 78ch;
   margin: 0;
-  font-size: 0.8rem;
+  font-size: 0.78rem;
   line-height: 1.5;
+  color: var(--pay-poster-dim);
 }
 
+/* "Arc Testnet" and "no real funds" are the two clauses that change what the
+   sentence means, so they go to full ink. Weight and colour are what this system
+   uses for emphasis; the paragraph carries the rest. */
 .site-footer-disclaimer strong {
-  color: var(--text-soft);
-  font-weight: 600;
+  color: var(--pay-poster-fg);
+  font-weight: 500;
+}
+
+.site-footer-base {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.5rem;
+}
+
+@media (min-width: 900px) {
+  /* Bottom-aligned with the paragraph's last line, so the band closes on one
+     baseline instead of two ragged columns. */
+  .site-footer-base {
+    align-items: flex-end;
+    justify-content: flex-end;
+  }
 }
 
 .site-footer-links {
   display: flex;
   flex-wrap: wrap;
-  justify-content: center;
-  gap: 0.4rem 1.1rem;
-  font-size: 0.8rem;
+  align-items: baseline;
+  gap: 0.35rem 1.35rem;
 }
 
-.site-footer-links a {
-  color: var(--accent);
-  text-decoration: none;
-}
-
-.site-footer-links a:hover {
-  text-decoration: underline;
+/* .bill-toggle draws its rule with an absolutely positioned ::after pinned to
+   left:0/right:0, which needs a block box to measure. In a flex rail these links
+   are items and get one for free — this is only for anywhere they are not. */
+.site-footer-links > * {
+  display: flex;
 }
 
 .site-footer-copy {
   margin: 0;
-  font-size: 0.75rem;
-  color: var(--text-muted);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* The top rule is drawn by a scroll-driven animation, which a
+     `prefers-reduced-motion` user has not asked for. `both` fill would strand it
+     at scaleX(0) if the animation were merely cancelled, so the resting state is
+     restored by hand — the same correction the section rules need. */
+  .site-footer-inner::before {
+    animation: none;
+    transform: none;
+  }
+
+  .site-footer-row,
+  .site-footer-row-addr {
+    transition: none;
+  }
 }
 
 /* ============================================================================
@@ -2148,12 +2225,17 @@ input[type="number"],
     box-shadow var(--dur-3) var(--ease-out) !important;
 }
 
+/* Display type, in the poster's voice. Weight 300 and −0.03em tracking are not a
+   style choice made here — they are .bill-display's, the merchant masthead the
+   app sets a scanned receipt in. A marketing page set two weights heavier than
+   the product it advertises reads as a different product, which is the whole
+   thing the spec-sheet system was built to stop. */
 .lp-display {
   font-family: var(--font-display);
   font-size: var(--lp-display-xl);
-  font-weight: 600;
-  letter-spacing: -0.01em;
-  line-height: 0.98;
+  font-weight: 300;
+  letter-spacing: -0.032em;
+  line-height: 0.9;
   color: var(--text);
   text-wrap: balance;
 }
@@ -2161,16 +2243,16 @@ input[type="number"],
 .lp-display-lg {
   font-family: var(--font-display);
   font-size: var(--lp-display-lg);
-  font-weight: 600;
-  letter-spacing: -0.01em;
-  line-height: 1.02;
+  font-weight: 300;
+  letter-spacing: -0.03em;
+  line-height: 0.96;
   color: var(--text);
   text-wrap: balance;
 }
 
 .lp-lede {
   font-size: var(--lp-lede);
-  line-height: 1.55;
+  line-height: 1.6;
   color: var(--text-soft);
   text-wrap: pretty;
 }
@@ -2217,19 +2299,393 @@ input[type="number"],
   border-top-color: rgba(255, 255, 255, 0.12);
 }
 
-/* Within the landing, boost the browser mock and any explicitly-blurred element
-   to the full glass level (stronger blur + saturation pop). */
-.lp-root .lp-browser {
-  backdrop-filter: blur(28px) saturate(1.6);
-  -webkit-backdrop-filter: blur(28px) saturate(1.6);
-  /* Glass rim on the browser chrome */
-  border-top-color: rgba(255, 255, 255, 0.72);
-  box-shadow: var(--shadow-soft);
+/* ── The landing, as a poster ─────────────────────────────────────────────────
+   `.lp-root` above is the /api page's glass treatment and stays as it is. The
+   landing itself no longer uses it: it is set on the same ground the app tabs
+   are, so that every class the product already owns — .settle-label,
+   .bill-poster, .bill-toggle, .bill-figure, .bill-cell-rule, .settle-action —
+   resolves its dims here and simply works. That is the redesign, in one
+   declaration: the marketing page stops having a design of its own.
+
+   The two custom properties are the whole contract. Every mix in the spec-sheet
+   system is `color-mix(… var(--pay-poster-fg) N%, var(--pay-poster-bg))`, so
+   handing it the page's real ground is what makes a dim label dim against THIS
+   paper rather than against the /pay page's cream. */
+.lp-paper {
+  --pay-poster-bg: var(--background);
+  color: var(--pay-poster-fg);
 }
 
-:root[data-theme="dark"] .lp-root .lp-browser {
-  border-top-color: rgba(255, 255, 255, 0.1);
+/* Sections on the landing are .bill-poster — same head, same marks rail, same
+   standfirst, same body — with the marketing page's air instead of the app's. A
+   tab has four sections above the fold and cannot afford 11rem of white; a
+   landing page is nothing but that afford. */
+.lp-paper .bill-poster {
+  border-top: 0;
+  padding: 0;
 }
+
+/* The section boundary, and it draws itself.
+
+   The rule goes on the measure's ::before rather than on the section, so it spans
+   the text column exactly — the same relationship .bill-poster's own border-top
+   has to the padded wrapper it sits in inside the app. :first-child because the
+   two demo sections have a second .lp-measure for the plate, and a rule above
+   that one would divide a section from itself.
+
+   Scroll-driven, in CSS: no JS to schedule, nothing for GSAP to own, and it
+   cannot desync from the scroll because it IS the scroll. Where
+   `animation-timeline` is unsupported the declaration is dropped and the
+   animation simply runs once on load — which ends on the same drawn rule, so the
+   fallback is the correct picture rather than a broken one. */
+@keyframes lp-draw {
+  from {
+    transform: scaleX(0);
+  }
+}
+
+.lp-paper .bill-poster > .lp-measure:first-child::before {
+  content: "";
+  display: block;
+  height: 1px;
+  margin-bottom: var(--lp-section-y);
+  background: var(--pay-poster-rule);
+  transform-origin: left;
+  animation: lp-draw 0.9s var(--ease-out) both;
+  animation-timeline: view();
+  animation-range: entry 4% cover 20%;
+}
+
+/* The last section closes the page, so it needs the air underneath that every
+   other section gets from the one below it. */
+.lp-paper .bill-poster[data-last] {
+  padding-bottom: var(--lp-section-y);
+}
+
+/* The measure. Sections declare it once here rather than repeating a max-width
+   and four padding utilities apiece. */
+.lp-measure {
+  width: 100%;
+  max-width: 88rem;
+  margin-inline: auto;
+  padding-inline: 1rem;
+}
+
+@media (min-width: 640px) {
+  .lp-measure { padding-inline: 1.5rem; }
+}
+
+@media (min-width: 1024px) {
+  .lp-measure { padding-inline: 2rem; }
+}
+
+/* The hero's rail carries the page's three proof figures, and each one has a
+   label and a note under it rather than the bare number a tab's rail holds. At
+   .bill-poster-rail's 7.5rem minimum a 430px phone fits three of them, which
+   turns "ways to tag someone" into three lines of two words. A wider minimum
+   drops it to two columns there and one on a small phone. Scoped under .lp-paper
+   because .bill-poster-rail is declared further down this file and would win the
+   tie on source order. */
+.lp-paper .lp-hero-rail {
+  grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
+}
+
+/* The step numeral a section hangs off. The app's own head sets "02 · Verify" in
+   one .settle-label; a landing section has more room, so the numeral is set as a
+   figure and the words stay caps beside it. It sits inside that label, so it has
+   to opt out of the caps rail's 0.18em — tracking that reads as "set wide" on
+   four capitals reads as a gap between two digits — and buy back the word space
+   the label's tiny type would otherwise give it. */
+.lp-step {
+  font-family: var(--font-display);
+  font-weight: 300;
+  font-size: clamp(1.6rem, 1.2rem + 1.2vw, 2.4rem);
+  line-height: 1;
+  letter-spacing: -0.02em;
+  margin-right: 0.9rem;
+  font-variant-numeric: tabular-nums;
+  color: color-mix(in srgb, var(--pay-poster-fg) 34%, var(--pay-poster-bg));
+}
+
+/* ── The demo plate ───────────────────────────────────────────────────────────
+   What used to be a rounded glass browser window with three traffic lights and a
+   pill for the URL. Six pieces of chrome to say "this is a screenshot" — on a
+   page whose entire claim is that nothing draws a box.
+
+   It is now a printed plate, the same one the bills tab puts a photographed
+   receipt on: a rule, a caption rail in caps, the thing itself, and a rule under
+   it. The URL survives because it is the only part of a browser frame that was
+   ever information. */
+.lp-plate {
+  border-top: 1px solid var(--pay-poster-rule);
+}
+
+.lp-plate-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.35rem 1.5rem;
+  padding: 0.7rem 0;
+}
+
+/* The screen itself. No radius, no border, no shadow — a wash of ink at 2% is
+   enough to say "this area is a screen" while staying a wash rather than a card.
+   Registration arms mark its extent, exactly as the capture plate's do.
+
+   It clips, and that is load-bearing rather than tidiness: the demo's receipt
+   starts 170px to the left of the plate and slides in, and its dropdown is
+   positioned by measurement and can land past the left edge. The old browser
+   frame clipped both by accident of being a box; this has to do it on purpose. */
+.lp-plate-screen {
+  position: relative;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--pay-poster-fg) 2%, transparent);
+}
+
+.lp-plate-screen::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  --mark: color-mix(in srgb, var(--pay-poster-fg) 26%, transparent);
+  --arm: clamp(0.9rem, 0.7rem + 0.5vw, 1.6rem);
+  background-image:
+    linear-gradient(var(--mark), var(--mark)), linear-gradient(var(--mark), var(--mark)),
+    linear-gradient(var(--mark), var(--mark)), linear-gradient(var(--mark), var(--mark));
+  background-repeat: no-repeat;
+  /* Horizontal arm then vertical arm, at both bottom corners — the top pair is
+     already implied by the caption rule the bar sits on. */
+  background-size: var(--arm) 1px, 1px var(--arm), var(--arm) 1px, 1px var(--arm);
+  background-position: left bottom, left bottom, right bottom, right bottom;
+}
+
+/* The demo's own step rail, under the plate: the app's view pair verbatim. */
+.lp-plate-steps {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.35rem clamp(1.1rem, 0.8rem + 1vw, 2rem);
+  padding: 0.85rem 0 0;
+  border-top: 1px solid var(--pay-poster-rule);
+}
+
+/* The app, reproduced. A plate is not the thing — it is a picture of the thing —
+   so the poster's figures come down one register inside it, the way a screenshot
+   in a printed spec sheet is smaller than the screen it was taken from.
+   Everything else (the weight, the tracking, the rules, the caps rails) is
+   untouched, so it still reads as the same product.
+
+   It is also what makes the pinned frame work: at the app's own sizes the stage
+   is ~1040px, which no laptop viewport can hold, and a pinned element taller than
+   the viewport has its foot cut off — including the control that settles the
+   bill, which is the one frame the whole demo exists to reach. */
+.lp-plate-screen :is(.bill-payer-target, .bill-payer-share) {
+  font-size: clamp(1.15rem, 0.9rem + 1vw, 1.85rem);
+}
+
+.lp-plate-screen .bill-payer {
+  padding-block: clamp(0.55rem, 0.4rem + 0.5vw, 0.9rem);
+}
+
+.lp-plate-screen .bill-payer-meta {
+  margin-top: 0.45rem;
+}
+
+.lp-plate-screen .settle-action {
+  font-size: clamp(1.35rem, 1rem + 1.2vw, 2.1rem);
+  margin-top: 0;
+}
+
+.lp-plate-screen .bill-figure-sm {
+  font-size: clamp(1rem, 0.9rem + 0.5vw, 1.4rem);
+}
+
+.lp-plate-screen .bill-poster-foot {
+  margin-top: clamp(1.1rem, 0.8rem + 1vw, 2rem);
+}
+
+/* The numeral on a step. Set in mono and dimmed a further step back, the way the
+   app's line items set their index: it is a position in a sequence, not a word,
+   and the eye should be able to skip it. */
+.lp-step-num {
+  font-family: var(--font-mono);
+  font-size: 0.86em;
+  letter-spacing: 0.02em;
+  opacity: 0.55;
+}
+
+/* A tone on a caps label. The app scopes these to .bill-poster, because inside a
+   tab a stray coloured label would be ambiguous; on the landing there is no
+   other kind of section, so the whole page is that scope. */
+.lp-paper .settle-label[data-tone="ok"] { color: var(--success); }
+.lp-paper .settle-label[data-tone="warn"] { color: var(--warning-text); }
+
+/* ── The masthead ─────────────────────────────────────────────────────────────
+   .app-masthead's grammar, with the one thing the app's header does not have to
+   solve: it is sticky over a page that scrolls under it. Bare, that is
+   unreadable; boxed, it is the one card left on the page. So it earns its ground
+   only once there is something behind it — the rule and the frost fade in
+   together past the hero, and at the top of the page the header is just type on
+   paper. */
+.lp-masthead {
+  position: sticky;
+  top: 0;
+  z-index: 40;
+  border-bottom: 1px solid transparent;
+  transition:
+    background-color var(--dur-3) var(--ease-out),
+    border-color var(--dur-3) var(--ease-out),
+    backdrop-filter var(--dur-3) var(--ease-out);
+}
+
+.lp-masthead[data-stuck="true"] {
+  border-bottom-color: var(--pay-poster-rule);
+  /* Not lower than this. The band is over live content, and at 78% the receipt
+     scrolling under it was legible through the words — a header you can read the
+     page through is a header you cannot read. */
+  background: color-mix(in srgb, var(--background) 90%, transparent);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+}
+
+/* The logo shrinks as the header docks, so the sticky band costs less of the
+   screen the further you read. Everything about the lockup — its width, and the
+   two offsets that crop the wordmark out of the source image — is derived from
+   --logo-width, so registering it as a real <length> lets one transition move
+   all three in step. Transitioning `width` alone would slide the box while the
+   crop inside it jumped. */
+@property --logo-width {
+  syntax: "<length>";
+  inherits: true;
+  initial-value: 12rem;
+}
+
+.lp-masthead .logo-crop {
+  transition: --logo-width var(--dur-3) var(--ease-out);
+}
+
+.lp-masthead[data-stuck="true"] .logo-crop {
+  --logo-width: clamp(7.6rem, 9vw, 9.2rem);
+}
+
+/* ── The hero's call ──────────────────────────────────────────────────────────
+   .settle-action is the /pay page's signature control: borderless, display-sized,
+   receded at rest, tracking tightening as it lights. It is the right control here
+   for the same reason it is right there — it is the one thing on the screen you
+   are meant to press — but a landing hero already has a 9rem headline above it,
+   so it comes down a register rather than competing.
+
+   Scoped under .lp-paper deliberately: .settle-action is declared further down
+   this file, so an unscoped .lp-call would lose every shared property to it on
+   source order alone. */
+.lp-paper .lp-call {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5em;
+  margin: 0;
+  font-size: clamp(1.5rem, 1rem + 1.6vw, 2.4rem);
+  text-decoration: none;
+}
+
+.lp-paper .lp-call > svg {
+  transition: transform var(--dur-2) var(--ease-out);
+}
+
+.lp-paper .lp-call:hover > svg,
+.lp-paper .lp-call:focus-visible > svg {
+  transform: translateX(0.18em);
+}
+
+/* A ruled row: the shape every list on this page takes now that none of them is
+   a grid of cards. Content columns are the caller's; the rule is ours.
+
+   The row only ever draws its own foot. The head rule belongs to the list, not
+   to its first member — .lp-row:first-child would put one on a two-column grid's
+   top-left cell and nowhere else, which reads as a mistake rather than as a
+   boundary. This is the app's own .bill-payers / .bill-payer arrangement. */
+.lp-rows {
+  border-top: 1px solid var(--pay-poster-rule);
+}
+
+.lp-row {
+  display: grid;
+  align-items: baseline;
+  gap: 0.5rem clamp(1rem, 0.6rem + 1.6vw, 2.5rem);
+  padding: clamp(0.85rem, 0.6rem + 0.7vw, 1.35rem) 0;
+  border-bottom: 1px solid var(--pay-poster-rule);
+}
+
+/* A row whose subject is currently the problem — the agent demo's confidence
+   signal while it is under threshold. Tint is state: the row's own rule carries
+   it, which is the same thing a warned .bill-cell does two thousand lines down. */
+.lp-row[data-state="warn"] {
+  border-bottom-color: var(--warning-text);
+}
+
+/* A row that is also a link out. The whole row lights, and the arrow leans —
+   no lift, no scale, no shadow; there is no card here to lift. */
+a.lp-row {
+  color: inherit;
+  text-decoration: none;
+  transition: background var(--dur-2) var(--ease-out);
+}
+
+a.lp-row:hover {
+  background: color-mix(in srgb, var(--pay-poster-fg) 3%, transparent);
+}
+
+/* The lean, on any link out — the ruled rows in the stack list, the bare caps
+   links on the rails, and the colophon's contract rows all want it, and it is the
+   same gesture every time. The footer is outside .lp-paper (it is in the body,
+   under every route), so it is named here rather than given a second copy. */
+:is(.lp-paper, .site-footer) .lp-row-out {
+  transition: transform var(--dur-2) var(--ease-out);
+}
+
+:is(.lp-paper, .site-footer) a:hover .lp-row-out,
+:is(.lp-paper, .site-footer) a:focus-visible .lp-row-out {
+  transform: translate(0.15em, -0.15em);
+}
+
+/* Row prose: one register under the poster's own body copy, since a row holds a
+   sentence about a thing rather than the thing. */
+.lp-row-body {
+  font-size: 0.86rem;
+  line-height: 1.6;
+  color: var(--pay-poster-dim);
+}
+
+/* Body prose that is an argument rather than a caption — the paragraph closing a
+   column, where .lp-lede's full size would shout across a half-width measure.
+   A real class rather than a `text-[0.95rem]` on .lp-lede: globals.css is
+   unlayered and Tailwind's utilities are in @layer utilities, so a utility can
+   never override a property a class in this file already sets. */
+.lp-note {
+  max-width: 52ch;
+  font-size: 0.95rem;
+  line-height: 1.65;
+  color: var(--pay-poster-dim);
+}
+
+.lp-note b {
+  font-weight: 400;
+  color: var(--pay-poster-fg);
+}
+
+.lp-row-proof {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  letter-spacing: 0.01em;
+  color: color-mix(in srgb, var(--pay-poster-fg) 52%, var(--pay-poster-bg));
+  overflow-wrap: anywhere;
+}
+
+/* The receipt for a claim that has been checked — the recomputed hash matching
+   its on-chain commitment, a batch that landed. Tint is state here too. */
+.lp-row-proof[data-tone="ok"] { color: var(--success); }
+.lp-row-proof[data-tone="accent"] { color: var(--accent); }
 
 /* SplitType wraps hero lines in .line > .word. Each line gets its own clip
    mask so words can slide up "out of nothing" — the reveal reads as printing,
@@ -2246,8 +2702,12 @@ input[type="number"],
 
 .lp-hero-headline .line {
   overflow: hidden;
-  padding-block: 0.08em; /* keep descenders/ascenders inside the clip */
-  margin-block: -0.08em;
+  /* At line-height 0.9 the line box is shorter than the em box, so ascenders and
+     descenders sit outside it — and the clip that masks the slide-up would cut
+     them off mid-glyph. Pad the clip past both, and cancel it in margin so the
+     leading the headline is set at is the leading it keeps. */
+  padding-block: 0.16em;
+  margin-block: -0.16em;
 }
 
 /* Once the slide-up reveal finishes, the clip has no job left but to cut the
@@ -2268,37 +2728,28 @@ input[type="number"],
   }
 }
 
-/* Accent line of the headline: blue-to-light-blue gradient — no teal/green. */
+/* The emphasised clause of a headline. It used to be a blue-to-pale-blue
+   gradient clipped to the text, which needed two compensating rules to survive
+   SplitType's transformed words and its own descenders — and which said nothing.
+   The poster carries emphasis with colour and with whether a rule is drawn, so
+   this is one flat ink: the brand blue the network dot already uses. */
 .lp-headline-accent {
-  background: linear-gradient(92deg, var(--usdc-blue) 8%, #93c5fd 92%);
-  background-clip: text;
-  -webkit-background-clip: text;
-  color: transparent;
+  color: var(--accent);
 }
 
-:root[data-theme="dark"] .lp-headline-accent {
-  background: linear-gradient(92deg, #7db8f5 8%, #bfdbfe 92%);
-  background-clip: text;
-  -webkit-background-clip: text;
-}
-
-/* Chrome won't paint background-clip: text through transformed inline-block
-   descendants (the SplitType words), leaving the accent line invisible.
-   Re-clip the gradient on each word so both engines paint it. */
-.lp-headline-accent .word {
-  background: inherit;
-  background-clip: text;
-  -webkit-background-clip: text;
-  /* background-clip: text only paints inside the word's box, and at
-     line-height 0.98 that box ends above the descender ink — the "y" tails
-     get no gradient and turn invisible. Pad the box down past the descenders
-     (margin compensates so layout doesn't move). */
-  padding-bottom: 0.18em;
-  margin-bottom: -0.18em;
+/* A hairline that draws itself. The landing's reveal primitive for rules GSAP
+   owns — the app's own gesture (a lit .bill-cell-rule under a focused figure)
+   promoted to a section boundary. Section rules between .bill-posters draw
+   themselves in CSS instead; see .lp-measure:first-child::before below. */
+.lp-rule {
+  height: 1px;
+  background: var(--pay-poster-rule);
+  transform-origin: left;
 }
 
 /* The brand S stands in for the letter S of "Split" — sized to the caps'
-   optical height, sitting on the baseline. */
+   optical height, sitting on the baseline. Two files, one per ground: the dark
+   ink reads on the light poster, the pale one on the dark poster. */
 .lp-hero-s {
   display: inline-block;
   height: 1em;
@@ -2307,60 +2758,28 @@ input[type="number"],
   margin-right: 0.02em;
 }
 
-/* Realistic browser chrome around the live demo. */
-.lp-browser {
-  border: 1px solid var(--border);
-  border-radius: 14px;
-  background: var(--surface);
-  box-shadow: var(--shadow);
-  backdrop-filter: blur(18px);
-  overflow: hidden;
+/* splitsy-dark.png frames its S with far less transparent margin than
+   splitsy2.png (94% of the frame's height against 81%), so a straight swap would
+   print a letter 15% taller, shifted right and off the baseline. These four
+   numbers put the two S's on the same cap height, baseline and left edge —
+   re-measure them (glyph bbox ÷ frame) if either file is ever replaced. */
+.lp-hero-s-light {
+  height: 0.87em;
+  vertical-align: -0.051em;
+  margin-left: -0.012em;
+  margin-right: -0.006em;
 }
 
-.lp-browser-bar {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-  padding: 0.65rem 0.9rem;
-  border-bottom: 1px solid var(--border);
-  background: color-mix(in srgb, var(--surface-strong) 72%, transparent);
+.lp-hero-s-dark {
+  display: none;
 }
 
-.lp-browser-dots {
-  display: inline-flex;
-  gap: 0.42rem;
+:root[data-theme="dark"] .lp-hero-s-light {
+  display: none;
 }
 
-.lp-browser-dots span {
-  width: 0.72rem;
-  height: 0.72rem;
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--text-muted) 26%, transparent);
-}
-
-.lp-browser:hover .lp-browser-dots span:nth-child(1) { background: #ff5f57; }
-.lp-browser:hover .lp-browser-dots span:nth-child(2) { background: #febc2e; }
-.lp-browser:hover .lp-browser-dots span:nth-child(3) { background: var(--accent); }
-
-.lp-browser-url {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.45rem;
-  min-width: 0;
-  flex: 0 1 24rem;
-  margin-inline: auto;
-  padding: 0.32rem 0.9rem;
-  border-radius: 999px;
-  border: 1px solid var(--border);
-  background: var(--surface-muted);
-  color: var(--text-muted);
-  font-size: 0.78rem;
-  font-weight: 600;
-}
-
-.lp-browser-url svg {
-  flex: none;
-  color: var(--accent);
+:root[data-theme="dark"] .lp-hero-s-dark {
+  display: inline-block;
 }
 
 /* Demo typing caret — blinks while the timeline "types", hidden otherwise. */
@@ -2383,6 +2802,15 @@ input[type="number"],
    simply exist; the demo renders labeled static frames instead. */
 @media (prefers-reduced-motion: reduce) {
   .lp-hero-headline .word {
+    transform: none;
+  }
+
+  /* The section rules are drawn by a scroll-driven CSS animation, which a
+     `prefers-reduced-motion` user has not asked for. `both` fill would leave
+     them at scaleX(0) if the animation were simply cancelled, so the resting
+     state has to be restored explicitly. */
+  .lp-paper .bill-poster > .lp-measure:first-child::before {
+    animation: none;
     transform: none;
   }
 
@@ -3208,8 +3636,7 @@ a.job-trail-tx:hover {
 
 @media (prefers-reduced-motion: reduce) {
   .spec-chip-live .spec-dot,
-  .spec-chip-attn .spec-dot,
-  .tab-count {
+  .spec-chip-attn .spec-dot {
     animation: none;
   }
 }
@@ -3275,8 +3702,8 @@ a.job-trail-tx:hover {
   justify-content: space-between;
   gap: 2rem;
   padding: clamp(2rem, 1rem + 3vw, 4rem);
-  /* .receipt-glass's fill — an accent bloom over a translucent pane — so the
-     poster is a pane of the app's own surface rather than a card beside it. */
+  /* An accent bloom over a translucent pane, so the poster is a pane of the app's
+     own surface rather than a card sitting beside it. */
   background:
     radial-gradient(120% 92% at 0% 0%, color-mix(in srgb, var(--accent) 13%, transparent), transparent 62%),
     linear-gradient(180deg, rgba(255, 255, 255, 0.6), rgba(255, 255, 255, 0.34));
@@ -5010,4 +5437,1652 @@ select.settle-trigger option {
     transform: none;
     transition: none;
   }
+}
+
+/* ── The bill poster (bills tab, steps 02 and 03) ─────────────────────────────
+   Verify and Split are the two screens where you read and change the numbers
+   that get written to Arc, so they are set as posters rather than as cards: no
+   border, no fill, no header bar. A hairline under a figure is the entire
+   affordance, and the figure IS the field.
+
+   Almost nothing is invented here. The type register, the borderless controls
+   and the auto-sizing inputs belong to the settle deck and the IOU composer and
+   are reused by class — .settle-label for the kickers, .settle-action for the
+   commit, .iou-provider for the small word-controls, .iou-slot/.iou-mirror/
+   .iou-field for every editable value. What this block adds is the layout those
+   pieces sit in, and the two figure sizes between .settle-amount and body copy.
+
+   One rule governs the whole thing: nothing draws a box. State is carried by
+   weight, by colour, and by whether a rule under a value is dim or lit. */
+.bill-poster {
+  /* Every dim in this palette is a color-mix against the ground, and this poster
+     sits on the app's mist rather than on the /pay page's cream. */
+  --pay-poster-bg: var(--background);
+  color: var(--pay-poster-fg);
+  padding: clamp(1.5rem, 1rem + 2.4vw, 3.25rem) 0 clamp(1rem, 0.5rem + 1.5vw, 2rem);
+  /* The rule the step number hangs off — a section boundary that costs one
+     pixel instead of a card. */
+  border-top: 1px solid var(--pay-poster-rule);
+}
+
+/* Step on the left, whatever the section knows about itself on the right, and the
+   standfirst running under both. This replaces .spec-head: the same information,
+   none of the bar. */
+.bill-poster-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.55rem 1.75rem;
+}
+
+/* As many small marks as the section has, on one baseline, each one either a
+   fact about the bill or a control over it. */
+.bill-poster-marks {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.4rem 1.35rem;
+}
+
+/* A status on the marks rail takes .settle-label rather than .bill-poster-fact:
+   sat next to a caps control, lowercase prose reads as a typo rather than as a
+   different register. Scoped, so the settle deck's own labels are untouched. */
+.bill-poster .settle-label[data-tone="warn"] { color: var(--warning-text); }
+.bill-poster .settle-label[data-tone="ok"] { color: var(--success); }
+
+/* The standfirst. One sentence, and it earns its place: on 02 it is the warning
+   that these figures are what gets hashed, on 03 that the write is final.
+   Everything else the old cards explained, the layout now says.
+
+   Set wide and under the full head rather than in a narrow column beside it —
+   a 46ch column in a 1400px section reads as an unfinished grid, not as air. */
+.bill-poster-note {
+  max-width: 78ch;
+  margin: 0.55rem 0 0;
+  font-size: 0.82rem;
+  line-height: 1.6;
+  color: var(--pay-poster-dim);
+}
+
+/* The gap between a section's head and its content. On the head itself it would
+   also push the standfirst away from the step it belongs to. */
+.bill-poster-body { margin-top: clamp(1.6rem, 1rem + 2vw, 3rem); }
+
+/* A fact on the marks rail — the FX rate, a discount, a total. Same register as
+   .settle-label so a fact and a control read as siblings; a fact just isn't
+   tracked out, because uppercase micro-caps at 0.18em says "tap me". */
+.bill-poster-fact {
+  font-family: var(--font-clash), system-ui, sans-serif;
+  font-size: 0.76rem;
+  font-weight: 400;
+  color: var(--pay-poster-dim);
+}
+
+.bill-poster-fact > b {
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  color: var(--pay-poster-fg);
+}
+
+.bill-poster-fact[data-tone="warn"],
+.bill-poster-fact[data-tone="warn"] > b { color: var(--warning-text); }
+
+/* ── Figures ──────────────────────────────────────────────────────────────────
+   Three sizes, all Clash 300, all with a hairline under them that lights on
+   focus. .settle-amount is the /pay page's single hero figure and is capped at
+   12ch; these are laid out in columns, so they size to their own slot instead. */
+.bill-poster :is(.iou-field, .iou-mirror, .iou-compact) {
+  font: inherit;
+  letter-spacing: inherit;
+  color: inherit;
+}
+
+/* A mirror measures with `white-space: pre`, so it never wraps — left alone, a
+   long name would size its slot past the grid column and collide with the figure
+   beside it. So the CAP goes on the slot, not on the mirror: the mirror keeps
+   overflowing (invisibly — it is `visibility: hidden`), the slot stops at its
+   column, and the input, sized to the slot, scrolls within it.
+
+   It has to be the slot rather than a clip on the mirror, because clipping there
+   costs the baseline. An inline-block takes its baseline from its last in-flow
+   line box, and a descendant that hides its overflow removes that line box from
+   consideration — leaving the bottom margin edge as the baseline, which drops the
+   "$" set beside the figure by about a tenth of an em. .bill-payer-share never
+   showed it because flex baseline alignment asks for a first-line baseline
+   instead and never falls back; the totals, in plain inline flow, did. */
+.bill-poster .iou-slot {
+  max-width: 100%;
+  /* A flex item's default min-width is its content, which would let a long value
+     push the figure past its cell instead of scrolling inside it. The input
+     already carries min-width: 0; the slot around it needs the same. */
+  min-width: 0;
+}
+
+.bill-display,
+.bill-figure,
+.bill-figure-sm {
+  font-family: var(--font-clash), system-ui, sans-serif;
+  font-weight: 300;
+  letter-spacing: -0.03em;
+  line-height: 0.95;
+}
+
+/* Every figure that pairs a qualifier with a value — a "$" with a total, a day
+   count with its unit — puts them on one baseline the same way .bill-payer-share
+   always has: flex baseline alignment, which asks the value for its first line's
+   baseline rather than accepting whatever an inline-block chooses to expose. The
+   slot cap above is the other half of that fix; this is the half that does not
+   depend on getting the cap right.
+
+   Whitespace between flex items is dropped, so a gap between two words here has
+   to be a real one — see .iou-slot + .bill-select. */
+.bill-figure,
+.bill-figure-sm {
+  display: flex;
+  align-items: baseline;
+}
+
+/* "every 14 days": the count and the unit are separate controls, and in a flex
+   row the space that separated them in the markup no longer exists. */
+.iou-slot + .bill-select { margin-left: 0.22em; }
+
+/* The masthead: a merchant name, straight off OCR. */
+.bill-display {
+  position: relative;
+  font-size: clamp(2.1rem, 1.1rem + 4.2vw, 5rem);
+  overflow-wrap: anywhere;
+}
+
+/* The one editable value that is NOT mirror-sized. A mirror measures with
+   `white-space: pre`, so it cannot wrap — and an OCR merchant name is arbitrary
+   length, which at 5rem means overflowing the column and colliding with the
+   total beside it. A masthead wants to fill its column anyway, so this is a bare
+   full-width input and long text scrolls within it, the way an input already
+   does. Its focus rule spans the column for the same reason. */
+.bill-title-field {
+  display: block;
+  width: 100%;
+}
+
+.bill-display::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0.03em;
+  height: max(1px, 0.018em);
+  background: currentColor;
+  transform: scaleX(0);
+  transform-origin: left;
+  transition: transform var(--dur-2) var(--ease-out);
+  pointer-events: none;
+}
+
+.bill-display:focus-within::after { transform: scaleX(1); }
+
+.bill-figure {
+  font-size: clamp(2.2rem, 1.2rem + 4.4vw, 5.25rem);
+  font-variant-numeric: tabular-nums;
+}
+
+.bill-figure-sm {
+  font-size: clamp(1.35rem, 1rem + 1.4vw, 2.15rem);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Merchant left, total right, sitting on one baseline. The total column is
+   `auto` so the merchant takes everything left over and wraps into it — the
+   figure is never the thing that gets squeezed. */
+.bill-poster-lede {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 1rem clamp(1.5rem, 1rem + 2vw, 3.5rem);
+}
+
+/* Below 40rem the two stack, and the total goes first: on a phone the number is
+   what you came to check. */
+@media (max-width: 40rem) {
+  .bill-poster-lede { grid-template-columns: minmax(0, 1fr); }
+  .bill-poster-lede > [data-total] { order: -1; }
+}
+
+/* The supporting figures — subtotal, tax, tip, currency. auto-fit rather than a
+   fixed four, so a manual bill with two of them doesn't leave two dead columns.
+   The rail is what makes the composition read as a spec sheet instead of a form:
+   a row of labelled figures, each on its own rule. */
+.bill-poster-rail {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(7.5rem, 1fr));
+  gap: clamp(1.1rem, 0.8rem + 1vw, 2rem);
+  margin-top: clamp(1.75rem, 1rem + 2.4vw, 3.25rem);
+}
+
+/* A labelled figure: caps label, the value, the rule. The rule takes the
+   column's width rather than the value's, so the rail reads as a row of aligned
+   entries and not as ragged underlines. */
+.bill-cell > .settle-label { display: block; margin-bottom: 0.35rem; }
+
+.bill-cell-rule {
+  height: 1px;
+  margin-top: 0.4rem;
+  background: var(--pay-poster-rule);
+  transition: background var(--dur-1) var(--ease-out), height var(--dur-1) var(--ease-out);
+}
+
+/* Focus lights the whole entry's rule. .iou-slot draws its own hairline under
+   the glyphs on focus, which is right mid-sentence but reads as a second,
+   shorter underline here — so inside a cell that one is suppressed and this rule
+   is the indicator instead. */
+.bill-cell:focus-within > .bill-cell-rule {
+  background: var(--pay-poster-fg);
+  height: 2px;
+}
+
+.bill-cell .iou-slot::after { content: none; }
+
+/* An empty field still needs something to click, and a two-character number
+   should not collapse the slot to nothing. */
+.bill-cell .iou-mirror { min-width: 2ch; }
+
+/* A rail figure that is the problem rather than merely a small number — an
+   approval or a wallet balance under what this cycle needs to collect. The label
+   goes with it, since a warn colour on a figure alone reads as a styling
+   accident. The rule stays dim on purpose: on this page a lit rule means focus,
+   and a cell nobody has touched must not look focused. */
+.bill-cell[data-tone="warn"] > :is(.settle-label, .bill-figure-sm) { color: var(--warning-text); }
+
+/* The "$" that qualifies a figure. Dim, like the IOU composer's — the currency
+   is context, the number is the content. */
+.bill-currency {
+  color: color-mix(in srgb, var(--pay-poster-fg) 38%, var(--pay-poster-bg));
+  margin-right: 0.12em;
+}
+
+/* ── Bill items ───────────────────────────────────────────────────────────────
+   A disclosure with no chrome: the summary is a caps label and a total, the
+   marker is a chevron, and the rows underneath are the same ledger lines the IOU
+   page uses. */
+.bill-items > summary {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+  cursor: pointer;
+  list-style: none;
+  padding: 0.7rem 0;
+  border-top: 1px solid var(--pay-poster-rule);
+  color: var(--pay-poster-dim);
+  transition: color var(--dur-1) var(--ease-out);
+}
+
+.bill-items > summary::-webkit-details-marker { display: none; }
+.bill-items > summary:hover { color: var(--pay-poster-fg); }
+.bill-items > summary:focus-visible { outline: 1px solid currentColor; outline-offset: 0.3em; }
+
+.bill-items-total {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.6rem;
+  font-family: var(--font-clash), system-ui, sans-serif;
+  font-weight: 400;
+  font-size: 0.95rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--pay-poster-fg);
+}
+
+.bill-items[open] .bill-items-chevron { transform: rotate(180deg); }
+.bill-items-chevron { transition: transform var(--dur-2) var(--ease-out); }
+
+.bill-items { margin-top: clamp(1.75rem, 1rem + 2.4vw, 3.25rem); }
+
+/* Scout's x402 receipt, in the poster's voice: the same borderless disclosure
+   the line items use, with the evidence kept as small dim copy — links included,
+   because a hash you can't open isn't evidence. Sits above the merchant rather
+   than below it, so "who read this bill" comes before what it says. */
+.bill-scout { margin: 0 0 clamp(1.5rem, 1rem + 1.5vw, 2.5rem); }
+
+.bill-scout-body {
+  padding: 0.15rem 0 0.75rem;
+  font-size: 0.78rem;
+  line-height: 1.65;
+  color: var(--pay-poster-dim);
+}
+
+.bill-scout-body a {
+  color: var(--pay-poster-fg);
+  text-decoration: underline;
+  text-underline-offset: 0.2em;
+}
+
+.bill-scout-body b {
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  color: var(--pay-poster-fg);
+}
+
+/* Line items. The index is what makes it read as a receipt rather than a list —
+   set in mono and dim, so it recedes to a margin number. */
+.bill-item {
+  display: grid;
+  grid-template-columns: 2.5ch minmax(0, 1fr) auto;
+  align-items: baseline;
+  gap: 0.9rem;
+  padding: 0.45rem 0;
+  font-family: var(--font-clash), system-ui, sans-serif;
+  font-weight: 300;
+  font-size: clamp(0.92rem, 0.85rem + 0.3vw, 1.1rem);
+  border-bottom: 1px solid color-mix(in srgb, var(--pay-poster-rule) 45%, transparent);
+  color: color-mix(in srgb, var(--pay-poster-fg) 78%, var(--pay-poster-bg));
+}
+
+.bill-item > i {
+  font-family: var(--font-mono);
+  font-style: normal;
+  font-size: 0.68rem;
+  letter-spacing: 0.04em;
+  color: var(--pay-poster-dim);
+}
+
+.bill-item > b {
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+  color: var(--pay-poster-fg);
+}
+
+/* ── Payer rows ───────────────────────────────────────────────────────────────
+   One payer, one line of poster type: the name, then the share. The handle and
+   its namespace live on a caps rail underneath, where the reputation badge and
+   the remove control also sit — so the big line stays "Dani … $24.50" and
+   everything that qualifies it is a footnote to it.
+
+   This is the IOU sentence, one row tall, and it is deliberately the same
+   gesture: a name and an amount, both typed straight into the type. */
+.bill-payer {
+  padding: clamp(0.9rem, 0.6rem + 0.8vw, 1.4rem) 0;
+  border-bottom: 1px solid var(--pay-poster-rule);
+}
+
+.bill-payer:first-of-type { border-top: 1px solid var(--pay-poster-rule); }
+
+/* The payer list, wrapped, for the two sections that reach it through a rail
+   rather than opening with it. Two things needed that the bare rows cannot do
+   themselves: the step the rail and the line items also take, so the list's own
+   top rule is not sitting on the rail's bottom one and reading as one thick
+   line — and a parent whose only children are the rows, so :first-of-type above
+   still finds the first payer instead of the lede div that came before them. */
+.bill-payers { margin-top: clamp(1.75rem, 1rem + 2.4vw, 3.25rem); }
+
+.bill-payer-line {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: baseline;
+  gap: 0.5rem clamp(1rem, 0.5rem + 2vw, 2.5rem);
+}
+
+/* Between the merchant masthead and the rail figures: big enough that a payer
+   line reads as the poster's content, small enough that five of them fit on a
+   screen without becoming a scroll.
+
+   The TARGET is what the line is set in, not the display name. A handle, an
+   email or a wallet address is what identifies a payer on Arc and what gets
+   hashed into the bill; the name is a convenience for the creator, so it rides
+   the footnote rail with everything else that merely qualifies the target. */
+.bill-payer-target,
+.bill-payer-share {
+  font-family: var(--font-clash), system-ui, sans-serif;
+  font-weight: 300;
+  font-size: clamp(1.55rem, 1.1rem + 1.9vw, 2.9rem);
+  line-height: 1;
+  letter-spacing: -0.03em;
+  overflow-wrap: anywhere;
+}
+
+.bill-payer-share {
+  display: inline-flex;
+  align-items: baseline;
+  font-variant-numeric: tabular-nums;
+}
+
+/* The payer's mark, at the head of the line. Sized between cap height and the em
+   box, so a face reads as a face while a glyph still reads as a letter in the
+   word — and 0.03em lifts the box off the baseline onto the middle of the
+   capitals beside it. Both layers share one grid cell: the face fades up over
+   the platform glyph without moving a character of the line. */
+.bill-payer-mark {
+  display: inline-grid;
+  width: 0.64em;
+  height: 0.64em;
+  margin-right: 0.24em;
+  vertical-align: 0.03em;
+}
+
+.bill-payer-mark > * {
+  grid-area: 1 / 1;
+  width: 100%;
+  height: 100%;
+  transition: opacity var(--dur-2) var(--ease-out);
+}
+
+/* Hidden until it loads: a face that arrives a beat late is better than a broken
+   image sitting at the head of the line. */
+.bill-payer-mark > img {
+  border-radius: 50%;
+  object-fit: cover;
+  opacity: 0;
+}
+
+/* Resolved to a real account, so the person replaces their platform. */
+.bill-payer-mark[data-face="true"] > img { opacity: 1; }
+.bill-payer-mark[data-face="true"] > svg { opacity: 0; }
+
+/* The one mark that carries its brand colour into the poster's ink, the same as
+   the IOU composer's — Discord blurple is how that logo is legible as itself. */
+.bill-payer-mark[data-provider="discord"] { color: #5865f2; }
+
+/* The share is dim until it has a value, the same way the IOU composer's "$"
+   waits for a number — an unassigned payer should not look like a $0 charge. */
+.bill-payer-share[data-empty="true"] { color: color-mix(in srgb, var(--pay-poster-fg) 45%, var(--pay-poster-bg)); }
+
+/* Equal mode computes the share, so the field is a readout. It keeps the figure
+   at full strength — the number is true, it just isn't yours to type — and only
+   the caret goes. */
+.bill-payer-share .iou-field:disabled { color: inherit; cursor: default; }
+
+/* The footnote rail: display name, namespace, reputation, remove. Baseline-aligned
+   with a wide gap so four small things read as four, not as a sentence. */
+.bill-payer-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.35rem 1.1rem;
+  margin-top: 0.7rem;
+  font-size: 0.8rem;
+  color: var(--pay-poster-dim);
+}
+
+/* The display name, typed. Bigger than the caps around it because it is content
+   rather than a label, and it carries the same focus hairline every other
+   editable value does. */
+.bill-payer-name {
+  font-family: var(--font-clash), system-ui, sans-serif;
+  font-weight: 400;
+  font-size: 0.95rem;
+  letter-spacing: -0.01em;
+  color: color-mix(in srgb, var(--pay-poster-fg) 82%, var(--pay-poster-bg));
+}
+
+.bill-payer-name .iou-mirror { min-width: 6ch; }
+
+/* Reputation is a footnote here, not a badge — the component draws its own
+   text sizes, so it is brought down to the rail's register. */
+.bill-payer-rep { font-size: 0.76rem; }
+.bill-payer-rep > span { font-size: inherit; color: inherit; }
+
+/* Pushed to the end of the rail. A word, not an icon: this poster's whole thesis
+   is that the word is the control, and "REMOVE" beside a name is unambiguous in
+   a way a bare × next to an editable amount is not. */
+.bill-payer-remove { margin-left: auto; }
+
+/* ── The options rail ─────────────────────────────────────────────────────────
+   Due date, all-or-nothing, share link, creator identity. Four settings that
+   used to be four bordered boxes with a paragraph each; here they are four words
+   on one line, and a word that is ON says so by going full-strength with a lit
+   rule under it. */
+.bill-options {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.75rem clamp(1.5rem, 1rem + 1.5vw, 2.75rem);
+  margin-top: clamp(1.5rem, 1rem + 1.5vw, 2.5rem);
+}
+
+/* "Add payer" belongs to the list above it, not to the settings below — so it
+   gets its own line, hard against the last row's rule. */
+.bill-add {
+  margin-top: 0.9rem;
+}
+
+/* A label and its value on one baseline: "PAY BY 25 Aug 2026". Used for the date
+   and anywhere else a caps label introduces a value on the rail. */
+.bill-pair {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.55rem;
+}
+
+/* The toggles are .iou-provider (caps, borderless, cycles on click) plus a rule
+   that draws itself when the option is on. Nothing else changes — same size,
+   same position — so the rail never reflows as options are switched. */
+.bill-toggle {
+  position: relative;
+  padding-bottom: 0.3rem;
+}
+
+.bill-toggle::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 1px;
+  background: currentColor;
+  transform: scaleX(0);
+  transform-origin: left;
+  transition: transform var(--dur-2) var(--ease-out);
+}
+
+/* On, whichever way the control expresses it: a setting that is switched on says
+   aria-pressed, the one of a pair you are currently reading says aria-current, and
+   a trigger holding its menu open says data-state (Radix's, on the sign-in menu in
+   the header). Same state, same mark — the word goes to ink and the rule under it
+   draws itself. */
+.bill-toggle:is([aria-pressed="true"], [aria-current="true"], [data-state="open"]) {
+  color: var(--pay-poster-fg);
+}
+.bill-toggle:is([aria-pressed="true"], [aria-current="true"], [data-state="open"])::after {
+  transform: scaleX(1);
+}
+
+/* Unavailable, not invisible. .iou-provider's rest colour is already receded, so
+   the 0.4 a disabled control usually takes would drop this under the contrast
+   floor — and a control nobody can read is one nobody can ask about. */
+.bill-toggle:disabled { opacity: 0.62; }
+
+/* Two tiers on one marks rail (dashboard masthead). Which of the two documents
+   you are reading — analytics or net settlement — is not the same kind of
+   question as how that document is filtered, and a rail of identical caps words
+   says it is. So the view pair is set a register up with the section rule's
+   weight under the live one, and the filters keep the rail's own size, ruled off
+   to the right of it. */
+.bill-views {
+  display: inline-flex;
+  align-items: baseline;
+  gap: clamp(0.85rem, 0.7rem + 0.5vw, 1.4rem);
+}
+
+.bill-views .bill-toggle {
+  font-size: clamp(0.8rem, 0.74rem + 0.28vw, 0.95rem);
+  /* Less tracking than .iou-provider's 0.18em: the same openness at a larger
+     size reads as a gap between letters rather than as caps set wide. */
+  letter-spacing: 0.12em;
+  padding-bottom: 0.4rem;
+}
+
+/* The live view is the loudest word on the rail, so its rule is a section rule
+   rather than the hairline a filter draws. */
+.bill-views .bill-toggle::after { height: 2px; }
+
+.bill-filters {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.4rem 1.35rem;
+}
+
+/* Ruled only when there is a tier above to be separated from — with one view
+   there is nothing to divide, and a stray hairline would imply a missing group. */
+.bill-filters[data-ruled="true"] {
+  padding-left: clamp(0.85rem, 0.7rem + 0.5vw, 1.4rem);
+  border-left: 1px solid var(--pay-poster-rule);
+}
+
+/* What an armed option does, or why an unavailable one is unavailable. A sibling
+   of the rail, not a member of it: inside the flex row, the `max-width` that
+   keeps this to a readable measure also clamps its flex base below 100%, so it
+   packs onto the toggles' line instead of clearing them. */
+.bill-options-hint {
+  max-width: 74ch;
+  margin: 0.85rem 0 0;
+  font-size: 0.78rem;
+  line-height: 1.55;
+  color: var(--pay-poster-dim);
+}
+
+/* ── The app header, in the poster's voice ────────────────────────────────────
+   The last of the spec-sheet system lived up here. A glass band with a border
+   under it, a bordered pill rail with a filled black pill for the live tab, a
+   bordered gradient chip with a glow for the network, a second display title
+   fifty pixels above the one the tab sets itself, and a bordered circle for the
+   theme. Every screen beneath it had already given all of that up, which made
+   the header the one row of the app that read as a different product — and a
+   header is the row you cannot scroll past.
+
+   It now uses the grammar the tabs use: type on a hairline, and state carried by
+   weight, colour, and whether a rule is drawn. Nothing here draws a box.
+
+   Two tiers, the pair the dashboard's masthead already establishes:
+
+     .app-nav    where you are. Borrows .bill-views verbatim — a register up from
+                 the rail's own caps, with a section rule's 2px under the live
+                 word — because "which tab" is the same kind of question as which
+                 document the dashboard is showing.
+     .app-tools  what doesn't change where you are: the docs, your account, the
+                 theme. The rail's own size, ruled off beside it.
+
+   That split is the whole point of the rewrite. The old pill rail set Docs — a
+   link that leaves the app — in the same shape as Settle, so the header offered
+   six equal buttons and left the eye to work out that one of them was a
+   different kind of thing. */
+.app-masthead {
+  /* Every dim and every receded mix below is against the ground, and the
+     header's ground is the app's mist, not the root's cream poster. */
+  --pay-poster-bg: var(--background);
+  color: var(--pay-poster-fg);
+  /* The full-measure rule that closes the header. The section rule under it is
+     drawn inside the column, so the two read as a masthead and its first
+     section rather than as one line struck twice. */
+  border-bottom: 1px solid var(--pay-poster-rule);
+}
+
+/* Logo, then the line under it. Baseline-aligned so the strapline and the
+   network sit on one line however the row wraps. */
+.app-strap {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.25rem 0.85rem;
+  margin-top: 0.6rem;
+}
+
+/* The brand line. It was an h1 in display type — which put two display titles on
+   the same screen, since the tab below already sets its own at the largest size
+   on the page, and a page with two loudest things has none. So the words stay and
+   the register goes: the rail's caps, held at full ink rather than the rail's dim,
+   because weight and colour are what this system uses to say "this is the brand
+   line, not a label". */
+.app-strapline {
+  color: var(--pay-poster-fg);
+  font-weight: 600;
+}
+
+/* Which chain you are on. All that survives of the old chip is the dot, which was
+   the only part of it that was information — the border, the gradient, the inset
+   highlight and the drop shadow all said "chip", and none of them said "live".
+   Now the dot alone carries that, by breathing. */
+.app-network {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.45rem;
+  color: color-mix(in srgb, var(--accent) 68%, var(--pay-poster-fg));
+}
+
+.app-network::before {
+  content: "";
+  align-self: center;
+  width: 0.34rem;
+  height: 0.34rem;
+  border-radius: 999px;
+  background: currentColor;
+  animation: app-live 2.8s var(--ease-out) infinite;
+}
+
+@keyframes app-live {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.28;
+  }
+}
+
+/* The two rails, side by side when there is room and stacked when there is not. */
+.app-rails {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.35rem clamp(0.85rem, 0.7rem + 0.5vw, 1.4rem);
+}
+
+/* Once the header is a row rather than a stack, both rails hang off the right
+   edge — including when the tools drop to their own line under the tabs. */
+@media (min-width: 768px) {
+  .app-rails {
+    justify-content: flex-end;
+  }
+}
+
+/* .bill-views is inline and never wraps — six tabs in a header have to. Only the
+   flow changes; the type, the tracking and the 2px rule all come from the
+   dashboard's own view pair, so the two rails cannot drift apart. */
+.app-nav {
+  flex-wrap: wrap;
+  row-gap: 0.3rem;
+}
+
+.app-tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.3rem 1.15rem;
+}
+
+/* Ruled off from the tabs only where the two tiers actually share a line. Below
+   that the tools wrap under the tabs, and a left border on a row that has moved
+   to its own line points at nothing. */
+@media (min-width: 1180px) {
+  .app-tools {
+    padding-left: clamp(0.85rem, 0.7rem + 0.5vw, 1.4rem);
+    border-left: 1px solid var(--pay-poster-rule);
+  }
+}
+
+/* The theme, as a glyph. It was tried as a ruled Light/Dark pair — unambiguous,
+   but two caps words is a third of the tools rail spent on a binary, and the
+   ambiguity a single word has ("the mode I'm in" or "the mode I'd get") is one an
+   aria-label settles anyway. So it keeps .iou-provider's colour, hover and focus
+   ring and only stops being a bordered circle. */
+.app-icon {
+  display: inline-flex;
+  /* The rail aligns on the words' baseline, and a glyph hasn't got one — so it
+     centres instead, less the 0.3rem of padding the toggles beside it reserve for
+     their rule. Without that the icon centres on a box that extends below the
+     caps and reads a touch low. */
+  align-self: center;
+  margin-bottom: 0.3rem;
+  padding: 0;
+}
+
+/* Something is wrong with the connection, said at the rail's size. A warn tone,
+   not a red box: the control is still the way to fix it, so it stays a word you
+   can click rather than becoming an alert you have to dismiss first. */
+.app-warn {
+  color: var(--warning-text);
+}
+
+/* How many bills are waiting on you. The old chip was a filled red pill with a
+   pulsing ring — the one boxed thing left in a header that had stopped drawing
+   boxes, and the reason the count had to carry its own opaque ground to survive
+   the black pill underneath it. With no pill under it, a count is just a figure,
+   so it is set as one: a superior numeral in the danger ink, at the tab's own
+   size rather than a size of its own.
+
+   It still moves. That was never decoration — an unread count that doesn't move
+   doesn't read as unread — but it now breathes instead of ringing, because a ring
+   is a box drawn in animation. */
+.app-count {
+  margin-left: 0.28em;
+  font-size: 0.74em;
+  font-weight: 600;
+  /* The tab's 0.12em tracking would put air after the last digit and knock the
+     figure off the word it belongs to. */
+  letter-spacing: 0;
+  font-variant-numeric: tabular-nums;
+  /* Raised by offset rather than by vertical-align, which would grow the line box
+     and drop the tab's baseline below its neighbours' — one tab sitting a pixel
+     low is exactly the kind of thing a rail of six words makes obvious. */
+  position: relative;
+  top: -0.45em;
+  color: var(--danger-text);
+  animation: app-count-breathe 2.4s var(--ease-out) infinite;
+}
+
+@keyframes app-count-breathe {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  55% {
+    opacity: 0.32;
+  }
+}
+
+/* Both the dot and the digit are ambient motion on a control someone may be
+   reading rather than watching. */
+@media (prefers-reduced-motion: reduce) {
+  .app-network::before,
+  .app-count {
+    animation: none;
+  }
+}
+
+/* A native date input, stripped. It stays native — a date picker is the one
+   control the platform does better than anything worth hand-rolling — and only
+   gives up its chrome. Empty, it sits at the rail's dim; set, it is a value and
+   reads as one. */
+.bill-date {
+  appearance: none;
+  border: 0;
+  background: none;
+  padding: 0;
+  font-family: var(--font-clash), system-ui, sans-serif;
+  font-weight: 400;
+  font-size: 0.95rem;
+  color: var(--pay-poster-dim);
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  transition: color var(--dur-1) var(--ease-out);
+}
+
+.bill-date[data-set="true"] { color: var(--pay-poster-fg); }
+.bill-date:hover { color: var(--pay-poster-fg); }
+
+.bill-date::-webkit-calendar-picker-indicator {
+  opacity: 0.45;
+  cursor: pointer;
+  transition: opacity var(--dur-1) var(--ease-out);
+}
+
+.bill-date:hover::-webkit-calendar-picker-indicator { opacity: 1; }
+:root[data-theme="dark"] .bill-date::-webkit-calendar-picker-indicator { filter: invert(1); }
+.bill-date:focus-visible { outline: 1px solid currentColor; outline-offset: 0.3em; }
+
+/* ── The masthead (bills tab, the page's own head) ────────────────────────────
+   The tab opens the way the sections continue: a kicker on a hairline, the title
+   at the largest size anything on this page is set at, a standfirst, and the
+   contents rail. Everything .tab-hero draws to hold a card together — the border,
+   the accent bloom, the plotting-paper grid, the boxed legend — is absent, and
+   nothing replaced it. On a poster the white space is the container. */
+.bill-masthead {
+  /* The document's own head, so it opens wider than a section between two
+     others; the rule above it separates the page from the tab switcher. */
+  padding-bottom: clamp(1.5rem, 1rem + 2vw, 2.75rem);
+}
+
+.bill-masthead-title {
+  font-family: var(--font-clash), system-ui, sans-serif;
+  font-weight: 300;
+  /* Above .bill-display's ceiling: the merchant name is the biggest thing in a
+     section, and this is the biggest thing on the page. */
+  font-size: clamp(2.5rem, 1.2rem + 5vw, 5.75rem);
+  letter-spacing: -0.035em;
+  line-height: 0.94;
+  margin: clamp(1.1rem, 0.7rem + 1.4vw, 2rem) 0 0;
+}
+
+/* The standfirst. A step further up than .bill-poster-note's 0.82rem, because a
+   section's note qualifies one screen of figures and this one has to carry the
+   whole product — but the same dim, so it is still commentary on the title. */
+.bill-masthead-lede {
+  max-width: 68ch;
+  margin: clamp(0.9rem, 0.6rem + 0.6vw, 1.35rem) 0 0;
+  font-size: 0.95rem;
+  line-height: 1.68;
+  color: var(--pay-poster-dim);
+}
+
+/* The contents rail: the four steps as four spec entries, laid out on the same
+   auto-fit grid as the figures in 02 so the page has one column rhythm. Wider
+   minimum than that rail's 7.5rem — these hold a line of prose, not a number. */
+.bill-contents {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
+  gap: clamp(1rem, 0.7rem + 1vw, 1.75rem);
+  margin: clamp(1.75rem, 1.1rem + 2vw, 3rem) 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* Each entry IS a .bill-cell — caps label, the value, the rule — so it inherits
+   the label's block layout from the figures in 02 and only the value differs: a
+   line of prose where a figure would be. */
+.bill-contents-label {
+  display: block;
+  font-family: var(--font-clash), system-ui, sans-serif;
+  font-weight: 400;
+  font-size: clamp(0.92rem, 0.85rem + 0.25vw, 1.08rem);
+  line-height: 1.3;
+  letter-spacing: -0.01em;
+  color: color-mix(in srgb, var(--pay-poster-fg) 62%, var(--pay-poster-bg));
+  transition: color var(--dur-2) var(--ease-out);
+}
+
+/* Progress, drawn with the hairline a focused field uses three sections down: a
+   step not yet reached keeps the dim rule every unlit entry on this page has,
+   a finished one goes to ink, and the step in play is the lit 2px. Tint is
+   state — nothing here lights up for looks. */
+.bill-contents-entry[data-state="done"] > .bill-cell-rule {
+  background: color-mix(in srgb, var(--pay-poster-fg) 50%, var(--pay-poster-bg));
+}
+
+.bill-contents-entry[data-state="active"] > .bill-cell-rule {
+  background: var(--pay-poster-fg);
+  height: 2px;
+}
+
+.bill-contents-entry:is([data-state="done"], [data-state="active"]) > .settle-label,
+.bill-contents-entry[data-state="active"] > .bill-contents-label { color: var(--pay-poster-fg); }
+
+/* ── The capture plate (bills tab, step 01) ───────────────────────────────────
+   A dropzone in a page that draws no boxes. So it isn't one: the plate is an
+   area of the poster with a rule at its foot and a caption under that — the same
+   label / value / rule entry the figures in 02 are, with a photograph where the
+   figure goes. A drag arms it (a wash of ink at 4%, the foot rule to full) and
+   the OCR pass sweeps a bar of ink down it. Nothing is dashed, nothing is
+   rounded, and the prompt is the affordance. */
+.bill-capture {
+  display: flex;
+  flex-direction: column;
+}
+
+.bill-plate {
+  position: relative;
+  /* The sweep is drawn on ::after and must be clipped to the plate. */
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: clamp(15rem, 10rem + 18vw, 24rem);
+  padding: clamp(1.5rem, 1rem + 2vw, 3rem);
+  cursor: pointer;
+  transition: background var(--dur-2) var(--ease-out);
+}
+
+.bill-plate:hover { background: color-mix(in srgb, var(--pay-poster-fg) 2%, transparent); }
+.bill-capture[data-armed="true"] > .bill-plate { background: color-mix(in srgb, var(--pay-poster-fg) 4%, transparent); }
+
+/* The plate's extent, marked rather than drawn: two arms turning down from the
+   top corners, with the foot rule closing it underneath. Unmarked, an empty well
+   is not a well but a hole in the page; bordered, it would be the one box on a
+   page that has none. Registration marks are how print says "the image goes
+   here", and they cost one pseudo-element and no ink to speak of. */
+.bill-plate::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  --mark: var(--pay-poster-rule);
+  --arm: clamp(0.9rem, 0.7rem + 0.5vw, 1.5rem);
+  background-image:
+    linear-gradient(var(--mark), var(--mark)), linear-gradient(var(--mark), var(--mark)),
+    linear-gradient(var(--mark), var(--mark)), linear-gradient(var(--mark), var(--mark));
+  background-repeat: no-repeat;
+  /* Horizontal arm then vertical arm, once per top corner. */
+  background-size: var(--arm) 1px, 1px var(--arm), var(--arm) 1px, 1px var(--arm);
+  background-position: left top, left top, right top, right top;
+}
+
+/* Armed, the marks come up with the foot rule — the whole plate answers the drag,
+   not just its bottom edge. A colour swap rather than a transition: a background
+   image has no interpolation to animate, and a drag is a binary state anyway. */
+.bill-capture[data-armed="true"] .bill-plate::before {
+  --mark: color-mix(in srgb, var(--pay-poster-fg) 55%, transparent);
+}
+
+/* Armed by a drag, or reached by a keyboard on the file input the plate hides. */
+.bill-capture[data-armed="true"] > .bill-cell-rule,
+.bill-plate:has(input:focus-visible) ~ .bill-cell-rule {
+  background: var(--pay-poster-fg);
+  height: 2px;
+}
+
+.bill-plate-prompt {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.75rem;
+  text-align: center;
+}
+
+/* The prompt in the poster's display voice, one step under the masthead: at this
+   size the words are the target, which is why there is no icon and no button. */
+.bill-plate-call {
+  font-family: var(--font-clash), system-ui, sans-serif;
+  font-weight: 300;
+  font-size: clamp(1.75rem, 1.1rem + 2.6vw, 3.4rem);
+  line-height: 1;
+  letter-spacing: -0.03em;
+  color: color-mix(in srgb, var(--pay-poster-fg) 72%, var(--pay-poster-bg));
+  transition: color var(--dur-2) var(--ease-out);
+}
+
+.bill-plate:hover .bill-plate-call,
+.bill-capture[data-armed="true"] .bill-plate-call { color: var(--pay-poster-fg); }
+
+/* Printed, not framed: no radius, no shadow, no card. The plate's own foot rule
+   is the only edge the photograph gets. */
+.bill-plate-image {
+  max-height: clamp(14rem, 9rem + 18vw, 23rem);
+  max-width: 100%;
+  object-fit: contain;
+}
+
+/* The OCR sweep, in ink rather than the app's accent — the scan is happening on
+   this page's paper. Same 1.7s pass the landing demo's receipt uses. */
+.bill-plate[data-scanning="true"]::after {
+  content: "";
+  position: absolute;
+  inset-inline: 0;
+  top: -18%;
+  height: 22%;
+  background: linear-gradient(
+    180deg,
+    transparent,
+    color-mix(in srgb, var(--pay-poster-fg) 26%, transparent),
+    transparent
+  );
+  animation: receipt-scan 1.7s cubic-bezier(0.65, 0, 0.35, 1) infinite;
+  pointer-events: none;
+}
+
+/* Which photograph is on the plate, and how to get one if you have none. Reads
+   as the caption under a printed plate, which is exactly what it is. */
+.bill-plate-caption {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.35rem 1.5rem;
+  margin-top: 0.5rem;
+}
+
+/* ── The foot ─────────────────────────────────────────────────────────────────
+   The commit and the arithmetic that justifies it, on one line: .settle-action
+   on the left, the split total (or, on 01, the way out of the step) on the right,
+   baseline-aligned so the word and the figure sit on the same line of type. */
+.bill-poster-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem 2rem;
+  margin-top: clamp(1.75rem, 1rem + 2vw, 3rem);
+}
+
+/* .settle-action is sized for the /pay poster, where it is the only thing on the
+   screen. Here it closes a dense page, so it comes down two steps and gives back
+   most of its tracking — at 4.4rem tracked to 0.14em it read as ornament rather
+   than as the control that spends money. It also sits brighter at rest for the
+   same reason: on a busy ground, 62% recedes past "quiet" into "decorative". */
+.bill-poster-foot .settle-action {
+  margin: 0;
+  font-size: clamp(1.7rem, 1.1rem + 1.8vw, 2.9rem);
+  letter-spacing: 0.05em;
+  color: color-mix(in srgb, var(--pay-poster-fg) 82%, var(--pay-poster-bg));
+}
+
+.bill-poster-foot .settle-action:hover:not(:disabled),
+.bill-poster-foot .settle-action:focus-visible { letter-spacing: 0.03em; }
+
+/* The arithmetic. Big enough to be read against the action rather than swamped
+   by it — this figure is the reason to trust the button. */
+.bill-poster-total {
+  text-align: right;
+  margin-left: auto;
+}
+
+.bill-poster-total > .settle-label { display: block; margin-bottom: 0.3rem; }
+
+.bill-poster-total > span {
+  font-family: var(--font-clash), system-ui, sans-serif;
+  font-weight: 300;
+  font-size: clamp(1.3rem, 1rem + 1.1vw, 1.9rem);
+  line-height: 1;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+}
+
+.bill-poster-total em {
+  font-style: normal;
+  color: var(--pay-poster-dim);
+}
+
+.bill-poster-total[data-tone="warn"] > span { color: var(--warning-text); }
+
+/* A status line, not a message box. Tone is carried by colour and by the words
+   themselves — the same reasoning .iou-error is built on, which this shares its
+   register with. */
+.bill-poster-msg {
+  font-family: var(--font-clash), system-ui, sans-serif;
+  font-size: 0.78rem;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  line-height: 1.5;
+  margin: clamp(1.25rem, 1rem + 1vw, 2rem) 0 0;
+  color: var(--pay-poster-dim);
+}
+
+.bill-poster-msg[data-tone="error"] { color: var(--warning-text); }
+.bill-poster-msg[data-tone="success"] { color: var(--success); }
+
+/* ── Recurring: the interval ──────────────────────────────────────────────────
+   The one value on either bills subtab that is a closed set of more than two
+   answers. A .iou-provider cycles because there are two; a date stays native
+   because the platform's picker is better than anything worth writing. Four
+   intervals are the same case as the date: native <select>, stripped of its
+   chrome, set in the figure register it sits in, with the .bill-cell rule under
+   it as the only indicator. No custom menu, so it keeps the platform's keyboard
+   handling, its type-ahead and its touch sheet for free.
+
+   Deliberately not select.settle-trigger: that one carries its own underline and
+   is sized for a 0.78rem footnote on the /pay poster. This is a lede figure. */
+.bill-select {
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  border: 0;
+  background: none;
+  padding: 0;
+  /* The figure class that wraps it — .bill-figure or .bill-figure-sm — is what
+     sets the type, exactly as it is for a PosterValue. */
+  font: inherit;
+  letter-spacing: inherit;
+  line-height: inherit;
+  color: inherit;
+  cursor: pointer;
+  /* Room for the chevron, in em so it tracks whichever figure size wraps it. */
+  padding-right: 0.9em;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='none' stroke='%23697989' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round' d='M3 5l3 3 3-3'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  /* Sized in em for the same reason, and centred: at line-height 0.95 the box is
+     barely taller than the lowercase band, so the box's middle and the word's
+     middle are the same place. */
+  background-size: 0.42em 0.42em;
+  background-position: right center;
+}
+
+:root[data-theme="dark"] .bill-select {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='none' stroke='%239fb2c4' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round' d='M3 5l3 3 3-3'/%3E%3C/svg%3E");
+}
+
+/* The cell rule is the focus indicator, so the control drops its own ring —
+   .bill-cell:focus-within already lights it. */
+.bill-select:focus-visible { outline: none; }
+
+/* The menu itself is the platform's, and the platform will not inherit our type
+   into it — only the colours, which are worth setting so an opened menu is not a
+   white box on a dark poster. */
+.bill-select > option {
+  background: var(--pay-poster-bg);
+  color: var(--pay-poster-fg);
+  font-family: var(--font-clash), system-ui, sans-serif;
+}
+
+/* ── Recurring: the ledger row as a picker ────────────────────────────────────
+   Step 02 is a list of tabs where exactly one is being read below, which is the
+   .iou-ledger row (a line of poster type, a recall button, a faint rule) doing
+   the one thing it already does — except a recalled IOU has no lasting state and
+   a selected tab does. So the row keeps every one of its own styles and gains a
+   selected state drawn with this page's existing gesture for "you are here":
+   ink instead of the 72% mix, and the rule under it at full strength.
+
+   Height is untouched. .bill-contents-entry lights its rule by going to 2px
+   because that rule is a free-standing 1px div with room around it; a row's rule
+   is its own border-bottom, and thickening that would nudge every row below it
+   by a pixel as the selection moved. Colour alone is unambiguous here. */
+.bill-poster .iou-row:has([aria-current="true"]) {
+  color: var(--pay-poster-fg);
+  border-bottom-color: var(--pay-poster-fg);
+}
+
+/* ── The agent poster (agents tab) ────────────────────────────────────────────
+   The agents tab is the poster system's fourth screen, and it needed almost
+   nothing of its own: an agent's balance is a .bill-figure, its ceilings are
+   .bill-cell figures you type into, a trusted creator is a .bill-payer row, and
+   a decision is one too — a headline (bill, amount) with everything that
+   qualifies it on the footnote rail. What follows is only what a page about
+   standing spending permission has that a page about one bill does not.
+
+   1. ARMED. On a page that draws no boxes, .spec-card-live's lit rail has no
+      equivalent — so the section's OWN top rule carries it, going to ink and
+      drawing itself left to right. Same gesture a switched-on option makes two
+      rails further down, at section scale. The word on the marks rail says it
+      too: a hairline is not an accessible state.
+   2. The reviewer's sentence, which is the one piece of text on this tab that
+      nobody at Splitsy wrote.
+   3. A .bill-items disclosure nested inside a .bill-payer row, which needs its
+      own top rule and its section spacing taken back — a row already opened on
+      a hairline, and two of them touching read as one thick line. */
+
+/* Present on every armed-able section (React stamps data-armed="false" too), so
+   the rule exists to be drawn before there is anything to draw. */
+.bill-poster[data-armed] {
+  position: relative;
+}
+
+.bill-poster[data-armed]::before {
+  content: "";
+  position: absolute;
+  /* Over the section's own border-top, not under it: this rule replaces that
+     one while the agent is armed rather than sitting beside it. */
+  top: -1px;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: var(--pay-poster-fg);
+  transform: scaleX(0);
+  transform-origin: left;
+  transition: transform var(--dur-4) var(--ease-out);
+  pointer-events: none;
+}
+
+.bill-poster[data-armed="true"]::before {
+  transform: scaleX(1);
+}
+
+/* The step number goes with it. Everything else on the section is unchanged —
+   arming an agent does not warm a header or tint a card, because on this page
+   there is no header and no card. */
+.bill-poster[data-armed="true"] > .bill-poster-head > .settle-label {
+  color: var(--pay-poster-fg);
+}
+
+/* A verdict the bought reviewer wrote about one bill, quoted. Set a step above
+   .bill-options-hint in the poster's prose voice, with a rule down its left edge
+   — the print mark for "these are somebody else's words", and the reason this is
+   not one more dim caption in a stack of them. */
+.agent-verdict {
+  max-width: 68ch;
+  margin: 0.75rem 0 0;
+  padding-left: 0.9rem;
+  border-left: 1px solid var(--pay-poster-rule);
+  font-family: var(--font-clash), system-ui, sans-serif;
+  font-weight: 300;
+  font-size: clamp(0.95rem, 0.9rem + 0.3vw, 1.15rem);
+  line-height: 1.5;
+  color: color-mix(in srgb, var(--pay-poster-fg) 80%, var(--pay-poster-bg));
+}
+
+/* The job trail, opening inside a decision row rather than under a section head.
+   .bill-items is sized to separate two sections; here it is a footnote to the
+   line above it. */
+.bill-payer .bill-items {
+  margin-top: 0.55rem;
+}
+
+.bill-payer .bill-items > summary {
+  border-top: 0;
+  padding: 0.3rem 0;
+}
+
+/* And its own contents come down to the row's register: the rail of contract
+   facts is a footnote here, not the section's figures. */
+.bill-payer .bill-items .bill-poster-rail {
+  grid-template-columns: repeat(auto-fit, minmax(8.5rem, 1fr));
+  gap: 0.9rem 1.4rem;
+  margin-top: 0.9rem;
+}
+
+.bill-payer .bill-items .bill-figure-sm {
+  font-size: clamp(0.9rem, 0.85rem + 0.2vw, 1.05rem);
+}
+
+/* ── The dashboard poster (dashboard tab) ─────────────────────────────────────
+   The dashboard was the last screen left on the spec-card system, which meant
+   the one tab whose entire job is to be read was also the only one that read as
+   a different product. It is a poster now, and most of it is parts that were
+   already here: a masthead, sections opening on a hairline, figures in Clash 300
+   over a rule, caps words that go to ink when they are on.
+
+   Two things are new, and both follow from one observation: a horizontal bar
+   chart IS a labelled figure with a proportional rule under it. Recharts was
+   drawing that with a frame, two axes and a legend box around it. So every
+   categorical breakdown — identity, counterparties, aging, settlement state — is
+   drawn with this page's own hairline instead, and only the two genuine time
+   series (activity, reputation) stay plotted, restyled to the page's ink.
+
+   Nothing here encodes by colour alone. Every meter states its number in type
+   beside its label, so the identity hue is redundant rather than load-bearing —
+   which is also why the CVD-validated palette can stay exactly as it is. */
+
+/* The stack a breakdown's rows sit in. A horizontal bar chart is rows down the
+   page, not columns across it — .bill-poster-rail's auto-fit columns would give
+   every row an identical short rule and take the comparison with it. */
+.bill-meters {
+  display: grid;
+  gap: clamp(1rem, 0.8rem + 0.7vw, 1.6rem);
+}
+
+/* A figure whose rule carries its own value: the full column at the poster's
+   dim, with the value drawn over it in ink from the left. Same gesture an armed
+   section makes with its top rule, at figure scale.
+
+   `--meter` is the fraction of the block's largest row, set inline; `--meter-ink`
+   the identity hue where a row has one. A rule cannot draw itself from a value it
+   already has, so the section stamps data-drawn="false" for its first frame and
+   every meter starts empty — see the gate below. */
+.bill-meter-rule {
+  position: relative;
+  height: 2px;
+  margin-top: 0.45rem;
+  background: var(--pay-poster-rule);
+}
+
+.bill-meter-rule::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: var(--meter-ink, var(--pay-poster-fg));
+  transform: scaleX(var(--meter, 0));
+  transform-origin: left;
+  transition: transform var(--dur-4) var(--ease-out);
+  /* Staggered by row, so a breakdown draws itself down the page instead of
+     every bar snapping to length at once. */
+  transition-delay: calc(var(--meter-index, 0) * 70ms);
+}
+
+[data-drawn="false"] .bill-meter-rule::after { transform: scaleX(0); }
+
+/* The one meter that is a headline rather than a row: the rule under a
+   section-wide figure, drawn to the same fraction the figure states. */
+.bill-meter-rule[data-scale="lede"] {
+  height: 3px;
+  margin-top: clamp(0.9rem, 0.7rem + 0.5vw, 1.4rem);
+}
+
+/* An identity is also the filter for it, so the whole entry is the button. It
+   keeps the cell's type and layout and gains the toggle's manners: filtered out,
+   the entry recedes as one thing — label, figure and meter together — rather
+   than greying a word and leaving its bar at full strength. */
+.bill-meter-cell {
+  display: block;
+  width: 100%;
+  border: 0;
+  background: none;
+  padding: 0;
+  text-align: left;
+  color: inherit;
+  transition: opacity var(--dur-2) var(--ease-out);
+}
+
+.bill-meter-cell[data-active="false"] { opacity: 0.4; }
+.bill-meter-cell:focus-visible { outline: 1px solid currentColor; outline-offset: 0.35em; }
+
+/* What a meter row says under its figure: a bill count, a share of the total, a
+   date. The rail's own register, one step below the label. */
+.bill-meter-note {
+  display: block;
+  margin-top: 0.4rem;
+  font-size: 0.74rem;
+  line-height: 1.45;
+  color: var(--pay-poster-dim);
+}
+
+/* ── The ranking ──────────────────────────────────────────────────────────────
+   Who you split with most, as a list rather than a chart: each row a line of
+   poster type — the name, then the money — with the meter rule underneath doing
+   what the bar did, and everything that qualifies it on the footnote rail. The
+   rule between rows IS the data, which is why these rows carry no border of
+   their own. */
+.bill-ranks { border-top: 1px solid var(--pay-poster-rule); }
+
+.bill-rank { padding: clamp(0.8rem, 0.6rem + 0.6vw, 1.2rem) 0; }
+
+/* Between a payer line and body copy. A ranking is a secondary read on this tab
+   — five rows at the payer register would be the whole screen. */
+.bill-rank :is(.bill-payer-target, .bill-payer-share) {
+  font-size: clamp(1.1rem, 0.95rem + 0.7vw, 1.6rem);
+}
+
+.bill-rank .bill-payer-meta { margin-top: 0.55rem; }
+
+/* An address is the identity when there is no handle behind it, so it stays
+   readable as one: mono, dim, and dotted-underlined because it opens the
+   explorer. */
+.bill-rank-address {
+  font-family: var(--font-mono);
+  font-size: 0.85em;
+  letter-spacing: -0.01em;
+  color: inherit;
+  text-decoration: underline dotted;
+  text-underline-offset: 0.25em;
+}
+
+/* ── The two plots ────────────────────────────────────────────────────────────
+   A time series is the one thing on this page a rule cannot say, so these stay
+   charts. They just stop looking like widgets: no frame, no legend box,
+   horizontal hairlines only, and ticks set in the caps register everything else
+   here is labelled in.
+
+   These rules are unlayered, so they outrank the Tailwind utilities the shadcn
+   chart primitive ships in @layer utilities — no !important needed. */
+.bill-chart { margin-top: clamp(1.25rem, 1rem + 1vw, 2rem); }
+
+.bill-chart .recharts-cartesian-grid line { stroke: var(--pay-poster-rule); }
+
+.bill-chart .recharts-cartesian-axis-tick text {
+  font-family: var(--font-clash), system-ui, sans-serif;
+  font-size: 0.68rem;
+  font-weight: 500;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  fill: var(--pay-poster-dim);
+}
+
+/* The cursor recharts draws under the pointer. Ink at a whisper, so it reads as
+   a print registration line rather than as a grey band. */
+.bill-chart .recharts-curve.recharts-tooltip-cursor,
+.bill-chart .recharts-rectangle.recharts-tooltip-cursor {
+  stroke: color-mix(in srgb, var(--pay-poster-fg) 30%, transparent);
+  fill: color-mix(in srgb, var(--pay-poster-fg) 6%, transparent);
+}
+
+/* The readout, brought onto this page's paper: square, hairline, no shadow. A
+   floating figure is the one box a poster can't design away — it can at least be
+   printed rather than popped. */
+.bill-chart .recharts-tooltip-wrapper > div {
+  border-radius: 0;
+  border-color: var(--pay-poster-rule);
+  background: var(--pay-poster-bg);
+  box-shadow: none;
+  font-family: var(--font-clash), system-ui, sans-serif;
+}
+
+/* Which ink is which series, on the marks rail instead of in a legend box: the
+   swatch is a rule, because every other thing on this page that carries a value
+   is one too. */
+.bill-key {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.45rem;
+}
+
+.bill-key::before {
+  content: "";
+  width: 1.15rem;
+  height: 2px;
+  background: var(--key-ink, currentColor);
+  /* A 2px box takes its baseline from its bottom edge, which would hang the
+     swatch off the descender line instead of the middle of the capitals. */
+  transform: translateY(-0.3em);
+}
+
+/* ── A section that names itself ───────────────────────────────────────────────
+   Every tab here is a stack of .bill-poster sections, and each one used to open
+   with the same single mark: a 0.72rem caps kicker sitting on a hairline. That is
+   enough on a tab you are walked through a step at a time — the bills tab shows
+   one step and hides the rest — but it is not enough on the two tabs that put
+   every section on one scroll. The dashboard's four readings are all built from
+   the same meters, rails and subheads; the agents tab's four sections are all a
+   lede pair over a list of rows. At that density a micro-caps kicker is not a
+   section break. The eye finds nothing to catch on, and the reader loses which
+   section they are in.
+
+   So those sections say their name in display type, with the ordinal beside it.
+   Two registers clear of everything underneath — the blocks inside a section stay
+   at .bill-subhead's caps, the standfirst stays at .bill-poster-note's 0.82rem —
+   and that gap is the whole point: nothing else on screen is set at this size, so
+   a boundary between two sections is unmissable at any scroll speed. The ordinal
+   is the same one the masthead's contents rail prints, so the entry you picked out
+   of the index is the landmark you arrive at.
+
+   Deliberately below .bill-masthead-title and below the .bill-display or
+   .bill-figure a section leads with: the page is still named once, and a section's
+   own figures still outrank its name. */
+.bill-section-title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0 clamp(0.6rem, 0.4rem + 0.7vw, 1.15rem);
+  /* Short by construction. A title allowed to run the note's full 78ch measure
+     would read as one more paragraph, which is exactly what it is not. */
+  max-width: 30ch;
+  margin: clamp(0.75rem, 0.55rem + 0.6vw, 1.2rem) 0 0;
+  font-family: var(--font-clash), system-ui, sans-serif;
+  font-weight: 300;
+  font-size: clamp(1.5rem, 1.05rem + 1.75vw, 2.6rem);
+  line-height: 1.02;
+  letter-spacing: -0.028em;
+  color: var(--pay-poster-fg);
+}
+
+/* The ordinal. Sized in em off the title rather than clamped a second time, so
+   the pair cannot drift apart at any viewport, and set at a fifth of the ink so
+   it marks the section without competing with it for the read. */
+.bill-section-index {
+  font-size: 1.45em;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.05em;
+  color: color-mix(in srgb, var(--pay-poster-fg) 20%, var(--pay-poster-bg));
+  transition: color var(--dur-2) var(--ease-out);
+}
+
+/* Arming a section already lights its kicker (see .bill-poster[data-armed]); the
+   ordinal is part of the same mark, so it comes up too rather than staying the
+   one dim thing in a head that has gone live. */
+.bill-poster[data-armed="true"] > .bill-section-title > .bill-section-index {
+  color: color-mix(in srgb, var(--pay-poster-fg) 45%, var(--pay-poster-bg));
+}
+
+/* The standfirst is commentary on the title now rather than on the kicker, so it
+   drops back and narrows to sit under it: 0.55rem of air was measured against a
+   caps line, and 78ch of dim prose under a 30ch title reads as a paragraph that
+   lost its heading. */
+.bill-section-title + .bill-poster-note {
+  max-width: 68ch;
+  margin-top: clamp(0.7rem, 0.55rem + 0.5vw, 1.1rem);
+}
+
+/* A section that names itself needs the air to be read as a break. The hairline
+   alone was carrying that and losing — a 1px rule between two dense stacks of
+   meters is a seam, not a boundary. */
+.bill-poster:has(> .bill-section-title) {
+  padding-top: clamp(2.25rem, 1.4rem + 3.4vw, 4.75rem);
+}
+
+/* ── A block inside a section ─────────────────────────────────────────────────
+   The dashboard is the one tab whose sections hold more than one reading each —
+   "who you reached" and "who you split with" are the same question asked twice.
+   So a block gets a caps label with a rule running out from it to the end of the
+   measure. It cannot open on a full rule the way a section does; that would read
+   as a section, and the numbering would be a lie. */
+.bill-subhead {
+  display: flex;
+  align-items: center;
+  gap: 0.85rem;
+  margin: clamp(1.9rem, 1.2rem + 1.8vw, 3rem) 0 clamp(0.9rem, 0.7rem + 0.5vw, 1.4rem);
+}
+
+.bill-subhead::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--pay-poster-rule);
+}
+
+.bill-poster-body > .bill-subhead:first-child { margin-top: 0; }
+
+/* ── The same numbers as text ─────────────────────────────────────────────────
+   Kept because a chart nobody can read as text is a chart that excludes people,
+   not because anyone prefers a table. Hairline rows, caps head, tabular figures;
+   no cell borders, no zebra, no wrapper card. */
+.bill-table-wrap { overflow-x: auto; }
+
+.bill-table {
+  width: 100%;
+  border-collapse: collapse;
+  text-align: left;
+}
+
+.bill-table th {
+  font-family: var(--font-clash), system-ui, sans-serif;
+  font-size: 0.68rem;
+  font-weight: 500;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--pay-poster-dim);
+  padding: 0 1.25rem 0.5rem 0;
+  border-bottom: 1px solid var(--pay-poster-rule);
+  white-space: nowrap;
+}
+
+.bill-table td {
+  font-size: 0.9rem;
+  padding: 0.55rem 1.25rem 0.55rem 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--pay-poster-rule) 45%, transparent);
+  font-variant-numeric: tabular-nums;
+}
+
+.bill-table :is(th, td):not(:first-child) { text-align: right; }
+.bill-table tr:last-child td { border-bottom: 0; }
+
+/* ── Record rows (the paper trail) ────────────────────────────────────────────
+   A settled bill, expandable. This is the .bill-payer row with a disclosure
+   bolted on: the bill is the line, the stamp and the chevron close it, the
+   figures are footnotes, and what the chain says opens underneath. The rubber
+   stamp survived the move from the card — a printed page is exactly where a
+   stamp belongs. */
+.bill-record { border-bottom: 1px solid var(--pay-poster-rule); }
+.bill-record:first-of-type { border-top: 1px solid var(--pay-poster-rule); }
+
+.bill-record-toggle {
+  display: block;
+  width: 100%;
+  border: 0;
+  background: none;
+  padding: clamp(0.8rem, 0.6rem + 0.6vw, 1.2rem) 0;
+  text-align: left;
+  color: inherit;
+  transition: color var(--dur-1) var(--ease-out);
+}
+
+.bill-record-toggle:hover:not(:disabled),
+.bill-record-toggle:focus-visible { color: var(--pay-poster-fg); }
+.bill-record-toggle:focus-visible { outline: 1px solid currentColor; outline-offset: 0.3em; }
+
+/* Between a payer line and the ranking: a record is a fact, not a decision, and
+   there can be a great many of them. */
+.bill-record .bill-payer-target { font-size: clamp(1.1rem, 0.95rem + 0.7vw, 1.7rem); }
+.bill-record .bill-payer-meta { margin-top: 0.5rem; }
+
+.bill-record-mark {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 0.7rem;
+}
+
+/* The stamp is normally an absolute overlay on a receipt; inline on a record row
+   it is pinned beside the chevron and kept off square. */
+.bill-record-mark .paid-bill-stamp {
+  position: static;
+  inset: auto;
+  width: clamp(2.4rem, 5.5vw, 3.2rem);
+  transform: rotate(-6deg);
+}
+
+.bill-record[data-open="true"] .bill-items-chevron { transform: rotate(180deg); }
+
+/* What the chain says about this row, opened. A footnote to the line above it:
+   dim, small, and ruled off at the top rather than boxed. */
+.bill-record-detail {
+  padding: 0 0 clamp(0.9rem, 0.7rem + 0.5vw, 1.4rem);
+  font-size: 0.85rem;
+  line-height: 1.6;
+  color: var(--pay-poster-dim);
+  animation: bill-items-open var(--dur-2) var(--ease-out);
+}
+
+.bill-record-detail :is(a, .history-tx-link) { color: var(--pay-poster-fg); }
+
+@media (prefers-reduced-motion: reduce) {
+  .bill-toggle::after,
+  .bill-cell-rule,
+  .bill-section-index,
+  .bill-payer-mark > *,
+  .bill-plate,
+  .bill-plate-call,
+  .bill-items-chevron { transition: none; }
+  /* The armed rule is the state, so it stays drawn — it just stops drawing. */
+  .bill-poster[data-armed]::before { transition: none; }
+  /* The sweep is the only thing saying a scan is running, so it stops moving and
+     stays put rather than disappearing — the marks rail carries the words. */
+  .bill-plate[data-scanning="true"]::after { animation: none; }
+  /* A meter's length is its value, so it keeps it and simply arrives at it. */
+  .bill-meter-rule::after,
+  .bill-meter-cell { transition: none; }
+  .bill-record-detail { animation: none; }
 }

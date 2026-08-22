@@ -4,9 +4,8 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import gsap from "gsap";
 import { MotionPathPlugin } from "gsap/MotionPathPlugin";
 import { ScrollTrigger } from "gsap/ScrollTrigger";
-import { Camera, Check, Mail, ReceiptText, WalletCards } from "lucide-react";
+import { Mail, WalletCards } from "lucide-react";
 
-import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { DiscordIcon, XIcon } from "../ProviderIcons";
 
@@ -26,7 +25,7 @@ type DemoItem = {
 };
 
 const ITEMS: DemoItem[] = [
-  { name: "Pizza", price: "$18.00", typed: "@splitsy_xyz", kind: "X handle", icon: <XIcon size={13} /> },
+  { name: "Pizza", price: "$18.00", typed: "@SplitsyApp", kind: "X handle", icon: <XIcon size={13} /> },
   { name: "Coffee", price: "$4.50", typed: "Splitsy", kind: "Discord username", icon: <DiscordIcon size={13} /> },
   { name: "Dessert", price: "$7.25", typed: "info@splitsy.xyz", kind: "Email address", icon: <Mail size={13} /> },
   {
@@ -111,7 +110,11 @@ export function DemoStage() {
           return { x: r.left - stageRect.left + r.width / 2, y: r.top - stageRect.top + r.height / 2 };
         };
         const btn0 = centerOf(splitBtns[0]);
-        gsap.set(menu, { left: btn0.x - 168, top: btn0.y + 16 });
+        // The menu is placed by measurement, and the control it hangs off is now
+        // at the START of a payer line rather than the end of a row — so the old
+        // bare `x - 168` can land past the plate's left edge, where the screen's
+        // clip would eat it. Clamped to the stage instead of trusting the layout.
+        gsap.set(menu, { left: gsap.utils.clamp(12, stageRect.width - 220, btn0.x - 60), top: btn0.y + 18 });
         const M = {
           receipt: centerOf(receipt),
           btn0,
@@ -271,9 +274,12 @@ export function DemoStage() {
         let seeking = false;
         let inView = true;
 
-        // ponytail: pin the parent section via closest() instead of threading a
-        // ref through BrowserFrame — one line vs. a prop drill.
-        const section = stage.closest("section");
+        // ponytail: the pin target is found by closest() instead of threading a
+        // ref through BrowserFrame — one line vs. a prop drill. It is the plate
+        // wrapper rather than the whole section: the section now opens with a
+        // step, a headline and a standfirst, and pinning those would spend half a
+        // laptop viewport on copy the visitor has already read.
+        const section = stage.closest("[data-demo-pin]") ?? stage.closest("section");
         const mm = gsap.matchMedia();
         mm.add("(min-width: 1024px)", () => {
           const st = ScrollTrigger.create({
@@ -352,29 +358,24 @@ export function DemoStage() {
   }, []);
 
   return (
-    <div className="relative grid gap-5 p-5 md:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)] md:p-7" ref={stageRef}>
+    <div className="relative grid gap-x-[clamp(1.5rem,1rem+2vw,3.5rem)] gap-y-8 p-5 md:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)] md:p-8" ref={stageRef}>
       <p className="sr-only">
         Animated product demo: a receipt from Café Arc is dragged into the upload area and scanned. Four line items are
         detected: Pizza, Coffee, Dessert, and Taxi. Each item is assigned to a person by X handle, Discord username,
         email address, or wallet address, then the split is written to Arc and settled in USDC.
       </p>
 
-      {/* LEFT · upload pane */}
-      <div>
-        <p className="flex items-center gap-2 text-sm font-bold text-[var(--text)]">
-          <Camera className="text-[var(--accent)]" size={16} /> Upload bill
-        </p>
-        <div
-          className="scan-surface upload-focus relative mt-3 flex min-h-[22rem] items-center justify-center rounded-[var(--radius)] border border-dashed border-[var(--border-strong)] bg-[var(--receipt)] p-5"
-          data-dropzone
-        >
+      {/* LEFT · upload pane — the bills tab's capture plate, verbatim: a caps
+          label, an area of the poster marked by registration arms, and a rule at
+          its foot. Nothing dashed, nothing rounded. */}
+      <div className="bill-capture">
+        <span className="settle-label">01 · Upload</span>
+        <div className="bill-plate mt-3" data-dropzone>
           <div
-            className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center px-6 text-center opacity-0"
+            className="pointer-events-none absolute inset-0 flex items-center justify-center px-6 text-center opacity-0"
             data-drop-hint
           >
-            <Camera className="text-[var(--accent)]" size={34} />
-            <p className="mt-3 text-base font-semibold text-[var(--receipt-text)]">Upload the bill</p>
-            <p className="mt-1 text-xs text-[var(--receipt-muted)]">Click to browse or drag &amp; drop an image</p>
+            <span className="bill-plate-call">Drop the bill</span>
           </div>
           <div className="receipt-card w-56 p-4 will-change-transform" data-receipt>
             <p className="text-center text-sm font-extrabold tracking-wide text-[var(--receipt-text)]">CAFÉ ARC</p>
@@ -397,139 +398,159 @@ export function DemoStage() {
               <span>TOTAL</span>
               <span className="amount-text">$42.55</span>
             </div>
-            <div className="settlement-stamp absolute right-2 top-9 text-[10px]" data-stamp>
+            <div className="settlement-stamp absolute top-9 right-2 text-[10px]" data-stamp>
               Settled on Arc
             </div>
           </div>
         </div>
+        <div className="bill-cell-rule" />
+        <div className="bill-plate-caption">
+          <span className="bill-poster-fact">receipt.jpg · 1290 × 1720</span>
+          <span className="bill-poster-fact">
+            hashed into the bill · <b>keccak256</b>
+          </span>
+        </div>
       </div>
 
       {/* RIGHT · split pane */}
-      <div className="relative flex flex-col">
-        <p className="flex items-center gap-2 text-sm font-bold text-[var(--text)]">
-          <ReceiptText className="text-[var(--accent)]" size={16} /> Split the bill
-        </p>
+      <div className="relative flex min-w-0 flex-col">
+        <span className="settle-label">02 · Split</span>
 
         <div className="relative mt-3">
-          <p className="absolute inset-x-0 top-3 text-sm text-[var(--text-muted)] opacity-0" data-right-empty>
+          <p className="bill-poster-fact absolute inset-x-0 top-3 opacity-0" data-right-empty>
             Scan a receipt to start a split…
           </p>
-          <div className="space-y-1.5">
-            {ITEMS.map((item, i) => (
-              <div
-                className="flex items-center gap-3 rounded-[var(--radius)] border border-[var(--border)] bg-[var(--surface-strong)] px-3 py-2.5"
-                data-item-row
-                key={item.name}
-              >
-                <span className="receipt-index">{String(i + 1).padStart(2, "0")}</span>
-                <span className="min-w-0 flex-1 truncate text-sm font-semibold text-[var(--text)]">{item.name}</span>
-                <span className="amount-text text-sm font-semibold text-[var(--text)]" data-fly-source>
-                  {item.price}
-                </span>
-                <span className="relative flex w-[46%] min-w-0 items-center justify-end sm:w-[42%]">
-                  <button
-                    className="absolute right-0 rounded-full border border-[var(--border-strong)] px-2.5 py-1 text-xs font-bold text-[var(--text-soft)] opacity-0"
-                    data-split-btn
-                    tabIndex={-1}
-                    type="button"
-                  >
-                    Split with…
-                  </button>
-                  {/* ponytail: focus ring is visual-only ([data-focus] styling) — calling
-                      .focus() from the timeline would steal real page focus mid-scroll. */}
-                  <span
-                    className="flex min-w-0 items-center gap-1.5 rounded-full border border-[var(--border)] bg-[var(--surface)] px-2.5 py-1 text-xs font-semibold text-[var(--text)] transition-shadow duration-[var(--dur-1)] data-[focus=true]:border-[var(--accent)] data-[focus=true]:shadow-[0_0_0_3px_var(--accent-soft)]"
-                    data-assignee-chip
-                  >
-                    <span className="shrink-0 text-[var(--text-soft)]">{item.icon}</span>
-                    {item.short ? (
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <span className="mono truncate" data-typed>
-                            {item.short}
+          {/* Payer rows: the app's own. A name and an amount, both set in poster
+              type, with everything that qualifies them on a caps rail beneath —
+              which is where the "split with…" control and the typed handle live. */}
+          <div>
+            {ITEMS.map((item) => (
+              <div className="bill-payer" data-item-row key={item.name}>
+                <div className="bill-payer-line">
+                  <span className="bill-payer-target flex min-w-0 items-baseline">
+                    <span className="relative flex min-w-0 items-baseline">
+                      <button
+                        className="bill-payer-target absolute top-0 left-0 border-0 bg-transparent p-0 whitespace-nowrap text-[var(--pay-poster-dim)] opacity-0"
+                        data-split-btn
+                        tabIndex={-1}
+                        type="button"
+                      >
+                        Split with…
+                      </button>
+                      {/* ponytail: focus ring is visual-only ([data-focus] styling) — calling
+                          .focus() from the timeline would steal real page focus mid-scroll. */}
+                      <span
+                        className="relative flex min-w-0 items-baseline opacity-0 after:absolute after:inset-x-0 after:-bottom-1 after:h-px after:origin-left after:scale-x-0 after:bg-current after:transition-transform after:duration-[var(--dur-2)] data-[focus=true]:after:scale-x-100"
+                        data-assignee-chip
+                      >
+                        <span className="bill-payer-mark shrink-0 self-center text-[var(--pay-poster-dim)]">
+                          {item.icon}
+                        </span>
+                        {item.short ? (
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <span className="truncate" data-typed>
+                                {item.short}
+                              </span>
+                            </TooltipTrigger>
+                            <TooltipContent className="mono">{FULL_ADDRESS}</TooltipContent>
+                          </Tooltip>
+                        ) : (
+                          <span className="truncate" data-typed>
+                            {item.typed}
                           </span>
-                        </TooltipTrigger>
-                        <TooltipContent className="mono">{FULL_ADDRESS}</TooltipContent>
-                      </Tooltip>
-                    ) : (
-                      <span className={`truncate ${item.mono ? "mono" : ""}`} data-typed>
-                        {item.typed}
+                        )}
+                        <span className="lp-caret ml-0.5 self-center opacity-0" data-caret />
                       </span>
-                    )}
-                    <span className="lp-caret opacity-0" data-caret />
+                    </span>
                   </span>
-                </span>
+                  <span className="bill-payer-share" data-fly-source>
+                    <span className="bill-currency">$</span>
+                    {item.price.replace("$", "")}
+                  </span>
+                </div>
+                <div className="bill-payer-meta">
+                  <span className="settle-label">{item.kind}</span>
+                  <span className="bill-poster-fact">{item.name}</span>
+                </div>
               </div>
             ))}
           </div>
         </div>
 
-        {/* recipients */}
-        <div className="mt-4 grid grid-cols-2 gap-2">
+        {/* Who ends up owing what — the same ruled rows, one register smaller. */}
+        <div className="lp-rows mt-7 grid grid-cols-1 gap-x-8 sm:grid-cols-2">
           {ITEMS.map((item) => (
-            <div
-              className="flex items-center gap-2 rounded-[var(--radius)] border border-[var(--border)] bg-[var(--surface)] px-2.5 py-2"
-              data-recipient
-              key={item.kind}
-            >
-              <span className="flex size-7 shrink-0 items-center justify-center rounded-full border border-[var(--border)] bg-[var(--surface-strong)] text-[var(--text-soft)]">
-                {item.icon}
+            <div className="lp-row grid-cols-[minmax(0,1fr)_auto] opacity-0" data-recipient key={item.kind}>
+              <span className="flex min-w-0 items-baseline gap-2">
+                <span className="shrink-0 self-center text-[var(--pay-poster-dim)]">{item.icon}</span>
+                <span className={`truncate text-[0.82rem] text-[var(--pay-poster-fg)] ${item.mono ? "mono" : ""}`}>
+                  {item.short ?? item.typed}
+                </span>
               </span>
-              <span className={`min-w-0 flex-1 truncate text-[11px] font-bold text-[var(--text)] ${item.mono ? "mono" : ""}`}>
-                {item.short ?? item.typed}
-              </span>
-              <span className="amount-text shrink-0 text-[11px] font-bold text-[var(--success)]" data-chip-amount>
-                {item.price}
+              <span className="bill-figure-sm text-[var(--success)] opacity-0" data-chip-amount>
+                <span className="bill-currency">$</span>
+                {item.price.replace("$", "")}
               </span>
             </div>
           ))}
         </div>
 
-        {/* write on arc */}
-        <div className="relative mt-4 overflow-hidden rounded-[var(--radius)]">
-          <Button className="w-full will-change-transform" data-write size="lg" tabIndex={-1}>
-            Write on Arc
-          </Button>
-          {[0, 1, 2].map((i) => (
-            <span
-              className="pointer-events-none absolute top-1/2 left-[-40px] size-2 -translate-y-1/2 rounded-[3px] bg-[var(--arc-cyan)] opacity-0"
-              data-block
-              key={i}
-              style={{ marginLeft: i * -14 }}
-            />
-          ))}
+        {/* The commit: .settle-action, the borderless display word the /pay
+            poster uses to move money. The blocks stream out of it as it fires. */}
+        <div className="bill-poster-foot relative">
+          <div className="relative">
+            <button className="settle-action opacity-0" data-write tabIndex={-1} type="button">
+              Write on Arc
+            </button>
+            {[0, 1, 2].map((i) => (
+              <span
+                className="pointer-events-none absolute top-1/2 left-[-40px] size-2 -translate-y-1/2 bg-[var(--accent)] opacity-0"
+                data-block
+                key={i}
+                style={{ marginLeft: i * -14 }}
+              />
+            ))}
+          </div>
+          <span className="settle-label opacity-0" data-success data-tone="ok">
+            Settled on Arc · 4 shares
+          </span>
         </div>
-        <p className="status-dot status-ok mt-3 gap-1.5" data-success>
-          <Check size={13} /> Successfully settled on Arc
-        </p>
       </div>
 
       {/* dropdown — real list, real rows; ponytail: not Radix — its body portal
-          fights the pinned/scrubbed stage, so the menu animates in place. */}
+          fights the pinned/scrubbed stage, so the menu animates in place. The
+          menu is the one thing here allowed a ground of its own: it floats over
+          the rows it covers, and type over type is not readable. */}
       <div
-        className="invisible absolute z-10 w-52 rounded-lg border border-[var(--border)] bg-[var(--surface-strong)] p-1 opacity-0 shadow-[var(--shadow)]"
+        className="invisible absolute z-10 w-52 border-t border-[var(--pay-poster-rule)] bg-[var(--background)] p-1 opacity-0 shadow-[var(--shadow)]"
         data-menu
       >
         {ITEMS.map((item) => (
           <div
-            className="flex items-center gap-2.5 rounded-md px-2.5 py-2 text-xs font-semibold text-[var(--text)] data-[on=true]:bg-[var(--accent-soft)]"
+            className="flex items-center gap-2.5 px-2.5 py-2 text-[var(--pay-poster-dim)] data-[on=true]:text-[var(--pay-poster-fg)]"
             data-menu-item
             key={item.kind}
           >
-            <span className="text-[var(--text-soft)]">{item.icon}</span>
-            {item.kind}
+            <span>{item.icon}</span>
+            <span className="settle-label">{item.kind}</span>
           </div>
         ))}
       </div>
 
-      {/* flying amounts */}
+      {/* flying amounts. The one element on the page that gets a ground of its
+          own, and it earns it: it flies across four rows of type on its way to a
+          recipient, and a bare figure over other type is unreadable. So it takes
+          the page's own background and nothing else — no border, no shadow, no
+          pill; a figure travelling, not a badge. */}
       {ITEMS.map((item) => (
         <span
-          className="amount-text invisible pointer-events-none absolute top-0 left-0 z-20 rounded-full border border-[var(--border)] bg-[var(--surface-strong)] px-2 py-0.5 text-xs font-bold text-[var(--text)] opacity-0 shadow-[var(--shadow-soft)]"
+          className="bill-figure-sm invisible pointer-events-none absolute top-0 left-0 z-20 bg-[var(--background)] px-1.5 opacity-0"
           data-fly
           key={item.name}
         >
-          {item.price}
+          <span className="bill-currency">$</span>
+          {item.price.replace("$", "")}
         </span>
       ))}
 
@@ -549,22 +570,20 @@ export function DemoStage() {
       </svg>
 
       {/* loop-reset veil */}
-      <div className="pointer-events-none absolute inset-0 z-40 bg-[var(--surface)] opacity-0" data-overlay />
+      <div className="pointer-events-none absolute inset-0 z-40 bg-[var(--background)] opacity-0" data-overlay />
 
-      {/* step rail */}
-      <nav aria-label="Demo steps" className="col-span-full mt-1 flex flex-wrap items-center justify-center gap-1.5">
+      {/* step rail — .bill-views, the app's own view pair: caps on a baseline,
+          with a section rule under the one you are on. */}
+      <nav aria-label="Demo steps" className="lp-plate-steps col-span-full mt-2">
         {STEPS.map((step, i) => (
           <button
-            className={`rounded-full px-3 py-1 text-xs font-bold transition-colors duration-[var(--dur-1)] ${
-              i === activeStep
-                ? "bg-[var(--accent-soft)] text-[var(--accent)]"
-                : "text-[var(--text-muted)] hover:text-[var(--text)]"
-            }`}
+            aria-current={i === activeStep ? "true" : undefined}
+            className="iou-provider bill-toggle"
             key={step}
             onClick={() => seekRef.current(i)}
             type="button"
           >
-            {step}
+            <span className="lp-step-num">{String(i + 1).padStart(2, "0")}</span> {step}
           </button>
         ))}
       </nav>

@@ -1,99 +1,67 @@
 "use client";
 
-import { useEffect, useRef } from "react";
-import gsap from "gsap";
-import { ArrowRight, FileCheck2, ReceiptText, ShieldCheck } from "lucide-react";
+import { useReveal } from "./useReveal";
 
-// The trust story, kept quiet: receipt bytes are hashed, the hash is committed
-// in the BillCreated event, so any payer can verify the split matches the
-// paper. Three stations, one line each — the connector draws itself in as
-// the section enters.
+// The trust story, kept quiet: receipt bytes are hashed, the hash is committed in
+// the BillCreated event, so any payer can verify the split matches the paper.
+// Three stations as three spec entries on the app's own contents rail — label,
+// one line, rule — rather than three cards with an arrow between them.
+const STATIONS = [
+  {
+    label: "The receipt",
+    body: "Scanned, itemized, and hashed byte for byte.",
+    proof: "keccak256(receipt.jpg)",
+  },
+  {
+    label: "The bill on Arc",
+    body: "Every share and the fingerprint, committed in one event.",
+    proof: "BillCreated(billId, metadataHash)",
+  },
+  {
+    label: "The check",
+    body: "Payers recompute the hash and confirm it matches before paying.",
+    proof: "matches on-chain commitment",
+    ok: true,
+  },
+];
+
 export function SectionOnchain() {
-  const rootRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
-    const root = rootRef.current;
-    if (!root) return;
-
-    const ctx = gsap.context(() => {
-      gsap.from("[data-onchain-heading]", {
-        y: 26,
-        autoAlpha: 0,
-        duration: 0.8,
-        ease: "expo.out",
-        scrollTrigger: { trigger: root, start: "top 74%" },
-      });
-      gsap.from("[data-onchain-step]", {
-        y: 24,
-        autoAlpha: 0,
-        duration: 0.7,
-        ease: "expo.out",
-        stagger: 0.14,
-        scrollTrigger: { trigger: root, start: "top 62%" },
-      });
-      gsap.from("[data-onchain-arrow]", {
-        autoAlpha: 0,
-        scale: 0.6,
-        duration: 0.45,
-        ease: "back.out(2)",
-        stagger: 0.14,
-        delay: 0.18,
-        scrollTrigger: { trigger: root, start: "top 62%" },
-      });
-    }, root);
-
-    return () => ctx.revert();
-  }, []);
+  const ref = useReveal<HTMLElement>("top 76%");
 
   return (
-    <section
-      aria-labelledby="onchain-heading"
-      className="mx-auto w-full max-w-[80rem] px-4 pb-[var(--lp-section-y)] sm:px-6 lg:px-8"
-      ref={rootRef}
-    >
-      <h2 className="lp-display-lg max-w-3xl" data-onchain-heading id="onchain-heading">
-        Don&apos;t trust the split. <span className="lp-headline-accent">Verify it.</span>
-      </h2>
-      <p className="lp-lede mt-5 max-w-xl" data-onchain-heading>
-        The receipt&apos;s fingerprint is written into the bill on Arc. Anyone tagged can check that what
-        they&apos;re paying matches the paper before they pay.
-      </p>
-
-      <div className="mt-12 flex flex-col items-stretch gap-3 lg:flex-row lg:items-center">
-        <div
-          className="flex-1 rounded-[calc(var(--radius)+4px)] border border-[var(--border)] bg-[var(--surface)] p-5 shadow-[var(--shadow-soft)] backdrop-blur-xl"
-          data-onchain-step
-        >
-          <ReceiptText className="text-[var(--text-soft)]" size={20} />
-          <p className="mt-3 text-sm font-bold text-[var(--text)]">The receipt</p>
-          <p className="mt-1 text-sm text-[var(--text-muted)]">Scanned, itemized, and hashed byte for byte.</p>
-          <p className="mono mt-3 truncate text-xs text-[var(--text-muted)]">keccak256(receipt.jpg)</p>
+    <section aria-labelledby="onchain-heading" className="bill-poster" ref={ref}>
+      <div className="lp-measure">
+        <div className="bill-poster-head">
+          <span className="settle-label" data-reveal="item">
+            <span className="lp-step">07</span> Verification
+          </span>
+          <span className="bill-poster-fact" data-reveal="item">
+            the preimage is public · the hash is on-chain
+          </span>
         </div>
+        <h2 className="lp-display-lg mt-4 max-w-4xl" data-reveal="lead" id="onchain-heading">
+          Don&apos;t trust the split. <span className="lp-headline-accent">Verify it.</span>
+        </h2>
+        <p className="lp-lede mt-5 max-w-2xl" data-reveal="lead">
+          The receipt&apos;s fingerprint is written into the bill on Arc. Anyone tagged can check that what
+          they&apos;re paying matches the paper before they pay.
+        </p>
 
-        <ArrowRight className="mx-auto shrink-0 rotate-90 text-[var(--text-muted)] lg:rotate-0" data-onchain-arrow size={18} />
-
-        <div
-          className="flex-1 rounded-[calc(var(--radius)+4px)] border border-[var(--border)] bg-[var(--surface)] p-5 shadow-[var(--shadow-soft)] backdrop-blur-xl"
-          data-onchain-step
-        >
-          <FileCheck2 className="text-[var(--text-soft)]" size={20} />
-          <p className="mt-3 text-sm font-bold text-[var(--text)]">The bill on Arc</p>
-          <p className="mt-1 text-sm text-[var(--text-muted)]">Every share and the fingerprint, committed in one event.</p>
-          <p className="mono mt-3 truncate text-xs text-[var(--accent)]">BillCreated(billId, metadataHash)</p>
-        </div>
-
-        <ArrowRight className="mx-auto shrink-0 rotate-90 text-[var(--text-muted)] lg:rotate-0" data-onchain-arrow size={18} />
-
-        <div
-          className="flex-1 rounded-[calc(var(--radius)+4px)] border border-[var(--border)] bg-[var(--surface)] p-5 shadow-[var(--shadow-soft)] backdrop-blur-xl"
-          data-onchain-step
-        >
-          <ShieldCheck className="text-[var(--success)]" size={20} />
-          <p className="mt-3 text-sm font-bold text-[var(--text)]">The check</p>
-          <p className="mt-1 text-sm text-[var(--text-muted)]">Payers recompute the hash and confirm it matches before paying.</p>
-          <p className="mono mt-3 truncate text-xs text-[var(--success)]">✓ matches on-chain commitment</p>
-        </div>
+        <ol className="bill-contents list-none">
+          {STATIONS.map((station, index) => (
+            <li className="bill-cell" data-reveal="item" key={station.label}>
+              <span className="settle-label">
+                <span className="lp-step-num">{String(index + 1).padStart(2, "0")}</span> {station.label}
+              </span>
+              <span className="bill-contents-label">{station.body}</span>
+              <div className="bill-cell-rule lp-rule" data-rule />
+              <p className="lp-row-proof mt-2" data-tone={station.ok ? "ok" : undefined}>
+                {station.ok ? "✓ " : ""}
+                {station.proof}
+              </p>
+            </li>
+          ))}
+        </ol>
       </div>
     </section>
   );

@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import gsap from "gsap";
-import { Bot, Check, ExternalLink, Terminal, TriangleAlert } from "lucide-react";
+import { Check, ExternalLink, TriangleAlert } from "lucide-react";
 
 import { resolveLedger, SCRIPTED_LEDGER, type LedgerTiles } from "@/lib/landing-ledger";
 
@@ -260,12 +260,10 @@ export function AgentStage() {
       </p>
 
       {/* LEFT · Scout's decision signals */}
-      <div className="flex flex-col">
-        <p className="flex items-center gap-2 text-sm font-bold text-[var(--text)]">
-          <Bot className="text-[var(--accent)]" size={16} /> Scout · the buyer
-        </p>
+      <div className="flex min-w-0 flex-col">
+        <span className="settle-label">Scout · the buyer</span>
 
-        <div className="mt-3 space-y-2">
+        <div className="lp-rows mt-3">
           <Signal title="Image is legible" detail="1.4 MB · 1290 × 1720" foot="floors: 8 KB · 200 px" />
           <Signal
             title="Budget allows it"
@@ -280,31 +278,31 @@ export function AgentStage() {
           />
         </div>
 
-        <div className="mt-3 rounded-[var(--radius)] border border-[var(--border)] bg-[var(--surface-strong)] px-3 py-2.5">
-          <p className="flex items-baseline justify-between text-xs text-[var(--text-muted)]">
-            <span>Spent this run</span>
-            <span className="amount-text font-bold text-[var(--text)]" data-spend>
-              {TOTAL_SPEND}
-            </span>
-          </p>
-          <p className="mt-1.5 text-[11px] text-[var(--text-muted)]" data-wallet>
+        <div className="bill-cell mt-6">
+          <span className="settle-label">Spent this run</span>
+          <div className="bill-figure-sm" data-spend>
+            {TOTAL_SPEND}
+          </div>
+          <div className="bill-cell-rule" />
+          <p className="lp-row-body mt-2" data-wallet>
             Signed from Scout&apos;s own wallet — a server-held EOA on Arc, capped at {DEMO_CAP} a day.
           </p>
         </div>
       </div>
 
-      {/* RIGHT · the x402 transcript */}
+      {/* RIGHT · the x402 transcript. The one place on this page set in mono on a
+          ground of its own: it is a terminal, and a terminal that isn't inset
+          isn't legible as one. Ruled rather than boxed — a head rule, a foot
+          rule, and the ink wash the demo plate itself uses. */}
       <div className="flex min-w-0 flex-col">
-        <p className="flex items-center gap-2 text-sm font-bold text-[var(--text)]">
-          <Terminal className="text-[var(--accent)]" size={16} /> x402 · HTTP
-        </p>
+        <span className="settle-label">x402 · HTTP</span>
 
         {/* A fixed-height viewport over a track the timeline slides upward, so
             the transcript behaves like a real terminal rather than overflowing:
             the six acts are ~36rem of lines in a 24rem pane. Under reduced
             motion nothing slides, so the viewport is hand-scrollable instead
             and no line is unreachable. */}
-        <div className="mono mt-3 h-[24rem] overflow-hidden rounded-[var(--radius)] border border-[var(--border)] bg-[var(--surface-strong)] p-3 text-[11px] leading-[1.7] motion-reduce:overflow-y-auto sm:text-xs">
+        <div className="mono mt-3 h-[24rem] overflow-hidden border-y border-[var(--pay-poster-rule)] bg-[color-mix(in_srgb,var(--pay-poster-fg)_3%,transparent)] p-3 text-[11px] leading-[1.7] motion-reduce:overflow-y-auto sm:text-xs">
           <div data-track>
             {ACTS.map((act, actIndex) => (
               <div className="space-y-0.5" data-act={actIndex} data-act-group key={act.label}>
@@ -316,54 +314,51 @@ export function AgentStage() {
           </div>
         </div>
 
-        <p className="mt-2 text-[11px] text-[var(--text-muted)]">
+        <p className="lp-row-body mt-3">
           Scripted walkthrough — the field names, headers, prices and thresholds are the ones the server
           uses. The address and transaction hash are illustrative.
         </p>
       </div>
 
       {/* LIVE · the real x402 ledger, not the scripted run above */}
-      <div className="col-span-full rounded-[var(--radius)] border border-[var(--border)] bg-[var(--surface)] p-3">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <p className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-[0.08em] text-[var(--text-muted)]">
-            {ledger.live ? (
-              <span className="size-1.5 shrink-0 animate-pulse rounded-full bg-[var(--success)] motion-reduce:animate-none" />
-            ) : null}
+      <div className="col-span-full">
+        <div className="bill-poster-head border-t border-[var(--pay-poster-rule)] pt-4">
+          {/* .app-network is the header's live mark: a dot that breathes, and
+              nothing else. When the figures below are the scripted ones there is
+              nothing live to mark, so it is a plain label. */}
+          <span className={ledger.live ? "settle-label app-network" : "settle-label"}>
             {ledger.live ? "Live from the x402 ledger" : "Agent economy · all time"}
-          </p>
+          </span>
           {agent ? (
             <a
-              className="inline-flex items-center gap-1 text-[11px] text-[var(--text-muted)]"
+              className="bill-poster-fact inline-flex items-baseline gap-1 no-underline"
               href={`https://testnet.arcscan.app/address/${agent.address}`}
               rel="noreferrer"
               target="_blank"
             >
               Scout {agent.address.slice(0, 6)}…{agent.address.slice(-4)}
               {agent.tokenId ? ` · ERC-8004 #${agent.tokenId}` : ""}
-              <ExternalLink size={11} />
+              <ExternalLink className="lp-row-out self-center" size={11} />
             </a>
           ) : null}
         </div>
 
-        <div className="mt-2 grid grid-cols-3 gap-3">
+        <div className="bill-poster-rail">
           <LedgerTile label="Earned" sub="x402 calls served" value={`${ledger.earnedUsdc} USDC`} />
           <LedgerTile label="Scout spent" sub="paid to Splitsy's own APIs" value={`${ledger.spentUsdc} USDC`} />
-          <LedgerTile label="Calls served" sub="paid API responses" value={ledger.callsServed} />
+          <LedgerTile label="Calls served" sub="paid API responses" value={String(ledger.callsServed)} />
         </div>
       </div>
 
       {/* loop-reset veil */}
-      <div className="pointer-events-none absolute inset-0 z-40 bg-[var(--surface)] opacity-0" data-overlay />
+      <div className="pointer-events-none absolute inset-0 z-40 bg-[var(--background)] opacity-0" data-overlay />
 
       {/* step rail */}
-      <nav aria-label="Agent demo steps" className="col-span-full mt-1 flex flex-wrap items-center justify-center gap-1.5">
+      <nav aria-label="Agent demo steps" className="lp-plate-steps col-span-full mt-2">
         {STEPS.map((step, i) => (
           <button
-            className={`rounded-full px-3 py-1 text-xs font-bold transition-colors duration-[var(--dur-1)] ${
-              i === activeStep
-                ? "bg-[var(--accent-soft)] text-[var(--accent)]"
-                : "text-[var(--text-muted)] hover:text-[var(--text)]"
-            }`}
+            aria-current={i === activeStep ? "true" : undefined}
+            className="iou-provider bill-toggle"
             key={step}
             onClick={() => {
               setActiveStep(i);
@@ -371,7 +366,7 @@ export function AgentStage() {
             }}
             type="button"
           >
-            {step}
+            <span className="lp-step-num">{String(i + 1).padStart(2, "0")}</span> {step}
           </button>
         ))}
       </nav>
@@ -379,10 +374,10 @@ export function AgentStage() {
   );
 }
 
-// One decision signal. Signal 3 carries two mutually exclusive detail lines —
-// the amber "under threshold" reading and the resolved green one — because
-// swapping textContent from a timeline does not survive scrubbing backwards,
-// whereas toggling two elements with tl.set() reverts cleanly.
+// One decision signal, as a ruled row. Signal 3 carries two mutually exclusive
+// detail lines — the amber "under threshold" reading and the resolved green one —
+// because swapping textContent from a timeline does not survive scrubbing
+// backwards, whereas toggling two elements with tl.set() reverts cleanly.
 function Signal({
   title,
   detail,
@@ -395,17 +390,13 @@ function Signal({
   warnDetail?: string;
 }) {
   return (
-    <div
-      className="rounded-[var(--radius)] border border-[var(--border)] bg-[var(--surface)] px-3 py-2.5 data-[state=warn]:border-[var(--warning-text)]"
-      data-signal
-      data-state="ok"
-    >
-      <p className="flex items-center gap-2 text-xs font-bold text-[var(--text)]">
+    <div className="lp-row grid-cols-1" data-signal data-state="ok">
+      <p className="flex items-baseline gap-2 text-[0.95rem] text-[var(--pay-poster-fg)]">
         {/* Both glyphs share one slot so swapping them cannot shift the title.
             They stack absolutely rather than toggling `hidden`, because the
             timeline crossfades them with autoAlpha and a display:none element
             cannot be tweened back in. */}
-        <span className="relative inline-flex size-[13px] shrink-0 items-center justify-center">
+        <span className="relative inline-flex size-[13px] shrink-0 items-center justify-center self-center">
           <span className="absolute inset-0 text-[var(--success)]" data-signal-ok>
             <Check size={13} />
           </span>
@@ -421,7 +412,7 @@ function Signal({
         </span>
         {title}
       </p>
-      <p className="mt-1 text-xs text-[var(--text-muted)]" data-signal-detail>
+      <p className="lp-row-body" data-signal-detail>
         {detail}
       </p>
       {/* Authored hidden from assistive tech as well as from sight: opacity-0
@@ -432,13 +423,13 @@ function Signal({
       {warnDetail ? (
         <p
           aria-hidden="true"
-          className="mt-1 text-xs text-[var(--warning-text)] opacity-0"
+          className="lp-row-body text-[var(--warning-text)] opacity-0"
           data-signal-warn-detail
         >
           {warnDetail}
         </p>
       ) : null}
-      <p className="mt-1 text-[11px] text-[var(--text-muted)]">{foot}</p>
+      <p className="settle-label">{foot}</p>
     </div>
   );
 }
@@ -497,10 +488,11 @@ function TranscriptLine({ line }: { line: Line }) {
 
 function LedgerTile({ label, value, sub }: { label: string; value: string; sub: string }) {
   return (
-    <div className="min-w-0">
-      <p className="amount-text truncate text-base font-bold tabular-nums text-[var(--text)] sm:text-lg">{value}</p>
-      <p className="truncate text-[11px] font-semibold text-[var(--text)]">{label}</p>
-      <p className="truncate text-[11px] text-[var(--text-muted)]">{sub}</p>
+    <div className="bill-cell">
+      <span className="settle-label">{label}</span>
+      <div className="bill-figure-sm">{value}</div>
+      <div className="bill-cell-rule" />
+      <p className="lp-row-body mt-2">{sub}</p>
     </div>
   );
 }

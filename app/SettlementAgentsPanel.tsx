@@ -1,20 +1,31 @@
 "use client";
 
-// The surface for the two settlement agents. Three numbered sections:
-//   01. Autopay rules — the caps and checks that bind the debtor-side agent.
+// The surface for the two settlement agents. Four numbered sections, the fourth
+// (Scout's x402 ledger) in app/AgentEconomyPanel.tsx:
+//   01. Autopay — the agent, its balance, and the caps and checks that bind it.
 //   02. Collect mandates — per-bill permissions for the creditor-side agent,
 //       each with a visible revoke.
 //   03. The decision log — including every skip and its reason. The skips are the
 //       point: they are what shows a spending mandate is still constrained.
 //
-// The "armed" styling on section 01 is load-bearing, not decorative: the lit
-// rail and warmed header appear only while the agent is actually permitted to
-// spend, so the page always answers "can software move my money right now?"
-// from across the room.
+// SET AS POSTERS, not as spec cards — the same system both bills subtabs use, so
+// the app reads as one product rather than five screens that shipped together.
+// See "the bill poster" and "the agent poster" in globals.css, and the note at
+// the top of app/SpecCard.tsx on why a tab picks one system and stays in it. The
+// translation is almost all reuse: the agent's balance is a .bill-figure, its
+// ceilings are .bill-cell figures you type into, and a trusted creator, a collect
+// mandate and a decision are each one .bill-payer row — a headline with
+// everything that qualifies it on the footnote rail underneath.
+//
+// The "armed" styling on section 01 is load-bearing, not decorative: the
+// section's own top rule draws itself in ink only while the agent is actually
+// permitted to spend, so the page always answers "can software move my money
+// right now?" from across the room. The marks rail says it in words too, because
+// a hairline is not a state a screen reader can read.
 //
 // FUNDED MODE ONLY. The agent settles out of ITS OWN balance — the one the user
-// tops up on the card below — so the hard ceiling is what it holds, and the caps
-// here are enforced by Splitsy before it spends rather than by a contract.
+// tops up in 01 — so the hard ceiling is what it holds, and the caps here are
+// enforced by Splitsy before it spends rather than by a contract.
 // Mandate mode, where the agent instead pulls the user's own USDC under
 // AutopayMandate.sol, is still whole in the backend (lib/autopay.ts,
 // app/api/agents/autopay/route.ts, the contract, the PUT that can still write
@@ -23,9 +34,10 @@
 // longer grant must still be withdrawable by whoever already granted it.
 //
 // Distinct from app/AgentEconomyPanel.tsx, which is Scout's x402 nanopayment
-// ledger. Same design tokens, different agents.
-import { useCallback, useEffect, useState } from "react";
-import { Ban, Bot, CalendarClock, Check, ChevronRight, Link2, Loader2, Plus, ShieldCheck, Wallet, X } from "lucide-react";
+// ledger. Same design system, different agents.
+import { useCallback, useEffect, useRef, useState } from "react";
+import { ChevronDown } from "lucide-react";
+import { AnimatePresence, motion } from "framer-motion";
 import { useAccount, useSignMessage } from "wagmi";
 import { getWalletClient } from "wagmi/actions";
 import { createPublicClient, http } from "viem";
@@ -38,7 +50,10 @@ import { buildLinkMessage, buildSigninMessage, SESSION_ENDED_EVENT } from "@/lib
 // component — it is imported to keep REASONS below exhaustive, not to run.
 import type { AutopayDecision } from "@/lib/autopay";
 import { encodeRevokeMandate } from "@/lib/registry-calldata";
+import { PosterCell, PosterFact, PosterValue, SectionHead, revealMotion, sectionMotion, type Step } from "./SpecCard";
 import JobTrail from "./JobTrail";
+
+const EXPLORER = "https://testnet.arcscan.app";
 
 // ERC-8004 IdentityRegistry, for the link to the agent's identity NFT. Display
 // only — nothing here signs against it.
@@ -48,6 +63,36 @@ const IDENTITY_REGISTRY_ADDRESS = "0x8004A818BFB912233c491871b3d84c89A494BD9e";
 // the job fee and the agent's own gas, which is the smallest amount that leaves
 // the agent actually able to settle something.
 const DEFAULT_FUND_USDC = 2;
+
+// The PUT caps the list, so the UI stops offering rows past the same number
+// rather than letting someone type an eleventh and have it silently dropped.
+const MAX_TRUSTED_CREATORS = 10;
+
+const looksLikeAddress = (value: string) => /^0x[a-fA-F0-9]{40}$/.test(value.trim());
+
+// ── the tab's four sections, named once ──────────────────────────────────────
+//
+// Three of these render here and the fourth in app/AgentEconomyPanel.tsx, while
+// the contents rail that indexes all four is a PosterHero up in HomeClient. Three
+// files describing the same four sections is exactly how an index ends up
+// promising something the page does not deliver — the old rail called section 04
+// "Scout" while the section itself called it "Third-party agent" — so every one of
+// them now reads these rows instead of restating them.
+//
+// See SectionHead in SpecCard.tsx for why a section on this tab has to say its own
+// name at all: four sections on one scroll, each a lede pair over a list of rows,
+// and until now each one opened with nothing but a 0.72rem caps kicker.
+export const AGENT_STEPS: readonly Step[] = [
+  // Noun phrases, not sentences, because section 01 renders in a state where no
+  // agent exists at all — a title that read "your agent pays for you" would be
+  // contradicted by its own hero figure ("No agent can spend on your behalf") two
+  // lines below it. A title names what a section is about; the figure under it is
+  // what is actually true right now.
+  { index: "01", kicker: "Debtor side", title: "The agent that pays for you" },
+  { index: "02", kicker: "Creditor side", title: "What others may collect" },
+  { index: "03", kicker: "Audit trail", title: "Every decision it made" },
+  { index: "04", kicker: "Third-party agent", title: "An agent with its own books" },
+];
 
 // Every rule, in ONE Postgres row per user (autopay_grants upserts on user_id).
 // In funded mode the caps are not per-wallet: they bind the agent, and the agent
@@ -202,7 +247,22 @@ const REASONS: Record<ReasonSlug, string> = {
 // that happened to read "toString" would be shown as a rule the agent applied.
 const modelWrote = (reason: string) => !Object.hasOwn(REASONS, reason);
 
-export default function SettlementAgentsPanel() {
+// The two skips that are the system working rather than something to look at:
+// a bill that was already settled, and autopay being off because you switched it
+// off. Every other skip wants something from you — a cap raised, a creator
+// allowed, the agent funded, a suspect bill checked — so it takes the warn tone.
+//
+// Kept narrow on purpose. Warn on every skip would colour "Already settled" like
+// a failure, and a colour that fires on everything is a colour people stop
+// reading. Same rule the recurring tab applies to "not due yet".
+const BENIGN_SKIPS = new Set<string>(["nothing_owed", "disabled"]);
+
+// What the tab's masthead needs to light its contents rail — the same shape
+// XHistoryPanel reports its count up in. The rail is the poster system's progress
+// readout, and it can only be honest about a section it is told about.
+export type AgentTabState = { armed: boolean; granted: number; decisions: number };
+
+export default function SettlementAgentsPanel({ onState }: { onState?: (state: AgentTabState) => void }) {
   const [grant, setGrant] = useState<Grant | null>(null);
   const [server, setServer] = useState<GrantsResponse | null>(null);
   const [agentWallet, setAgentWallet] = useState<AgentWallet | null>(null);
@@ -211,16 +271,29 @@ export default function SettlementAgentsPanel() {
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
   const [messageTone, setMessageTone] = useState<"error" | "success">("success");
+  // 02's own message. Separate state rather than a tag on the one above, because
+  // the alternative is reporting a failed "allow" up in 01 next to a form the
+  // user was not touching — each section answers for its own actions.
+  const [mandateMessage, setMandateMessage] = useState("");
+  const [mandateTone, setMandateTone] = useState<"error" | "success">("success");
   const [pendingBillId, setPendingBillId] = useState<string | null>(null);
   const [signedOut, setSignedOut] = useState(false);
   // Collapsed by default: the warning matters, but a permanent wall of it above
   // the caps would train people to scroll past the one thing they must read.
   const [showUnlink, setShowUnlink] = useState(false);
-  // The top-up dialog. Blank means "use the placeholder", which is why the
-  // amount is parsed with a default rather than initialised to "2" — a field
-  // someone cleared should not silently re-fill itself.
+  // The top-up field, revealed in place rather than in a dialog — a modal would
+  // cover the balance it exists to raise. Blank means "use the placeholder",
+  // which is why the amount is parsed with a default rather than initialised to
+  // "2": a field someone cleared should not silently re-fill itself.
   const [funding, setFunding] = useState(false);
   const [fundAmount, setFundAmount] = useState("");
+  // The top-up landing is the confirmation that funding worked — the balance is
+  // read from the chain server-side and trails the receipt by a block or two, so
+  // the figure moving is the last thing to happen. Counted rather than compared
+  // at render time: a boolean derived from a ref would be stripped by the next
+  // re-render and cut its own animation short.
+  const [balanceFlashes, setBalanceFlashes] = useState(0);
+  const previousBalance = useRef<number | null>(null);
   const { address: connectedAddress } = useAccount();
   const { signMessageAsync } = useSignMessage();
 
@@ -279,6 +352,28 @@ export default function SettlementAgentsPanel() {
     return () => window.removeEventListener(SESSION_ENDED_EVENT, load);
   }, [load]);
 
+  // "Can software spend for me right now?" In funded mode the answer is this one
+  // row — there is no per-wallet mandate to disagree with it, and GET reads it
+  // back from the same row rather than from the chain.
+  const armed = grant?.enabled ?? false;
+  const grantedCount = mandates.filter((m) => m.authorized).length;
+
+  // Reported up so the masthead's contents rail can light the sections that are
+  // live. Above the early returns, where every hook has to be — a signed-out tab
+  // still has a rail, and it should read as four cold steps rather than as four
+  // it never heard about.
+  useEffect(() => {
+    onState?.({ armed, granted: grantedCount, decisions: log.length });
+  }, [armed, grantedCount, log.length, onState]);
+
+  const agentBalance = agentWallet?.balanceUsdc ?? 0;
+  useEffect(() => {
+    if (previousBalance.current !== null && previousBalance.current !== agentBalance) {
+      setBalanceFlashes((count) => count + 1);
+    }
+    previousBalance.current = agentBalance;
+  }, [agentBalance]);
+
   const linkedAddress = server?.linkedAddress ?? null;
   const mandateAddress = server?.mandateAddress ?? null;
   // Signed in AS a wallet. Then the linked address is the account itself, not a
@@ -314,7 +409,15 @@ export default function SettlementAgentsPanel() {
         // the funded agent, so it must never leave an account in the mode it
         // cannot show. Saving is also what migrates an account armed under the
         // old flow.
-        body: JSON.stringify({ ...next, moneyMode: "funded" }),
+        //
+        // The creator list is cleaned on the WIRE and not in state: a row you
+        // just added is empty, and dropping it out from under the caret the
+        // moment any other field saves is worse than sending nothing for it.
+        body: JSON.stringify({
+          ...next,
+          trustedCreators: next.trustedCreators.map((address) => address.trim()).filter(Boolean),
+          moneyMode: "funded",
+        }),
       });
       const body = await res.json().catch(() => ({}));
       if (!res.ok) {
@@ -556,9 +659,18 @@ export default function SettlementAgentsPanel() {
     }
   }
 
+  // The allowed-creator list, edited a row at a time. Each row is one line of
+  // poster type, so the operations are the list ones a payer list already has —
+  // and every one of them commits, because there is no separate save on this
+  // page and a creator you dropped must not come back on the next load.
+  function editCreators(next: string[]) {
+    if (!grant) return;
+    void save({ ...grant, trustedCreators: next });
+  }
+
   async function toggleMandate(billId: string, authorized: boolean) {
     setPendingBillId(billId);
-    setMessage("");
+    setMandateMessage("");
     try {
       const res = await fetch("/api/agents/mandate", {
         method: "POST",
@@ -567,7 +679,8 @@ export default function SettlementAgentsPanel() {
       });
       const body = await res.json().catch(() => ({}));
       if (!res.ok) {
-        fail(
+        setMandateTone("error");
+        setMandateMessage(
           body.error === "insufficient_funds"
             ? "Your wallet needs a little test USDC to cover the gas for this."
             : (body.error ?? "Could not update the mandate."),
@@ -579,72 +692,92 @@ export default function SettlementAgentsPanel() {
       // section must never do.
       load();
     } catch (err) {
-      fail(err instanceof Error ? err.message : "Could not update the mandate.");
+      setMandateTone("error");
+      setMandateMessage(err instanceof Error ? err.message : "Could not update the mandate.");
     } finally {
       setPendingBillId(null);
     }
   }
 
   if (signedOut) {
+    // A poster with nothing to report, which is the honest shape for it: the
+    // sentence is set at the size the balance would have been, because "nothing
+    // is authorized" is this tab's most important possible reading.
     return (
-      <section className="spec-card">
-        <div className="spec-head">
-          <div className="min-w-0">
-            <span className="spec-kicker">
-              <span className="spec-icon">
-                <ShieldCheck size={15} />
-              </span>
-              <span className="spec-step">Signed out</span>
+      <motion.section className="bill-poster" {...sectionMotion(0)}>
+        <SectionHead
+          marks={
+            <span className="settle-label" data-tone="ok">
+              nothing is authorized
             </span>
-            <h3 className="spec-title">Nothing is authorized</h3>
-            <p className="spec-note">
-              {connectedAddress
-                ? "An agent needs an account to belong to — it holds its own balance, its rules and its log. Sign the message below and this wallet becomes one."
-                : "Rules are tied to your account, so there is nothing to show until you sign in."}
+          }
+          note={
+            connectedAddress
+              ? "An agent needs an account to belong to — it holds its own balance, its rules and its log. Signing costs nothing and moves nothing; it only proves the wallet is yours."
+              : "Rules are tied to your account, so there is nothing to show until you sign in. Until you do, no permission exists to revoke."
+          }
+          step={AGENT_STEPS[0]}
+        />
+
+        <div className="bill-poster-body">
+          <div className="bill-poster-lede">
+            <div className="bill-cell">
+              <span className="settle-label">Right now</span>
+              {/* h4 under the section's own h3 — the sentence is what this
+                  section is ABOUT, not what it is called. */}
+              <h4 className="bill-display">No agent can spend on your behalf</h4>
+              <div className="bill-cell-rule" />
+            </div>
+          </div>
+
+          {message ? (
+            <p className="bill-poster-msg" data-tone={messageTone === "error" ? "error" : undefined} role="status">
+              {message}
             </p>
-          </div>
-        </div>
-        <div className="spec-body space-y-3">
-          {message ? <div className={`message ${messageTone === "error" ? "message-error" : "message-neutral"}`}>{message}</div> : null}
-          <div className="spec-empty">
-            <ShieldCheck size={22} />
-            <span>
-              <strong>No agent can spend on your behalf.</strong>
-              <br />
-              {connectedAddress
-                ? "Signing costs nothing and moves nothing — it only proves the wallet is yours. Your agent gets its own balance, which you fund separately."
-                : "Sign in to set the caps and checks your settlement agents run under. Until you do, no permission exists to revoke."}
-            </span>
-          </div>
-          {/* The whole point of this change: a browser wallet is an identity
-              here, not just an address someone else's account can point at. */}
+          ) : null}
+
+          {/* The whole point of the wallet sign-in: a browser wallet is an
+              identity here, not just an address someone else's account can
+              point at. With none connected there is nothing to offer, and the
+              standfirst above already says so. */}
           {connectedAddress ? (
-            <button className="primary-button" disabled={saving} onClick={signInWithWallet} type="button">
-              {saving ? <Loader2 className="animate-spin" size={13} /> : <Wallet size={13} />}
-              Sign in with {short(connectedAddress)}
-            </button>
+            <div className="bill-poster-foot">
+              <button className="settle-action" disabled={saving} onClick={signInWithWallet} type="button">
+                {saving ? "signing…" : `sign in with ${short(connectedAddress)}`} ›
+              </button>
+              <div className="bill-poster-total">
+                <span className="settle-label">Its agent gets</span>
+                <span>
+                  a balance <em>you fund separately</em>
+                </span>
+              </div>
+            </div>
           ) : null}
         </div>
-      </section>
+      </motion.section>
     );
   }
   if (!grant) return null;
 
-  const grantedCount = mandates.filter((m) => m.authorized).length;
-  // "Can software spend for me right now?" In funded mode the answer is this one
-  // row — there is no per-wallet mandate to disagree with it, and GET reads it
-  // back from the same row rather than from the chain.
-  const armed = grant.enabled;
   // Left over from the mandate flow on the linked wallet, and revocable below.
   const staleMandate = linkedFacts?.enabled ?? false;
+  const balanceUsdc = agentBalance;
+  // What the revealed top-up would send, mirroring fundAgent's own parse so the
+  // "it would hold" figure cannot disagree with what the transfer does. Junk
+  // reads as 0 rather than NaN — the transfer refuses it either way, and a
+  // figure set at rail size must not say "NaN" while someone is still typing.
+  const fundUsdc = (() => {
+    const parsed = Number(fundAmount.trim() || DEFAULT_FUND_USDC);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+  })();
   // The trail actually holds another account's decisions. Read off the ROWS, not
   // off `otherAgent`: linking merges the accounts, and the rows written before it
   // stay under the account that wrote them, so a merged trail outlives the second
   // agent it came from.
   const mergedTrail = log.some((entry) => entry.otherAccount);
   // The wallet the extension is on RIGHT NOW, when it is none of the three the
-  // card already accounts for: not this session's own, not the linked one, and not
-  // one whose agent is on screen.
+  // section already accounts for: not this session's own, not the linked one, and
+  // not one whose agent is on screen.
   //
   // This is the state switching wallets in Rabby lands in, and it used to render as
   // nothing at all: an agent row on screen a second ago simply disappeared, with no
@@ -662,807 +795,848 @@ export default function SettlementAgentsPanel() {
       ? connectedAddress
       : null;
 
+  // Which DEBTS the agent settles — no longer the same question as which wallet
+  // it spends from, since it always spends its own. Short enough to sit on the
+  // rail as a figure would; the hint under the options rail carries the rest.
+  const settlesFor = walletSignin
+    ? "both your wallets"
+    : linkedAddress
+      ? "both your wallets"
+      : agentWallet?.otherAgent
+        ? "your Splitsy wallet only"
+        : "your Splitsy wallet";
+
   return (
-    <div className="space-y-4">
-      {saving || message ? (
-        <div className={`message ${messageTone === "error" ? "message-error" : "message-neutral"}`}>
-          {saving ? (
-            <span className="inline-flex items-center gap-2">
-              <Loader2 className="animate-spin" size={13} />
-              {/* Same busy flag drives both, so the word has to follow what is
-                  actually in flight — "Saving your rules" over a transfer is a
-                  lie about where the money is. */}
-              {funding ? "Sending to your agent…" : "Saving your rules…"}
-            </span>
-          ) : (
-            message
-          )}
-        </div>
-      ) : null}
-
-      {/* ── Top-up dialog ── The agent's balance is its spending ceiling, so
-          this is the one control on the page that RAISES what software can
-          spend. It says the amount and the destination in one screen and does
-          nothing else. */}
-      {funding && agentWallet?.address ? (
-        <div
-          className="fixed inset-0 z-[60] flex items-center justify-center bg-black/45 p-4 backdrop-blur-sm"
-          onClick={() => (saving ? null : setFunding(false))}
-        >
-          <div
-            className="w-full max-w-sm rounded-[var(--radius)] border border-[var(--border)] bg-[var(--surface-muted)] p-6 shadow-2xl"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex items-start justify-between gap-3">
-              <div className="min-w-0">
-                <h3 className="text-base font-semibold">Fund your agent</h3>
-                <p className="spec-hint">
-                  Goes to{" "}
-                  <span className="mono">{short(agentWallet.address)}</span> — your agent&rsquo;s own wallet. It can
-                  never spend more than it holds.
-                </p>
-              </div>
-              <button
-                aria-label="Close"
-                className="shrink-0 text-[var(--text-muted)] hover:text-[var(--text)]"
-                disabled={saving}
-                onClick={() => setFunding(false)}
-                type="button"
-              >
-                <X size={16} />
-              </button>
-            </div>
-
-            {/* Repeated inside the dialog: the page-level banner sits behind
-                this overlay, so a rejected transfer would fail silently. */}
-            {message && messageTone === "error" ? (
-              <div className="message message-error mt-3">{message}</div>
-            ) : null}
-
-            <label className="mt-4 block">
-              <span className="spec-label">Amount</span>
-              <span className="spec-input-wrap">
-                <input
-                  autoFocus
-                  className="spec-input"
-                  min={0}
-                  onChange={(e) => setFundAmount(e.target.value)}
-                  placeholder={String(DEFAULT_FUND_USDC)}
-                  step="0.01"
-                  type="number"
-                  value={fundAmount}
-                />
-                <span className="spec-input-unit">USDC</span>
+    <>
+      {/* ── 01. Autopay ───────────────────────────────────────────────────────
+          The agent is the masthead and its balance is the hero figure, because
+          in funded mode the balance IS the ceiling: every rule under it is one
+          Splitsy checks before spending, and the only limit the chain holds is
+          this number. Armed, the section's own top rule draws itself in ink —
+          see "the agent poster" in globals.css. */}
+      <motion.section className="bill-poster" data-armed={armed} {...sectionMotion(0)}>
+        <SectionHead
+          marks={
+            <>
+              {/* The one fact this tab exists to answer, in words as well as in
+                  the rule above — a hairline is not a state a reader can hear. */}
+              <span className="settle-label" data-tone={armed ? "ok" : undefined}>
+                {armed ? "armed · it can spend now" : "idle"}
               </span>
-            </label>
-
-            <div className="mt-4 flex flex-col gap-2">
-              {connectedAddress ? (
-                <button
-                  className="primary-button justify-center"
-                  disabled={saving}
-                  onClick={() => fundAgent("browser")}
-                  type="button"
-                >
-                  {saving ? <Loader2 className="animate-spin" size={13} /> : <Wallet size={13} />}
-                  Send from {short(connectedAddress)}
-                </button>
-              ) : null}
-              {/* Not offered to a wallet account: that DCW exists but they have
-                  never funded it, and it is behind a PIN they never set. */}
-              {!walletSignin && server?.walletAddress ? (
-                <button
-                  className={connectedAddress ? "secondary-button justify-center" : "primary-button justify-center"}
-                  disabled={saving}
-                  onClick={() => fundAgent("splitsy")}
-                  type="button"
-                >
-                  {saving ? <Loader2 className="animate-spin" size={13} /> : <Wallet size={13} />}
-                  Send from my Splitsy wallet
-                </button>
-              ) : null}
-              {/* Always true, and the only route left if neither source is
-                  available — the agent's address takes an inbound transfer from
-                  anywhere. */}
-              <span className="spec-hint">
-                Or send USDC to{" "}
+              {agentWallet?.tokenId ? (
                 <a
-                  className="mono underline-offset-2 hover:underline"
-                  href={`https://testnet.arcscan.app/address/${agentWallet.address}`}
+                  className="iou-row-tx"
+                  href={`${EXPLORER}/token/${IDENTITY_REGISTRY_ADDRESS}/instance/${agentWallet.tokenId}`}
                   rel="noreferrer"
                   target="_blank"
                 >
-                  {short(agentWallet.address)}
-                </a>{" "}
-                from any wallet.
-              </span>
-            </div>
-          </div>
-        </div>
-      ) : null}
-
-      {/* ── 01. Autopay rules ── */}
-      <section className={`spec-card ${armed ? "spec-card-live" : ""}`}>
-        <div className="spec-head">
-          <div className="min-w-0">
-            <span className="spec-step">01 · Debtor side</span>
-            <h3 className="spec-title">Autopay my share</h3>
-            {/* Says whose money moves, in the first sentence. The agent spends
-                what YOU sent it and nothing else — no allowance on your wallet,
-                so the balance below is the hard ceiling and the rules under it
-                are the soft ones Splitsy applies first. */}
-            <p className="spec-note">
-              When someone bills you, your agent settles your share out of <strong>its own balance</strong> — the one you
-              fund below. It can never spend more than it holds, and every rule here is a ceiling checked before it
-              pays, never a target.
-            </p>
-          </div>
-          {/* The chip is the state, the switch is the control — no second
-              "On/Off" caption repeating what the chip already says. */}
-          <div className="flex shrink-0 items-center gap-3">
-            <span className={`spec-chip ${armed ? "spec-chip-live" : ""}`}>
-              <span className="spec-dot" />
-              {armed ? "Armed" : "Idle"}
-            </span>
-            <Switch
-              checked={grant.enabled}
-              onChange={(enabled) => save({ ...grant, enabled })}
-              size="lg"
-              srLabel="Autopay my share"
-            />
-          </div>
-        </div>
-
-        <div className="spec-body space-y-4">
-          {/* The agent that spends. It is the user's: they fund it, it holds
-              its own balance, and its ERC-8004 identity NFT is theirs. */}
-          <div className="spec-row">
-            <div className="min-w-0">
-              <span className="inline-flex items-center gap-1.5 text-sm font-semibold">
-                <Bot size={14} /> Your agent
-                {/* Which of the two is live, said on the row itself. With two
-                    agents on screen and one set of rules under them, "which one
-                    does this page mean?" is the question the card must answer
-                    before anything else on it can be trusted. */}
-                {agentWallet?.otherAgent ? <span className="spec-badge">in use here</span> : null}
-              </span>
-              <span className="spec-hint">
-                {agentWallet?.address ? (
-                  <>
-                    <a
-                      className="mono underline-offset-2 hover:underline"
-                      href={`https://testnet.arcscan.app/address/${agentWallet.address}`}
-                      rel="noreferrer"
-                      target="_blank"
-                    >
-                      {short(agentWallet.address)}
-                    </a>
-                    {agentWallet.tokenId ? (
-                      <>
-                        {" · "}
-                        <a
-                          className="underline-offset-2 hover:underline"
-                          href={`https://testnet.arcscan.app/token/${IDENTITY_REGISTRY_ADDRESS}/instance/${agentWallet.tokenId}`}
-                          rel="noreferrer"
-                          target="_blank"
-                        >
-                          identity #{agentWallet.tokenId}
-                        </a>
-                      </>
-                    ) : null}
-                  </>
-                ) : (
-                  "No agent yet — it is created the first time this page loads with Circle configured."
-                )}
-              </span>
-              {/* Said plainly, because the alternative is someone funding twice
-                  looking for a second agent that does not exist — or, when there
-                  really are two, funding the one that is about to be replaced. */}
-              <span className="spec-hint">
-                {agentWallet?.otherAgent
-                  ? "This one belongs to the login you are in now. You have a second below, because you have two logins."
-                  : "One agent covers both your Splitsy wallet and your linked browser wallet. Fund it once."}
-              </span>
-            </div>
-            <div className="flex shrink-0 flex-col items-end gap-1">
-              <span className="mono text-sm font-semibold">{(agentWallet?.balanceUsdc ?? 0).toFixed(2)} USDC</span>
+                  identity #{agentWallet.tokenId}
+                </a>
+              ) : null}
               {agentWallet?.address ? (
-                <button className="primary-button" disabled={saving} onClick={() => setFunding(true)} type="button">
-                  <Plus size={13} /> Fund
+                <button
+                  aria-pressed={funding}
+                  className="iou-provider bill-toggle"
+                  onClick={() => setFunding((open) => !open)}
+                  type="button"
+                >
+                  top it up
                 </button>
               ) : null}
-              {/* The one thing a new user has to do, said where the number is:
-                  an empty agent settles nothing, and the log's 'agent_unfunded'
-                  row is a worse place to learn that. */}
-              <span className="spec-hint">
-                {(agentWallet?.balanceUsdc ?? 0) > 0
-                  ? "The share, the job fee and its gas all come out of this."
-                  : "Nothing settles until you fund it — the fee and gas come out of the same balance."}
-              </span>
+            </>
+          }
+          note="When someone bills you, your agent settles your share out of its own balance — the one you top up here. It can never spend more than it holds, and every ceiling below is a limit checked before it pays rather than a figure it aims at."
+          step={AGENT_STEPS[0]}
+        />
+
+        <div className="bill-poster-body">
+          {/* The agent, and what it holds. Same lede pair a bill uses for the
+              merchant and the total, and for the same reason: the address is
+              what this section is about, and the balance is the figure you came
+              to read. The explorer link rides the footnote rail underneath —
+              mono, dim and openable, the way every other hash on this poster is
+              evidence rather than a headline. */}
+          <div className="bill-poster-lede">
+            <div className="bill-cell">
+              <span className="settle-label">Your agent</span>
+              {/* h4 under the section's own h3: the address names the agent this
+                  section is about, and the section already named itself. */}
+              <h4 className="bill-display">
+                {agentWallet?.address ? short(agentWallet.address) : "no agent yet"}
+              </h4>
+              <div className="bill-cell-rule" />
+            </div>
+            <div className="bill-cell" data-total>
+              <span className="settle-label">It holds</span>
+              <div className="bill-figure">
+                <span className="bill-currency">$</span>
+                {/* Flashed only when the figure CHANGES, never on arrival: a
+                    balance that goes green the first time you open the tab is
+                    claiming money landed when none did, and on this page tint is
+                    state. The count is the key as well as the gate, so the
+                    animation replays on each real change and does not restart on
+                    the unrelated re-renders load() causes. */}
+                <span className={balanceFlashes > 0 ? "balance-flash" : undefined} key={balanceFlashes}>
+                  {balanceUsdc.toFixed(2)}
+                </span>
+              </div>
+              <div className="bill-cell-rule" />
             </div>
           </div>
 
-          {/* ── The SECOND agent ── Shown only when one exists, which means the
-              person signed in with this browser wallet before adding the login
-              they are using now: that sign-in minted an account of its own, and
-              an account gets an agent. Both hold real balances and neither can
-              spend the other's, so hiding one is how USDC ends up in an agent
-              nobody can find. Linking below is what merges them. */}
-          {agentWallet?.otherAgent ? (
-            <div className="spec-row flex-col items-start gap-2">
-              <div className="flex w-full flex-wrap items-start justify-between gap-3">
-                <div className="min-w-0">
-                  <span className="inline-flex items-center gap-1.5 text-sm font-semibold">
-                    <Bot size={14} /> Your other agent
-                    {/* That account's OWN switch, and the reason this row is not
-                        trivia: it can be spending while every control on this page
-                        belongs to the other login. */}
-                    <span className={`spec-chip ${agentWallet.otherAgent.enabled ? "spec-chip-live" : ""}`}>
-                      <span className="spec-dot" />
-                      {agentWallet.otherAgent.enabled ? "Armed" : "Idle"}
-                    </span>
-                  </span>
-                  <span className="spec-hint">
-                    <a
-                      className="mono underline-offset-2 hover:underline"
-                      href={`https://testnet.arcscan.app/address/${agentWallet.otherAgent.address}`}
-                      rel="noreferrer"
-                      target="_blank"
-                    >
-                      {short(agentWallet.otherAgent.address)}
-                    </a>
-                  </span>
-                  <span className="spec-hint">
-                    It belongs to {short(connectedAddress ?? "")}, which signed in as an account of its own before you
-                    added this login. <strong>Nothing on this page applies to it</strong> — the ceilings and checks
-                    below are one row on the login you are in now, and that account keeps its own copy, which only
-                    appears when you sign in with that wallet again.
-                  </span>
-                </div>
-                <div className="flex shrink-0 flex-col items-end gap-1">
-                  <span className="mono text-sm font-semibold">
-                    {agentWallet.otherAgent.balanceUsdc.toFixed(2)} USDC
-                  </span>
-                  <span className="spec-hint">the agent above cannot spend this</span>
-                </div>
-              </div>
-              {/* The way out, not a footnote: two agents with two sets of rules is
-                  a state nobody should have to hold in their head, and linking is
-                  the one action that ends it. The button is in the row below. */}
-              <span className="spec-hint">
-                <strong>Link {short(connectedAddress ?? "")} below</strong> and the two accounts become one:{" "}
-                {short(agentWallet.otherAgent.address)} stays as your only agent, with its balance, and these rules are
-                the only ones left.
+          {/* The full address, under the short one the masthead is set in: the
+              headline is legible and the footnote is checkable. .bill-payer-meta
+              is the poster's footnote rail wherever a line needs one, which is
+              what this is — the caption to the pair above. */}
+          <div className="bill-payer-meta">
+            {agentWallet?.address ? (
+              <a
+                className="iou-row-tx"
+                href={`${EXPLORER}/address/${agentWallet.address}`}
+                rel="noreferrer"
+                target="_blank"
+              >
+                {agentWallet.address}
+              </a>
+            ) : (
+              <span className="bill-poster-fact">
+                created the first time this tab loads with Circle configured
               </span>
-            </div>
-          ) : null}
+            )}
+            {agentWallet?.otherAgent ? <span className="settle-label">in use here</span> : null}
+          </div>
 
-          {/* ── The connected wallet, while it is unproven ── The row above is
+          {/* ── The top-up ── Revealed in place rather than in a dialog: a modal
+              would cover the balance it exists to raise, and the destination is
+              already on the rail above. Deliberately a plain transfer either
+              way, not an approval — the agent's balance is its ceiling, so
+              funding means handing over custody, not permission. */}
+          <AnimatePresence>
+            {funding && agentWallet?.address ? (
+              <motion.div key="top-up" {...revealMotion}>
+                <div className="bill-poster-rail">
+                  <div className="bill-cell">
+                    <span className="settle-label">Send</span>
+                    <div className="bill-figure-sm">
+                      <span className="bill-currency">$</span>
+                      <PosterValue
+                        ariaLabel="Amount to send to your agent, in USDC"
+                        decimal
+                        onChange={setFundAmount}
+                        placeholder={String(DEFAULT_FUND_USDC)}
+                        value={fundAmount}
+                      />
+                    </div>
+                    <div className="bill-cell-rule" />
+                  </div>
+                  <PosterFact label="To" value={short(agentWallet.address)} />
+                  <PosterFact label="It would hold" value={`$${(balanceUsdc + fundUsdc).toFixed(2)}`} />
+                </div>
+
+                {/* Only the sources this account actually has: a browser wallet
+                    signs an ordinary USDC transfer itself, while a social
+                    account's USDC sits in the Splitsy DCW that only the server
+                    can move. A wallet account is offered neither — that DCW
+                    exists but is behind a PIN they never set. */}
+                {connectedAddress || (!walletSignin && server?.walletAddress) ? (
+                  <div className="bill-poster-foot">
+                    {connectedAddress ? (
+                      <button
+                        className="settle-action"
+                        disabled={saving}
+                        onClick={() => fundAgent("browser")}
+                        type="button"
+                      >
+                        {saving ? "sending…" : `send from ${short(connectedAddress)}`} ›
+                      </button>
+                    ) : null}
+                    {!walletSignin && server?.walletAddress ? (
+                      <button
+                        className={connectedAddress ? "iou-provider" : "settle-action"}
+                        disabled={saving}
+                        onClick={() => fundAgent("splitsy")}
+                        type="button"
+                      >
+                        {connectedAddress
+                          ? "or from my splitsy wallet"
+                          : `${saving ? "sending…" : "send from my splitsy wallet"} ›`}
+                      </button>
+                    ) : null}
+                  </div>
+                ) : null}
+
+                <p className="bill-options-hint">
+                  The share, the job fee and the agent&rsquo;s own gas all come out of this balance — and it can never
+                  pay out more than you have sent it. Any wallet can send to {agentWallet.address} directly.
+                </p>
+              </motion.div>
+            ) : null}
+          </AnimatePresence>
+
+          {/* ── The SECOND agent ── Another agent, so it takes the line an agent
+              takes: shown only when one exists, which means the person signed in
+              with this browser wallet before adding the login they are using
+              now. That sign-in minted an account of its own, and an account gets
+              an agent. Both hold real balances and neither can spend the
+              other's, so hiding one is how USDC ends up in an agent nobody can
+              find. Linking below is what merges them. */}
+          <AnimatePresence>
+            {agentWallet?.otherAgent ? (
+              <motion.div key="other-agent" {...revealMotion}>
+                <div className="bill-payers">
+                  <div className="bill-payer">
+                    <div className="bill-payer-line">
+                      <span className="bill-payer-target">{short(agentWallet.otherAgent.address)}</span>
+                      <span className="bill-payer-share">
+                        <span className="bill-currency">$</span>
+                        {agentWallet.otherAgent.balanceUsdc.toFixed(2)}
+                      </span>
+                    </div>
+                    <div className="bill-payer-meta">
+                      {/* That account's OWN switch, and the reason this row is
+                          not trivia: it can be spending while every control on
+                          this page belongs to the other login. */}
+                      <span
+                        className="settle-label"
+                        data-tone={agentWallet.otherAgent.enabled ? "warn" : undefined}
+                      >
+                        {agentWallet.otherAgent.enabled ? "armed, and not by these rules" : "idle"}
+                      </span>
+                      <span className="bill-poster-fact">your other agent</span>
+                      <span className="bill-poster-fact">
+                        belongs to <b>{short(connectedAddress ?? "")}</b>
+                      </span>
+                      <a
+                        className="iou-row-tx"
+                        href={`${EXPLORER}/address/${agentWallet.otherAgent.address}`}
+                        rel="noreferrer"
+                        target="_blank"
+                      >
+                        {short(agentWallet.otherAgent.address)}
+                      </a>
+                    </div>
+                  </div>
+                </div>
+                {/* The way out, not a footnote: two agents under two sets of
+                    rules is a state nobody should have to hold in their head,
+                    and linking is the one action that ends it. */}
+                <p className="bill-options-hint">
+                  That wallet signed in as an account of its own before you added this login, and nothing on this page
+                  applies to it — the ceilings and checks below are one row on the login you are in now. Link{" "}
+                  {short(connectedAddress ?? "")} below and the two accounts become one:{" "}
+                  {short(agentWallet.otherAgent.address)} stays as your only agent, with its balance, and these rules
+                  are the only ones left.
+                </p>
+              </motion.div>
+            ) : null}
+          </AnimatePresence>
+
+          {/* ── The connected wallet, while it is unproven ── The rail above is
               keyed on the wallet the extension is on, so switching accounts in
               Rabby swaps which agent is on screen — and lands here for a wallet
               that has not signed a message in this browser. Said where the
-              disappearance happened rather than left to be inferred from a button
-              further down. */}
-          {unprovenWallet ? (
-            <div className="spec-row flex-col items-start gap-2">
-              <div className="min-w-0">
-                <span className="inline-flex items-center gap-1.5 text-sm font-semibold">
-                  <Bot size={14} /> {short(unprovenWallet)} isn&rsquo;t signed in here
-                </span>
+              disappearance happened rather than left to be inferred from a
+              control further down. */}
+          <AnimatePresence>
+            {unprovenWallet ? (
+              <motion.div key="unproven" {...revealMotion}>
+                <div className="bill-options">
+                  <span className="bill-poster-fact">
+                    <b>{short(unprovenWallet)}</b> isn&rsquo;t signed in here
+                  </span>
+                  {/* Labelled by its OUTCOME rather than "sign in", because the
+                      login does not change — POST /api/auth/wallet leaves a
+                      social session where it is. A control that says "sign in"
+                      while you are already signed in reads as "sign out of
+                      this", which is exactly what it used to do. */}
+                  <button className="iou-provider" disabled={saving} onClick={signInWithWallet} type="button">
+                    {saving ? "signing…" : "show its agent"}
+                  </button>
+                </div>
                 {/* Does not claim the wallet HAS no agent, which this page cannot
                     know: the server will not reveal whether an address has an
-                    account without that address's signature, which is exactly what
-                    stops anyone reading a stranger's agent and decisions. */}
-                <span className="spec-hint">
+                    account without that address's signature, which is exactly
+                    what stops anyone reading a stranger's agent and decisions. */}
+                <p className="bill-options-hint">
                   The wallet your extension is on now hasn&rsquo;t proved itself in this browser, so its agent
-                  can&rsquo;t be shown — and if it never signed in, it has none and nothing settles its bills. An
-                  agent belongs to the account of the wallet that signed in with it, which is why switching wallets
-                  changes what this card shows.
-                </span>
-              </div>
-              <div className="flex flex-wrap items-center gap-2">
-                {/* One control, and it is the one that was missing: linking has
-                    its own button in the row below, and this is the only way to
-                    surface THIS wallet's own agent.
+                  can&rsquo;t be shown — and if it never signed in, it has none and nothing settles its bills. One
+                  signature, nothing moved: its agent, its balance and its decisions then appear beside your own, and
+                  you stay signed in here.{" "}
+                  {linkedAddress
+                    ? `To have the agent above cover this wallet instead — no second agent at all — unlink ${short(linkedAddress)} first, then link this one.`
+                    : "Or link it below instead: the agent above then settles its bills too, and there is no second agent to fund."}
+                </p>
+              </motion.div>
+            ) : null}
+          </AnimatePresence>
 
-                    Labelled by its OUTCOME rather than "Sign in with…", because
-                    the login does not change any more — POST /api/auth/wallet
-                    leaves a social session where it is. A button that says "sign
-                    in" while you are already signed in reads as "sign out of
-                    this", which is exactly what it used to do. */}
-                <button className="secondary-button" disabled={saving} onClick={signInWithWallet} type="button">
-                  {saving ? <Loader2 className="animate-spin" size={13} /> : <Wallet size={13} />}
-                  Sign to show {short(unprovenWallet)}&rsquo;s agent
-                </button>
-              </div>
-              {/* Two ways out, one signature each, no money either way — and the
-                  quieter one is named second because it is the one that leaves
-                  you with a single agent to think about. */}
-              <span className="spec-hint">
-                One signature, nothing moved: its agent, its balance and its decisions then appear beside your own,
-                and it gets an account and an agent of its own if it had none. <strong>You stay signed in here.</strong>{" "}
-                {linkedAddress
-                  ? `To have the agent above cover this wallet instead — no second agent at all — unlink ${short(linkedAddress)} first, then link this one.`
-                  : "Or link it below instead: the agent above then settles its bills too, and there is no second agent to fund."}
-              </span>
-            </div>
-          ) : null}
-
-          {/* Which DEBTS the agent settles, which is no longer the same question
-              as which wallet it spends from — it always spends its own. A bill
-              addressed to a browser wallet is only resolvable to this account
-              while that wallet is linked, so linking is what widens the agent's
-              reach, not what grants it money. */}
-          <div className="spec-row">
-            <div className="min-w-0">
-              <span className="inline-flex items-center gap-1.5 text-sm font-semibold">
-                <Wallet size={14} /> Bills it settles
-              </span>
-              <span className="spec-hint">
-                {walletSignin
-                  ? `Bills owed by ${short(linkedAddress ?? "")} — the wallet you signed in with — and by your Splitsy wallet. One agent, one balance, both.`
-                  : linkedAddress
-                    ? `Bills owed by your Splitsy wallet and by ${short(linkedAddress)}. Both are paid out of the one agent balance above.`
-                    : // A second agent changes this sentence completely: bills owed
-                      // by that wallet are NOT unattended, they are settled by the
-                      // other agent under the other account's rules. Saying "link
-                      // it and the agent covers them too" would imply nothing is
-                      // spending for them today, which is the opposite of true.
-                      agentWallet?.otherAgent
-                      ? `Bills owed by your Splitsy wallet — those, and only those. Bills owed by ${short(connectedAddress ?? "")} are settled by the other agent above, under that account's own rules. Link it and one agent covers both, under these.`
-                      : connectedAddress
-                        ? `Bills owed by your Splitsy wallet. Link ${short(connectedAddress)} and the same agent covers its bills too — it stays one agent and one balance.`
-                        : "Bills owed by your Splitsy wallet. Connect a browser wallet to also have the same agent cover its bills."}
-              </span>
-            </div>
-            <div className="flex shrink-0 flex-wrap items-center gap-2">
-              {/* Three states, and the button only exists in two of them. A
-                  wallet sign-in has nothing to link or unlink; a social account
-                  with no wallet connected gets the sentence above instead of a
-                  button that can only fail. */}
-              {walletSignin ? null : linkedAddress ? (
-                <button
-                  className="secondary-button"
-                  disabled={saving}
-                  onClick={() => setShowUnlink((v) => !v)}
-                  type="button"
-                >
-                  <X size={13} /> Unlink
-                </button>
-              ) : connectedAddress ? (
-                <button className="secondary-button" disabled={saving} onClick={linkWallet} type="button">
-                  <Link2 size={13} /> Link wallet
-                </button>
-              ) : null}
-            </div>
-          </div>
-
-          {showUnlink && linkedAddress && !walletSignin ? (
-            <div className="spec-row flex-col items-start gap-2">
-              {/* Unlinking does LESS than people expect, and the gap is money —
-                  for anyone who armed this wallet under the old mandate flow,
-                  the standing permission is on the CHAIN and unlinking does not
-                  touch it. Revoke first, then unlink, offered as that pair. */}
-              <span className="text-sm font-semibold">Unlinking {short(linkedAddress)} does more than one thing</span>
-              <ul className="spec-hint list-disc space-y-1 pl-4">
-                <li>
-                  Autopay for that wallet <strong>stops</strong> — its bills are no longer resolvable to your account.
-                </li>
-                {/* Two different truths, and the difference is a balance. An agent
-                    this account only holds because linking merged two accounts
-                    GOES BACK on unlink — the inverse of the adoption — so the
-                    reassuring version of this bullet would be a lie about money. */}
-                {agentWallet?.agentFromWallet ? (
-                  <li>
-                    Your agent <strong>goes back</strong> to being that wallet&rsquo;s own, with its balance and its
-                    identity NFT: linking is what merged the two accounts, and unlinking un-merges them. This login
-                    gets its own agent again — a different address, and an empty one until you fund it or link back.
-                  </li>
-                ) : (
-                  <li>
-                    Your agent, its balance and its identity NFT are <strong>untouched</strong> — they belong to your
-                    account, not to that wallet.
-                  </li>
-                )}
-                {staleMandate ? (
-                  <li>
-                    The mandate you armed on it earlier <strong>survives</strong>, along with its USDC approval.
-                    Splitsy no longer pulls under it, but revoking is still a transaction only that wallet can send.
-                  </li>
-                ) : null}
-              </ul>
-              <div className="flex flex-wrap items-center gap-2">
-                {/* Signed by the LINKED wallet itself, so it is offered only
-                    while that exact account is connected and only while there is
-                    something left to revoke. */}
-                {staleMandate ? (
-                  <button
-                    className="secondary-button"
-                    disabled={saving || !mandateAddress || !connectedAddress || wrongAccount}
-                    onClick={revokeMandate}
-                    type="button"
-                  >
-                    <Ban size={13} /> Revoke the old mandate first
-                  </button>
-                ) : null}
-                <button className="secondary-button" disabled={saving} onClick={unlinkWallet} type="button">
-                  <X size={13} /> {staleMandate ? "Unlink anyway" : "Unlink"}
-                </button>
-              </div>
-            </div>
-          ) : null}
-
-          {/* ── Ceilings. Enforced HERE, before the agent spends — the chain's
-              only ceiling in this mode is the agent's balance. One set per
-              account, because the agent is per account. ── */}
-          <div className="grid gap-3 sm:grid-cols-2">
-            <label>
-              <span className="spec-label">Ceiling per bill</span>
-              <span className="spec-input-wrap">
-                <input
-                  className="spec-input"
-                  min={0}
-                  onBlur={() => save(grant)}
-                  onChange={(e) => setGrant({ ...grant, maxPerBillUsdc: Number(e.target.value) })}
-                  step="0.01"
-                  type="number"
-                  value={grant.maxPerBillUsdc}
-                />
-                <span className="spec-input-unit">USDC</span>
-              </span>
-            </label>
-            <label>
-              <span className="spec-label">Ceiling per day</span>
-              <span className="spec-input-wrap">
-                <input
-                  className="spec-input"
-                  min={0}
-                  onBlur={() => save(grant)}
-                  onChange={(e) => setGrant({ ...grant, maxPerDayUsdc: Number(e.target.value) })}
-                  step="0.01"
-                  type="number"
-                  value={grant.maxPerDayUsdc}
-                />
-                <span className="spec-input-unit">USDC</span>
-              </span>
-            </label>
-          </div>
-
-          <label className="block">
-            <span className="spec-label">Allowed creators</span>
-            <textarea
-              className="spec-textarea"
+          {/* ── The ceilings ── Typed straight into the figures they set, and
+              committed on blur the way every figure on the bills poster is.
+              Enforced HERE, before the agent spends: the chain's only ceiling in
+              this mode is the balance above. One set per account, because the
+              agent is per account. */}
+          <div className="bill-poster-rail">
+            <PosterCell
+              decimal
+              label="Ceiling per bill"
               onBlur={() => save(grant)}
-              onChange={(e) =>
-                setGrant({
-                  ...grant,
-                  trustedCreators: e.target.value.split("\n").map((a) => a.trim()).filter(Boolean),
-                })
-              }
-              placeholder="0x…  (one address per line)"
-              rows={2}
-              value={grant.trustedCreators.join("\n")}
+              onChange={(value) => setGrant({ ...grant, maxPerBillUsdc: Number(value) || 0 })}
+              prefix="$"
+              value={String(grant.maxPerBillUsdc)}
             />
-            <span className="spec-hint">
-              {grant.trustedCreators.length === 0
-                ? "Empty means any creator can trigger autopay, within the ceilings above. Up to 10 addresses."
-                : `${grant.trustedCreators.length} address${grant.trustedCreators.length === 1 ? "" : "es"} — no one else can trigger autopay.`}
-            </span>
-          </label>
-
-          {/* Said rather than implied. The ceilings above are ours to enforce
-              now, so the page must not let anyone believe a contract is holding
-              them — the agent's balance is the only number the chain bounds. */}
-          <div className="spec-row">
-            <div className="min-w-0">
-              <span className="inline-flex items-center gap-1.5 text-sm font-semibold">
-                <ShieldCheck size={14} /> Who holds these ceilings
-              </span>
-              <span className="spec-hint">
-                Splitsy does. They are checked before your agent spends, not enforced by a contract — so the hard limit
-                is the balance above: it can never pay out more than you have sent it.
-                {agentWallet?.otherAgent
-                  ? ` And they hold for ${short(agentWallet.address ?? "")} only — your other agent runs under the rules stored on its own account.`
-                  : ""}
-              </span>
-            </div>
-            <span className="shrink-0 text-right">
-              <span className="trail-amount">{(agentWallet?.balanceUsdc ?? 0).toFixed(2)} USDC</span>
-              <span className="spec-hint">the only ceiling the chain enforces</span>
-            </span>
-          </div>
-
-          {/* ── Checks: one row per account, like everything else here. ── */}
-          <div className="pt-1">
-            <span className="spec-label">Checks on every payment</span>
-            <span className="spec-hint">
-              {agentWallet?.otherAgent
-                ? `These apply to every bill ${short(agentWallet.address ?? "")} looks at, and to nothing your other agent does — one setting per account, and you currently have two.`
-                : linkedAddress
-                  ? "These apply to bills owed by either of your wallets — one setting on your account."
-                  : "These apply to every bill your agent looks at — one setting on your account."}
-            </span>
-          </div>
-
-          <label className="block">
-            <span className="spec-label">Creator score floor</span>
-            <span className="spec-input-wrap">
-              <input
-                className="spec-input"
-                max={100}
-                min={0}
-                onBlur={() => save(grant)}
-                onChange={(e) => setGrant({ ...grant, minCreatorScore: Number(e.target.value) })}
-                step={1}
-                type="number"
-                value={grant.minCreatorScore}
-              />
-              <span className="spec-input-unit">{grant.minCreatorScore === 0 ? "OFF" : "/ 100"}</span>
-            </span>
-            {/* Stated plainly because it is the one rule that fails open. */}
-            <span className="spec-hint">A creator with no history yet still passes — no history is not a bad score.</span>
-          </label>
-
-          <div className={`spec-row ${grant.requireVerifiedHash ? "spec-row-on" : ""}`}>
-            <div className="min-w-0">
-              <span className="inline-flex items-center gap-1.5 text-sm font-semibold">
-                <ShieldCheck size={14} /> Only pay verified bills
-              </span>
-              <span className="spec-hint">
-                The merchant, total and split must match what the creator committed on chain. Turn this off and the
-                agent will pay bills it cannot check.
-              </span>
-            </div>
-            <Switch
-              checked={grant.requireVerifiedHash}
-              onChange={(requireVerifiedHash) => save({ ...grant, requireVerifiedHash })}
-              srLabel="Only pay verified bills"
+            <PosterCell
+              decimal
+              label="Ceiling per day"
+              onBlur={() => save(grant)}
+              onChange={(value) => setGrant({ ...grant, maxPerDayUsdc: Number(value) || 0 })}
+              prefix="$"
+              value={String(grant.maxPerDayUsdc)}
             />
-          </div>
-
-          {/* Distinct from the hash check above, and worth its own row: that one
-              proves the details match what was committed, this one asks whether
-              the details are reasonable. A verified bill can still charge you for
-              four mains you did not eat. */}
-          <div className={`spec-row ${grant.requireBillReview ? "spec-row-on" : ""}`}>
-            <div className="min-w-0">
-              <span className="inline-flex items-center gap-1.5 text-sm font-semibold">
-                <ShieldCheck size={14} /> Check the bill&rsquo;s contents before paying
-              </span>
-              {/* Deliberately does not promise a line-item check: lib/autopay-review.ts
-                  is given the headline fields only, and the receipt image is never sent. */}
-              <span className="spec-hint">
-                A model reads the bill and refuses if the numbers don&rsquo;t hang together — it weighs the merchant,
-                total and your share against each other. It has no line items, so it cannot tell who ordered what.
-              </span>
-
-              {/* The one check on this page that is not a rule, so it is the one
-                  that has to show its working. Every line below is a claim about
-                  lib/autopay-review.ts and has to stay true to it: the field list
-                  is that prompt's inputs, the two lists are its refuse/do-not-refuse
-                  instructions, and "cannot answer" is FAIL_CLOSED. Nothing here may
-                  promise judgment the model was not given the data to make.
-
-                  A real <details>, like JobTrail: no state, keyboard and find-in-page
-                  for free. Collapsed by default — someone who just wants the toggle
-                  should not have to read an essay to reach it. */}
-              <details className="job-trail">
-                <summary className="spec-chip job-trail-summary">
-                  <ChevronRight className="job-trail-caret" size={12} />
-                  <span>how the model judges your bill · $0.002 per review</span>
-                </summary>
-
-                <div className="job-trail-body">
-                  {/* Said first because it is the part nobody assumes: the verdict is
-                      bought from a different wallet, so refusing costs the Settler
-                      money it does not recover. */}
-                  <p className="job-trail-desc">
-                    Bought, not asked for. Your Settler pays the Auditor $0.002 over x402 for each verdict, out of the
-                    settlement fee — two different wallets, so the one that judges the bill is not the one that gets
-                    paid to settle it.
-                  </p>
-
-                  <section>
-                    <h4 className="job-trail-head">what it is given</h4>
-                    <span className="spec-hint">
-                      The merchant, the currency, the bill total, how many people are on it, what an even split would
-                      be, your share in USDC, the creator&rsquo;s reputation score, and the names on the bill.{" "}
-                      <strong>Never the receipt image, and never the line items.</strong>
-                    </span>
-                  </section>
-
-                  <section>
-                    <h4 className="job-trail-head">it refuses when</h4>
-                    <ul className="spec-hint list-disc space-y-1 pl-4">
-                      <li>the total is wildly implausible for that kind of merchant</li>
-                      <li>your share is more than the entire bill</li>
-                      <li>your share is so far above an even split that no ordering would explain it</li>
-                      <li>the names on the bill contradict how many people it says are on it</li>
-                    </ul>
-                  </section>
-
-                  {/* As load-bearing as the list above it. A reviewer people believe
-                      is trigger-happy gets switched off, and the prompt is explicit
-                      about both of these. */}
-                  <section>
-                    <h4 className="job-trail-head">it will not refuse for</h4>
-                    <ul className="spec-hint list-disc space-y-1 pl-4">
-                      <li>a share above the even split, on its own — uneven is the point of splitting a bill</li>
-                      <li>a creator with no reputation history yet</li>
-                    </ul>
-                  </section>
-
-                  <section>
-                    <h4 className="job-trail-head">when it cannot answer</h4>
-                    <span className="spec-hint">
-                      A timeout, an error, or a verdict it cannot parse is a <strong>refusal, never a payment</strong>.
-                      It also runs last, after your ceilings — a bill those already stopped never costs a review.
-                    </span>
-                  </section>
-
-                  <span className="spec-hint">
-                    When it refuses, its own sentence is what you read in the trail below.
-                  </span>
-                </div>
-              </details>
-            </div>
-            <Switch
-              checked={grant.requireBillReview}
-              onChange={(requireBillReview) => save({ ...grant, requireBillReview })}
-              srLabel="Check the bill's contents before paying"
+            <PosterCell
+              decimal
+              label="Creator score floor"
+              // Clamped on the way out rather than under the caret: someone
+              // typing 100 passes through 1 and 10, and a field that fights the
+              // second keystroke is worse than one that tidies up after the last.
+              onBlur={() => save({ ...grant, minCreatorScore: Math.min(100, Math.max(0, grant.minCreatorScore)) })}
+              onChange={(value) => setGrant({ ...grant, minCreatorScore: Number(value) || 0 })}
+              placeholder="0"
+              value={String(grant.minCreatorScore)}
             />
+            <PosterFact label="Settles bills owed by" value={settlesFor} />
           </div>
-        </div>
-      </section>
 
-      {/* ── 02. Collect mandates ── */}
-      <section className="spec-card">
-        <div className="spec-head">
-          <div className="min-w-0">
-            <span className="spec-step">02 · Creditor side</span>
-            <h3 className="spec-title">Let creators collect after the due date</h3>
-            {/* A consent UI that hides its scope is the actual security bug in
-                this feature, so the scope is spelled out per bill below, not
-                once in a footnote. */}
-            <p className="spec-note">
-              Granting this is per bill and you can withdraw it at any time. It never lets anyone take more than your
-              remaining share, and never before the due date.
-            </p>
-          </div>
-          {mandates.length > 0 ? (
-            <span className={`spec-chip ${grantedCount > 0 ? "spec-chip-live" : ""}`}>
-              <span className="spec-dot" />
-              {grantedCount} of {mandates.length} granted
-            </span>
-          ) : null}
-        </div>
-
-        <div className="spec-body">
-          {mandates.length === 0 ? (
-            <div className="spec-empty">
-              <CalendarClock size={22} />
-              <span>
-                <strong>No bills with a due date.</strong>
-                <br />
-                A mandate only makes sense once there is a deadline to collect after, so bills appear here as soon as
-                one has a due date.
-              </span>
-            </div>
-          ) : (
-            <ul className="space-y-2">
-              {mandates.map((bill) => (
-                <li className={`spec-row ${bill.authorized ? "spec-row-on" : ""}`} key={bill.billId}>
-                  <div className="flex min-w-0 items-start gap-3">
-                    <span className="spec-badge">#{bill.billId}</span>
-                    <div className="min-w-0">
-                      <div className="text-sm font-semibold">{bill.creatorLabel}</div>
-                      <div className="spec-hint">
-                        After {formatDue(bill.dueDateSeconds)}, can pull up to{" "}
-                        <span className="mono font-semibold">{bill.remainingUsdc} USDC</span> — your remaining share —
-                        from your approved balance.
-                      </div>
-                    </div>
-                  </div>
-                  <button
-                    className={bill.authorized ? "secondary-button" : "primary-button"}
-                    disabled={pendingBillId === bill.billId}
-                    onClick={() => toggleMandate(bill.billId, !bill.authorized)}
-                    type="button"
-                  >
-                    {pendingBillId === bill.billId ? (
-                      <Loader2 className="animate-spin" size={13} />
-                    ) : bill.authorized ? (
-                      <X size={13} />
-                    ) : (
-                      <Check size={13} />
-                    )}
-                    {bill.authorized ? "Revoke" : "Allow"}
-                  </button>
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-      </section>
-
-      {/* ── 03. Decision log ── */}
-      <section className="spec-card">
-        <div className="spec-head">
-          <div className="min-w-0">
-            <span className="spec-step">03 · Audit trail</span>
-            {/* Plural once there are two agents to account for: the trail is the
-                one place on this page that must never be scoped to whichever
-                login you happen to be in, because a decision you cannot see is
-                the only kind that matters. */}
-            <h3 className="spec-title">What {mergedTrail ? "your agents" : "the agent"} decided</h3>
-            <p className="spec-note">
-              Every run, including the ones it declined. A skip and its reason is the proof the ceilings above are
-              real. A row marked <strong>reviewer</strong> is the model&rsquo;s own sentence about that bill rather than
-              a rule it matched.
-              {mergedTrail
-                ? " Both of your agents are here, each row marked with the one that decided it — the ceilings above bind only the first."
-                : ""}
-            </p>
-          </div>
-          {log.length > 0 ? (
-            <span className="spec-chip">
-              {log.length} decision{log.length === 1 ? "" : "s"}
-            </span>
-          ) : null}
-        </div>
-
-        <div className="spec-body">
-          {log.length === 0 ? (
-            <div className="spec-empty">
-              <Ban size={22} />
-              <span>
-                <strong>No decisions yet.</strong>
-                <br />
-                The first time an agent looks at one of your bills, what it decided — and why — is written here.
-              </span>
-            </div>
-          ) : (
-            <ol>
-              {log.map((entry) => (
-                <li
-                  className={`trail-row ${entry.decision === "pay" ? "trail-done" : ""}`}
-                  // The row's full unique key in Postgres. Bill id and debtor
-                  // alone are not unique across registries, and a merged trail
-                  // lists enough rows for that to actually collide.
-                  key={`${entry.registryAddress}-${entry.billId}-${entry.debtorAddress}`}
+          {/* ── Allowed creators ── One address, one line of poster type, with
+              its own remove: the same payer row the bills poster sets a split
+              in. It replaced a textarea of newline-separated addresses, which
+              was the last box left on this section — and a list you can read a
+              row at a time is also a list you can check a row at a time. */}
+          {grant.trustedCreators.length > 0 ? (
+            <div className="bill-payers">
+              {grant.trustedCreators.map((creator, index) => (
+                <div
+                  className="bill-payer"
+                  // The index, and safe as one: rows are only ever appended, and
+                  // removal happens through a button click, which blurs the
+                  // field first — so no PosterValue can carry its half-typed
+                  // value into the row that takes its place.
+                  key={`creator-${index}`}
                 >
-                  <span className="trail-mark">
-                    {entry.decision === "pay" ? <Check size={11} /> : <Ban size={11} />}
-                  </span>
-                  <span className="min-w-0">
-                    <span className="inline-flex flex-wrap items-center gap-1.5 text-sm font-semibold">
-                      Bill #{entry.billId}
+                  <div className="bill-payer-line">
+                    <span className="bill-payer-target">
+                      <PosterValue
+                        ariaLabel={`Allowed creator ${index + 1}`}
+                        compact={looksLikeAddress(creator) ? short(creator) : null}
+                        onBlur={() => save(grant)}
+                        onChange={(value) =>
+                          setGrant({
+                            ...grant,
+                            trustedCreators: grant.trustedCreators.map((entry, at) =>
+                              at === index ? value : entry,
+                            ),
+                          })
+                        }
+                        placeholder="0x…"
+                        value={creator}
+                      />
+                    </span>
+                  </div>
+                  <div className="bill-payer-meta">
+                    {/* An address that is not one can never match a creator, so
+                        the row says so rather than waiting for a skip in the
+                        trail to explain it. */}
+                    <span
+                      className="settle-label"
+                      data-tone={creator.trim() !== "" && !looksLikeAddress(creator) ? "warn" : undefined}
+                    >
+                      {creator.trim() === ""
+                        ? "empty"
+                        : looksLikeAddress(creator)
+                          ? "on wallet"
+                          : "not a wallet address"}
+                    </span>
+                    <button
+                      className="iou-provider bill-payer-remove"
+                      onClick={() =>
+                        editCreators(grant.trustedCreators.filter((_, at) => at !== index))
+                      }
+                      type="button"
+                    >
+                      remove
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : null}
+
+          {grant.trustedCreators.length < MAX_TRUSTED_CREATORS ? (
+            <div className="bill-add">
+              <button
+                className="iou-provider"
+                onClick={() => setGrant({ ...grant, trustedCreators: [...grant.trustedCreators, ""] })}
+                type="button"
+              >
+                + allow a creator
+              </button>
+            </div>
+          ) : null}
+
+          {/* ── The checks ── Four settings that used to be four bordered rows
+              with a paragraph each; here they are four words on one line, and a
+              word that is ON says so by going full-strength with a lit rule
+              under it. */}
+          <div className="bill-options">
+            <button
+              aria-pressed={grant.requireVerifiedHash}
+              className="iou-provider bill-toggle"
+              disabled={saving}
+              onClick={() => save({ ...grant, requireVerifiedHash: !grant.requireVerifiedHash })}
+              type="button"
+            >
+              only verified bills
+            </button>
+            <button
+              aria-pressed={grant.requireBillReview}
+              className="iou-provider bill-toggle"
+              disabled={saving}
+              onClick={() => save({ ...grant, requireBillReview: !grant.requireBillReview })}
+              type="button"
+            >
+              check the contents
+            </button>
+            {/* Three states, and the control only exists in two of them. A
+                wallet sign-in has nothing to link or unlink; a social account
+                with no wallet connected gets the hint instead of a button that
+                can only fail. */}
+            {walletSignin ? null : linkedAddress ? (
+              <button
+                aria-pressed={showUnlink}
+                className="iou-provider bill-toggle"
+                onClick={() => setShowUnlink((open) => !open)}
+                type="button"
+              >
+                unlink {short(linkedAddress)}
+              </button>
+            ) : connectedAddress ? (
+              <button className="iou-provider" disabled={saving} onClick={linkWallet} type="button">
+                link {short(connectedAddress)}
+              </button>
+            ) : null}
+          </div>
+
+          {/* One line each, and only when there is something to say: what an
+              armed option actually does, or what a switched-off check stops
+              stopping. Off and available, a control explains nothing. */}
+          <p className="bill-options-hint">
+            {grant.trustedCreators.length === 0
+              ? `Any creator can trigger autopay, within the ceilings above — up to ${MAX_TRUSTED_CREATORS} addresses once you start naming them.`
+              : `${grant.trustedCreators.length} address${grant.trustedCreators.length === 1 ? "" : "es"} — no one else can trigger autopay.`}
+          </p>
+
+          {/* Said rather than implied, and said every time. The ceilings above
+              are ours to enforce, so the page must not let anyone believe a
+              contract is holding them: the agent's balance is the only number
+              the chain bounds. */}
+          <p className="bill-options-hint">
+            Splitsy holds these ceilings and checks them before your agent spends — they are not enforced by a
+            contract, so the hard limit is the ${balanceUsdc.toFixed(2)} it holds: it can never pay out more than you
+            have sent it.
+            {agentWallet?.otherAgent
+              ? ` And they hold for ${short(agentWallet.address ?? "")} only — your other agent runs under the rules stored on its own account.`
+              : ""}
+          </p>
+
+          {/* Why the control isn't there, which is the other thing a hint is
+              for: with no wallet connected there is nothing to link, and a
+              button that can only fail is worse than the sentence. */}
+          {!walletSignin && !linkedAddress && !connectedAddress ? (
+            <p className="bill-options-hint">
+              Connect a browser wallet and you can link it here — the same agent then covers bills owed by it too, out
+              of the one balance, with no second agent to fund.
+            </p>
+          ) : null}
+
+          {grant.minCreatorScore === 0 ? null : (
+            // Stated plainly because it is the one rule that fails open.
+            <p className="bill-options-hint">
+              A creator scoring under {grant.minCreatorScore} of 100 is refused — but one with no history yet still
+              passes, because no history is not a bad score. Set the floor to 0 to switch it off.
+            </p>
+          )}
+
+          {grant.requireVerifiedHash ? null : (
+            <p className="bill-options-hint">
+              Verified bills only is off, so the agent will pay bills whose merchant, total and split it cannot check
+              against what the creator committed on chain.
+            </p>
+          )}
+
+          {grant.requireBillReview ? (
+            <p className="bill-options-hint">
+              A model reads each bill and refuses if the numbers don&rsquo;t hang together — it weighs the merchant,
+              total and your share against each other. It has no line items, so it cannot tell who ordered what.
+            </p>
+          ) : null}
+
+          {armed && balanceUsdc <= 0 ? (
+            <p className="bill-options-hint">
+              Armed with an empty balance: nothing will settle until you top the agent up, and until then the trail
+              below records every attempt as <span className="mono">agent_unfunded</span>.
+            </p>
+          ) : null}
+
+          {/* ── Unlinking ── It does LESS than people expect, and the gap is
+              money: for anyone who armed this wallet under the old mandate flow
+              the standing permission is on the CHAIN, and unlinking does not
+              touch it. Revoke first, then unlink, offered as that pair. */}
+          <AnimatePresence>
+            {showUnlink && linkedAddress && !walletSignin ? (
+              <motion.div key="unlink" {...revealMotion}>
+                <ul className="bill-options-hint list-disc space-y-1 pl-4">
+                  <li>
+                    Autopay for {short(linkedAddress)} stops — its bills are no longer resolvable to your account.
+                  </li>
+                  {/* Two different truths, and the difference is a balance. An
+                      agent this account only holds because linking merged two
+                      accounts GOES BACK on unlink — the inverse of the adoption
+                      — so the reassuring version of this line would be a lie
+                      about money. */}
+                  {agentWallet?.agentFromWallet ? (
+                    <li>
+                      Your agent goes back to being that wallet&rsquo;s own, with its balance and its identity NFT:
+                      linking is what merged the two accounts, and unlinking un-merges them. This login gets its own
+                      agent again — a different address, and an empty one until you fund it or link back.
+                    </li>
+                  ) : (
+                    <li>
+                      Your agent, its balance and its identity NFT are untouched — they belong to your account, not to
+                      that wallet.
+                    </li>
+                  )}
+                  {staleMandate ? (
+                    <li>
+                      The mandate you armed on it earlier survives, along with its USDC approval. Splitsy no longer
+                      pulls under it, but revoking is still a transaction only that wallet can send.
+                    </li>
+                  ) : null}
+                </ul>
+                <div className="bill-options">
+                  {/* Signed by the LINKED wallet itself, so it is offered only
+                      while that exact account is connected and only while there
+                      is something left to revoke. */}
+                  {staleMandate ? (
+                    <button
+                      className="iou-provider"
+                      disabled={saving || !mandateAddress || !connectedAddress || wrongAccount}
+                      onClick={revokeMandate}
+                      type="button"
+                    >
+                      revoke the old mandate first
+                    </button>
+                  ) : null}
+                  <button className="iou-provider" disabled={saving} onClick={unlinkWallet} type="button">
+                    {staleMandate ? "unlink anyway" : "unlink"}
+                  </button>
+                </div>
+                {staleMandate && wrongAccount ? (
+                  <p className="bill-options-hint">
+                    Your wallet is on a different account than the one you linked. The mandate is keyed on the sender,
+                    so switch back to {short(linkedAddress)} to revoke it.
+                  </p>
+                ) : null}
+              </motion.div>
+            ) : null}
+          </AnimatePresence>
+
+          {/* The one check on this page that is not a rule, so it is the one
+              that has to show its working. Every line below is a claim about
+              lib/autopay-review.ts and has to stay true to it: the field list is
+              that prompt's inputs, the two lists are its refuse/do-not-refuse
+              instructions, and "cannot answer" is FAIL_CLOSED. Nothing here may
+              promise judgment the model was not given the data to make.
+
+              A real <details>, like JobTrail: no state, keyboard and
+              find-in-page for free, and set as the poster's own chrome-less
+              disclosure — the same one the bills tab opens line items with. */}
+          <details className="bill-items">
+            <summary>
+              <span className="settle-label">how the model judges your bill</span>
+              <span className="bill-items-total">
+                $0.002 per review
+                <ChevronDown className="bill-items-chevron" size={16} />
+              </span>
+            </summary>
+
+            {/* Said first because it is the part nobody assumes: the verdict is
+                bought from a different wallet, so refusing costs the Settler
+                money it does not recover. */}
+            <p className="bill-options-hint">
+              Bought, not asked for. Your Settler pays the Auditor $0.002 over x402 for each verdict, out of the
+              settlement fee — two different wallets, so the one that judges the bill is not the one that gets paid to
+              settle it. It also runs last, after your ceilings: a bill those already stopped never costs a review.
+            </p>
+
+            <div className="bill-poster-rail">
+              <PosterFact label="It is given" value="9 headline fields" />
+              <PosterFact label="It never sees" value="the receipt, the line items" />
+              <PosterFact label="Cannot answer" value="counts as a refusal" />
+            </div>
+
+            {/* Two lists, set as captions rather than as entries: a disclosure
+                nested under a section is explanation, and "it refuses when" at
+                payer-row scale would out-shout the figures it explains. */}
+            <p className="bill-options-hint settle-label">it refuses when</p>
+            <ul className="bill-options-hint list-disc space-y-1 pl-4">
+              <li>the total is wildly implausible for that kind of merchant</li>
+              <li>your share is more than the entire bill</li>
+              <li>your share is so far above an even split that no ordering would explain it</li>
+              <li>the names on the bill contradict how many people it says are on it</li>
+            </ul>
+
+            {/* As load-bearing as the list above it. A reviewer people believe is
+                trigger-happy gets switched off, and the prompt is explicit about
+                both of these. */}
+            <p className="bill-options-hint settle-label">it will not refuse for</p>
+            <ul className="bill-options-hint list-disc space-y-1 pl-4">
+              <li>a share above the even split, on its own — uneven is the point of splitting a bill</li>
+              <li>a creator with no reputation history yet</li>
+            </ul>
+
+            <p className="bill-options-hint">
+              What it is given: the merchant, the currency, the bill total, how many people are on it, what an even
+              split would be, your share in USDC, the creator&rsquo;s reputation score and the names on the bill. Never
+              the receipt image, and never the line items. When it refuses, its own sentence is what you read in the
+              trail below.
+            </p>
+          </details>
+
+          {message ? (
+            <p
+              className="bill-poster-msg"
+              data-tone={messageTone === "error" ? "error" : "success"}
+              role="status"
+            >
+              {message}
+            </p>
+          ) : null}
+
+          {/* The commit. Arming is what this section is for, so it takes the
+              word rather than a switch in the header — and the arithmetic that
+              justifies pressing it sits opposite, as it does on every other
+              poster: the ceiling the agent will apply today, out of what it
+              actually holds. */}
+          <div className="bill-poster-foot">
+            <button className="settle-action" disabled={saving} onClick={() => save({ ...grant, enabled: !armed })} type="button">
+              {saving ? "saving…" : armed ? "disarm autopay" : "arm autopay"} ›
+            </button>
+            <div className="bill-poster-total" data-tone={armed && balanceUsdc <= 0 ? "warn" : undefined}>
+              <span className="settle-label">Ceiling today</span>
+              <span>
+                ${grant.maxPerDayUsdc.toFixed(2)} <em>from a balance of ${balanceUsdc.toFixed(2)}</em>
+              </span>
+            </div>
+          </div>
+        </div>
+      </motion.section>
+
+      {/* ── 02. Collect mandates ──────────────────────────────────────────────
+          One bill, one line: the creator who would collect, and the most they
+          could ever pull. Everything that qualifies it — the date it unlocks,
+          whether you have granted it, the word that grants or withdraws it —
+          rides the footnote rail, which is where a permission's terms belong. */}
+      <motion.section className="bill-poster" {...sectionMotion(1)}>
+        <SectionHead
+          marks={
+            mandates.length > 0 ? (
+              <span className="bill-poster-fact">
+                <b>{grantedCount}</b> of <b>{mandates.length}</b> granted
+              </span>
+            ) : null
+          }
+          note="Granting this is per bill and you can withdraw it at any time. It never lets anyone take more than your remaining share, and never before the due date."
+          step={AGENT_STEPS[1]}
+        />
+
+        <div className="bill-poster-body">
+          {mandates.length === 0 ? (
+            <div className="iou-ledger">
+              <p className="iou-empty">
+                No bills with a due date yet. A mandate only makes sense once there is a deadline to collect after, so
+                bills appear here as soon as one has one.
+              </p>
+            </div>
+          ) : (
+            <div className="bill-payers">
+              {mandates.map((bill) => (
+                <div className="bill-payer" key={bill.billId}>
+                  <div className="bill-payer-line">
+                    <span className="bill-payer-target">{bill.creatorLabel}</span>
+                    {/* Dim until granted, the way an unassigned payer's share
+                        is: this is what they COULD pull, not what they can. */}
+                    <span className="bill-payer-share" data-empty={!bill.authorized}>
+                      <span className="bill-currency">$</span>
+                      {bill.remainingUsdc}
+                    </span>
+                  </div>
+                  <div className="bill-payer-meta">
+                    <span className="settle-label" data-tone={bill.authorized ? "ok" : undefined}>
+                      {bill.authorized ? "granted" : "not granted"}
+                    </span>
+                    <span className="bill-poster-fact">
+                      bill <b>#{bill.billId}</b>
+                    </span>
+                    <span className="bill-poster-fact">
+                      not before <b>{formatDue(bill.dueDateSeconds)}</b>
+                    </span>
+                    <span className="bill-poster-fact">your remaining share, and no more</span>
+                    {/* A word that says what it does, rather than a toggle whose
+                        label changes under aria-pressed — the state is already
+                        said by "granted" at the head of the rail. */}
+                    <button
+                      className="iou-provider bill-payer-remove"
+                      disabled={pendingBillId === bill.billId}
+                      onClick={() => toggleMandate(bill.billId, !bill.authorized)}
+                      type="button"
+                    >
+                      {pendingBillId === bill.billId
+                        ? bill.authorized
+                          ? "withdrawing…"
+                          : "allowing…"
+                        : bill.authorized
+                          ? "withdraw"
+                          : "allow"}
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {mandateMessage ? (
+            <p
+              className="bill-poster-msg"
+              data-tone={mandateTone === "error" ? "error" : "success"}
+              role="status"
+            >
+              {mandateMessage}
+            </p>
+          ) : null}
+        </div>
+      </motion.section>
+
+      {/* ── 03. Decision log ─────────────────────────────────────────────────
+          Every run, including the ones it declined — and a skip is a row of
+          exactly the same weight as a payment, because a skip and its reason is
+          the proof the ceilings in 01 are real. The headline is the bill and the
+          amount; the reason, the timestamp, the agent that decided it and the
+          on-chain ceremony behind it are all footnotes to that line. */}
+      <motion.section className="bill-poster" {...sectionMotion(2)}>
+        <SectionHead
+          marks={
+            <>
+              {log.length > 0 ? (
+                <span className="bill-poster-fact">
+                  <b>{log.length}</b> decision{log.length === 1 ? "" : "s"}
+                </span>
+              ) : null}
+              {mergedTrail ? <span className="bill-poster-fact">both of your agents</span> : null}
+            </>
+          }
+          note={
+            mergedTrail
+              ? "What your agents decided, newest first. Both are here, each row marked with the one that decided it — the ceilings in 01 bind only the first. A row marked reviewer carries the model's own sentence about that bill rather than a rule it matched."
+              : "What the agent decided, newest first. A row marked reviewer carries the model's own sentence about that bill rather than a rule it matched, and every figure links to the transaction that carried it."
+          }
+          step={AGENT_STEPS[2]}
+        />
+
+        <div className="bill-poster-body">
+          {log.length === 0 ? (
+            <div className="iou-ledger">
+              <p className="iou-empty">
+                No decisions yet. The first time an agent looks at one of your bills, what it decided — and why — is
+                written here.
+              </p>
+            </div>
+          ) : (
+            <div className="bill-payers">
+              {log.map((entry) => {
+                const quoted = modelWrote(entry.reason);
+                return (
+                  <div
+                    className="bill-payer"
+                    // The row's full unique key in Postgres. Bill id and debtor
+                    // alone are not unique across registries, and a merged trail
+                    // lists enough rows for that to actually collide.
+                    key={`${entry.registryAddress}-${entry.billId}-${entry.debtorAddress}`}
+                  >
+                    <div className="bill-payer-line">
+                      <span className="bill-payer-target">Bill #{entry.billId}</span>
+                      <span className="bill-payer-share" data-empty={entry.decision !== "pay"}>
+                        {entry.decision === "pay" ? (
+                          <>
+                            <span className="bill-currency">$</span>
+                            {entry.amountUsdc.toFixed(2)}
+                          </>
+                        ) : (
+                          "no payment"
+                        )}
+                      </span>
+                    </div>
+
+                    <div className="bill-payer-meta">
+                      <span
+                        className="settle-label"
+                        data-tone={
+                          entry.decision === "pay" ? "ok" : BENIGN_SKIPS.has(entry.reason) ? undefined : "warn"
+                        }
+                      >
+                        {entry.decision === "pay" ? "paid" : "skipped"}
+                      </span>
+                      <span className="bill-poster-fact">{formatWhen(entry.createdAt)}</span>
+                      <span className="bill-poster-fact">
+                        owed by <b>{short(entry.debtorAddress)}</b>
+                      </span>
+                      {/* Without this the model's sentence sits in the same slot
+                          as "Above your per-bill cap" and reads as one more
+                          canned string. The mark is the whole difference between
+                          a rule the agent applied and a judgment it made. */}
+                      {quoted ? <span className="settle-label">reviewer</span> : null}
                       {/* Only on the other agent's rows. Marking every row would
                           be noise; marking the ones that came from an agent whose
-                          rules are not on this page is the whole point. The
-                          address is the one already shown up in section 01, so
-                          the two rows read as the same agent. */}
+                          rules are not on this page is the whole point. */}
                       {entry.otherAccount ? (
-                        <span className="spec-badge">
+                        <span className="settle-label">
                           {agentWallet?.otherAgent ? short(agentWallet.otherAgent.address) : "your other agent"}
                         </span>
                       ) : null}
-                      {/* Without this the model's sentence sits in the same slot as
-                          "Above your per-bill cap" and reads as one more canned
-                          string. The badge is the whole difference between a rule
-                          the agent applied and a judgment it made. */}
-                      {modelWrote(entry.reason) ? <span className="spec-badge">reviewer</span> : null}
-                    </span>
-                    {/* Quoted, because it is a quotation. The cast is safe on this
-                        branch and only on it: modelWrote is the hasOwn check, so a
-                        mapped slug is exactly what is left — which is also why the
-                        old `?? entry.reason` fallback is gone rather than moved. */}
-                    <span className="spec-hint">
-                      {modelWrote(entry.reason) ? `“${entry.reason}”` : REASONS[entry.reason as ReasonSlug]}
-                    </span>
-                    {/* Only a payment opens a job, so this line appears on pay
-                        rows alone. A skip keeps the model's own sentence above
-                        and nothing else — there is no job to point at. */}
+                      {entry.txHash ? (
+                        <a
+                          className="iou-row-tx"
+                          href={`${EXPLORER}/tx/${entry.txHash}`}
+                          rel="noreferrer"
+                          target="_blank"
+                        >
+                          {short(entry.txHash)}
+                        </a>
+                      ) : null}
+                    </div>
+
+                    {/* Quoted, because it is a quotation. The cast is safe on
+                        this branch and only on it: modelWrote is the hasOwn
+                        check, so a mapped slug is exactly what is left — which
+                        is also why the old `?? entry.reason` fallback is gone
+                        rather than moved. */}
+                    {quoted ? (
+                      <p className="agent-verdict">&ldquo;{entry.reason}&rdquo;</p>
+                    ) : (
+                      <p className="bill-options-hint">{REASONS[entry.reason as ReasonSlug]}</p>
+                    )}
+
+                    {/* Only a payment opens a job, so this appears on pay rows
+                        alone. A skip keeps the reason above and nothing else —
+                        there is no job to point at. */}
                     {entry.jobId ? (
                       <JobTrail
                         billId={entry.billId}
@@ -1472,20 +1646,14 @@ export default function SettlementAgentsPanel() {
                         jobStatus={entry.jobStatus}
                       />
                     ) : null}
-                  </span>
-                  <span className="shrink-0 text-right">
-                    <span className="trail-amount">
-                      {entry.decision === "pay" ? `${entry.amountUsdc.toFixed(2)} USDC` : "no payment"}
-                    </span>
-                    <span className="spec-hint">{formatWhen(entry.createdAt)}</span>
-                  </span>
-                </li>
-              ))}
-            </ol>
+                  </div>
+                );
+              })}
+            </div>
           )}
         </div>
-      </section>
-    </div>
+      </motion.section>
+    </>
   );
 }
 

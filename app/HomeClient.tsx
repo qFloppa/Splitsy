@@ -3,30 +3,21 @@
 import {
   AlertTriangle,
   ArrowLeftRight,
-  AtSign,
   BadgeDollarSign,
-  BookOpen,
   Bot,
-  Camera,
   ChevronDown,
   CheckCircle2,
   ExternalLink,
-  FileJson,
   Info,
   Landmark,
   Link2,
   Loader2,
-  Lock,
   Mail,
   Moon,
-  Plus,
-  ReceiptText,
-  RefreshCw,
   Send,
   ShieldCheck,
   Sun,
-  Trash2,
-  Upload,
+  Wallet,
   WalletCards,
   X,
 } from "lucide-react";
@@ -43,6 +34,7 @@ import { useAccount, useConnect, useDisconnect, useSwitchChain } from "wagmi";
 import { getWalletClient } from "wagmi/actions";
 import { ConnectButton } from "@rainbow-me/rainbowkit";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { DiscordIcon, XIcon } from "@/components/landing/ProviderIcons";
 import BillVerification from "./BillVerification";
 import XAuthControl from "./XAuthControl";
 import SignInMenu from "./SignInMenu";
@@ -51,9 +43,10 @@ import DashboardPanel from "./DashboardPanel";
 import IouClient from "./IouClient";
 import AgentEconomyPanel from "./AgentEconomyPanel";
 import { gatewayReceiptUrl } from "./JobTrail";
-import SettlementAgentsPanel, { Switch } from "./SettlementAgentsPanel";
+import SettlementAgentsPanel, { AGENT_STEPS, type AgentTabState } from "./SettlementAgentsPanel";
 import { HistoryCard, PaidBillStamp } from "./HistoryCard";
-import { Panel, TabHero } from "./SpecCard";
+import { PosterCell, PosterFact, PosterHero, PosterValue, SectionHead, legendOf, type Step } from "./SpecCard";
+import { nextProvider, validHandle } from "@/lib/iou";
 import {
   bridgeSourceChains,
   bridgeUsdcToArc,
@@ -118,7 +111,7 @@ import {
 import { newShareToken } from "@/lib/pay-link";
 import { providerDisplay } from "@/lib/provider-display";
 import { ReputationBadge } from "./ReputationBadge";
-import type { IdentityProvider } from "@/lib/types";
+import type { AccountProvider, IdentityProvider } from "@/lib/types";
 import type { TreasurySettleSelection } from "@/lib/dashboard-types";
 import { shouldPayLeg } from "@/lib/treasury";
 import { useTheme } from "@/lib/use-theme";
@@ -212,11 +205,16 @@ export type ProgressFlow = {
   steps: FlowStep[];
 };
 
+// The labels complete the word "every" — the recurring poster sets the interval
+// as a sentence ("every week", "every 14 days"), so an option that read "Weekly"
+// or "Custom" would not be grammar. "days" is the custom case: picking it puts an
+// editable day count in front of it, which is the only difference between the
+// four.
 const recurringCycleOptions: Array<{ id: RecurringCycle; label: string; seconds: bigint }> = [
-  { id: "test", label: "Every 3 minutes", seconds: 3n * 60n },
-  { id: "weekly", label: "Weekly", seconds: 7n * 24n * 60n * 60n },
-  { id: "monthly", label: "Monthly", seconds: 30n * 24n * 60n * 60n },
-  { id: "custom", label: "Custom", seconds: 30n * 24n * 60n * 60n },
+  { id: "test", label: "3 minutes", seconds: 3n * 60n },
+  { id: "weekly", label: "week", seconds: 7n * 24n * 60n * 60n },
+  { id: "monthly", label: "month", seconds: 30n * 24n * 60n * 60n },
+  { id: "custom", label: "days", seconds: 30n * 24n * 60n * 60n },
 ];
 
 // Downscale a receipt photo to <=1000px and re-encode as JPEG q0.7 in the
@@ -293,11 +291,36 @@ type OwnedBillSplitDebt = OwnedDebt;
 type CreatorIdentity = "wallet" | "social";
 const CREATOR_IDENTITY_KEY = "splitsy-creator-identity";
 
-export default function HomeClient({ testCycleEnabled = false }: { testCycleEnabled?: boolean }) {  const [activeTab, setActiveTab] = useState<AppTab>("iou");
+// The paper trail at the foot of the dashboard tab, continuing the numbering of
+// the four readings DashboardPanel draws above it. Keyed rather than an array
+// because these three are mutually exclusive views of the same thing, not a
+// sequence — `empty` stands in for `handle` when there is nothing to list, which
+// is why it takes the same 05 and never appears beside it.
+//
+// Named for the same reason every other section here is: see SectionHead in
+// SpecCard.tsx. Not in DashboardPanel's own contents rail, which indexes the four
+// readings only — the trail is a coda, and it was outside the rail before it had
+// a title too.
+const RECORD_STEPS: Record<"handle" | "wallet" | "empty", Step> = {
+  handle: { index: "05", kicker: "By handle", title: "Settled for a handle" },
+  wallet: { index: "06", kicker: "By wallet", title: "Settled on chain" },
+  empty: { index: "05", kicker: "Records", title: "Nothing has settled yet" },
+};
+
+export default function HomeClient({ testCycleEnabled = false }: { testCycleEnabled?: boolean }) {  const [activeTab, setActiveTab] = useState<AppTab>("bills");
+  // What the agents tab's masthead needs to light its contents rail. Reported up
+  // by SettlementAgentsPanel, which is the only thing that knows — same shape as
+  // XHistoryPanel's onCount, and for the same reason: the rail is above the
+  // sections it indexes.
+  const [agentState, setAgentState] = useState<AgentTabState>({ armed: false, granted: 0, decisions: 0 });
   const { theme, setTheme } = useTheme();
   const [ocrState, setOcrState] = useState<OcrState>("idle");
   const [error, setError] = useState("");
   const [imagePreview, setImagePreview] = useState("");
+  // The chosen photo's file name, for the plate's caption. Held separately because
+  // the <input type=file> is the only other place it lives, and that isn't
+  // reactive — a caption read off the ref would go stale on the next render.
+  const [previewName, setPreviewName] = useState("");
   // The compressed receipt bytes + their keccak256, captured at scan time so the
   // exact image can be committed on-chain and published for payers to eyeball.
   // Null for hand-entered bills (no photo).
@@ -1945,10 +1968,14 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
   function showBillPreview(file: File | null) {
     if (!file) {
       setImagePreview("");
+      setPreviewName("");
       return;
     }
 
     setImagePreview(URL.createObjectURL(file));
+    // Bytes as well as the name: the plate's caption is the one place the size of
+    // what you are about to spend a scan on is visible.
+    setPreviewName(`${file.name} · ${Math.max(1, Math.round(file.size / 1024))} KB`);
   }
 
   function updatePreview(event: ChangeEvent<HTMLInputElement>) {
@@ -2624,7 +2651,7 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
   // `header` prop) so it scrolls away with the first card rather than standing
   // over every section. Everywhere else it is the page's first block as usual.
   const appHeader = (
-    <header className="z-30 border-b border-[var(--border)] bg-[color:var(--header-bg)] backdrop-blur-xl">
+    <header className="app-masthead z-30">
       <div className="mx-auto max-w-[88rem] px-4 py-3 sm:px-6 lg:px-8">
         <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
           <div className="min-w-0 shrink">
@@ -2636,25 +2663,29 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
             {/* Every row of header is a row the content doesn't get, and the
                 section rail already stamps the network. */}
             {billsTab ? (
-              <div className="header-title-row mt-1">
-                <h1 className="app-title">
-                  Split bills, Settle cleanly
-                </h1>
-                <span className="network-stamp">Arc Testnet</span>
+              <div className="app-strap">
+                <h1 className="settle-label app-strapline">Split bills, settle cleanly</h1>
+                <span className="settle-label app-network">Arc Testnet</span>
               </div>
             ) : null}
           </div>
-          <div className="flex flex-wrap items-center gap-2 md:justify-end lg:flex-nowrap">
-            <div className="segmented-control">
+          <div className="app-rails">
+            <div className="bill-views app-nav">
               <TabButton active={billsTab} onClick={() => switchAppTab("bills")}>
                 Bills
               </TabButton>
               <TabButton active={activeTab === "settle"} onClick={() => switchAppTab("settle")}>
                 Settle
                 {settleCount > 0 ? (
-                  <span aria-label={`${settleCount} waiting on you`} className="tab-count">
-                    {settleCount}
-                  </span>
+                  <>
+                    <span aria-hidden className="app-count">
+                      {settleCount}
+                    </span>
+                    {/* The figure alone reads out as a bare number, which next to
+                        "Settle" could as easily be a price. So the numeral is the
+                        printed form and this is the spoken one. */}
+                    <span className="sr-only"> — {settleCount} waiting on you</span>
+                  </>
                 ) : null}
               </TabButton>
               <TabButton active={activeTab === "iou"} onClick={() => switchAppTab("iou")}>
@@ -2666,21 +2697,23 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
               <TabButton active={activeTab === "agents"} onClick={() => switchAppTab("agents")}>
                 Agents
               </TabButton>
-              <Link className="tab-button" href="/docs">
-                <BookOpen size={16} />
+            </div>
+            <div className="app-tools">
+              {/* Not a tab: it leaves the app. Same mark as a filter on the
+                  dashboard's rail, which is the register for everything here that
+                  doesn't change which tab you are reading. */}
+              <Link className="iou-provider bill-toggle" href="/docs">
                 Docs
               </Link>
-            </div>
-            <div className="flex flex-nowrap items-center gap-2">
               <SignInMenu />
-              <ConnectButton accountStatus="address" chainStatus="icon" showBalance={false} />
+              <WalletMark />
               <button
                 aria-label={`Switch to ${theme === "light" ? "dark" : "light"} mode`}
-                className="icon-button shrink-0"
+                className="iou-provider app-icon"
                 onClick={() => setTheme((current) => (current === "light" ? "dark" : "light"))}
                 type="button"
               >
-                {theme === "light" ? <Moon size={17} /> : <Sun size={17} />}
+                {theme === "light" ? <Moon size={16} /> : <Sun size={16} />}
               </button>
             </div>
           </div>
@@ -2731,14 +2764,28 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
             key="bills-section"
             transition={{ duration: 0.22, ease: "easeOut" }}
           >
-            {/* Sub-tab toggle — One-off bill vs standing recurring split */}
-            <div className="segmented-control">
-              <TabButton active={activeTab === "bills"} onClick={() => switchAppTab("bills")}>
+            {/* One-off vs standing recurring split. Not a segmented control: this
+                rail sits directly above a page that draws no boxes, and a pill
+                here was the last piece of card chrome left on the tab. Two words
+                on a baseline, the one you are reading at ink with its rule drawn —
+                the same mark every other option on this page makes. */}
+            <div className="bill-poster-marks">
+              <button
+                aria-current={activeTab === "bills" ? "true" : undefined}
+                className="iou-provider bill-toggle"
+                onClick={() => switchAppTab("bills")}
+                type="button"
+              >
                 One-off
-              </TabButton>
-              <TabButton active={activeTab === "recurring"} onClick={() => switchAppTab("recurring")}>
+              </button>
+              <button
+                aria-current={activeTab === "recurring" ? "true" : undefined}
+                className="iou-provider bill-toggle"
+                onClick={() => switchAppTab("recurring")}
+                type="button"
+              >
                 Recurring
-              </TabButton>
+              </button>
             </div>
             <AnimatePresence mode="wait">
             {activeTab === "bills" ? (
@@ -2750,9 +2797,8 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
               key="one-off"
               transition={{ duration: 0.22, ease: "easeOut" }}
             >
-            <TabHero
+            <PosterHero
               eyebrow="Receipt to settlement"
-              icon={<ReceiptText size={13} />}
               legend={[
                 {
                   step: "01 · Capture",
@@ -2813,96 +2859,100 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
             ) : null}
 
             <div className="space-y-5">
-              <Panel
-                chip={
-                  ocrState === "reading" ? (
-                    <span className="spec-chip spec-chip-attn">
-                      <span className="spec-dot" />
-                      Reading
-                    </span>
-                  ) : null
-                }
-                icon={<Upload size={15} />}
-                live={ocrState === "reading"}
-                step="01 · Capture"
-                title="Upload the bill"
-              >
-                <form className="space-y-4" onSubmit={parseBill}>
-                  <label
-                    className={`scan-surface upload-focus receipt-glass flex min-h-[28rem] cursor-pointer flex-col items-center justify-center rounded-[var(--radius)] border border-dashed p-6 text-center text-[var(--receipt-text)] transition hover:border-[var(--accent)] sm:min-h-[34rem] ${
-                      isDraggingBill ? "border-[var(--accent)]" : "border-[var(--border-strong)]"
-                    }`}
-                    data-scanning={ocrState === "reading"}
-                    onDragLeave={handleBillDragLeave}
-                    onDragOver={handleBillDragOver}
-                    onDrop={handleBillDrop}
-                  >
-                    {imagePreview ? (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img
-                        alt="Bill preview"
-                        className="max-h-80 rounded-md object-contain shadow-sm"
-                        src={imagePreview}
+              {/* Step 01 as a poster, in the same grammar as 02 and 03 below it:
+                  the plate is the field, the hairline under it is the whole
+                  affordance, and the commit is a word rather than a filled bar.
+                  See "the capture plate" in globals.css. */}
+              <section className="bill-poster">
+                <div className="bill-poster-head">
+                  <span className="settle-label">01 · Capture</span>
+                  <div className="bill-poster-marks">
+                    {/* The live state is a fact on the rail, the way 02 reports
+                        Scout buying an FX rate — not a pill on a header bar. */}
+                    {ocrState === "reading" ? (
+                      <span className="bill-poster-fact">Scout is reading the receipt</span>
+                    ) : null}
+                  </div>
+                </div>
+                <p className="bill-poster-note">
+                  Any language, any currency. Scout reads the totals, tax, tip and line items off the photo, and pays
+                  for the parse out of its own wallet — you fix whatever it misread in 02, before anything reaches Arc.
+                </p>
+
+                <div className="bill-poster-body">
+                  <form className="bill-capture" data-armed={isDraggingBill} onSubmit={parseBill}>
+                    {/* The whole plate is the label, so a click anywhere on it
+                        opens the picker and a file can be dropped anywhere in it.
+                        Nothing draws a box: the plate is an area of the page that
+                        arms itself under a drag and rules off at the foot. */}
+                    <label
+                      className="bill-plate"
+                      data-loaded={imagePreview !== ""}
+                      data-scanning={ocrState === "reading"}
+                      onDragLeave={handleBillDragLeave}
+                      onDragOver={handleBillDragOver}
+                      onDrop={handleBillDrop}
+                    >
+                      {imagePreview ? (
+                        // eslint-disable-next-line @next/next/no-img-element -- object URL, not a bundled asset
+                        <img alt="The bill to be scanned" className="bill-plate-image" src={imagePreview} />
+                      ) : (
+                        <span className="bill-plate-prompt">
+                          <span className="bill-plate-call">Drop the receipt</span>
+                          <span className="settle-label">or click to browse · jpg, png or heic</span>
+                        </span>
+                      )}
+                      <input
+                        accept="image/*"
+                        className="sr-only"
+                        name="image"
+                        onChange={updatePreview}
+                        ref={imageInputRef}
+                        type="file"
                       />
-                    ) : (
-                      <>
-                        <Camera className="text-[var(--accent)]" size={44} />
-                        <p className="mt-4 text-xl font-semibold">Upload the bill</p>
-                        <p className="mt-1 text-sm text-[var(--receipt-muted)]">Click to browse or drag &amp; drop an image</p>
-                        <p className="mt-2 max-w-md text-sm leading-6 text-[var(--receipt-muted)]">
-                          Use a local receipt or bill photo in any language. Splitsy reads totals, tax, tip, and line items so the split starts clean.
-                        </p>
-                        <p className="mt-4 text-sm text-[var(--receipt-muted)]">
-                          Don&apos;t have a receipt image right now?{" "}
-                          {/* A <span>, not a <button>: buttons are labelable, so the
-                              surrounding upload <label> would adopt it as its control
-                              and every click on the box would trigger it. */}
-                          <span
-                            className="cursor-pointer font-semibold text-[var(--accent)] underline underline-offset-2 hover:opacity-80"
-                            onClick={(event) => {
-                              // Inside the upload <label>: stop the click from also
-                              // opening the file picker.
-                              event.preventDefault();
-                              event.stopPropagation();
-                              void loadSampleBill();
-                            }}
-                            onKeyDown={(event) => {
-                              if (event.key === "Enter" || event.key === " ") {
-                                event.preventDefault();
-                                void loadSampleBill();
-                              }
-                            }}
-                            role="button"
-                            tabIndex={0}
-                          >
-                            Use this
-                          </span>
-                        </p>
-                      </>
-                    )}
-                    <input accept="image/*" className="sr-only" name="image" onChange={updatePreview} ref={imageInputRef} type="file" />
-                  </label>
+                    </label>
+                    <div className="bill-cell-rule" />
 
-                  {error ? <Message tone="error">{error}</Message> : null}
+                    {/* The plate's caption: which photo is loaded, and the way to
+                        get one if you haven't got a receipt to hand. A real
+                        <button> at last — out here it is outside the upload
+                        <label>, so the label can no longer adopt it as its own
+                        control and steal every click on the plate. */}
+                    <div className="bill-plate-caption">
+                      <span className="settle-label">{previewName || "no photo yet"}</span>
+                      <button className="iou-provider" onClick={() => void loadSampleBill()} type="button">
+                        use the sample bill
+                      </button>
+                    </div>
 
-                  <button className="primary-button scan-receipt-button w-full" disabled={ocrState === "reading"}>
-                    {ocrState === "reading" ? <Loader2 className="animate-spin" size={18} /> : <FileJson size={18} />}
-                    {ocrState === "reading" ? "Reading receipt" : "Scan receipt"}
-                  </button>
-                  <button
-                    className="manual-entry-link"
-                    onClick={() => {
-                      setManualBillEntry(true);
-                      setReceiptCommit(null);
-                      setError("");
-                      clearBillFlowState();
-                    }}
-                    type="button"
-                  >
-                    Or enter manually
-                  </button>
-                </form>
-              </Panel>
+                    {error ? (
+                      <p className="bill-poster-msg" data-tone="error" role="status">
+                        {error}
+                      </p>
+                    ) : null}
+
+                    <div className="bill-poster-foot">
+                      <button className="settle-action" disabled={ocrState === "reading"} type="submit">
+                        {ocrState === "reading" ? "reading…" : "scan receipt"} ›
+                      </button>
+                      {/* The alternative to the whole step, sitting opposite the
+                          action it replaces rather than underlined beneath it. */}
+                      <button
+                        className="iou-provider"
+                        onClick={() => {
+                          setManualBillEntry(true);
+                          setReceiptCommit(null);
+                          setError("");
+                          clearBillFlowState();
+                        }}
+                        type="button"
+                      >
+                        or enter it by hand
+                      </button>
+                    </div>
+                  </form>
+                </div>
+              </section>
 
               <AnimatePresence>
                 {showBillEditor ? (
@@ -2913,103 +2963,131 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
                     ref={reviewBillRef}
                     transition={{ duration: 0.26, ease: "easeOut" }}
                   >
-                    <Panel
-                      chip={
-                        billIsScanned ? (
-                          <span className="spec-chip">
-                            {originCurrency}
-                            {originCurrency === "USD" ? "" : " → USD"}
-                          </span>
-                        ) : null
-                      }
-                      icon={<ReceiptText size={15} />}
-                      note="Every figure here is editable. Fix anything the scan misread now — from step 03 on, these numbers are what gets committed to Arc and hashed into the bill."
-                      step="02 · Verify"
-                      title={billIsScanned ? "What the scan read" : "Enter the bill"}
-                    >
-                      <div className="receipt-card receipt-glass p-4 sm:p-5" ref={receiptPrintRef}>
-                        {billIsScanned ? (
-                          <>
-                            {/* A USD bill needs no conversion notice — there is
-                                nothing to convert and no rate worth showing. */}
-                            {originCurrency !== "USD" ? (
-                              <div className="mb-4 rounded-[var(--radius)] border border-[var(--receipt-border-soft)] bg-[var(--receipt-overlay)] p-3 text-xs text-[var(--receipt-muted)]">
-                                <p className="font-semibold text-[var(--receipt-text)]">
-                                  {fxPending ? `Converting ${originCurrency} to USD…` : "Converted to USD for settlement"}
-                                </p>
-                                <p className="mt-1">
-                                  Origin currency {originCurrency}.{" "}
-                                  {fxPending ? (
-                                    "Scout is buying the rate — amounts below are still in the origin currency."
-                                  ) : (
-                                    <>
-                                      Rate{" "}
-                                      <span className="amount-text">1 {originCurrency} = {usdRate.toFixed(6)} USD</span>
-                                      {fxQuote?.asOf ? ` · ${new Date(fxQuote.asOf).toLocaleString()}` : ""}
-                                    </>
-                                  )}
-                                </p>
-                              </div>
-                            ) : null}
-                            {scoutReport ? <ScoutReceipt report={scoutReport} /> : null}
-                            {/* While the rate is in flight usdRate is 1, so these
-                                amounts are still the origin currency — label them
-                                that way rather than asserting a wrong USD figure. */}
-                            <div className="grid gap-3 sm:grid-cols-2">
-                              <Field label="Merchant" value={bill.merchant} onChange={(value) => updateBillField("merchant", value)} />
-                              <Field label="Origin currency" value={bill.currency} onChange={(value) => updateBillField("currency", value)} />
-                              <Field label={`Subtotal ${amountUnit}`} type="number" value={toUsdInput(bill.subtotal, usdRate)} onChange={(value) => updateBillUsdField("subtotal", value)} />
-                              <Field label={`Tax ${amountUnit}`} type="number" value={toUsdInput(bill.tax, usdRate)} onChange={(value) => updateBillUsdField("tax", value)} />
-                              <Field label={`Tip ${amountUnit}`} type="number" value={toUsdInput(bill.tip, usdRate)} onChange={(value) => updateBillUsdField("tip", value)} />
-                              <Field label={`Total ${amountUnit}`} type="number" value={toUsdInput(bill.total, usdRate)} onChange={(value) => updateBillUsdField("total", value)} />
+                    {/* Set as a poster, not a card — see "the bill poster" in
+                        globals.css. The merchant is the masthead, the total is
+                        the hero figure, and every one of them is the field that
+                        edits it. */}
+                    <section className="bill-poster">
+                      <div className="bill-poster-head">
+                        <span className="settle-label">02 · Verify</span>
+                        <div className="bill-poster-marks">
+                          {/* A USD bill needs no conversion notice — there is
+                              nothing to convert and no rate worth showing. */}
+                          {billIsScanned && originCurrency !== "USD" ? (
+                            <span className="bill-poster-fact">
+                              {fxPending ? (
+                                `${originCurrency} → USD · Scout is buying the rate`
+                              ) : (
+                                <>
+                                  {originCurrency} → USD ·{" "}
+                                  <b>
+                                    1 {originCurrency} = {usdRate.toFixed(6)}
+                                  </b>
+                                  {fxQuote?.asOf ? ` · ${new Date(fxQuote.asOf).toLocaleDateString()}` : ""}
+                                </>
+                              )}
+                            </span>
+                          ) : null}
+                          {/* A discount is a fact about the total, not a field —
+                              the total already carries it. */}
+                          {discountShown > 0 ? (
+                            <span className="bill-poster-fact">
+                              discount <b>−{discountShown.toFixed(2)}</b> off subtotal + tax + tip
+                            </span>
+                          ) : null}
+                        </div>
+                      </div>
+                      <p className="bill-poster-note">
+                        Every figure below is editable — fix anything the scan misread now. From step 03 on, these are
+                        the numbers written to Arc and hashed into the bill.
+                      </p>
+
+                      <div className="bill-poster-body" ref={receiptPrintRef}>
+                        {billIsScanned && scoutReport ? <ScoutReceipt report={scoutReport} /> : null}
+
+                        <div className="bill-poster-lede">
+                          <h4 className="bill-display">
+                            <input
+                              aria-label="Merchant"
+                              autoComplete="off"
+                              className="iou-field bill-title-field"
+                              onChange={(event) => updateBillField("merchant", event.target.value)}
+                              placeholder="Merchant"
+                              value={bill.merchant}
+                            />
+                          </h4>
+                          {/* While the rate is in flight usdRate is 1, so this
+                              is still the origin currency — the label says which
+                              rather than asserting a wrong USD figure. */}
+                          <div className="bill-cell" data-total>
+                            <span className="settle-label">Total {amountUnit}</span>
+                            <div className="bill-figure">
+                              <span className="bill-currency">$</span>
+                              <PosterValue
+                                ariaLabel={`Total ${amountUnit}`}
+                                decimal
+                                onChange={(value) =>
+                                  billIsScanned ? updateBillUsdField("total", value) : updateBillField("total", value)
+                                }
+                                placeholder="0.00"
+                                value={billIsScanned ? toUsdInput(bill.total, usdRate) : String(bill.total)}
+                              />
                             </div>
-                            {discountShown > 0 ? (
-                              <p className="mt-3 text-xs text-[var(--receipt-muted)]">
-                                Discount applied:{" "}
-                                <span className="amount-text font-semibold text-[var(--receipt-text)]">
-                                  −{discountShown.toFixed(2)} {amountUnit}
-                                </span>{" "}
-                                off subtotal + tax + tip. The split uses the discounted total, and editing a field above keeps
-                                the discount.
-                              </p>
-                            ) : null}
-                          </>
-                        ) : (
-                          <div className="grid gap-3 sm:grid-cols-2">
-                            <Field label="Merchant" value={bill.merchant} onChange={(value) => updateBillField("merchant", value)} />
-                            <Field label="Total USD" type="number" value={String(bill.total)} onChange={(value) => updateBillField("total", value)} />
+                            <div className="bill-cell-rule" />
                           </div>
-                        )}
+                        </div>
+
+                        {billIsScanned ? (
+                          <div className="bill-poster-rail">
+                            <PosterCell
+                              decimal
+                              label={`Subtotal ${amountUnit}`}
+                              onChange={(value) => updateBillUsdField("subtotal", value)}
+                              value={toUsdInput(bill.subtotal, usdRate)}
+                            />
+                            <PosterCell
+                              decimal
+                              label={`Tax ${amountUnit}`}
+                              onChange={(value) => updateBillUsdField("tax", value)}
+                              value={toUsdInput(bill.tax, usdRate)}
+                            />
+                            <PosterCell
+                              decimal
+                              label={`Tip ${amountUnit}`}
+                              onChange={(value) => updateBillUsdField("tip", value)}
+                              value={toUsdInput(bill.tip, usdRate)}
+                            />
+                            <PosterCell
+                              label="Origin currency"
+                              onChange={(value) => updateBillField("currency", value)}
+                              placeholder="USD"
+                              value={bill.currency}
+                            />
+                          </div>
+                        ) : null}
 
                         {billIsScanned && bill.lineItems.length > 0 ? (
-                          <details className="bill-items-disclosure mt-5">
+                          <details className="bill-items">
                             <summary>
-                              <span>
-                                <span className="block text-sm font-semibold text-[var(--receipt-text)]">Bill items</span>
-                                <span className="mt-0.5 block text-xs text-[var(--receipt-muted)]">
-                                  {bill.lineItems.length} extracted item{bill.lineItems.length === 1 ? "" : "s"}
-                                </span>
+                              <span className="settle-label">
+                                {bill.lineItems.length} extracted item{bill.lineItems.length === 1 ? "" : "s"}
                               </span>
-                              <span className="bill-items-summary-total">
-                                <span className="amount-text">
-                                  ${bill.lineItems.reduce((sum, item) => sum + item.amount * usdRate, 0).toFixed(2)}
-                                </span>
-                                <ChevronDown className="bill-items-chevron" size={18} />
+                              <span className="bill-items-total">
+                                ${bill.lineItems.reduce((sum, item) => sum + item.amount * usdRate, 0).toFixed(2)}
+                                <ChevronDown className="bill-items-chevron" size={16} />
                               </span>
                             </summary>
-                            <div className="bill-items-body">
-                              {bill.lineItems.map((item, index) => (
-                                <div className="receipt-row" data-receipt-row key={`${item.description}-${index}`}>
-                                  <span className="receipt-index">{String(index + 1).padStart(2, "0")}</span>
-                                  <span className="min-w-0 text-sm font-medium">{item.description}</span>
-                                  <span className="amount-text text-sm font-semibold">${(item.amount * usdRate).toFixed(2)}</span>
-                                </div>
-                              ))}
-                            </div>
+                            {bill.lineItems.map((item, index) => (
+                              <div className="bill-item" data-receipt-row key={`${item.description}-${index}`}>
+                                <i>{String(index + 1).padStart(2, "0")}</i>
+                                <span>{item.description}</span>
+                                <b>${(item.amount * usdRate).toFixed(2)}</b>
+                              </div>
+                            ))}
                           </details>
                         ) : null}
                       </div>
-                    </Panel>
+                    </section>
                   </motion.div>
                 ) : null}
               </AnimatePresence>
@@ -3023,253 +3101,255 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
                     ref={reviewSplitRef}
                     transition={{ duration: 0.3, ease: "easeOut" }}
                   >
-                    <Panel
-                      action={
-                        <div className="segmented-control">
-                          <ModeButton active={splitMode === "equal"} onClick={() => setSplitMode("equal")}>
-                            Equal
-                          </ModeButton>
-                          <ModeButton active={splitMode === "manual"} onClick={() => setSplitMode("manual")}>
-                            Manual
-                          </ModeButton>
-                        </div>
-                      }
-                      chip={
-                        Math.abs(splitDelta) > 0.009 ? (
-                          <span className="spec-chip spec-chip-warn">
-                            <span className="spec-dot" />${Math.abs(splitDelta).toFixed(2)} off
-                          </span>
-                        ) : (
-                          <span className="spec-chip spec-chip-live">
-                            <span className="spec-dot" />
-                            Balanced
-                          </span>
-                        )
-                      }
-                      icon={<WalletCards size={15} />}
-                      live={Math.abs(splitDelta) <= 0.009}
-                      note="Tag each payer by wallet address, X, Discord, or email — a tagged person gets a Splitsy wallet and can pay without one of their own. Writing to Arc costs one transaction and cannot be edited afterwards."
-                      step="03 · Split & commit"
-                      title="Who owes what"
-                    >
-                <div className="route-strip text-sm">
-                  <div>
-                    <p className="font-semibold text-[var(--text)]">Bill registry (escrow)</p>
-                    <p className="mt-1 text-[var(--text-muted)]">
-                      Tag each payer by wallet address, X, Discord, or email. Written to the on-chain escrow — tagged
-                      people get a wallet and can pay + be claimed on Arc.
-                    </p>
-                  </div>
-                  <div className="route-line" aria-hidden="true" />
-                  <div>
-                    <p className="font-semibold text-[var(--text)]">Arc Testnet</p>
-                    <p className="mt-1 text-[var(--text-muted)]">Fees settle in USDC with transaction memos.</p>
-                  </div>
-                </div>
-
-                {billMessage ? (
-                  <div className="mt-4">
-                    <Message tone={billState === "error" ? "error" : billState === "success" ? "success" : "neutral"}>{billMessage}</Message>
-                  </div>
-                ) : null}
-
-                <div className="receipt-card receipt-glass mt-4 p-4">
-                  {displayParticipants.map((participant) => {
-                    return (
-                      <div className="receipt-divider py-3 first:border-t-0 first:pt-0" key={participant.id}>
-                        <div className="grid gap-3 md:grid-cols-[0.48fr_1fr_0.32fr_auto] md:items-end">
-                          <Field
-                            label="Name"
-                            value={participant.label}
-                            onChange={(value) => updateParticipant(participant.id, "label", value)}
-                          />
-                          <HandleField
-                            provider={participant.provider ?? "x"}
-                            onProviderChange={(value) => updateParticipant(participant.id, "provider", value)}
-                            value={participant.walletAddress}
-                            onChange={(value) => updateParticipant(participant.id, "walletAddress", value)}
-                          />
-                          <Field
-                            disabled={splitMode === "equal"}
-                            label="Share"
-                            type="number"
-                            value={
-                              splitMode === "manual"
-                                ? (participantShareInputs[participant.id] ?? (participant.amountUsd > 0 ? String(participant.amountUsd) : ""))
-                                : participant.amountUsd.toFixed(2)
-                            }
-                            onChange={(value) => updateParticipantShare(participant.id, value)}
-                          />
+                    <section className="bill-poster">
+                      <div className="bill-poster-head">
+                        <span className="settle-label">03 · Split &amp; commit</span>
+                        <div className="bill-poster-marks">
+                          {/* Two answers, so it cycles rather than opening a
+                              picker — the same call .iou-provider makes. */}
                           <button
-                            aria-label={`Remove ${participant.label}`}
-                            className="icon-button"
-                            onClick={() => removeParticipant(participant.id)}
+                            className="iou-provider"
+                            onClick={() => setSplitMode(splitMode === "equal" ? "manual" : "equal")}
                             type="button"
                           >
-                            <Trash2 size={17} />
+                            {splitMode === "equal" ? "split equally" : "split manually"}
                           </button>
-                        </div>
-
-                        <div className="mt-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                          <ReputationBadge provider={rowProvider(participant)} value={participant.walletAddress} />
-                          <span className="amount-text font-semibold">${participant.amountUsd.toFixed(2)}</span>
+                          {Math.abs(splitDelta) > 0.009 ? (
+                            <span className="settle-label" data-tone="warn">
+                              ${Math.abs(splitDelta).toFixed(2)} off
+                            </span>
+                          ) : (
+                            <span className="settle-label" data-tone="ok">
+                              balanced
+                            </span>
+                          )}
                         </div>
                       </div>
-                    );
-                  })}
-                </div>
-
-                {/* Optional pay-by date. Committed into the on-chain metadata
-                    hash so payment reputation can grade timeliness against a
-                    deadline the creator can't move after the fact. Leaving it
-                    blank keeps the bill (and every payer's score) exactly as it
-                    was before due dates existed. */}
-                <div className="mt-4 flex flex-col gap-2 rounded-[var(--radius)] border border-[var(--border)] bg-[var(--surface-muted)] p-3 text-sm sm:flex-row sm:items-center sm:justify-between">
-                  <div>
-                    <label className="font-semibold text-[var(--text)]" htmlFor="bill-due-date">
-                      Pay by <span className="font-normal text-[var(--text-muted)]">(optional)</span>
-                    </label>
-                    <p className="mt-1 text-[var(--text-muted)]">
-                      Payers who settle on time build stronger on-chain payment reputation. Leave blank for no deadline.
-                    </p>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <input
-                      className="input-field w-auto"
-                      id="bill-due-date"
-                      min={new Date().toISOString().slice(0, 10)}
-                      onChange={(event) => setDueDateInput(event.target.value)}
-                      type="date"
-                      value={dueDateInput}
-                    />
-                    {dueDateInput ? (
-                      <button
-                        className="secondary-button"
-                        onClick={() => {
-                          setDueDateInput("");
-                          // Escrow without a deadline is an unbounded lock, so
-                          // the contract refuses it — drop the toggle with it
-                          // rather than submit a pair that reverts.
-                          setEscrowUntilFull(false);
-                        }}
-                        type="button"
-                      >
-                        Clear
-                      </button>
-                    ) : null}
-                  </div>
-                </div>
-
-                <div
-                  className={`mt-4 flex flex-col gap-3 rounded-[var(--radius)] border p-3 text-sm sm:flex-row sm:items-start sm:justify-between ${
-                    escrowUntilFull
-                      ? "border-[var(--accent)] bg-[var(--accent-soft)]"
-                      : "border-[var(--border)] bg-[var(--surface-muted)]"
-                  }`}
-                >
-                  <div>
-                    <p className="flex items-center gap-1.5 font-semibold text-[var(--text)]">
-                      <Lock size={14} />
-                      All or nothing
-                      <span className="font-normal text-[var(--text-muted)]">(escrow)</span>
-                    </p>
-                    <p className="mt-1 max-w-xl leading-6 text-[var(--text-muted)]">
-                      {dueDateInput
-                        ? "Hold the money until everyone has paid. You can't collect any of it until every payer has settled. If the bill is still short on the due date, it has failed: you collect nothing and each payer takes their own money back. Use this when a partial amount is no good to you."
-                        : "Set a due date first. Without one there is no moment at which a short bill counts as failed, so the money could never be released to anyone."}
-                    </p>
-                  </div>
-                  <Switch
-                    checked={escrowUntilFull}
-                    disabled={!dueDateInput}
-                    onChange={setEscrowUntilFull}
-                    srLabel="All or nothing — hold the money until everyone has paid"
-                  />
-                </div>
-
-                <div
-                  className={`mt-4 flex flex-col gap-3 rounded-[var(--radius)] border p-3 text-sm sm:flex-row sm:items-start sm:justify-between ${
-                    publicPayLink
-                      ? "border-[var(--accent)] bg-[var(--accent-soft)]"
-                      : "border-[var(--border)] bg-[var(--surface-muted)]"
-                  }`}
-                >
-                  <div>
-                    <p className="flex items-center gap-1.5 font-semibold text-[var(--text)]">
-                      <Link2 size={14} />
-                      Anyone can pay
-                      <span className="font-normal text-[var(--text-muted)]">(share link)</span>
-                    </p>
-                    <p className="mt-1 max-w-xl leading-6 text-[var(--text-muted)]">
-                      Get a link that opens this bill on its own page, where anyone holding it can cover any payer&apos;s
-                      share — useful when one person picks up several shares. Without it, only the people you tagged can
-                      pay. The link is minted when the bill is written and can&apos;t be added or removed afterwards.
-                    </p>
-                  </div>
-                  <Switch
-                    checked={publicPayLink}
-                    onChange={setPublicPayLink}
-                    srLabel="Anyone can pay — get a shareable link for this bill"
-                  />
-                </div>
-
-                {/* Dual identity (signed in social + connected wallet): the
-                    creator picks which wallet writes the bill to Arc and
-                    collects the payments. With one identity there is no
-                    ambiguity and no picker. */}
-                {canChooseCreator && socialWalletAddress && connectedWalletAccount ? (
-                  <div className="mt-4 flex flex-col gap-3 rounded-[var(--radius)] border border-[var(--border)] bg-[var(--surface-muted)] p-3 text-sm sm:flex-row sm:items-center sm:justify-between">
-                    <div>
-                      <p className="font-semibold text-[var(--text)]">Create as</p>
-                      <p className="mt-1 text-[var(--text-muted)]">
-                        {creatorIdentity === "social"
-                          ? `Your Splitsy wallet ${shortAddress(socialWalletAddress)} writes the bill and collects the payments — no signing needed.`
-                          : `Your connected wallet ${shortAddress(connectedWalletAccount)} signs the bill and collects the payments. Payers see this address as the bill's creator.`}
+                      <p className="bill-poster-note">
+                        Tag each payer by wallet address, X, Discord or email — anyone tagged gets a Splitsy wallet and
+                        can pay without one of their own. One transaction writes the split to Arc, and it can&apos;t be
+                        edited afterwards.
                       </p>
-                    </div>
-                    <div className="segmented-control shrink-0">
-                      <ModeButton active={creatorIdentity === "social"} onClick={() => chooseCreatorIdentity("social")}>
-                        {socialCreatorLabel}
-                      </ModeButton>
-                      <ModeButton active={creatorIdentity === "wallet"} onClick={() => chooseCreatorIdentity("wallet")}>
-                        {shortAddress(connectedWalletAccount)}
-                      </ModeButton>
-                    </div>
-                  </div>
-                ) : null}
 
-                <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                  <div className="flex flex-wrap gap-2">
-                    <button className="secondary-button" onClick={addParticipant} type="button">
-                      <Plus size={16} />
-                      Add payer
-                    </button>
-                    <button
-                      className="primary-button"
-                      disabled={billState === "working" || billState === "connecting"}
-                      onClick={submitBillOnchainMixed}
-                      type="button"
-                    >
-                      {billState === "working" ? <Loader2 className="animate-spin" size={16} /> : <Landmark size={16} />}
-                      Write on Arc
-                    </button>
-                  </div>
-                  <div className="text-sm text-[var(--text-muted)]">
-                    Split total <span className="amount-text font-semibold text-[var(--text)]">${splitTotal.toFixed(2)}</span>
-                    {Math.abs(splitDelta) > 0.009 ? (
-                      <span className="ml-2 text-[var(--warning-text)]">delta ${splitDelta.toFixed(2)}</span>
-                    ) : null}
-                  </div>
-                </div>
-                {submittedBillId ? (
-                  <div className="mt-4 flex flex-col gap-3 rounded-[var(--radius)] border border-[var(--border)] bg-[var(--surface-muted)] p-3 text-sm text-[var(--text-muted)] sm:flex-row sm:items-center sm:justify-between">
-                    <span>Bill #{submittedBillId.toString()} is live. Payers see it when they connect the matching wallet.</span>
-                    <div className="settlement-stamp" ref={settlementStampRef}>
-                      Settled
-                    </div>
-                  </div>
-                ) : null}
-                    </Panel>
+                      <div className="bill-poster-body">
+                        {displayParticipants.map((participant) => {
+                        // A value that names its own namespace needs no picker:
+                        // a 0x address and an email address both say what they
+                        // are. Only a bare handle is ambiguous, and there the
+                        // word cycles X → Discord → email.
+                        const target = participant.walletAddress.trim();
+                        const namespace = looksLikeAddress(target) ? "wallet" : rowProvider(participant);
+                        const ambiguous = target !== "" && !looksLikeAddress(target) && !looksLikeEmail(target);
+                        const share =
+                          splitMode === "manual"
+                            ? (participantShareInputs[participant.id] ??
+                              (participant.amountUsd > 0 ? String(participant.amountUsd) : ""))
+                            : participant.amountUsd.toFixed(2);
+                        return (
+                          <div className="bill-payer" key={participant.id}>
+                            <div className="bill-payer-line">
+                              {/* The target is the line, because the target is
+                                  what identifies this payer on Arc — the display
+                                  name is the creator's own shorthand and rides
+                                  the rail below. A pasted address is 42
+                                  characters, which at this size is three lines of
+                                  poster, so it shows compacted through the same
+                                  mechanism the IOU composer uses: the mirror
+                                  measures the short form, the input's own glyphs
+                                  go transparent, .iou-compact draws the short
+                                  text. The value itself is never touched. */}
+                              <span className="bill-payer-target">
+                                <PayerMark provider={namespace} target={target} />
+                                <PosterValue
+                                  ariaLabel="Wallet address, handle or email"
+                                  compact={looksLikeAddress(target) ? shortAddress(target) : null}
+                                  onChange={(value) => updateParticipant(participant.id, "walletAddress", value)}
+                                  placeholder="@handle or 0x…"
+                                  value={participant.walletAddress}
+                                />
+                              </span>
+                              <span className="bill-payer-share" data-empty={share === "" || Number(share) === 0}>
+                                <span className="bill-currency">$</span>
+                                <PosterValue
+                                  ariaLabel={`${participant.label || "Payer"} share in USD`}
+                                  decimal
+                                  disabled={splitMode === "equal"}
+                                  onChange={(value) => updateParticipantShare(participant.id, value)}
+                                  placeholder="0.00"
+                                  value={share}
+                                />
+                              </span>
+                            </div>
+
+                            <div className="bill-payer-meta">
+                              <span className="bill-payer-name">
+                                <PosterValue
+                                  ariaLabel="Payer name"
+                                  onChange={(value) => updateParticipant(participant.id, "label", value)}
+                                  placeholder="name"
+                                  value={participant.label}
+                                />
+                              </span>
+                              {target === "" ? null : ambiguous ? (
+                                <button
+                                  className="iou-provider"
+                                  onClick={() =>
+                                    updateParticipant(participant.id, "provider", nextProvider(namespace))
+                                  }
+                                  type="button"
+                                >
+                                  on {namespace}
+                                </button>
+                              ) : (
+                                <span className="settle-label">on {namespace}</span>
+                              )}
+                              <span className="bill-payer-rep">
+                                <ReputationBadge provider={rowProvider(participant)} value={participant.walletAddress} />
+                              </span>
+                              <button
+                                className="iou-provider bill-payer-remove"
+                                onClick={() => removeParticipant(participant.id)}
+                                type="button"
+                              >
+                                remove
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
+
+                      <div className="bill-add">
+                        <button className="iou-provider" onClick={addParticipant} type="button">
+                          + add payer
+                        </button>
+                      </div>
+
+                      <div className="bill-options">
+                        {/* Optional pay-by date. Committed into the on-chain
+                            metadata hash so payment reputation can grade
+                            timeliness against a deadline the creator can't move
+                            after the fact. */}
+                        <span className="bill-pair">
+                          <label className="settle-label" htmlFor="bill-due-date">
+                            pay by
+                          </label>
+                          <input
+                            className="bill-date"
+                            data-set={dueDateInput !== ""}
+                            id="bill-due-date"
+                            min={new Date().toISOString().slice(0, 10)}
+                            onChange={(event) => {
+                              setDueDateInput(event.target.value);
+                              // Escrow without a deadline is an unbounded lock,
+                              // so the contract refuses it — drop the toggle
+                              // with the date rather than submit a pair that
+                              // reverts.
+                              if (!event.target.value) setEscrowUntilFull(false);
+                            }}
+                            type="date"
+                            value={dueDateInput}
+                          />
+                        </span>
+
+                        <button
+                          aria-pressed={escrowUntilFull}
+                          className="iou-provider bill-toggle"
+                          disabled={!dueDateInput}
+                          onClick={() => setEscrowUntilFull(!escrowUntilFull)}
+                          type="button"
+                        >
+                          all or nothing
+                        </button>
+
+                        <button
+                          aria-pressed={publicPayLink}
+                          className="iou-provider bill-toggle"
+                          onClick={() => setPublicPayLink(!publicPayLink)}
+                          type="button"
+                        >
+                          anyone can pay
+                        </button>
+
+                        {/* Dual identity (signed in social + connected wallet):
+                            the creator picks which wallet writes the bill to Arc
+                            and collects the payments. With one identity there is
+                            no ambiguity and no picker. */}
+                        {canChooseCreator && socialWalletAddress && connectedWalletAccount ? (
+                          <button
+                            className="iou-provider"
+                            onClick={() => chooseCreatorIdentity(creatorIdentity === "social" ? "wallet" : "social")}
+                            type="button"
+                          >
+                            as{" "}
+                            {creatorIdentity === "social" ? socialCreatorLabel : shortAddress(connectedWalletAccount)}
+                          </button>
+                        ) : null}
+                      </div>
+
+                      {/* One line each, and only when there is something to say:
+                          why a control is unavailable, or what an armed one
+                          actually does. Off and available, it explains nothing —
+                          which is most of the time. */}
+                      {dueDateInput ? null : (
+                        <p className="bill-options-hint">
+                          A pay-by date unlocks all-or-nothing escrow, and payers who settle before it build stronger
+                          on-chain reputation.
+                        </p>
+                      )}
+                      {escrowUntilFull ? (
+                        <p className="bill-options-hint">
+                          All or nothing — nobody&apos;s money is released until every payer has settled. Still short on
+                          the due date and the bill has failed: you collect nothing and each payer takes their own money
+                          back.
+                        </p>
+                      ) : null}
+                      {publicPayLink ? (
+                        <p className="bill-options-hint">
+                          Anyone can pay — you get a link that opens this bill on its own page, where whoever holds it
+                          can cover any payer&apos;s share. Minted when the bill is written, and not removable after.
+                        </p>
+                      ) : null}
+
+                      {billMessage ? (
+                        <p
+                          className="bill-poster-msg"
+                          data-tone={billState === "error" ? "error" : billState === "success" ? "success" : undefined}
+                          role="status"
+                        >
+                          {billMessage}
+                        </p>
+                      ) : null}
+
+                      <div className="bill-poster-foot">
+                        <button
+                          className="settle-action"
+                          disabled={billState === "working" || billState === "connecting"}
+                          onClick={submitBillOnchainMixed}
+                          type="button"
+                        >
+                          {billState === "working" ? "writing…" : "write on arc"} ›
+                        </button>
+                        <div className="bill-poster-total" data-tone={Math.abs(splitDelta) > 0.009 ? "warn" : undefined}>
+                          <span className="settle-label">Split total</span>
+                          <span>
+                            ${splitTotal.toFixed(2)} <em>of ${confirmedUsd.toFixed(2)}</em>
+                          </span>
+                        </div>
+                      </div>
+
+                      {submittedBillId ? (
+                        <div className="bill-poster-foot">
+                          <span className="bill-poster-fact">
+                            Bill <b>#{submittedBillId.toString()}</b> is live. Payers see it when they connect the
+                            matching wallet.
+                          </span>
+                          <div className="settlement-stamp" ref={settlementStampRef}>
+                            Settled
+                          </div>
+                        </div>
+                      ) : null}
+                      </div>
+                    </section>
                   </motion.div>
                 ) : null}
               </AnimatePresence>
@@ -3284,9 +3364,8 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
               key="recurring"
               transition={{ duration: 0.22, ease: "easeOut" }}
             >
-            <TabHero
+            <PosterHero
             eyebrow="Standing splits"
-            icon={<RefreshCw size={13} />}
             legend={[
               { step: "01 · Set up", label: "Members, share, cycles", state: walletTabs.length > 0 ? "done" : "active" },
               { step: "02 · Your tabs", label: "Everything you're on", state: tabState ? "done" : walletTabs.length > 0 ? "active" : undefined },
@@ -3353,22 +3432,27 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
             key="agents"
             transition={{ duration: 0.22, ease: "easeOut" }}
           >
-            {/* The hero states what the tab is and which side of a bill each
-                agent works; live state stays down on the card that controls it,
-                where acting on it is one click away. */}
-            <TabHero
+            {/* The masthead states what the tab is and which side of a bill each
+                agent works; live state stays down on the section that controls
+                it, where acting on it is one click away. The contents rail is
+                the exception — it is the poster system's progress readout, so it
+                reports what the sections below have reported up.
+
+                Both the rail and the sections read AGENT_STEPS, so an entry here
+                and the heading it scrolls to cannot name a section differently —
+                which they did: this rail used to call 04 "Scout" while the section
+                itself called it "Third-party agent". */}
+            <PosterHero
               eyebrow="Autonomous settlement"
-              icon={<Bot size={13} />}
-              legend={[
-                { step: "01 · Debtor side", label: "Autopay, inside your caps" },
-                { step: "02 · Creditor side", label: "Collect mandates, per bill" },
-                { step: "03 · Audit trail", label: "Every decision, every skip" },
-                { step: "04 · Scout", label: "x402 nanopayment ledger" },
-              ]}
+              legend={legendOf(AGENT_STEPS, [
+                agentState.armed ? "active" : undefined,
+                agentState.granted > 0 ? "done" : undefined,
+                agentState.decisions > 0 ? "done" : undefined,
+              ])}
               lede="Two agents work opposite sides of a bill: one pays your share the moment you are billed, one collects what you are owed once a bill falls due. Both run on standing permissions you write here — capped, per bill, revocable, and logged decision by decision."
               title="Agents that settle while you sleep"
             />
-            <SettlementAgentsPanel />
+            <SettlementAgentsPanel onState={setAgentState} />
             <AgentEconomyPanel />
           </motion.div>
         ) : activeTab === "iou" ? null : (
@@ -3388,53 +3472,47 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
               onSettleNet={connectedWalletAccount ? settleNetWithWallet : undefined}
             />
 
-            {/* The paper trail, moved under the dashboard: both stacks stay
+            {/* The paper trail, under the four readings: both stacks stay
                 mounted regardless of what they hold — XHistoryPanel reports its
                 count up, and that count decides whether the shared empty state
-                below is the truth. */}
+                below is the truth. Set as posters like the readings above, so the
+                tab ends in the same voice it opened in. */}
             <div className={socialHistoryCount > 0 ? undefined : "hidden"}>
-              <Panel
-                chip={
-                  <span className="spec-chip">
-                    {socialHistoryCount} record{socialHistoryCount === 1 ? "" : "s"}
-                  </span>
-                }
-                icon={<AtSign size={15} />}
-                note="Bills tagged to your X, Discord or email rather than to an address. Settled from the Splitsy wallet that handle owns."
-                step="05 · By handle"
-                title="Tagged to you"
-              >
-                <div className="space-y-4">
+              <section className="bill-poster">
+                <SectionHead
+                  marks={
+                    <span className="bill-poster-fact">
+                      <b>{socialHistoryCount}</b> record{socialHistoryCount === 1 ? "" : "s"}
+                    </span>
+                  }
+                  note="Bills tagged to your X, Discord or email rather than to an address — settled from the Splitsy wallet that handle owns. Open a record to see the transaction behind it."
+                  step={RECORD_STEPS.handle}
+                />
+                <div className="bill-poster-body">
                   <XHistoryPanel onCount={setSocialHistoryCount} />
                 </div>
-              </Panel>
+              </section>
             </div>
 
             {walletHistoryEmpty ? null : (
-              <Panel
-                icon={<Landmark size={15} />}
-                note="Rows written to the bill registry on Arc — what you paid, what is still owed to you, and what you have collected. Every figure here was read back off the chain."
-                step="06 · By wallet"
-                title="On the Arc registry"
-              >
-                <div className="space-y-4">
+              <section className="bill-poster">
+                <SectionHead
+                  note="Rows written to the bill registry on Arc — what you paid, what is still owed to you, and what you have collected. Every figure here was read back off the chain, and every record opens onto the proof."
+                  step={RECORD_STEPS.wallet}
+                />
+                <div className="bill-poster-body">
                   <HistoryWorkspace debts={debts} splitterBills={splitterBills} />
                 </div>
-              </Panel>
+              </section>
             )}
 
             {socialHistoryCount === 0 && walletHistoryEmpty ? (
-              <Panel icon={<BadgeDollarSign size={15} />} step="05 · Records" title="No records so far">
-                <div className="spec-empty">
-                  <ReceiptText size={22} />
-                  <span>
-                    <strong>Nothing has settled yet.</strong>
-                    <br />
-                    Bills you split, settle, or claim — on chain or tagged by handle — land here as records you can
-                    reopen and verify.
-                  </span>
-                </div>
-              </Panel>
+              <section className="bill-poster">
+                <SectionHead
+                  note="Nothing has settled yet. Bills you split, settle, or claim — on chain or tagged by handle — land here as records you can reopen and verify against Arc."
+                  step={RECORD_STEPS.empty}
+                />
+              </section>
             ) : null}
           </motion.div>
         )}
@@ -3464,17 +3542,20 @@ function HistoryWorkspace({
   const pendingBills = splitterBills.filter((debt) => debt.totalPaid < debt.totalOwed);
   const claimedBills = splitterBills.filter((debt) => debt.claimable <= 0n && debt.claimed > 0n);
 
-  // Headerless wallet history sections; the shared History Panel + empty state
-  // live at the foot of the dashboard tab so social and wallet records sit under
-  // one card.
+  // Headerless wallet history sections; the shared subheads + empty state live
+  // at the foot of the dashboard tab so social and wallet records sit under one
+  // document. Each group opens on its own subhead and the records carry their own
+  // rules, so nothing here needs a wrapper with spacing.
   return (
     <>
             {pendingBills.length > 0 ? (
-              <div className="space-y-2">
-                <p className="spec-subhead">
-                  Pending — awaiting payment from debtors · {pendingBills.length}
-                </p>
-                <div className="space-y-2">
+              <>
+                <div className="bill-subhead">
+                  <span className="settle-label">
+                    Pending · awaiting payment from debtors · {pendingBills.length}
+                  </span>
+                </div>
+                <div>
                   {pendingBills.map((debt) => {
                     const remaining = debt.totalOwed - debt.totalPaid;
 
@@ -3482,65 +3563,73 @@ function HistoryWorkspace({
                       <HistoryRecordCard
                         debt={debt}
                         key={`${debt.billId.toString()}:${debt.account}`}
-                        badge={<span className="status-dot status-warn">Pending</span>}
+                        badge={
+                          <span className="settle-label" data-tone="warn">
+                            pending
+                          </span>
+                        }
                         summary={
                           <>
-                            Paid <span className="amount-text">${billUnitsToUsdc(debt.totalPaid)}</span> of{" "}
-                            <span className="amount-text">${billUnitsToUsdc(debt.totalOwed)}</span> ·{" "}
-                            <span className="amount-text">${billUnitsToUsdc(remaining)}</span> outstanding
+                            <span>
+                              paid <span className="amount-text">${billUnitsToUsdc(debt.totalPaid)}</span> of{" "}
+                              <span className="amount-text">${billUnitsToUsdc(debt.totalOwed)}</span>
+                            </span>
+                            <span>
+                              <span className="amount-text">${billUnitsToUsdc(remaining)}</span> outstanding
+                            </span>
                           </>
                         }
                       />
                     );
                   })}
                 </div>
-              </div>
+              </>
             ) : null}
 
             {paidDebts.length > 0 ? (
-              <div className="space-y-2">
-                <p className="spec-subhead">
-                  Paid — your settled records · {paidDebts.length}
-                </p>
-                <div className="space-y-2">
+              <>
+                <div className="bill-subhead">
+                  <span className="settle-label">Paid · your settled records · {paidDebts.length}</span>
+                </div>
+                <div>
                   {paidDebts.map((debt) => (
                     <HistoryRecordCard
                       debt={debt}
                       key={`${debt.billId.toString()}:${debt.account}`}
                       badge={<PaidBillStamp compact />}
                       summary={
-                        <>
-                          Paid <span className="amount-text">${billUnitsToUsdc(debt.paid)}</span> of{" "}
+                        <span>
+                          paid <span className="amount-text">${billUnitsToUsdc(debt.paid)}</span> of{" "}
                           <span className="amount-text">${billUnitsToUsdc(debt.owed)}</span>
-                        </>
+                        </span>
                       }
                     />
                   ))}
                 </div>
-              </div>
+              </>
             ) : null}
 
             {claimedBills.length > 0 ? (
-              <div className="space-y-2">
-                <p className="spec-subhead">
-                  Claimed — your collected records · {claimedBills.length}
-                </p>
-                <div className="space-y-2">
+              <>
+                <div className="bill-subhead">
+                  <span className="settle-label">Claimed · your collected records · {claimedBills.length}</span>
+                </div>
+                <div>
                   {claimedBills.map((debt) => (
                     <HistoryRecordCard
                       debt={debt}
                       key={`${debt.billId.toString()}:${debt.account}`}
                       badge={<PaidBillStamp compact alt="Claimed" src="/claimed.png" width={652} height={512} />}
                       summary={
-                        <>
-                          Claimed <span className="amount-text">${billUnitsToUsdc(debt.claimed)}</span> of{" "}
+                        <span>
+                          claimed <span className="amount-text">${billUnitsToUsdc(debt.claimed)}</span> of{" "}
                           <span className="amount-text">${billUnitsToUsdc(debt.totalPaid)}</span> paid
-                        </>
+                        </span>
                       }
                     />
                   ))}
                 </div>
-              </div>
+              </>
             ) : null}
     </>
   );
@@ -3850,7 +3939,6 @@ function RecurringWorkspace({
     : authorizationAmount;
   const dueAmount = tabState?.members.reduce((sum, member) => sum + member.dueNow, 0n) ?? 0n;
   const activeTabComplete = Boolean(tabState && tabState.settlementCount >= tabState.maxSettlements);
-  const showRecurringDetails = Boolean(actingAccount && (walletTabs.length > 0 || tabState));
   const recurringTabPaidForWallet = (tab: RecurringTabState) => {
     const debtor = tab.members.find((member) => isViewer(member.address));
     if (debtor) {
@@ -3888,81 +3976,91 @@ function RecurringWorkspace({
   const customDaysValid = recurringCycle !== "custom" || (Number.isInteger(customDaysNum) && customDaysNum >= 1);
   const scheduleValid = cyclesValid && customDaysValid;
   const perCycleTotalUsd = (recurringShareUsd * displayRecurringMembers.length) / createCycleCount;
+  const perMemberPerCycleUsd = recurringShareUsd / createCycleCount;
+
+  // Manual mode lets the shares drift off the Total, and buildRecurringPlan
+  // refuses a tab where they have. So 01 carries the same arithmetic the one-off
+  // split does — the sum against the total, and how far off it is — rather than
+  // finding out on submit.
+  const totalUsd = Number(recurringTotalUsd) || 0;
+  const shareTotalUsd = displayRecurringMembers.reduce((sum, member) => sum + Number(member.share || "0"), 0);
+  const shareDelta = shareTotalUsd - totalUsd;
+  const balanced = Math.abs(shareDelta) <= 0.009;
+  const creatorPicker = Boolean(canChooseCreator && socialWalletAddress && connectedWalletAccount);
+
+  // What the whole schedule is worth against what it has actually pulled in. The
+  // figure that answers "is there anything left on this tab", which is what
+  // justifies the Claim beside it.
+  const tabCollected = tabState?.members.reduce((sum, member) => sum + member.totalSettled, 0n) ?? 0n;
+  const tabCommitted = tabState
+    ? tabState.members.reduce((sum, member) => sum + member.fixedShare, 0n) * tabState.maxSettlements
+    : 0n;
 
   return (
-    <div className={`grid gap-5 ${showRecurringDetails ? "lg:grid-cols-[0.9fr_1.1fr]" : "lg:grid-cols-1"}`}>
-      <div className="space-y-5">
-        <Panel
-          chip={
-            scheduleValid ? (
-              <span className="spec-chip">
-                {createCycleCount} × {recurringCycle === "custom" ? `${customCycleDays}d` : recurringCycle}
+    <>
+      {/* ── 01 ────────────────────────────────────────────────────────────────
+          The create form, set as a poster in the same grammar as the one-off's
+          02 and 03: the interval is this section's masthead (a recurring tab IS
+          its interval, the way a bill is its merchant), the total is the hero
+          figure beside it, the supporting figures sit on the rail underneath,
+          and each member is one line of poster type with their share typed into
+          it. See "the bill poster" in globals.css. */}
+      <section className="bill-poster">
+        <div className="bill-poster-head">
+          <span className="settle-label">01 · Set up</span>
+          <div className="bill-poster-marks">
+            {/* Two answers, so it cycles rather than opening a picker — the same
+                call the one-off's split mode makes. */}
+            <button
+              className="iou-provider"
+              onClick={() => setRecurringSplitMode(recurringSplitMode === "equal" ? "manual" : "equal")}
+              type="button"
+            >
+              {recurringSplitMode === "equal" ? "split equally" : "split manually"}
+            </button>
+            {!scheduleValid ? (
+              <span className="settle-label" data-tone="warn">
+                fix the schedule
+              </span>
+            ) : balanced ? (
+              <span className="settle-label" data-tone="ok">
+                balanced
               </span>
             ) : (
-              <span className="spec-chip spec-chip-warn">
-                <span className="spec-dot" />
-                Fix the schedule
+              <span className="settle-label" data-tone="warn">
+                ${Math.abs(shareDelta).toFixed(2)} off
               </span>
-            )
-          }
-          icon={<Landmark size={15} />}
-          note="A tab is its own contract on Arc. It holds the members, the per-cycle share and the number of cycles — nobody is charged until a cycle comes due and each member has approved their own share."
-          step="01 · Set up"
-          title="Open a recurring tab"
-        >
-          <div className="space-y-3">
-            <div className="rounded-[var(--radius)] border border-[var(--border)] bg-[var(--surface-muted)] p-3 text-sm text-[var(--text-muted)]">
-              {createAsSocial
-                ? "Your Splitsy wallet receives each recurring settlement. Members can be wallet addresses or tagged handles."
-                : "The connected creator wallet receives each recurring settlement. Members can be wallet addresses or tagged handles."}
-            </div>
-            {/* Same dual-identity choice as the one-off split form: which wallet
-                creates the tab and receives every settlement. */}
-            {canChooseCreator && socialWalletAddress && connectedWalletAccount ? (
-              <div className="flex flex-col gap-3 rounded-[var(--radius)] border border-[var(--border)] bg-[var(--surface-muted)] p-3 text-sm sm:flex-row sm:items-center sm:justify-between">
-                <div>
-                  <p className="font-semibold text-[var(--text)]">Create as</p>
-                  <p className="mt-1 text-[var(--text-muted)]">
-                    {creatorIdentity === "social"
-                      ? `Your Splitsy wallet ${shortAddress(socialWalletAddress)} creates the tab and receives the settlements — no signing needed.`
-                      : `Your connected wallet ${shortAddress(connectedWalletAccount)} signs the tab and receives the settlements.`}
-                  </p>
-                </div>
-                <div className="segmented-control shrink-0">
-                  <ModeButton active={creatorIdentity === "social"} onClick={() => chooseCreatorIdentity("social")}>
-                    {socialCreatorLabel}
-                  </ModeButton>
-                  <ModeButton active={creatorIdentity === "wallet"} onClick={() => chooseCreatorIdentity("wallet")}>
-                    {shortAddress(connectedWalletAccount)}
-                  </ModeButton>
-                </div>
-              </div>
-            ) : null}
-            <div className="segmented-control">
-              <ModeButton active={recurringSplitMode === "equal"} onClick={() => setRecurringSplitMode("equal")}>
-                Equal
-              </ModeButton>
-              <ModeButton active={recurringSplitMode === "manual"} onClick={() => setRecurringSplitMode("manual")}>
-                Manual
-              </ModeButton>
-            </div>
-            <div className="grid gap-3 sm:grid-cols-[1fr_0.45fr_0.7fr_0.5fr]">
-              <Field
-                label="Total USD"
-                type="number"
-                value={recurringTotalUsd}
-                onChange={setRecurringTotalUsd}
-              />
-              <Field
-                label="Cycles"
-                type="number"
-                value={recurringCycleCount}
-                onChange={setRecurringCycleCount}
-              />
-              <label className="block text-sm font-medium text-[var(--text-soft)]">
-                Cycle
+            )}
+          </div>
+        </div>
+        <p className="bill-poster-note">
+          A tab is its own contract on Arc, holding the members, the share and the number of cycles. Nobody is charged
+          until a cycle falls due and every member has approved their own share — and no cycle can collect more than
+          the share written here.
+        </p>
+
+        <div className="bill-poster-body">
+          <div className="bill-poster-lede">
+            {/* The interval, in the slot the one-off gives the merchant: it is
+                what this tab is, and the only value on either subtab that is a
+                closed set of four. Picking "days" puts the count in front of it,
+                so all four states read as one sentence — every week, every
+                month, every 14 days. */}
+            <div className="bill-cell">
+              <span className="settle-label">Every</span>
+              <div className="bill-figure">
+                {recurringCycle === "custom" ? (
+                  <PosterValue
+                    ariaLabel="Cycle length in days"
+                    decimal
+                    onChange={setCustomCycleDays}
+                    placeholder="30"
+                    value={customCycleDays}
+                  />
+                ) : null}
                 <select
-                  className="field-control"
+                  aria-label="How often the tab collects"
+                  className="bill-select"
                   onChange={(event) => setRecurringCycle(event.target.value as RecurringCycle)}
                   value={recurringCycle}
                 >
@@ -3972,119 +4070,224 @@ function RecurringWorkspace({
                     </option>
                   ))}
                 </select>
-              </label>
-              {recurringCycle === "custom" ? (
-                <Field
-                  label="Custom days"
-                  type="number"
-                  value={customCycleDays}
-                  onChange={setCustomCycleDays}
-                />
-              ) : null}
-            </div>
-            {!cyclesValid ? (
-              <p className="text-xs text-[var(--warning-text)]">Cycles must be at least 1.</p>
-            ) : !customDaysValid ? (
-              <p className="text-xs text-[var(--warning-text)]">Custom days must be a whole number of at least 1 day.</p>
-            ) : Number(recurringTotalUsd) > 0 ? (
-              <p className="text-xs text-[var(--text-muted)]">
-                Total USD is the full amount across all {createCycleCount} cycle{createCycleCount === 1 ? "" : "s"}. Each cycle
-                collects ${perCycleTotalUsd.toFixed(2)}
-                {displayRecurringMembers.length > 1 ? ` across ${displayRecurringMembers.length} members` : ""}.
-              </p>
-            ) : null}
-            {displayRecurringMembers.map((member) => (
-              <div className="grid gap-2 rounded-[var(--radius)] border border-[var(--border)] bg-[var(--surface-strong)] p-3 sm:grid-cols-[1fr_0.35fr_auto] sm:items-end" key={member.id}>
-                <HandleField
-                  provider={member.provider ?? "wallet"}
-                  onProviderChange={(value) => updateRecurringMember(member.id, "provider", value)}
-                  value={member.address}
-                  onChange={(value) => updateRecurringMember(member.id, "address", value)}
-                />
-                {recurringSplitMode === "manual" ? (
-                  <Field
-                    label="Share"
-                    type="number"
-                    value={member.share}
-                    onChange={(value) => updateRecurringMember(member.id, "share", value)}
-                  />
-                ) : (
-                  <div className="metric">
-                    <p className="text-xs font-semibold uppercase text-[var(--text-muted)]">Share</p>
-                    <p className="amount-text mt-1 text-lg font-semibold text-[var(--text)]">
-                      ${recurringShareUsd.toFixed(2)}
-                    </p>
-                  </div>
-                )}
-                <button
-                  aria-label="Remove member"
-                  className="icon-button"
-                  onClick={() => removeRecurringMember(member.id)}
-                  type="button"
-                >
-                  <Trash2 size={17} />
-                </button>
               </div>
-            ))}
-          </div>
-
-          <div className="mt-4 flex flex-wrap gap-2">
-            <button className="secondary-button" onClick={addRecurringMember} type="button">
-              <Plus size={16} />
-              Add member
-            </button>
-            <button className="primary-button" disabled={recurringState === "working" || !scheduleValid} onClick={createOnchainTab} type="button">
-              {recurringState === "working" ? <Loader2 className="animate-spin" size={16} /> : <Landmark size={16} />}
-              Create
-            </button>
-          </div>
-          {recurringCreateMessage ? (
-            <div className="mt-4">
-              <Message tone={recurringCreateMessageTone}>{recurringCreateMessage}</Message>
+              <div className="bill-cell-rule" />
             </div>
-          ) : null}
-        </Panel>
 
-        {showRecurringDetails ? (
-          <Panel
-            action={
-              tabRowCount > 3 || !tabsShown ? (
-                <button className="secondary-button" onClick={() => setTabsExpanded(!tabsShown)} type="button">
-                  <ChevronDown className={`transition-transform ${tabsShown ? "rotate-180" : ""}`} size={16} />
-                  {tabsShown ? "Collapse" : "Expand"}
-                </button>
-              ) : null
-            }
-            chip={
-              tabRowCount > 0 ? (
-                <span className="spec-chip">
-                  {tabRowCount} tab{tabRowCount === 1 ? "" : "s"}
-                </span>
-              ) : null
-            }
-            icon={<RefreshCw size={15} />}
-            note="Every tab either of your wallets touches — the ones you collect on and the ones you pay into. Pick one to see its cycle and act on it."
-            step="02 · Your tabs"
-            title="Tabs you're on"
-          >
-            <div className="flex flex-wrap gap-2">
-              <button className="secondary-button" disabled={!actingAccount} onClick={refreshRecurringTabsForWallet} type="button">
-                <RefreshCw size={16} />
-                Refresh tabs
+            <div className="bill-cell" data-total>
+              <span className="settle-label">Total USD</span>
+              <div className="bill-figure">
+                <span className="bill-currency">$</span>
+                <PosterValue
+                  ariaLabel="Recurring total in USD, across every cycle"
+                  decimal
+                  onChange={setRecurringTotalUsd}
+                  placeholder="0.00"
+                  value={recurringTotalUsd}
+                />
+              </div>
+              <div className="bill-cell-rule" />
+            </div>
+          </div>
+
+          {/* Cycles is the one editable figure on the rail; the other two are
+              read-outs of it, which is the point — the Total is the whole
+              schedule, so what a cycle actually charges has to be visible next
+              to it rather than worked out. */}
+          <div className="bill-poster-rail">
+            <PosterCell
+              decimal
+              label="Cycles"
+              onChange={setRecurringCycleCount}
+              placeholder="3"
+              value={recurringCycleCount}
+            />
+            <PosterFact label="Per cycle" value={`$${perCycleTotalUsd.toFixed(2)}`} />
+            {displayRecurringMembers.length > 1 ? (
+              <PosterFact label="Each member, per cycle" value={`$${perMemberPerCycleUsd.toFixed(2)}`} />
+            ) : null}
+          </div>
+
+          {/* One member, one line — the same row the one-off's payers get, minus
+              the display name the recurring form has never held. The target is
+              what the line is set in because the target is what identifies this
+              member on Arc; everything that merely qualifies it rides the
+              footnote rail underneath. */}
+          <div className="bill-payers">
+            {displayRecurringMembers.map((member) => {
+              const target = member.address.trim();
+              const namespace = looksLikeAddress(target) ? "wallet" : detectRowProvider(target, member.provider);
+              const ambiguous = target !== "" && !looksLikeAddress(target) && !looksLikeEmail(target);
+              return (
+                <div className="bill-payer" key={member.id}>
+                  <div className="bill-payer-line">
+                    <span className="bill-payer-target">
+                      <PayerMark provider={namespace} target={target} />
+                      <PosterValue
+                        ariaLabel="Wallet address, handle or email"
+                        compact={looksLikeAddress(target) ? shortAddress(target) : null}
+                        onChange={(value) => updateRecurringMember(member.id, "address", value)}
+                        placeholder="@handle or 0x…"
+                        value={member.address}
+                      />
+                    </span>
+                    <span className="bill-payer-share" data-empty={member.share === "" || Number(member.share) === 0}>
+                      <span className="bill-currency">$</span>
+                      <PosterValue
+                        ariaLabel="Member share in USD, across every cycle"
+                        decimal
+                        disabled={recurringSplitMode === "equal"}
+                        onChange={(value) => updateRecurringMember(member.id, "share", value)}
+                        placeholder="0.00"
+                        value={member.share}
+                      />
+                    </span>
+                  </div>
+
+                  <div className="bill-payer-meta">
+                    {target === "" ? null : ambiguous ? (
+                      <button
+                        className="iou-provider"
+                        onClick={() => updateRecurringMember(member.id, "provider", nextProvider(namespace))}
+                        type="button"
+                      >
+                        on {namespace}
+                      </button>
+                    ) : (
+                      <span className="settle-label">on {namespace}</span>
+                    )}
+                    <span className="bill-payer-rep">
+                      <ReputationBadge provider={detectRowProvider(target, member.provider)} value={member.address} />
+                    </span>
+                    <button
+                      className="iou-provider bill-payer-remove"
+                      onClick={() => removeRecurringMember(member.id)}
+                      type="button"
+                    >
+                      remove
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          <div className="bill-add">
+            <button className="iou-provider" onClick={addRecurringMember} type="button">
+              + add member
+            </button>
+          </div>
+
+          {/* Dual identity: which of the creator's two wallets signs the tab and
+              receives every settlement. One identity means no ambiguity and no
+              control — just the line below saying which wallet collects. */}
+          {creatorPicker ? (
+            <div className="bill-options">
+              <button
+                className="iou-provider"
+                onClick={() => chooseCreatorIdentity(creatorIdentity === "social" ? "wallet" : "social")}
+                type="button"
+              >
+                as {creatorIdentity === "social" ? socialCreatorLabel : shortAddress(connectedWalletAccount as string)}
               </button>
             </div>
-            {recurringMessage ? (
-              <div className="mt-4">
-                <Message tone={recurringState === "error" ? "error" : recurringState === "success" ? "success" : "neutral"}>{recurringMessage}</Message>
-              </div>
+          ) : null}
+
+          <p className="bill-options-hint">
+            {creatorPicker
+              ? creatorIdentity === "social"
+                ? `Your Splitsy wallet ${shortAddress(socialWalletAddress as string)} creates the tab and receives every settlement — nothing to sign.`
+                : `Your connected wallet ${shortAddress(connectedWalletAccount as string)} signs the tab and receives every settlement.`
+              : createAsSocial
+                ? "Your Splitsy wallet creates the tab and receives every settlement. Members can be wallet addresses or tagged handles."
+                : "The connected creator wallet creates the tab and receives every settlement. Members can be wallet addresses or tagged handles."}
+          </p>
+
+          {!cyclesValid ? (
+            <p className="bill-poster-msg" data-tone="error" role="status">
+              Cycles must be at least 1.
+            </p>
+          ) : !customDaysValid ? (
+            <p className="bill-poster-msg" data-tone="error" role="status">
+              Custom days must be a whole number of at least 1 day.
+            </p>
+          ) : recurringCreateMessage ? (
+            <p
+              className="bill-poster-msg"
+              data-tone={recurringCreateMessageTone === "neutral" ? undefined : recurringCreateMessageTone}
+              role="status"
+            >
+              {recurringCreateMessage}
+            </p>
+          ) : null}
+
+          <div className="bill-poster-foot">
+            <button
+              className="settle-action"
+              disabled={recurringState === "working" || !scheduleValid}
+              onClick={createOnchainTab}
+              type="button"
+            >
+              {recurringState === "working" ? "opening…" : "open the tab"} ›
+            </button>
+            <div className="bill-poster-total" data-tone={balanced ? undefined : "warn"}>
+              <span className="settle-label">Shares</span>
+              <span>
+                ${shareTotalUsd.toFixed(2)} <em>of ${totalUsd.toFixed(2)}</em>
+              </span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* ── 02 ────────────────────────────────────────────────────────────────
+          The tabs either wallet touches, as ledger lines — the .iou-row the IOU
+          page keeps its history in, since that is what this is. The row being
+          read below goes to ink with its rule at full strength, which is the
+          same "you are here" the masthead's contents rail draws. */}
+      <section className="bill-poster">
+        <div className="bill-poster-head">
+          <span className="settle-label">02 · Your tabs</span>
+          <div className="bill-poster-marks">
+            {tabRowCount > 0 ? (
+              <span className="bill-poster-fact">
+                <b>{tabRowCount}</b> tab{tabRowCount === 1 ? "" : "s"}
+              </span>
             ) : null}
-            {!tabsShown ? (
-              <p className="mt-4 text-sm text-[var(--text-muted)]">
-                {tabRowCount} recurring tabs. Expand to view and act on each.
-              </p>
+            {/* Hidden rather than disabled: .iou-provider has no disabled look
+                to speak of, and the body already says why there is nothing to
+                refresh. */}
+            {actingAccount ? (
+              <button className="iou-provider" onClick={refreshRecurringTabsForWallet} type="button">
+                refresh
+              </button>
+            ) : null}
+            {tabRowCount > 3 || !tabsShown ? (
+              <button className="iou-provider" onClick={() => setTabsExpanded(!tabsShown)} type="button">
+                {tabsShown ? "collapse" : "expand"}
+              </button>
+            ) : null}
+          </div>
+        </div>
+        <p className="bill-poster-note">
+          Every tab either of your wallets touches — the ones you collect on and the ones you pay into. Pick one and 03
+          to 05 below report on it.
+        </p>
+
+        <div className="bill-poster-body">
+          {/* .iou-ledger for the top rule and nothing else — a row draws only its
+              own bottom border, so without it the list opens on nothing where
+              .bill-payer would have opened on a hairline. Its head is skipped:
+              the marks rail above already carries the count. */}
+          <div className="iou-ledger">
+            {!actingAccount ? (
+              <p className="iou-empty">Connect a wallet or sign in, and your recurring tabs load here.</p>
+            ) : tabRowCount === 0 ? (
+              <p className="iou-empty">No recurring tabs on either wallet yet. Open one above.</p>
+            ) : !tabsShown ? (
+              <p className="iou-empty">{tabRowCount} recurring tabs. Expand to read and act on each.</p>
             ) : (
-            <div className="mt-4 space-y-2">
-              {walletTabs.flatMap((tab) => {
+              walletTabs.flatMap((tab) => {
                 // A tab where the viewer is both recipient and a payer becomes
                 // two rows so each role gets its own actions instead of one row
                 // that mixes Approve and Claim.
@@ -4092,226 +4295,301 @@ function RecurringWorkspace({
                 if (isViewer(tab.recipient)) roles.push("recipient");
                 if (tab.members.some((member) => isViewer(member.address))) roles.push("payer");
                 if (roles.length === 0) roles.push("recipient");
-                return roles.map((role) => (
-                  <button
-                    className={`w-full rounded-[var(--radius)] border p-3 text-left text-sm transition hover:bg-[var(--surface-muted)] ${
-                      tabState?.address === tab.address && viewingRole === role
-                        ? "border-[var(--accent)] bg-[var(--accent-soft)]"
-                        : "border-[var(--border)] bg-[var(--surface-strong)]"
-                    }`}
-                    key={`${tab.address}-${role}`}
-                    onClick={() => {
-                      setViewRole(role);
-                      selectRecurringTab(tab.address);
-                    }}
-                    type="button"
-                  >
-                    <span className="block font-semibold text-[var(--text)]">{shortAddress(tab.address)}</span>
-                    <span className="mt-1 block text-[var(--text-muted)]">
-                      {role === "payer" ? "You are a payer" : "You receive settlement"}{" "}
-                      ·{" "}
-                      {role === "payer"
-                        ? recurringTabPaidForWallet(tab)
-                          ? "paid off"
-                          : tab.dueCycles > 0n
-                            ? `${tab.dueCycles.toString()} due now`
-                            : `next ${formatUnix(tab.nextSettlementAt)}`
-                        : `$${unitsToUsdc(tab.claimable)} claimable`}
-                    </span>
-                  </button>
-                ));
-              })}
-            </div>
+                return roles.map((role) => {
+                  const status =
+                    role === "payer"
+                      ? recurringTabPaidForWallet(tab)
+                        ? "paid off"
+                        : tab.dueCycles > 0n
+                          ? `${tab.dueCycles.toString()} due now`
+                          : `next ${formatUnix(tab.nextSettlementAt)}`
+                      : `$${unitsToUsdc(tab.claimable)} claimable`;
+                  return (
+                    <div className="iou-row" key={`${tab.address}-${role}`}>
+                      <button
+                        // The selected row, said to a screen reader — the ink and
+                        // the lit rule say it to everyone else.
+                        aria-current={tabState?.address === tab.address && viewingRole === role ? "true" : undefined}
+                        className="iou-row-recall"
+                        onClick={() => {
+                          setViewRole(role);
+                          selectRecurringTab(tab.address);
+                        }}
+                        type="button"
+                      >
+                        {shortAddress(tab.address)}
+                        <span className="iou-row-note"> · {role === "payer" ? "you pay in" : "you collect"}</span>
+                      </button>
+                      <span className="iou-row-amount">{status}</span>
+                    </div>
+                  );
+                });
+              })
             )}
-          </Panel>
-        ) : null}
-      </div>
+          </div>
 
-      {showRecurringDetails && tabState ? (
-        <div className="space-y-5">
-          <>
-            <Panel
-              chip={
-                activeTabComplete ? (
-                  <span className="spec-chip spec-chip-live">
-                    <span className="spec-dot" />
-                    All cycles run
-                  </span>
-                ) : dueAmount > 0n ? (
-                  <span className="spec-chip spec-chip-attn">
-                    <span className="spec-dot" />${unitsToUsdc(dueAmount)} due now
-                  </span>
-                ) : (
-                  <span className="spec-chip">Not due yet</span>
-                )
-              }
-              icon={<ReceiptText size={15} />}
-              live={dueAmount > 0n}
-              note={
-                isRecipient
-                  ? "Where this tab stands cycle by cycle: what each member has approved, what their wallet can cover, and what is collectable right now."
-                  : "Your side of this tab: the share per cycle, what you have approved, and whether your wallet can cover the next collection."
-              }
-              step="03 · Where it stands"
-              title="The active cycle"
+          {recurringMessage ? (
+            <p
+              className="bill-poster-msg"
+              data-tone={recurringState === "error" ? "error" : recurringState === "success" ? "success" : undefined}
+              role="status"
             >
-              {actingAccount && visibleMembers.length === 1 && !isRecipient ? (
-                <div className={`relative overflow-hidden rounded-[var(--radius)] border border-[var(--accent)] bg-[var(--accent-soft)] p-4 ${recurringTabPaidForWallet(tabState) ? "paid-off-window" : ""}`}>
-                  {(() => {
+              {recurringMessage}
+            </p>
+          ) : null}
+        </div>
+      </section>
+
+      {/* 03 to 05 are about one selected tab, so they arrive with it — and the
+          key is the tab AND the role, so flipping between the two rows of a
+          dual-role tab replays the entrance rather than swapping the figures
+          under the reader. */}
+      <AnimatePresence mode="wait">
+        {tabState ? (
+          <motion.div
+            animate={{ opacity: 1, y: 0 }}
+            className="space-y-5"
+            exit={{ opacity: 0, y: 8 }}
+            initial={{ opacity: 0, y: 12 }}
+            key={`${tabState.address}-${viewingRole}`}
+            transition={{ duration: 0.26, ease: "easeOut" }}
+          >
+            {/* ── 03 ──────────────────────────────────────────────────────────
+                Where the selected tab stands. Two figures in the lede, the rest
+                of the schedule on the rail, and — on the collecting side — one
+                poster line per member with their own figures as footnotes. */}
+            <section className="bill-poster">
+              <div className="bill-poster-head">
+                <span className="settle-label">03 · Where it stands</span>
+                <div className="bill-poster-marks">
+                  <span className="bill-poster-fact">{isRecipient ? "you collect" : "you pay in"}</span>
+                  {/* The contract, as evidence rather than as a route diagram:
+                      mono, dim, and openable. */}
+                  <a
+                    className="iou-row-tx"
+                    href={`https://testnet.arcscan.app/address/${tabState.address}`}
+                    rel="noreferrer"
+                    target="_blank"
+                  >
+                    {shortAddress(tabState.address)}
+                  </a>
+                  {activeTabComplete ? (
+                    <span className="settle-label" data-tone="ok">
+                      all cycles run
+                    </span>
+                  ) : dueAmount > 0n ? (
+                    <span className="settle-label" data-tone="warn">
+                      ${unitsToUsdc(dueAmount)} due now
+                    </span>
+                  ) : (
+                    <span className="settle-label">not due yet</span>
+                  )}
+                </div>
+              </div>
+              <p className="bill-poster-note">
+                {isRecipient
+                  ? "Where this tab stands cycle by cycle: what each member has approved, what their wallet can cover, and what is collectable right now."
+                  : "Your side of this tab: the share per cycle, what you have approved, and whether your wallet can cover the next collection."}
+              </p>
+
+              <div className="bill-poster-body">
+                {actingAccount && visibleMembers.length === 1 && !isRecipient && visibleMembers[0] ? (
+                  (() => {
                     const debtor = visibleMembers[0];
-                    if (!debtor) {
-                      return null;
-                    }
                     const debtorTotal = debtor.fixedShare * tabState.maxSettlements;
                     const debtorPaidOff = debtor.totalSettled >= debtorTotal;
-                    const approvalNeeded = debtor.dueNow > 0n ? debtor.dueNow : activeTabComplete ? 0n : debtor.fixedShare;
-                    const balanceNeeded = debtor.dueNow > 0n ? debtor.dueNow : activeTabComplete ? 0n : debtor.fixedShare;
-                    const approvalShort = debtor.allowance < approvalNeeded;
-                    const balanceShort = debtor.walletBalance < balanceNeeded;
+                    const needed = debtor.dueNow > 0n ? debtor.dueNow : activeTabComplete ? 0n : debtor.fixedShare;
+                    const approvalShort = debtor.allowance < needed;
+                    const balanceShort = debtor.walletBalance < needed;
+                    const bridgeAmount = needed > 0n ? needed : debtor.fixedShare;
                     const status = debtorPaidOff
-                      ? "Paid off"
+                      ? "paid off"
                       : debtor.dueNow > 0n && approvalShort
-                        ? "Needs approval"
+                        ? "needs approval"
                         : debtor.dueNow > 0n && balanceShort
-                          ? "Low balance"
+                          ? "low balance"
                           : debtor.dueNow > 0n
                             ? activeTabComplete
-                              ? "Partially paid"
-                              : "Ready to settle"
+                              ? "partially paid"
+                              : "ready to settle"
                             : tabState.dueCycles === 0n
-                              ? "Not due yet"
-                              : "Ready to settle";
+                              ? "not due yet"
+                              : "ready to settle";
+                    // Warn is for a state that wants something from you, not for
+                    // every state that isn't finished: "not due yet" is the tab
+                    // working correctly, and colouring it like a problem trains
+                    // people to ignore the colour.
+                    const attention = status === "needs approval" || status === "low balance" || status === "partially paid";
                     return (
                       <>
-                        <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
-                          <div>
-                            <p className="text-sm font-semibold text-[var(--accent)]">Your payment</p>
-                            <h3 className="amount-text mt-1 text-2xl font-semibold text-[var(--text)]">
-                              {debtorPaidOff
-                                ? "Paid off"
-                                : activeTabComplete
-                                  ? `$${unitsToUsdc(debtor.dueNow)} outstanding`
-                                  : `$${unitsToUsdc(debtor.dueNow)} due now`}
-                            </h3>
-                            <p className="mt-1 text-sm text-[var(--text-muted)]">
-                              ${unitsToUsdc(debtor.fixedShare)} per cycle ·{" "}
-                              {activeTabComplete ? "all cycles complete" : `next ${formatUnix(tabState.nextSettlementAt)}`}
-                            </p>
+                        <div className="bill-poster-lede">
+                          {/* The one figure a payer came for. Paid off, it is a
+                              word rather than a zero — "$0.00 due" and "nothing
+                              left to pay" are not the same sentence. */}
+                          <div className="bill-cell">
+                            <span className="settle-label">
+                              {debtorPaidOff ? "Your side" : activeTabComplete ? "Outstanding" : "Due now"}
+                            </span>
+                            <div className="bill-figure">
+                              {debtorPaidOff ? (
+                                "paid off"
+                              ) : (
+                                <>
+                                  <span className="bill-currency">$</span>
+                                  {unitsToUsdc(debtor.dueNow)}
+                                </>
+                              )}
+                            </div>
+                            <div className="bill-cell-rule" />
                           </div>
-                          <span className={`status-dot ${status === "Ready to settle" || status === "Paid off" ? "status-ok" : "status-warn"}`}>
-                            {status}
-                          </span>
+                          <div className="bill-cell">
+                            <span className="settle-label">Your share, per cycle</span>
+                            <div className="bill-figure">
+                              <span className="bill-currency">$</span>
+                              {unitsToUsdc(debtor.fixedShare)}
+                            </div>
+                            <div className="bill-cell-rule" />
+                          </div>
                         </div>
-                        {debtorPaidOff ? <PaidBillStamp /> : null}
-                        <div className="mt-4 grid gap-3 sm:grid-cols-2">
-                          <Metric label="Approved" value={`$${unitsToUsdc(debtor.allowance)}`} />
-                          <Metric label="Wallet balance" value={`$${unitsToUsdc(debtor.walletBalance)}`} />
-                          <Metric label="Paid total" value={`$${unitsToUsdc(debtor.totalSettled)}`} />
-                          <Metric label="Debt total" value={`$${unitsToUsdc(debtorTotal)}`} />
-                          <Metric label="Cycles due" value={tabState.dueCycles.toString()} />
-                          <Metric
-                            label="Progress"
-                            value={`${tabState.settlementCount.toString()} / ${tabState.maxSettlements.toString()}`}
+
+                        {/* The rail answers "can this cycle actually collect?" —
+                            so the verdict is the first entry on it, in the same
+                            slot a figure would take. A word where a number goes
+                            is the point: it is the one readout that isn't
+                            arithmetic, and the two figures it depends on sit
+                            right beside it, toned when they are the reason. */}
+                        <div className="bill-poster-rail">
+                          <PosterFact label="Status" tone={attention ? "warn" : undefined} value={status} />
+                          <PosterFact
+                            label="Approved"
+                            tone={approvalShort && debtor.dueNow > 0n ? "warn" : undefined}
+                            value={`$${unitsToUsdc(debtor.allowance)}`}
+                          />
+                          <PosterFact
+                            label="Wallet balance"
+                            tone={balanceShort && debtor.dueNow > 0n ? "warn" : undefined}
+                            value={`$${unitsToUsdc(debtor.walletBalance)}`}
+                          />
+                          <PosterFact label="Paid so far" value={`$${unitsToUsdc(debtor.totalSettled)}`} />
+                          <PosterFact label="Your debt total" value={`$${unitsToUsdc(debtorTotal)}`} />
+                          <PosterFact
+                            label="Next collection"
+                            value={activeTabComplete ? "complete" : formatUnix(tabState.nextSettlementAt)}
                           />
                         </div>
-                        <p className="mt-4 text-sm text-[var(--text-muted)]">
+
+                        {/* Bridging needs a browser-wallet session AND the debtor
+                            to be that wallet; Splitsy (DCW) members top up from
+                            the wallet dock instead. */}
+                        {!debtorPaidOff &&
+                        recurringWallet &&
+                        debtor.address.toLowerCase() === recurringWallet.account.toLowerCase() ? (
+                          <div className="bill-options">
+                            <button
+                              aria-pressed={showBridge}
+                              className="iou-provider bill-toggle"
+                              onClick={() => setShowBridge((open) => !open)}
+                              type="button"
+                            >
+                              bring usdc to arc
+                            </button>
+                            {showBridge
+                              ? bridgeSourceChains.map((chain) => (
+                                  <button
+                                    aria-pressed={selectedBridgeChain === chain.id}
+                                    className="iou-provider bill-toggle"
+                                    disabled={recurringState === "working"}
+                                    key={chain.id}
+                                    onClick={() => {
+                                      setSelectedBridgeChain(chain.id);
+                                      bridgeForRecurring(unitsToUsdc(bridgeAmount), chain.id);
+                                    }}
+                                    type="button"
+                                  >
+                                    from {chain.label}
+                                  </button>
+                                ))
+                              : null}
+                          </div>
+                        ) : null}
+
+                        <p className="bill-options-hint">
                           {debtorPaidOff
-                            ? "This recurring bill is fully paid."
+                            ? "Every cycle on this tab has been collected from your wallet. Nothing further can be pulled."
                             : debtor.dueNow > 0n
                               ? activeTabComplete
-                                ? "All cycle windows have passed, but the outstanding recurring debt can still be collected after approval."
+                                ? "All cycle windows have passed, but the outstanding recurring debt can still be collected once it is approved."
                                 : "Funds stay in your wallet unless this tab is approved for the due amount and the cycle time has arrived."
                               : "No recurring debt is currently due for this wallet."}
                         </p>
-                        {/* Bridging needs a browser-wallet session AND the debtor
-                            to be that wallet; Splitsy (DCW) members top up their
-                            wallet from the wallet dock instead. */}
-                        {!debtorPaidOff && recurringWallet && debtor.address.toLowerCase() === recurringWallet.account.toLowerCase() ? (
-                          (() => {
-                            const bridgeAmount = balanceNeeded > 0n ? balanceNeeded : debtor.fixedShare;
-                            return (
-                              <div className="mt-4 border-t border-[var(--border)] pt-4">
-                                <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
-                                  <div>
-                                    <p className="font-semibold text-[var(--text)]">Bridge USDC to Arc</p>
-                                    <p className="mt-1 text-sm text-[var(--text-muted)]">
-                                      {balanceShort
-                                        ? `Your Arc balance is below the $${unitsToUsdc(bridgeAmount)} USDC needed this cycle. `
-                                        : ""}
-                                      Move USDC from another chain to Arc in 3 transactions: approve USDC, bridge with CCTP V2,
-                                      then claim on Arc Testnet. After that, approve the tab so the due cycle can be collected.
-                                    </p>
-                                  </div>
-                                  <button
-                                    className="secondary-button shrink-0"
-                                    onClick={() => setShowBridge((open) => !open)}
-                                    type="button"
-                                  >
-                                    <ArrowLeftRight size={16} />
-                                    {showBridge ? "Hide bridge options" : "Bridge USDC"}
-                                  </button>
-                                </div>
-                                {showBridge ? (
-                                  <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-                                    {bridgeSourceChains.map((chain) => (
-                                      <button
-                                        className={`chain-button ${selectedBridgeChain === chain.id ? "chain-button-active" : ""}`}
-                                        disabled={recurringState === "working"}
-                                        key={chain.id}
-                                        onClick={() => {
-                                          setSelectedBridgeChain(chain.id);
-                                          bridgeForRecurring(unitsToUsdc(bridgeAmount), chain.id);
-                                        }}
-                                        type="button"
-                                      >
-                                        Bridge from {chain.label}
-                                      </button>
-                                    ))}
-                                  </div>
-                                ) : null}
-                              </div>
-                            );
-                          })()
+                        {showBridge ? (
+                          <p className="bill-options-hint">
+                            {balanceShort
+                              ? `Your Arc balance is below the $${unitsToUsdc(bridgeAmount)} USDC this cycle needs. `
+                              : ""}
+                            CCTP V2 moves USDC from another chain to Arc in three transactions — approve, bridge, then
+                            claim on Arc Testnet. After it lands, approve the tab in 04 so the due cycle can be
+                            collected.
+                          </p>
+                        ) : null}
+
+                        {debtorPaidOff ? (
+                          <div className="bill-poster-foot">
+                            <span className="bill-poster-fact">
+                              Collected <b>${unitsToUsdc(debtor.totalSettled)}</b> across{" "}
+                              <b>{tabState.maxSettlements.toString()}</b> cycles.
+                            </span>
+                            <div className="settlement-stamp">Paid off</div>
+                          </div>
                         ) : null}
                       </>
                     );
-                  })()}
-                </div>
-              ) : (
-                <>
-                  <div className="grid gap-3 sm:grid-cols-2">
-                    <Metric label="Recipient" value={shortAddress(tabState.recipient)} />
-                    <Metric
-                      label="Cycle progress"
-                      value={`${tabState.settlementCount.toString()} / ${tabState.maxSettlements.toString()}`}
-                    />
-                    <Metric label="Overdue cycles" value={tabState.dueCycles.toString()} />
-                    <Metric label="Due now" value={`$${unitsToUsdc(dueAmount)}`} />
-                    <Metric label="Next settlement" value={formatUnix(tabState.nextSettlementAt)} />
-                    <Metric label="Cycle length" value={formatDuration(tabState.settlementInterval)} />
-                  </div>
-
-                  <div className="route-strip mt-4 text-sm">
-                    <div>
-                      <p className="font-semibold text-[var(--text)]">RecurringTab.sol</p>
-                      <a
-                        className="mt-1 block break-all text-[var(--accent)] underline"
-                        href={`https://testnet.arcscan.app/address/${tabState.address}`}
-                      >
-                        {shortAddress(tabState.address)}
-                      </a>
+                  })()
+                ) : (
+                  <>
+                    <div className="bill-poster-lede">
+                      <div className="bill-cell">
+                        <span className="settle-label">Due now, across members</span>
+                        <div className="bill-figure">
+                          <span className="bill-currency">$</span>
+                          {unitsToUsdc(dueAmount)}
+                        </div>
+                        <div className="bill-cell-rule" />
+                      </div>
+                      <div className="bill-cell">
+                        <span className="settle-label">Claimable</span>
+                        <div className="bill-figure">
+                          <span className="bill-currency">$</span>
+                          {unitsToUsdc(tabState.claimable)}
+                        </div>
+                        <div className="bill-cell-rule" />
+                      </div>
                     </div>
-                    <div className="route-line" aria-hidden="true" />
-                    <div>
-                      <p className="font-semibold text-[var(--text)]">Funds stay in wallets</p>
-                      <p className="mt-1 text-[var(--text-muted)]">
-                        Collection needs payer approval, enough balance, and a due cycle.
-                      </p>
-                    </div>
-                  </div>
 
-                  <div className="mt-4 divide-y divide-[var(--border)] rounded-[var(--radius)] border border-[var(--border)]">
-                    {tabState.members.map((member) => {
+                    <div className="bill-poster-rail">
+                      <PosterFact
+                        label="Cycles run"
+                        value={`${tabState.settlementCount.toString()} of ${tabState.maxSettlements.toString()}`}
+                      />
+                      <PosterFact label="Cycle length" value={formatDuration(tabState.settlementInterval)} />
+                      <PosterFact
+                        label="Next collection"
+                        value={activeTabComplete ? "complete" : formatUnix(tabState.nextSettlementAt)}
+                      />
+                      <PosterFact
+                        label="Overdue cycles"
+                        tone={tabState.dueCycles > 0n ? "warn" : undefined}
+                        value={tabState.dueCycles.toString()}
+                      />
+                      <PosterFact label="Collects into" value={shortAddress(tabState.recipient)} />
+                    </div>
+
+                    {/* One member, one line — the create form's row read back off
+                        the chain. The figures that qualify them are footnotes to
+                        the line, in the same register the one-off puts a payer's
+                        namespace and reputation. */}
+                    <div className="bill-payers">
+                      {tabState.members.map((member) => {
                       const memberDebtTotal = member.fixedShare * tabState.maxSettlements;
                       const memberPaidOff = member.totalSettled >= memberDebtTotal;
                       const memberStatus = memberPaidOff
@@ -4325,140 +4603,230 @@ function RecurringWorkspace({
                             : member.collectible
                               ? "ready"
                               : "short";
-
                       return (
-                        <div className="p-3" key={member.address}>
-                          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                            <p className="break-all font-mono text-xs">{member.address}</p>
-                            <span className={`status-dot ${memberPaidOff || memberStatus === "ready" ? "status-ok" : "status-warn"}`}>
-                              {memberStatus}
+                        <div className="bill-payer" key={member.address}>
+                          <div className="bill-payer-line">
+                            <span className="bill-payer-target">
+                              <PayerMark provider="wallet" target={member.address} />
+                              {shortAddress(member.address)}
+                            </span>
+                            <span className="bill-payer-share" data-empty={member.dueNow === 0n}>
+                              <span className="bill-currency">$</span>
+                              {unitsToUsdc(member.dueNow)}
                             </span>
                           </div>
-                          <div className="mt-3 grid gap-3 sm:grid-cols-2">
-                            <Metric label="Share" value={`$${unitsToUsdc(member.fixedShare)}`} />
-                            <Metric label="Due now" value={`$${unitsToUsdc(member.dueNow)}`} />
-                            <Metric label="Remaining total" value={`$${unitsToUsdc(member.remainingTotal)}`} />
-                            <Metric label="Wallet balance" value={`$${unitsToUsdc(member.walletBalance)}`} />
-                            <Metric label="Approved" value={`$${unitsToUsdc(member.allowance)}`} />
-                            <Metric label="Collected total" value={`$${unitsToUsdc(member.totalSettled)}`} />
+                          <div className="bill-payer-meta">
+                            {/* Same rule as the payer view's Status: ok for the
+                                two finished states, warn only where the member is
+                                the reason a cycle cannot collect, and the plain
+                                dim for "waiting", which is nobody's problem. */}
+                            <span
+                              className="settle-label"
+                              data-tone={
+                                memberPaidOff || memberStatus === "ready"
+                                  ? "ok"
+                                  : memberStatus === "waiting"
+                                    ? undefined
+                                    : "warn"
+                              }
+                            >
+                              {memberStatus}
+                            </span>
+                            <span className="bill-poster-fact">
+                              share <b>${unitsToUsdc(member.fixedShare)}</b>
+                            </span>
+                            <span className="bill-poster-fact">
+                              approved <b>${unitsToUsdc(member.allowance)}</b>
+                            </span>
+                            <span className="bill-poster-fact">
+                              balance <b>${unitsToUsdc(member.walletBalance)}</b>
+                            </span>
+                            <span className="bill-poster-fact">
+                              collected <b>${unitsToUsdc(member.totalSettled)}</b>
+                            </span>
+                            <span className="bill-poster-fact">
+                              still owed <b>${unitsToUsdc(member.remainingTotal)}</b>
+                            </span>
                           </div>
                         </div>
                       );
-                    })}
-                  </div>
-                </>
-              )}
-            </Panel>
+                      })}
+                    </div>
 
-            <Panel
-              icon={<BadgeDollarSign size={15} />}
-              note={
-                isRecipient
-                  ? "Collecting only ever pulls a share that is already due and already approved. Nothing here can take more than that."
-                  : "Approving lets this tab collect your share when a cycle falls due — and only then. The money stays in your wallet until that moment, and you can withdraw the approval whenever you like."
-              }
-              step="04 · Act on it"
-              title={isRecipient ? "Collect what's due" : "Approve or withdraw"}
-            >
-              {/* Payer actions (approve/revoke) belong to payers only — hidden
-                  on the recipient/settler side, whether single- or dual-role. */}
-              {isRecipient ? null : (
-                <>
-              {/* A Splitsy (DCW) member's approval is set server-side to exactly
-                  their remaining debt, so there is no limit to pick. */}
-              {recurringWallet && (!viewerMember || walletIsTabMember) ? (
-                <>
-                  <Field
-                    label="Approval limit"
-                    type="number"
-                    value={authorizationAmount || approvalPlaceholder}
-                    onChange={setAuthorizationAmount}
-                  />
-                  <p className="mt-2 text-xs text-[var(--text-muted)]">
-                    {approvalPlaceholder ? `Default: ${approvalPlaceholder} USDC` : "Default updates after you load a tab."}
-                  </p>
-                </>
-              ) : (
-                <p className="text-xs text-[var(--text-muted)]">
-                  Approving from your Splitsy wallet authorizes exactly your remaining recurring debt on this tab.
-                </p>
-              )}
-              <p className="mt-3 text-sm text-[var(--text-muted)]">
-                Funds stay in the payer wallet unless this tab is approved for the due amount and the cycle time has arrived.
-              </p>
-              <div className="mt-4 flex flex-wrap gap-2">
-                <button className="primary-button" onClick={authorizeActiveTab} type="button">
-                  Approve
-                </button>
-                <button className="secondary-button" onClick={revokeActiveTab} type="button">
-                  Revoke
-                </button>
+                    <p className="bill-options-hint">
+                      Collection needs three things at once: the payer&apos;s approval, enough USDC in their wallet, and
+                      a cycle that has actually fallen due. Until then the money stays where it is.
+                    </p>
+                  </>
+                )}
               </div>
-                </>
-              )}
-              {isRecipient ? (
-                <div className="mt-4 flex flex-wrap gap-2">
-                  <button
-                    className="primary-button"
-                    disabled={tabState.claimable <= 0n || recurringState === "working"}
-                    onClick={claimActiveRecurringFunds}
-                    type="button"
-                  >
-                    Claim recurring funds (${unitsToUsdc(tabState.claimable)})
-                  </button>
-                </div>
-              ) : null}
-            </Panel>
+            </section>
 
-            {/* Same timeline as the agents' decision log: one mark per thing that
-                actually happened, newest first, each linking to its tx. */}
-            {visibleEvents.length > 0 ? (
-              <Panel
-                chip={
-                  <span className="spec-chip">
-                    {visibleEvents.length} event{visibleEvents.length === 1 ? "" : "s"}
+            {/* ── 04 ──────────────────────────────────────────────────────────
+                The commit, in the same shape the one-off's 03 ends on: the word
+                that acts, the alternative to it opposite, and the arithmetic
+                that justifies pressing it. */}
+            <section className="bill-poster">
+              <div className="bill-poster-head">
+                <span className="settle-label">04 · Act on it</span>
+                <div className="bill-poster-marks">
+                  <span className="bill-poster-fact">
+                    on <b>{shortAddress(tabState.address)}</b>
                   </span>
-                }
-                icon={<CheckCircle2 size={15} />}
-                note={
-                  isRecipient
-                    ? "Everything this tab has done on Arc. Each row is a transaction you can open and check yourself."
-                    : "Your own activity on this tab. Each row is a transaction you can open and check yourself."
-                }
-                step="05 · On chain"
-                title="What Arc recorded"
-              >
-                <ol>
-                  {visibleEvents.slice(0, 5).map((event, index) => (
-                    <li
-                      className="trail-row trail-done"
-                      key={`${event.txHash}-${event.name}-${event.blockNumber.toString()}-${index}`}
+                </div>
+              </div>
+              <p className="bill-poster-note">
+                {isRecipient
+                  ? "Collecting only ever pulls a share that is already due and already approved. Nothing here can take more than that."
+                  : "Approving lets this tab collect your share when a cycle falls due — and only then. The money stays in your wallet until that moment, and you can withdraw the approval whenever you like."}
+              </p>
+
+              <div className="bill-poster-body">
+                {isRecipient ? (
+                  <div className="bill-poster-foot">
+                    <button
+                      className="settle-action"
+                      disabled={tabState.claimable <= 0n || recurringState === "working"}
+                      onClick={claimActiveRecurringFunds}
+                      type="button"
                     >
-                      <span className="trail-mark">
-                        <CheckCircle2 size={11} />
+                      {recurringState === "working" ? "claiming…" : `claim $${unitsToUsdc(tabState.claimable)}`} ›
+                    </button>
+                    <div className="bill-poster-total">
+                      <span className="settle-label">Collected on this tab</span>
+                      <span>
+                        ${unitsToUsdc(tabCollected)} <em>of ${unitsToUsdc(tabCommitted)}</em>
                       </span>
-                      <span className="min-w-0">
-                        <span className="text-sm font-semibold">{event.name}</span>
-                        <span className="spec-hint">Block {event.blockNumber.toString()}</span>
-                      </span>
-                      <a
-                        className="shrink-0 text-right no-underline"
-                        href={`https://testnet.arcscan.app/tx/${event.txHash}`}
-                        rel="noreferrer"
-                        target="_blank"
+                    </div>
+                  </div>
+                ) : (
+                  <>
+                    {/* The limit you set, against the figure it has to cover —
+                        set as a lede pair rather than a one-cell rail, because
+                        auto-fit would stretch a single cell to the full column
+                        and draw a 1400px rule under "$50.00".
+
+                        A Splitsy (DCW) member's approval is set server-side to
+                        exactly their remaining debt, so there is no limit to pick
+                        and no pair: just the sentence saying so, and the word
+                        that does it. */}
+                    {recurringWallet && (!viewerMember || walletIsTabMember) ? (
+                      <div className="bill-poster-lede">
+                        <div className="bill-cell">
+                          <span className="settle-label">Approval limit USD</span>
+                          <div className="bill-figure">
+                            <span className="bill-currency">$</span>
+                            <PosterValue
+                              ariaLabel="Approval limit in USD"
+                              decimal
+                              onChange={setAuthorizationAmount}
+                              placeholder={approvalPlaceholder || "0.00"}
+                              value={authorizationAmount}
+                            />
+                          </div>
+                          <div className="bill-cell-rule" />
+                        </div>
+                        <div className="bill-cell">
+                          <span className="settle-label">Still collectable from you</span>
+                          <div className="bill-figure">
+                            <span className="bill-currency">$</span>
+                            {viewerMember ? unitsToUsdc(viewerMember.remainingTotal) : approvalPlaceholder || "0.00"}
+                          </div>
+                          <div className="bill-cell-rule" />
+                        </div>
+                      </div>
+                    ) : null}
+
+                    <p className="bill-options-hint">
+                      {recurringWallet && (!viewerMember || walletIsTabMember)
+                        ? `Left empty this approves ${approvalPlaceholder || "your outstanding share"} USDC — what this tab can still collect from you. Funds stay in your wallet unless a cycle has fallen due.`
+                        : "Approving from your Splitsy wallet authorizes exactly your remaining recurring debt on this tab, and nothing beyond it."}
+                    </p>
+
+                    {/* Withdrawing an approval is not a second commit — it is the
+                        alternative to this one, so it sits opposite it on the same
+                        line, the way the one-off's "or enter it by hand" sits
+                        opposite Scan. */}
+                    <div className="bill-poster-foot">
+                      <button
+                        className="settle-action"
+                        disabled={recurringState === "working"}
+                        onClick={authorizeActiveTab}
+                        type="button"
                       >
-                        <span className="trail-amount">{shortAddress(event.txHash)}</span>
-                        <span className="spec-hint">View on Arcscan</span>
-                      </a>
-                    </li>
-                  ))}
-                </ol>
-              </Panel>
+                        {recurringState === "working" ? "approving…" : "approve"} ›
+                      </button>
+                      <button className="iou-provider" onClick={revokeActiveTab} type="button">
+                        or withdraw the approval
+                      </button>
+                    </div>
+
+                    {viewerMember ? (
+                      <p className="bill-options-hint">
+                        You have paid ${unitsToUsdc(viewerMember.totalSettled)} of $
+                        {unitsToUsdc(viewerMember.fixedShare * tabState.maxSettlements)} on this tab.
+                      </p>
+                    ) : null}
+                  </>
+                )}
+              </div>
+            </section>
+
+            {/* ── 05 ──────────────────────────────────────────────────────────
+                What Arc recorded, as the same ledger lines 02 lists tabs in —
+                each one a transaction you can open and check. */}
+            {visibleEvents.length > 0 ? (
+              <section className="bill-poster">
+                <div className="bill-poster-head">
+                  <span className="settle-label">05 · On chain</span>
+                  <div className="bill-poster-marks">
+                    <span className="bill-poster-fact">
+                      <b>{visibleEvents.length}</b> event{visibleEvents.length === 1 ? "" : "s"}
+                    </span>
+                  </div>
+                </div>
+                <p className="bill-poster-note">
+                  {isRecipient
+                    ? "Everything this tab has done on Arc, newest first. Each line is a transaction you can open and check yourself."
+                    : "Your own activity on this tab, newest first. Each line is a transaction you can open and check yourself."}
+                </p>
+
+                <div className="bill-poster-body">
+                  <div className="iou-ledger">
+                    {visibleEvents.slice(0, 5).map((event, index) => (
+                      <div
+                        className="iou-row"
+                        key={`${event.txHash}-${event.name}-${event.blockNumber.toString()}-${index}`}
+                      >
+                        <span className="min-w-0">
+                          {event.name}
+                          <span className="iou-row-note"> · block {event.blockNumber.toString()}</span>
+                        </span>
+                        <a
+                          className="iou-row-tx"
+                          href={`https://testnet.arcscan.app/tx/${event.txHash}`}
+                          rel="noreferrer"
+                          target="_blank"
+                        >
+                          {shortAddress(event.txHash)}
+                        </a>
+                      </div>
+                    ))}
+                  </div>
+                  {visibleEvents.length > 5 ? (
+                    // No silent truncation: five rows is a deliberate cap, so the
+                    // page says how many it is not showing.
+                    <p className="bill-options-hint">
+                      Showing the 5 most recent of {visibleEvents.length} transactions on this tab.
+                    </p>
+                  ) : null}
+                </div>
+              </section>
             ) : null}
-          </>
-        </div>
-      ) : null}
-    </div>
+          </motion.div>
+        ) : null}
+      </AnimatePresence>
+    </>
   );
 }
 
@@ -4748,259 +5116,151 @@ function ScoutReceipt({ report }: { report: ScoutReport }) {
   const { agent, payments, degraded } = report;
   const settledTx = useBatchSettlement(payments);
   return (
-    <details className="scout-receipt mb-4 rounded-[var(--radius)] border border-[var(--receipt-border-soft)] bg-[var(--receipt-overlay)] p-3 text-xs text-[var(--receipt-muted)]">
-      <summary className="flex cursor-pointer list-none items-center gap-1.5 font-semibold text-[var(--receipt-text)]">
-        <Bot size={14} /> Scanned by Scout
-        <span className="amount-text font-normal">
-          {degraded ? "unpaid fallback" : `${report.totalSpentUsd.toFixed(3)} USDC`}
+    <details className="bill-items bill-scout scout-receipt">
+      <summary>
+        <span className="settle-label">
+          <Bot className="inline-block align-[-0.15em]" size={13} /> scanned by scout
         </span>
-        <X402Info />
-        <ChevronDown className="scout-receipt-chevron ml-auto" size={14} />
+        <span className="bill-items-total">
+          {degraded ? "unpaid fallback" : `${report.totalSpentUsd.toFixed(3)} USDC`}
+          <X402Info />
+          <ChevronDown className="scout-receipt-chevron" size={16} />
+        </span>
       </summary>
 
-      <p className="mt-2 flex flex-wrap items-center gap-1">
-        Agent{" "}
-        <a
-          className="underline"
-          href={`https://testnet.arcscan.app/address/${agent.address}`}
-          rel="noreferrer"
-          target="_blank"
-        >
-          {agent.address.slice(0, 6)}…{agent.address.slice(-4)}
-        </a>
-        {agent.tokenId ? <span>· ERC-8004 #{agent.tokenId}</span> : null}
-      </p>
+      <div className="bill-scout-body">
+        <p>
+          Agent{" "}
+          <a href={`https://testnet.arcscan.app/address/${agent.address}`} rel="noreferrer" target="_blank">
+            {agent.address.slice(0, 6)}…{agent.address.slice(-4)}
+          </a>
+          {agent.tokenId ? ` · ERC-8004 #${agent.tokenId}` : ""}
+        </p>
 
-      {payments.length > 0 ? (
-        <ul className="mt-1.5 space-y-0.5">
-          {payments.map((payment, index) => (
-            <li key={`${payment.endpoint}-${index}`}>
-              Paid <span className="amount-text">{payment.amountUsd.toFixed(3)} USDC</span> → {payment.endpoint}
-              {payment.confidence != null ? ` (confidence ${(payment.confidence * 100).toFixed(0)}%)` : ""}
-              {/* Two different receipts, and both are worth having:
-                    · Circle's record of THIS payment — who paid whom, how much,
-                      and its status. Available the instant it settles.
-                    · the batch TRANSACTION on Arc, which carries this payment
-                      among others and only exists once the batch lands
-                      (minutes later — useBatchSettlement waits for it).
-                  Neither substitutes for the other: the transaction proves money
-                  moved on chain but names no single payment, and the receipt
-                  names the payment but is Circle's word for it. */}
-              {payment.tx && !payment.tx.startsWith("0x") ? (
-                <>
-                  {" · "}
-                  <a
-                    className="underline"
-                    href={gatewayReceiptUrl(payment.tx)}
-                    rel="noreferrer"
-                    target="_blank"
-                    title="Circle's own record of this x402 payment"
-                  >
-                    receipt {payment.tx.slice(0, 8)}…
-                  </a>
-                </>
-              ) : null}
-              {(() => {
-                const hash = payment.tx?.startsWith("0x") ? payment.tx : settledTx[payment.tx ?? ""];
-                if (hash) {
-                  return (
-                    <>
-                      {" · "}
-                      <a
-                        className="underline"
-                        href={`https://testnet.arcscan.app/tx/${hash}`}
-                        rel="noreferrer"
-                        target="_blank"
-                      >
-                        settled tx
-                      </a>
-                    </>
-                  );
-                }
-                // Not "no transaction" — not yet. Saying which it is stops the
-                // receipt reading as a payment that failed to land.
-                return payment.tx ? <span> · batching</span> : null;
-              })()}
-            </li>
-          ))}
-        </ul>
-      ) : null}
+        {payments.length > 0 ? (
+          <ul>
+            {payments.map((payment, index) => (
+              <li key={`${payment.endpoint}-${index}`}>
+                Paid <b>{payment.amountUsd.toFixed(3)} USDC</b> → {payment.endpoint}
+                {payment.confidence != null ? ` (confidence ${(payment.confidence * 100).toFixed(0)}%)` : ""}
+                {/* Two different receipts, and both are worth having:
+                      · Circle's record of THIS payment — who paid whom, how much,
+                        and its status. Available the instant it settles.
+                      · the batch TRANSACTION on Arc, which carries this payment
+                        among others and only exists once the batch lands
+                        (minutes later — useBatchSettlement waits for it).
+                    Neither substitutes for the other: the transaction proves money
+                    moved on chain but names no single payment, and the receipt
+                    names the payment but is Circle's word for it. */}
+                {payment.tx && !payment.tx.startsWith("0x") ? (
+                  <>
+                    {" · "}
+                    <a
+                      href={gatewayReceiptUrl(payment.tx)}
+                      rel="noreferrer"
+                      target="_blank"
+                      title="Circle's own record of this x402 payment"
+                    >
+                      receipt {payment.tx.slice(0, 8)}…
+                    </a>
+                  </>
+                ) : null}
+                {(() => {
+                  const hash = payment.tx?.startsWith("0x") ? payment.tx : settledTx[payment.tx ?? ""];
+                  if (hash) {
+                    return (
+                      <>
+                        {" · "}
+                        <a href={`https://testnet.arcscan.app/tx/${hash}`} rel="noreferrer" target="_blank">
+                          settled tx
+                        </a>
+                      </>
+                    );
+                  }
+                  // Not "no transaction" — not yet. Saying which it is stops the
+                  // receipt reading as a payment that failed to land.
+                  return payment.tx ? <span> · batching</span> : null;
+                })()}
+              </li>
+            ))}
+          </ul>
+        ) : null}
 
-      <p className="mt-1.5">
-        Spent <span className="amount-text">{report.totalSpentUsd.toFixed(3)} USDC</span> · budget left{" "}
-        <span className="amount-text">{report.budgetRemainingUsd.toFixed(3)} USDC</span>
-        {degraded ? " · fell back to an unpaid scan" : ""}
-      </p>
+        <p>
+          Spent <b>{report.totalSpentUsd.toFixed(3)} USDC</b> · budget left{" "}
+          <b>{report.budgetRemainingUsd.toFixed(3)} USDC</b>
+          {degraded ? " · fell back to an unpaid scan" : ""}
+        </p>
+      </div>
     </details>
   );
 }
 
-function Field({
-  label,
-  value,
-  onChange,
-  type = "text",
-  disabled = false,
-}: {
-  label: React.ReactNode;
-  value: string;
-  onChange: (value: string) => void;
-  type?: string;
-  disabled?: boolean;
-}) {
-  return (
-    <label className="block text-sm font-medium text-[var(--text-soft)]">
-      {label}
-      <input
-        className="field-control"
-        disabled={disabled}
-        min={type === "number" ? "0" : undefined}
-        onChange={(event) => onChange(event.target.value)}
-        step={type === "number" ? "0.01" : undefined}
-        type={type}
-        value={value}
-      />
-    </label>
-  );
-}
+// An editable value with no chrome, the mark at the head of a payer line, and the
+// two rail entries — all four of the poster's parts now live in app/SpecCard.tsx
+// alongside the heroes, because Agents imports them too and that file cannot
+// import this one.
 
-// The one debtor field: accepts a 0x wallet address, an email address, or an
-// X/Discord handle. Wallet and email are auto-detected from the value; the
-// inline dropdown only disambiguates X vs Discord for bare handles, so one
-// bill can mix debtors across platforms. Per detected kind:
-//  - Wallet: anything starting with 0x — no preview, used as-is on-chain.
-//  - X: a valid handle triggers a live unavatar.io lookup (fallback=false) so
-//    the avatar only shows once it resolves to a real account — a typo 404s and
-//    stays hidden, the "your handle became real" confirmation.
-//  - Discord: no public username→avatar CDN, so no preview.
-//  - Email: tagged (and matched) by address; both Google sign-in and Email-OTP
-//    resolve to it. unavatar.io resolves a Gravatar once the address looks valid.
-// The trimmed value is stored (leading @ stripped); the server lowercases it
-// before matching, so casing here doesn't affect debt linking.
-function HandleField({
-  provider: pickedProvider,
-  onProviderChange,
-  value,
-  onChange,
-}: {
-  provider: IdentityProvider | "wallet";
-  onProviderChange: (value: IdentityProvider | "wallet") => void;
-  value: string;
-  onChange: (value: string) => void;
-}) {
-  const handle = value.replace(/^@+/, "").trim();
-  // An explicit "Wallet address" pick is authoritative; otherwise a typed 0x
-  // address or email re-labels the row to match what it actually holds.
-  const provider: IdentityProvider | "wallet" =
-    pickedProvider === "wallet" || /^0x/i.test(handle)
-      ? "wallet"
-      : looksLikeEmail(handle)
-        ? "email"
-        : pickedProvider;
-  // Per-kind validity gates the avatar preview: X handles are ≤15 word chars;
-  // email must look like an address; wallet and Discord show no preview.
-  const valid =
-    provider === "x"
-      ? /^[a-zA-Z0-9_]{1,15}$/.test(handle)
-      : provider === "email"
-        ? /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(handle)
-        : false;
-  const [debounced, setDebounced] = useState(handle);
-  // The src that actually loaded — comparing it to the current src resets the
-  // avatar on a handle change without an effect.
+// The mark at the head of a payer line: their face when we can get it, otherwise
+// the mark of the namespace they are tagged in. One slot, four answers — and the
+// face arriving is the confirmation that the handle became a real account.
+//
+// Only X shows a face. Discord has no public username→avatar CDN, and for an
+// email or a wallet a stranger's face is a liability rather than a confirmation:
+// the Gravatar behind an address you mistyped belongs to whoever owns that
+// address, so a wrong target would still look right. Their glyph says which
+// namespace this is; the text beside it says who, and is the thing to check.
+function PayerMark({ provider, target }: { provider: AccountProvider; target: string }) {
+  const handle = target.trim().replace(/^@+/, "");
+  // unavatar is asked once the handle settles, not once per keystroke.
+  const [settled, setSettled] = useState(handle);
+  // The src that actually loaded — comparing it to the current src drops the old
+  // face the moment the handle changes, without a setState-in-effect reset.
   const [loadedSrc, setLoadedSrc] = useState("");
 
   useEffect(() => {
-    const timer = setTimeout(() => setDebounced(handle), 400);
+    const timer = setTimeout(() => setSettled(handle), 400);
     return () => clearTimeout(timer);
   }, [handle]);
 
-  // X keys unavatar by handle; email keys it by the address (Gravatar).
+  if (handle === "") return null;
+
+  // fallback=false, so a handle that isn't an account 404s and keeps the X mark.
+  // unavatar's default is a GENERATED face, which would make every misspelling
+  // look like it had resolved to somebody.
   const src =
-    valid && debounced
-      ? provider === "x"
-        ? `https://unavatar.io/x/${debounced.toLowerCase()}?fallback=false`
-        : provider === "email"
-          ? `https://unavatar.io/${encodeURIComponent(debounced.toLowerCase())}?fallback=false`
-          : ""
+    provider === "x" && validHandle("x", settled)
+      ? `https://unavatar.io/x/${settled.toLowerCase()}?fallback=false`
       : "";
-  // A new handle hasn't resolved yet — fade the old avatar out until onLoad fires.
-  const avatarOk = src !== "" && loadedSrc === src;
-
-  const label =
-    provider === "wallet"
-      ? "Wallet address"
-      : provider === "discord"
-        ? "Discord username"
-        : provider === "email"
-          ? "Email address"
-          : "X handle";
+  // A face is a claim about the handle in the field, so an edited handle drops it
+  // at once and the platform mark comes back until the new one resolves — the
+  // alternative is showing one person while the line names another.
+  const face = src !== "" && loadedSrc === src && settled === handle;
 
   return (
-    <label className="block text-sm font-medium text-[var(--text-soft)]">
-      <span className="flex items-center justify-between gap-2">
-        <span className="inline-flex items-center gap-1">
-          {provider === "wallet" ? (
-            <WalletCards size={12} />
-          ) : provider === "discord" ? (
-            <svg width="12" height="12" viewBox="0 0 127.14 96.36" fill="currentColor" aria-hidden="true">
-              <path d="M107.7 8.07A105.15 105.15 0 0 0 81.47 0a72.06 72.06 0 0 0-3.36 6.83 97.68 97.68 0 0 0-29.11 0A72.37 72.37 0 0 0 45.64 0a105.89 105.89 0 0 0-26.25 8.09C2.79 32.65-1.71 56.6.54 80.21a105.73 105.73 0 0 0 32.17 16.15 77.7 77.7 0 0 0 6.89-11.11 68.42 68.42 0 0 1-10.85-5.18c.91-.66 1.8-1.34 2.66-2a75.57 75.57 0 0 0 64.32 0c.87.71 1.76 1.39 2.66 2a68.68 68.68 0 0 1-10.87 5.19 77 77 0 0 0 6.89 11.1 105.25 105.25 0 0 0 32.19-16.14c2.64-27.38-4.51-51.11-18.9-72.15ZM42.45 65.69C36.18 65.69 31 60 31 53s5-12.74 11.43-12.74S54 46 53.89 53s-5.05 12.69-11.44 12.69Zm42.24 0C78.41 65.69 73.25 60 73.25 53s5-12.74 11.44-12.74S96.23 46 96.12 53s-5.04 12.69-11.43 12.69Z" />
-            </svg>
-          ) : provider === "email" ? (
-            <Mail size={12} />
-          ) : (
-            <Image src="/x.png" alt="" width={12} height={12} />
-          )}
-          {label}
-        </span>
-        <select
-          aria-label="Tag by"
-          value={provider}
-          onChange={(event) => onProviderChange(event.target.value as IdentityProvider | "wallet")}
-          className="rounded-md border border-[var(--border)] bg-[var(--surface)] px-1.5 py-0.5 text-xs font-medium text-[var(--text)]"
-        >
-          <option value="wallet">Wallet address</option>
-          <option value="x">X</option>
-          <option value="discord">Discord</option>
-          <option value="email">Email address</option>
-        </select>
-      </span>
-      <span className="handle-field">
-        <input
-          autoCapitalize="none"
-          autoComplete="off"
-          autoCorrect="off"
-          inputMode={provider === "email" ? "email" : "text"}
-          className={`field-control handle-input${avatarOk ? " is-resolved" : ""}`}
-          onChange={(event) => onChange(event.target.value.replace(/^@+/, "").trim())}
-          spellCheck={false}
-          value={handle}
-        />
-        {src ? (
-          // eslint-disable-next-line @next/next/no-img-element -- remote unavatar URL, not a bundled asset
-          <img
-            alt={`${debounced} avatar`}
-            className={`handle-avatar${avatarOk ? " is-visible" : ""}`}
-            height={24}
-            onError={() => setLoadedSrc("")}
-            onLoad={() => setLoadedSrc(src)}
-            src={src}
-            width={24}
-          />
-        ) : null}
-      </span>
-    </label>
+    // Decorative: the rail under this line already names the namespace in words,
+    // so the glyph repeats it rather than adding anything a reader would miss.
+    <span aria-hidden className="bill-payer-mark" data-face={face} data-provider={provider}>
+      {src ? (
+        // eslint-disable-next-line @next/next/no-img-element -- remote unavatar URL, not a bundled asset
+        <img alt="" onError={() => setLoadedSrc("")} onLoad={() => setLoadedSrc(src)} src={src} />
+      ) : null}
+      {provider === "discord" ? (
+        <DiscordIcon />
+      ) : provider === "email" ? (
+        <Mail strokeWidth={1.5} />
+      ) : provider === "wallet" ? (
+        <Wallet strokeWidth={1.5} />
+      ) : (
+        <XIcon />
+      )}
+    </span>
   );
 }
 
-function Metric({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="metric">
-      <p className="text-xs font-semibold uppercase text-[var(--text-muted)]">{label}</p>
-      <p className="mt-1 break-all text-lg font-semibold text-[var(--text)]">{value}</p>
-    </div>
-  );
-}
+// One labelled figure on the poster's rail: caps label, the value, and the rule
+// that lights when the value has focus. See app/SpecCard.tsx for PosterCell and
+// PosterFact.
 
 function Message({ tone, children }: { tone: "error" | "neutral" | "success"; children: ReactNode }) {
   return (
@@ -5021,6 +5281,11 @@ function Message({ tone, children }: { tone: "error" | "neutral" | "success"; ch
   );
 }
 
+// One tab on the header rail. The same control the dashboard's view pair and the
+// Bills tab's One-off/Recurring rail are built from — .iou-provider for the
+// borderless caps word, .bill-toggle for the rule that draws itself under the one
+// you are reading — so the app has one way of saying "this is where you are"
+// instead of a pill up here and a rule everywhere else.
 function TabButton({
   active,
   onClick,
@@ -5031,25 +5296,53 @@ function TabButton({
   children: ReactNode;
 }) {
   return (
-    <button className={`tab-button ${active ? "tab-button-active" : ""}`} onClick={onClick} type="button">
+    <button
+      aria-current={active ? "true" : undefined}
+      className="iou-provider bill-toggle"
+      onClick={onClick}
+      type="button"
+    >
       {children}
     </button>
   );
 }
 
-function ModeButton({
-  active,
-  onClick,
-  children,
-}: {
-  active: boolean;
-  onClick: () => void;
-  children: ReactNode;
-}) {
+// The wallet, on the rail. RainbowKit's own ConnectButton is a filled pill with a
+// shadow and a chain glyph — the last boxed control in the header — so this
+// renders its three states as marks instead: the way in, the chain to fix, or the
+// account you are signed in as.
+//
+// The chain glyph is not replaced. It was an unlabelled icon for a single-chain
+// app that stamps "Arc Testnet" under its own logo, and the only chain state worth
+// a word in the header is the one that stops a payment going through.
+function WalletMark() {
   return (
-    <button className={`mode-button ${active ? "mode-button-active" : ""}`} onClick={onClick} type="button">
-      {children}
-    </button>
+    <ConnectButton.Custom>
+      {({ account, chain, mounted, openAccountModal, openChainModal, openConnectModal }) => {
+        // Pre-hydration there is no truthful answer, and "connect a wallet" shown
+        // to someone already connected is worse than a beat of nothing.
+        if (!mounted) return null;
+        if (!account || !chain) {
+          return (
+            <button className="iou-provider bill-toggle" onClick={openConnectModal} type="button">
+              Connect wallet
+            </button>
+          );
+        }
+        if (chain.unsupported) {
+          return (
+            <button className="iou-provider bill-toggle app-warn" onClick={openChainModal} type="button">
+              Wrong network
+            </button>
+          );
+        }
+        return (
+          <button className="iou-provider bill-toggle" onClick={openAccountModal} type="button">
+            {account.displayName}
+          </button>
+        );
+      }}
+    </ConnectButton.Custom>
   );
 }
 
@@ -5061,8 +5354,12 @@ function toUsdInput(value: number, rate: number) {
   return (value * rate).toFixed(2);
 }
 
+// A single ellipsis character, not three periods: this string is set beside
+// lib/iou's shortAddress on the same surfaces (the poster's payer rows, the IOU
+// ledger), and two different elisions of the same address read as a bug. Every
+// caller renders it — nothing hashes or compares it.
 function shortAddress(address: string) {
-  return `${address.slice(0, 6)}...${address.slice(-4)}`;
+  return `${address.slice(0, 6)}…${address.slice(-4)}`;
 }
 
 // Walk an error and its `cause` chain looking for the signatures wallets use

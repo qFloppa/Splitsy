@@ -1,61 +1,47 @@
 "use client";
 
-import { useEffect, useRef } from "react";
-import gsap from "gsap";
+import { PRICES } from "@/lib/x402/pricing";
 
 import { BrowserFrame } from "./BrowserFrame";
 import { AgentStage } from "./demo/AgentStage";
+import { useReveal } from "./useReveal";
 
 // Sits directly after the product demo on purpose: DemoStage's first act is a
-// receipt sliding into a scan beam, and this section is what happens inside
-// that beam and who paid for it. The frame docks the same way DemoSection's
-// does, so the two read as one continuous story rather than two demos.
+// receipt sliding into a scan beam, and this section is what happens inside that
+// beam and who paid for it. Same plate, so the two read as one continuous story
+// rather than two demos.
 export function SectionAgent() {
-  const rootRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
-    const root = rootRef.current;
-    if (!root) return;
-
-    const ctx = gsap.context(() => {
-      gsap.from("[data-agent-heading]", {
-        y: 26,
-        autoAlpha: 0,
-        duration: 0.8,
-        ease: "expo.out",
-        scrollTrigger: { trigger: root, start: "top 78%" },
-      });
-    }, root);
-
-    return () => ctx.revert();
-  }, []);
+  const ref = useReveal<HTMLElement>("top 78%");
 
   return (
-    <section
-      aria-labelledby="agent-heading"
-      className="mx-auto w-full max-w-[96rem] scroll-mt-24 px-4 pt-[var(--lp-section-y)] sm:px-6 lg:px-8"
-      id="agent"
-      ref={rootRef}
-    >
-      <p
-        className="text-[0.62rem] font-extrabold uppercase tracking-[0.08em] text-[var(--text-muted)]"
-        data-agent-heading
-      >
-        Act one · agents that buy
-      </p>
-      <h2 className="lp-display-lg mt-3 max-w-3xl" data-agent-heading id="agent-heading">
-        Upload a receipt. <span className="lp-headline-accent">An agent goes shopping.</span>
-      </h2>
-      <p className="lp-lede mt-5 max-w-2xl" data-agent-heading>
-        Scout has its own wallet, an ERC-8004 identity on Arc, and a daily budget of one dollar. It
-        judges your photo before spending anything, pays Splitsy&apos;s own x402 endpoints per call, and
-        buys a second opinion when the parse looks shaky — signing gasless authorizations that Circle
-        Gateway batches and settles on Arc.
-      </p>
+    <section aria-labelledby="agent-heading" className="bill-poster scroll-mt-24" id="agent" ref={ref}>
+      <div className="lp-measure">
+        <div className="bill-poster-head">
+          <span className="settle-label" data-reveal="item">
+            <span className="lp-step">02</span> Agents that buy
+          </span>
+          {/* ponytail: the price is imported, never restated — same discipline as
+              SectionMarket and demo/agent-script.ts, so this page cannot
+              advertise a price the seller does not charge. */}
+          <span className="bill-poster-fact" data-reveal="item">
+            one dollar a day · <b>{PRICES["/api/ocr"]}</b> a scan
+          </span>
+        </div>
+        <h2 className="lp-display-lg mt-4 max-w-4xl" data-reveal="lead" id="agent-heading">
+          Upload a receipt
+          <br />
+          <span className="lp-headline-accent">An agent goes shopping</span>
+        </h2>
+        <p className="lp-lede mt-5 max-w-2xl" data-reveal="lead">
+          Scout has its own wallet, an ERC-8004 identity on Arc, and a daily budget of one dollar. It
+          judges your photo before spending anything, pays Splitsy&apos;s own x402 endpoints per call, and
+          buys a second opinion when the parse looks shaky — signing gasless authorizations that Circle
+          Gateway batches and settles on Arc.
+        </p>
+      </div>
 
-      <div className="mt-12">
-        <BrowserFrame>
+      <div className="lp-measure bill-poster-body">
+        <BrowserFrame label="POST splitsy.xyz/api/ocr" note="x402 · HTTP 402 → signed → 200">
           <AgentStage />
         </BrowserFrame>
       </div>

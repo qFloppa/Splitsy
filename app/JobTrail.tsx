@@ -1,10 +1,16 @@
 "use client";
 
 import { useState } from "react";
-import { ChevronRight, ExternalLink, Loader2 } from "lucide-react";
+import { ChevronDown } from "lucide-react";
+import { PosterFact } from "./SpecCard";
 
 // The expandable half of a decision-log row: every transaction of the ERC-8183
 // ceremony, the live getJob read behind it, and the x402 payment that gated it.
+//
+// Set in the poster's voice, like the row it opens under (see
+// app/SettlementAgentsPanel.tsx): the summary is a caps label and a figure, the
+// contract facts are the same labelled cells a rail of figures uses, and each
+// transaction is one receipt line. Nothing draws a box.
 //
 // Built on a real <details>, not a state-driven panel. The disclosure, the
 // keyboard behaviour and the announced expanded/collapsed state are the
@@ -117,117 +123,103 @@ export default function JobTrail({
   }
 
   return (
-    <details className="job-trail" onToggle={(e) => e.currentTarget.open && load()}>
-      <summary className="spec-chip job-trail-summary">
-        <ChevronRight className="job-trail-caret" size={12} />
-        <span>
-          job #{jobId} · {detail?.job?.statusName ?? jobStatus ?? "unknown"} · {feeUsdc.toFixed(3)} fee
+    <details className="bill-items" onToggle={(e) => e.currentTarget.open && load()}>
+      <summary>
+        <span className="settle-label">
+          job #{jobId} · {detail?.job?.statusName ?? jobStatus ?? "unknown"}
+          {loading ? " · reading the chain…" : ""}
         </span>
-        {loading ? <Loader2 className="animate-spin" size={11} /> : null}
+        <span className="bill-items-total">
+          {feeUsdc.toFixed(3)} fee
+          <ChevronDown className="bill-items-chevron" size={16} />
+        </span>
       </summary>
 
-      <div className="job-trail-body">
-        {error ? <p className="job-trail-error">{error}</p> : null}
+      {error ? (
+        <p className="bill-poster-msg" data-tone="error" role="status">
+          {error}
+        </p>
+      ) : null}
 
-        {detail?.job ? (
-          <section>
-            <h4 className="job-trail-head">
-              contract read · <span className="mono">getJob({detail.jobId})</span>
-            </h4>
-            <p className="job-trail-desc">{detail.job.description}</p>
-            <dl className="job-trail-facts">
-              {(["client", "provider", "evaluator"] as const).map((role) => (
-                <div key={role}>
-                  <dt>{role}</dt>
-                  <dd>
-                    <a
-                      className="mono"
-                      href={`${EXPLORER}/address/${detail.job?.[role]}`}
-                      rel="noreferrer"
-                      target="_blank"
-                    >
-                      {short(detail.job?.[role] ?? "")}
-                    </a>
-                    <span className="job-trail-role">{ROLES[role]}</span>
-                  </dd>
-                </div>
-              ))}
-              <div>
-                <dt>escrow</dt>
-                <dd>
-                  <span className="mono">{detail.job.budgetUsdc.toFixed(3)} USDC</span>
-                  <span className="job-trail-role">released on complete</span>
-                </dd>
-              </div>
-              <div>
-                <dt>status</dt>
-                <dd>
-                  <span className="mono">
-                    {detail.job.statusName} ({detail.job.status})
-                  </span>
-                  <span className="job-trail-role">live, from the chain</span>
-                </dd>
-              </div>
-              <div>
-                <dt>expires</dt>
-                <dd>
-                  <span className="mono">{formatDate(detail.job.expiredAt)}</span>
-                  <span className="job-trail-role">unclaimed escrow returns</span>
-                </dd>
-              </div>
-            </dl>
-          </section>
-        ) : null}
-
-        {rows.length > 0 ? (
-          <section>
-            <h4 className="job-trail-head">the ceremony · one transaction per call</h4>
-            <ol className="job-trail-steps">
-              {rows.map((row, i) => (
-                <li key={`${row.step}-${row.txHash}-${i}`}>
-                  <span className="job-trail-step">{row.step}</span>
-                  <span className="job-trail-block">
-                    {row.blockNumber === null ? "the settlement" : `#${row.blockNumber}`}
-                  </span>
+      {detail?.job ? (
+        <>
+          <p className="bill-options-hint">
+            {detail.job.description} — read live off the chain by{" "}
+            <span className="mono">getJob({detail.jobId})</span>, not from a cache.
+          </p>
+          <div className="bill-poster-rail">
+            {(["client", "provider", "evaluator"] as const).map((role) => (
+              <PosterFact
+                key={role}
+                label={`${role} · ${ROLES[role]}`}
+                value={
                   <a
-                    className="job-trail-tx mono"
-                    href={`${EXPLORER}/tx/${row.txHash}`}
+                    className="iou-row-tx"
+                    href={`${EXPLORER}/address/${detail.job?.[role]}`}
                     rel="noreferrer"
                     target="_blank"
                   >
-                    {short(row.txHash)}
-                    <ExternalLink size={10} />
+                    {short(detail.job?.[role] ?? "")}
                   </a>
-                </li>
-              ))}
-            </ol>
-          </section>
-        ) : null}
+                }
+              />
+            ))}
+            <PosterFact
+              label="escrow · released on complete"
+              value={`${detail.job.budgetUsdc.toFixed(3)} USDC`}
+            />
+            <PosterFact
+              label="status · live, from the chain"
+              value={`${detail.job.statusName} (${detail.job.status})`}
+            />
+            <PosterFact label="expires · unclaimed escrow returns" value={formatDate(detail.job.expiredAt)} />
+          </div>
+        </>
+      ) : null}
 
-        {detail && rows.length === 0 && !error ? (
-          <p className="job-trail-error">
-            No transactions found for this job — the settlement hash it is anchored on has not been
-            recorded yet.
-          </p>
-        ) : null}
+      {rows.length > 0 ? (
+        <>
+          <p className="bill-options-hint">The ceremony — one transaction per call, in the order they ran.</p>
+          {rows.map((row, i) => (
+            <div className="bill-item" key={`${row.step}-${row.txHash}-${i}`}>
+              <i>{String(i + 1).padStart(2, "0")}</i>
+              <span>
+                {row.step}
+                {row.blockNumber === null ? " · the settlement" : ` · block ${row.blockNumber}`}
+              </span>
+              <a
+                className="iou-row-tx"
+                href={`${EXPLORER}/tx/${row.txHash}`}
+                rel="noreferrer"
+                target="_blank"
+              >
+                {short(row.txHash)}
+              </a>
+            </div>
+          ))}
+        </>
+      ) : null}
 
-        {detail?.payments.length ? (
-          <section>
-            <h4 className="job-trail-head">x402 · what the agents paid each other</h4>
-            <ul className="job-trail-pay">
-              {detail.payments.map((p) => (
-                <li key={`${p.gatewayTx}-${p.direction}`}>
-                  <span className="job-trail-step">{p.endpoint}</span>
-                  <span className="job-trail-block">
-                    {p.direction} {p.amountUsdc.toFixed(3)} USDC
-                  </span>
-                  <PaymentLink gatewayTx={p.gatewayTx} />
-                </li>
-              ))}
-            </ul>
-          </section>
-        ) : null}
-      </div>
+      {detail && rows.length === 0 && !error ? (
+        <p className="bill-options-hint">
+          No transactions found for this job — the settlement hash it is anchored on has not been recorded yet.
+        </p>
+      ) : null}
+
+      {detail?.payments.length ? (
+        <>
+          <p className="bill-options-hint">x402 — what the agents paid each other to get this settled.</p>
+          {detail.payments.map((p) => (
+            <div className="bill-item" key={`${p.gatewayTx}-${p.direction}`}>
+              <i>{p.direction === "earned" ? "+" : "−"}</i>
+              <span>
+                {p.endpoint} · {p.amountUsdc.toFixed(3)} USDC
+              </span>
+              <PaymentLink gatewayTx={p.gatewayTx} />
+            </div>
+          ))}
+        </>
+      ) : null}
     </details>
   );
 }
@@ -248,17 +240,16 @@ export function gatewayReceiptUrl(transferId: string) {
 // for a payment whose settle() returned none, which would be a Gateway bug; the
 // row still shows, without a link to nowhere.
 export function PaymentLink({ gatewayTx }: { gatewayTx: string | null }) {
-  if (!gatewayTx) return <span className="job-trail-tx mono">no receipt id</span>;
+  if (!gatewayTx) return <span className="iou-row-tx">no receipt id</span>;
   return (
     <a
-      className="job-trail-tx mono"
+      className="iou-row-tx"
       href={gatewayReceiptUrl(gatewayTx)}
       rel="noreferrer"
       target="_blank"
       title="Circle's receipt for this batched x402 payment"
     >
       {gatewayTx.slice(0, 8)}…
-      <ExternalLink size={10} />
     </a>
   );
 }

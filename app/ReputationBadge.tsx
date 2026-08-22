@@ -37,7 +37,10 @@ export function ReputationBadge({ provider, value }: { provider: IdentityProvide
     const abort = new AbortController();
     const timer = window.setTimeout(async () => {
       try {
-        const res = await fetch(`/api/reputation?${query}`, { signal: abort.signal });
+        // The unpaid first-party read, NOT the $0.001 endpoint agents buy — a
+        // badge cannot wait on a Gateway settlement, and this app has no reason
+        // to pay itself for its own data.
+        const res = await fetch(`/api/reputation/lookup?${query}`, { signal: abort.signal });
         if (!res.ok) return;
         setAnswer({ key: trimmed, rep: (await res.json()) as Rep });
       } catch {

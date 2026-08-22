@@ -1,10 +1,10 @@
 "use client";
 
-import { useEffect, useRef } from "react";
-import gsap from "gsap";
 import { ArrowUpRight } from "lucide-react";
 
 import { PRICES } from "@/lib/x402/pricing";
+
+import { useReveal } from "./useReveal";
 
 // The rate card. Prices are IMPORTED, never restated — same discipline as
 // demo/agent-script.ts — so this page cannot advertise a price the seller does
@@ -68,106 +68,73 @@ const ENDPOINTS = [
 ];
 
 export function SectionMarket() {
-  const rootRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
-    const root = rootRef.current;
-    if (!root) return;
-
-    const ctx = gsap.context(() => {
-      gsap.from("[data-market-heading]", {
-        y: 26,
-        autoAlpha: 0,
-        duration: 0.8,
-        ease: "expo.out",
-        scrollTrigger: { trigger: root, start: "top 78%" },
-      });
-      gsap.from("[data-market-row]", {
-        y: 18,
-        autoAlpha: 0,
-        duration: 0.6,
-        ease: "expo.out",
-        stagger: 0.09,
-        scrollTrigger: { trigger: root, start: "top 68%" },
-      });
-    }, root);
-
-    return () => ctx.revert();
-  }, []);
+  const ref = useReveal<HTMLElement>("top 78%");
 
   return (
-    <section
-      aria-labelledby="market-heading"
-      className="mx-auto w-full max-w-[80rem] scroll-mt-24 px-4 pt-[var(--lp-section-y)] sm:px-6 lg:px-8"
-      id="market"
-      ref={rootRef}
-    >
-      <p
-        className="text-[0.62rem] font-extrabold uppercase tracking-[0.08em] text-[var(--text-muted)]"
-        data-market-heading
-      >
-        The market
-      </p>
-      <h2 className="lp-display-lg mt-3 max-w-3xl" data-market-heading id="market-heading">
-        Seven endpoints. <span className="lp-headline-accent">Priced in half-cents.</span>
-      </h2>
-      <p className="lp-lede mt-5 max-w-2xl" data-market-heading>
-        Splitsy&apos;s paid APIs answer HTTP 402 with their own terms. Any agent that signs an offchain
-        EIP-3009 authorization gets served: no account, no API key, and no gas, because Circle&apos;s
-        facilitator settles the payment in a batch rather than a transaction.
-      </p>
+    <section aria-labelledby="market-heading" className="bill-poster scroll-mt-24" id="market" ref={ref}>
+      <div className="lp-measure">
+        <div className="bill-poster-head">
+          <span className="settle-label" data-reveal="item">
+            <span className="lp-step">04</span> The market
+          </span>
+          <span className="bill-poster-fact" data-reveal="item">
+            no account · no API key · no gas
+          </span>
+        </div>
+        <h2 className="lp-display-lg mt-4 max-w-4xl" data-reveal="lead" id="market-heading">
+          Seven endpoints. <span className="lp-headline-accent">Priced in half-cents.</span>
+        </h2>
+        <p className="lp-lede mt-5 max-w-2xl" data-reveal="lead">
+          Splitsy&apos;s paid APIs answer HTTP 402 with their own terms. Any agent that signs an offchain
+          EIP-3009 authorization gets served, because Circle&apos;s facilitator settles the payment in a
+          batch rather than a transaction.
+        </p>
 
-      <div className="lp-glass mt-12 overflow-hidden">
-        <ul className="list-none p-0">
-          {/* Path and price share the first line at every width — the price is
-              the claim, and pushing it onto a wrapped line separates it from what
-              it prices. Seller → buyer sits under them, free to wrap. */}
-          {ENDPOINTS.map((endpoint, index) => (
-            <li
-              className={index === 0 ? "p-5" : "border-t border-[var(--border)] p-5"}
-              data-market-row
+        {/* The rate card, as a rate card: a path, what it costs, and who buys it
+            from whom — three columns on one rule apiece. It used to be a frosted
+            panel of bordered rows, which is a table pretending not to be one. */}
+        <div className="lp-rows bill-poster-body">
+          {ENDPOINTS.map((endpoint) => (
+            <div
+              className="lp-row grid-cols-[minmax(0,1fr)_auto] lg:grid-cols-[minmax(0,22rem)_minmax(0,1fr)_auto]"
+              data-reveal="item"
               key={endpoint.path}
             >
-              <div className="flex items-baseline justify-between gap-4">
-                <span className="mono min-w-0 truncate text-sm font-bold text-[var(--text)]">
-                  {endpoint.path}
-                </span>
-                <span className="amount-text shrink-0 text-base font-bold text-[var(--accent)]">
-                  {endpoint.price}
-                </span>
-              </div>
-              <p className="mt-1.5 text-sm text-[var(--text-muted)]">
-                <span className="font-semibold text-[var(--text-soft)]">{endpoint.seller}</span>
+              <span className="mono min-w-0 truncate text-[0.92rem] text-[var(--pay-poster-fg)]">
+                {endpoint.path}
+              </span>
+              <p className="lp-row-body col-span-2 lg:col-span-1 lg:col-start-2">
+                <span className="text-[var(--pay-poster-fg)]">{endpoint.seller}</span>
                 <span aria-hidden="true"> → </span>
                 <span className="sr-only"> sells to </span>
-                <span className="font-semibold text-[var(--text-soft)]">{endpoint.buyer}</span>, {endpoint.when}
+                <span className="text-[var(--pay-poster-fg)]">{endpoint.buyer}</span>, {endpoint.when}
               </p>
-            </li>
+              <span className="bill-figure-sm col-start-2 row-start-1 justify-self-end lg:col-start-3">
+                {endpoint.price}
+              </span>
+            </div>
           ))}
-        </ul>
-      </div>
+        </div>
 
-      <div className="mt-6 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-        <p className="max-w-2xl text-xs text-[var(--text-muted)]">
-          All three are open to anyone who pays. That is what makes them a market rather than an internal
-          call. The last row is Splitsy&apos;s own two agents trading with each other, so it is deliberately{" "}
-          <span className="font-semibold text-[var(--text-soft)]">left out</span> of the earned and spent
-          totals above: nobody outside paid it, and counting it would inflate both sides of the ledger from a
-          single internal transfer.
-        </p>
-        <a
-          className="group flex shrink-0 items-center gap-1 text-xs font-semibold text-[var(--accent)] no-underline"
-          href="https://developers.circle.com/gateway/nanopayments/concepts/x402"
-          rel="noopener noreferrer"
-          target="_blank"
-        >
-          How x402 works
-          <ArrowUpRight
-            className="transition-transform duration-[var(--dur-2)] group-hover:-translate-y-0.5 group-hover:translate-x-0.5"
-            size={13}
-          />
-        </a>
+        <div className="mt-6 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+          <p className="bill-options-hint" data-reveal="item">
+            All of them are open to anyone who pays. That is what makes them a market rather than an
+            internal call. The review row is Splitsy&apos;s own two agents trading with each other, so it is
+            deliberately <span className="text-[var(--pay-poster-fg)]">left out</span> of the earned and
+            spent totals above the fold: nobody outside paid it, and counting it would inflate both sides
+            of the ledger from a single internal transfer.
+          </p>
+          <a
+            className="iou-provider bill-toggle inline-flex shrink-0 items-baseline gap-1 no-underline"
+            data-reveal="item"
+            href="https://developers.circle.com/gateway/nanopayments/concepts/x402"
+            rel="noopener noreferrer"
+            target="_blank"
+          >
+            How x402 works
+            <ArrowUpRight className="lp-row-out self-center" size={13} />
+          </a>
+        </div>
       </div>
     </section>
   );

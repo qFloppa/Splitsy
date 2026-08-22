@@ -4,10 +4,17 @@ import Image from "next/image";
 import { ChevronDown } from "lucide-react";
 import { ReactNode, useState } from "react";
 
-// Shared expandable history record, used by both the on-chain (HomeClient) and
-// off-chain (XHistoryPanel) history so paid/created records look identical.
+// One settled bill, expandable — the paper trail at the foot of the dashboard
+// tab, used by both the on-chain (HomeClient) and off-chain (XHistoryPanel)
+// records so the two stacks read as one document.
+//
+// Set as a poster row rather than a card, like everything else on the tab: the
+// bill IS the line, the stamp and the chevron close it, whatever qualifies it is
+// a footnote underneath, and what the chain says opens under that. See "record
+// rows" in globals.css.
+//
 // `detail` is mounted only when expanded, so any lazy fetch inside it runs on
-// open. Without a `detail` the card is a static, non-expandable row.
+// open. Without a `detail` the row is static and the toggle is inert.
 export function HistoryCard({
   title,
   summary,
@@ -23,33 +30,33 @@ export function HistoryCard({
   const expandable = Boolean(detail);
 
   return (
-    <div className="history-record" data-open={open}>
+    <div className="bill-record" data-open={open}>
       <button
-        className="history-record-toggle"
-        onClick={() => expandable && setOpen((o) => !o)}
-        type="button"
-        aria-expanded={open}
+        aria-expanded={expandable ? open : undefined}
+        className="bill-record-toggle"
         disabled={!expandable}
+        onClick={() => expandable && setOpen((o) => !o)}
         style={expandable ? undefined : { cursor: "default" }}
+        type="button"
       >
-        <span className="min-w-0">
-          <span className="block font-semibold">{title}</span>
-          <span className="mt-1 block text-sm text-[var(--text-muted)]">{summary}</span>
+        <span className="bill-payer-line">
+          <span className="bill-payer-target">{title}</span>
+          <span className="bill-record-mark">
+            {badge}
+            {expandable ? <ChevronDown className="bill-items-chevron" size={18} /> : null}
+          </span>
         </span>
-        <span className="history-record-badge">
-          {badge}
-          {expandable ? <ChevronDown className="history-chevron" size={18} /> : null}
-        </span>
+        <span className="bill-payer-meta">{summary}</span>
       </button>
 
-      {open && detail ? <div className="history-detail">{detail}</div> : null}
+      {open && detail ? <div className="bill-record-detail">{detail}</div> : null}
     </div>
   );
 }
 
-// The paid/claimed rubber stamp. Normally an absolute overlay; inside a history
-// card's badge it's pinned inline by the .history-record-badge .paid-bill-stamp
-// rule in globals.css.
+// The paid/claimed rubber stamp. Normally an absolute overlay; inside a record's
+// mark it is pinned inline and given its tilt by the .bill-record-mark
+// .paid-bill-stamp rule in globals.css.
 export function PaidBillStamp({
   compact = false,
   src = "/paid.png",

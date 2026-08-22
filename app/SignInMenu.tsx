@@ -1,7 +1,7 @@
 "use client";
 
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
-import { ChevronDown, LogIn, Mail } from "lucide-react";
+import { Mail } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
@@ -106,24 +106,22 @@ export default function SignInMenu() {
   return (
     <DropdownMenu.Root>
       <DropdownMenu.Trigger asChild>
-        <button
-          type="button"
-          className="inline-flex items-center gap-2 rounded-full bg-black px-3.5 py-2 text-sm font-semibold !text-white transition hover:opacity-90"
-        >
-          <LogIn size={15} />
-          <span className="!text-white">Sign in</span>
-          <ChevronDown size={14} className="opacity-80" />
+        {/* A mark on the header rail, not a filled pill. The rule draws while the
+            menu is open — the same gesture every other control in this header
+            makes to say it is the live one. The provider logos stay inside the
+            menu, where each one names a different destination; a lock glyph on
+            the trigger only re-said the word next to it. */}
+        <button className="iou-provider bill-toggle" type="button">
+          Sign in
         </button>
       </DropdownMenu.Trigger>
       <DropdownMenu.Portal>
         <DropdownMenu.Content
           align="end"
-          sideOffset={8}
-          className="z-[80] w-60 rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-1.5 shadow-2xl"
+          sideOffset={10}
+          className="z-[80] w-60 rounded-xl border border-[var(--pay-poster-rule)] bg-[var(--surface-strong)] p-1.5 shadow-lg"
         >
-          <DropdownMenu.Label className="px-2.5 py-1.5 text-xs font-semibold uppercase tracking-wide text-[var(--text-muted)]">
-            Sign in with
-          </DropdownMenu.Label>
+          <DropdownMenu.Label className="settle-label block px-2.5 py-1.5">Sign in with</DropdownMenu.Label>
 
           <DropdownMenu.Item asChild>
             <a href="/api/auth/twitter" className={ITEM_CLASS}>

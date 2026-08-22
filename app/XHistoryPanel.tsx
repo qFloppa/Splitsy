@@ -36,9 +36,9 @@ type OwedToMe = {
 type WalletTx = { id: string; txHash: string | null };
 
 // Off-chain (handle) history, rendered headerless with the same HistoryCard
-// shell + PaidBillStamp as the on-chain records so both look identical inside
-// the shared History panel. `onCount` reports total records up so the panel can
-// show one empty state across social + wallet.
+// shell + PaidBillStamp as the on-chain records so both stacks read as one
+// document inside the paper trail. `onCount` reports total records up so the tab
+// can show one empty state across social + wallet.
 export default function XHistoryPanel({ onCount }: { onCount?: (n: number) => void }) {
   const [paid, setPaid] = useState<IOwe[]>([]);
   const [created, setCreated] = useState<OwedToMe[]>([]);
@@ -77,29 +77,34 @@ export default function XHistoryPanel({ onCount }: { onCount?: (n: number) => vo
   return (
     <>
       {paid.length > 0 ? (
-        <div className="space-y-2">
-          <p className="spec-subhead">
-            Paid — settled from your wallet · {paid.length}
-          </p>
-          <div className="space-y-2">
+        <>
+          <div className="bill-subhead">
+            <span className="settle-label">Paid · settled from your wallet · {paid.length}</span>
+          </div>
+          <div>
             {paid.map((d) => {
               const hash = d.paid_tx_hash ? hashById[d.paid_tx_hash] : undefined;
               return (
                 <HistoryCard
                   key={d.id}
-                  title={
-                    <span className="flex items-center gap-1.5">
-                      {d.bill?.merchant ?? "Bill"} — to{" "}
+                  title={d.bill?.merchant ?? "Bill"}
+                  // The creator rides the footnote rail rather than the line: on
+                  // this page the merchant is what the record is, and who it was
+                  // paid to is what qualifies it.
+                  summary={
+                    <>
+                      <span>paid to</span>
                       <ProviderTag
                         person={{
                           provider: d.bill?.creator?.provider,
                           handle: d.bill?.creator?.handle,
                           avatarUrl: d.bill?.creator?.avatar_url,
                         }}
+                        size={16}
                       />
-                    </span>
+                      <span className="amount-text">{d.amount_usdc} USDC</span>
+                    </>
                   }
-                  summary={<span className="amount-text">{d.amount_usdc} USDC</span>}
                   badge={<PaidBillStamp compact />}
                   detail={
                     hash ? (
@@ -117,15 +122,15 @@ export default function XHistoryPanel({ onCount }: { onCount?: (n: number) => vo
               );
             })}
           </div>
-        </div>
+        </>
       ) : null}
 
       {created.length > 0 ? (
-        <div className="space-y-2">
-          <p className="spec-subhead">
-            You created — tagged by handle · {created.length}
-          </p>
-          <div className="space-y-2">
+        <>
+          <div className="bill-subhead">
+            <span className="settle-label">You created · tagged by handle · {created.length}</span>
+          </div>
+          <div>
             {created.map((b) => {
               const paidCount = b.debts.filter((d) => d.status === "paid").length;
               const allPaid = b.debts.length > 0 && paidCount === b.debts.length;
@@ -135,12 +140,14 @@ export default function XHistoryPanel({ onCount }: { onCount?: (n: number) => vo
                   title={b.merchant ?? "Bill"}
                   summary={
                     <>
-                      {paidCount}/{b.debts.length} paid ·{" "}
+                      <span>
+                        {paidCount} of {b.debts.length} paid
+                      </span>
                       <span className="amount-text">{b.total_usdc} USDC</span>
                     </>
                   }
                   badge={
-                    allPaid ? <PaidBillStamp compact /> : <span className="status-dot status-warn">Pending</span>
+                    allPaid ? <PaidBillStamp compact /> : <span className="settle-label" data-tone="warn">pending</span>
                   }
                   detail={
                     <div className="space-y-1">
@@ -155,12 +162,10 @@ export default function XHistoryPanel({ onCount }: { onCount?: (n: number) => vo
                             size={16}
                           />
                           <span className="flex items-center gap-2">
-                            <span className="text-[var(--text-muted)]">{d.amount_usdc} USDC</span>
-                            {d.status === "paid" ? (
-                              <span className="status-dot status-ok">Paid</span>
-                            ) : (
-                              <span className="status-dot status-warn">Pending</span>
-                            )}
+                            <span>{d.amount_usdc} USDC</span>
+                            <span className="settle-label" data-tone={d.status === "paid" ? "ok" : "warn"}>
+                              {d.status === "paid" ? "paid" : "pending"}
+                            </span>
                           </span>
                         </div>
                       ))}
@@ -170,7 +175,7 @@ export default function XHistoryPanel({ onCount }: { onCount?: (n: number) => vo
               );
             })}
           </div>
-        </div>
+        </>
       ) : null}
     </>
   );

@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect, useRef } from "react";
-import gsap from "gsap";
 import Link from "next/link";
 import { ArrowRight } from "lucide-react";
+
 import { PRICES } from "@/lib/x402/pricing";
+
+import { useReveal } from "./useReveal";
 
 const NEW_ENDPOINTS = [
   { path: "/api/agents/queue",           price: PRICES["/api/agents/queue"],           method: "GET"  },
@@ -13,112 +14,61 @@ const NEW_ENDPOINTS = [
   { path: "/api/agents/dunning/verdict", price: PRICES["/api/agents/dunning/verdict"], method: "POST" },
 ] as const;
 
-export function SectionDevTeaser() {
-  const rootRef = useRef<HTMLDivElement>(null);
+const FLOW = ["Probe", "Parse", "Sign", "Retry"];
 
-  useEffect(() => {
-    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
-    const root = rootRef.current;
-    if (!root) return;
-    const ctx = gsap.context(() => {
-      gsap.from("[data-devteaser-el]", {
-        y: 20, autoAlpha: 0, duration: 0.7, ease: "expo.out", stagger: 0.09,
-        scrollTrigger: { trigger: root, start: "top 72%" },
-      });
-    }, root);
-    return () => ctx.revert();
-  }, []);
+export function SectionDevTeaser() {
+  const ref = useReveal<HTMLElement>("top 74%");
 
   return (
-    <section
-      ref={rootRef}
-      aria-label="Developer API"
-      className="mx-auto w-full max-w-[80rem] scroll-mt-24 px-4 pt-[var(--lp-section-y)] sm:px-6 lg:px-8"
-    >
-      {/* Single accent-bordered card — spec-card-live treatment */}
-      <div
-        data-devteaser-el
-        className="lp-glass relative overflow-hidden"
-      >
-        {/* Left-edge accent rail */}
-        <span
-          aria-hidden
-          className="pointer-events-none absolute inset-y-0 left-0 w-[3px]"
-          style={{ background: "linear-gradient(180deg, var(--accent), color-mix(in srgb, #93c5fd 65%, var(--accent)))" }}
-        />
-
-        <div className="grid grid-cols-1 gap-8 p-6 sm:p-8 lg:grid-cols-[1fr_auto]">
-
-          {/* Left: narrative */}
-          <div className="flex flex-col">
-            <p
-              data-devteaser-el
-              className="text-[0.62rem] font-extrabold uppercase tracking-[0.08em] text-[var(--accent)]"
-            >
-              Open to any agent · Developer API
-            </p>
-            <h2
-              data-devteaser-el
-              className="lp-display-md mt-3"
-            >
-              Seven APIs.{" "}
-              <span className="lp-headline-accent">Any agent.</span>
-            </h2>
-            <p data-devteaser-el className="lp-lede mt-4 max-w-xl">
-              Every endpoint answers HTTP&nbsp;402 with a Circle Gateway
-              challenge. Sign one offchain EIP-3009 authorisation — no Splitsy
-              account, no API key, no gas — and you're in.
-            </p>
-
-            {/* 4-step flow — tiny pills */}
-            <ol data-devteaser-el className="mono mt-5 flex list-none flex-wrap gap-2 p-0 text-[0.7rem]">
-              {["01 Probe", "02 Parse", "03 Sign", "04 Retry"].map((step) => (
-                <li
-                  key={step}
-                  className="rounded-full border border-[var(--border)] bg-[var(--surface-strong)] px-2.5 py-1 font-bold text-[var(--text-muted)]"
-                >
-                  {step}
-                </li>
-              ))}
-            </ol>
-
-            <div data-devteaser-el className="mt-6">
-              <Link
-                href="/api"
-                className="group primary-button inline-flex items-center gap-2"
-              >
-                Explore developer docs
-                <ArrowRight
-                  size={15}
-                  className="transition-transform duration-[var(--dur-2)] group-hover:translate-x-0.5"
-                />
-              </Link>
-            </div>
-          </div>
-
-          {/* Right: endpoint grid */}
-          <ul
-            data-devteaser-el
-            className="flex list-none flex-col gap-2 p-0 lg:w-72 lg:shrink-0"
-          >
-            {NEW_ENDPOINTS.map((ep) => (
-              <li
-                key={ep.path}
-                className="flex items-baseline justify-between gap-3 rounded-[var(--radius)] border border-[var(--border)] bg-[var(--surface-strong)] px-3 py-2"
-              >
-                <span className="mono min-w-0 truncate text-xs font-bold text-[var(--text)]">
-                  {ep.path}
-                </span>
-                <span className="mono shrink-0 text-xs font-bold text-[var(--accent)]">
-                  {ep.price}
-                </span>
-              </li>
+    <section aria-labelledby="devapi-heading" className="bill-poster scroll-mt-24" ref={ref}>
+      <div className="lp-measure">
+        <div className="bill-poster-head">
+          <span className="settle-label" data-reveal="item">
+            <span className="lp-step">05</span> Open to any agent
+          </span>
+          <div className="bill-poster-marks" data-reveal="item">
+            {/* The handshake, as four caps words on a baseline — the same rail the
+                app sets its own options on. It used to be four bordered pills,
+                which is a lot of chrome for four words in a fixed order. */}
+            {FLOW.map((step, index) => (
+              <span className="settle-label" key={step}>
+                <span className="lp-step-num">{String(index + 1).padStart(2, "0")}</span> {step}
+              </span>
             ))}
-            <li className="mt-1 text-right text-[0.7rem] text-[var(--text-muted)]">
-              + 3 existing endpoints
-            </li>
-          </ul>
+          </div>
+        </div>
+        <h2 className="lp-display-lg mt-4 max-w-4xl" data-reveal="lead" id="devapi-heading">
+          Seven APIs. <span className="lp-headline-accent">Any agent.</span>
+        </h2>
+        <p className="lp-lede mt-5 max-w-2xl" data-reveal="lead">
+          Every endpoint answers HTTP&nbsp;402 with a Circle Gateway challenge. Sign one offchain
+          EIP-3009 authorisation — no Splitsy account, no API key, no gas — and you&apos;re in.
+        </p>
 
+        <div className="lp-rows bill-poster-body">
+          {NEW_ENDPOINTS.map((endpoint) => (
+            <div
+              className="lp-row grid-cols-[auto_minmax(0,1fr)_auto]"
+              data-reveal="item"
+              key={endpoint.path}
+            >
+              <span className="settle-label">{endpoint.method}</span>
+              <span className="mono min-w-0 truncate text-[0.92rem] text-[var(--pay-poster-fg)]">
+                {endpoint.path}
+              </span>
+              <span className="bill-figure-sm">{endpoint.price}</span>
+            </div>
+          ))}
+        </div>
+
+        <div className="bill-poster-foot">
+          <Link className="settle-action lp-call" data-reveal="item" href="/api">
+            Read the API docs
+            <ArrowRight aria-hidden size="0.6em" />
+          </Link>
+          <span className="bill-poster-fact" data-reveal="item">
+            + three existing endpoints · full reference and a working client
+          </span>
         </div>
       </div>
     </section>

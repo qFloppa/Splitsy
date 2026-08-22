@@ -2,10 +2,10 @@ import type { Metadata, Viewport } from "next";
 import { Geist_Mono, Hanken_Grotesk } from "next/font/google";
 import localFont from "next/font/local";
 import { headers } from "next/headers";
-import Link from "next/link";
 import "./globals.css";
 import WagmiProviders from "./WagmiProviders";
 import { HeroBackground } from "@/components/ui/hero-background";
+import { SiteFooter } from "@/components/SiteFooter";
 
 // Self-hosted via next/font: no external requests, no layout shift. The CSS
 // font stacks in globals.css lead with these variables and keep the old
@@ -118,21 +118,7 @@ export default async function RootLayout({
       <body className="min-h-full flex flex-col">
         <HeroBackground />
         <WagmiProviders>{children}</WagmiProviders>
-        <footer className="site-footer">
-          <p className="site-footer-disclaimer">
-            Splitsy is an experimental demo on <strong>Arc Testnet</strong> — it uses test USDC only and
-            involves <strong>no real funds</strong>. It is an independent project and is not affiliated with,
-            endorsed by, or sponsored by Circle, Arc, USDC, MetaMask, or any other referenced brand. All
-            trademarks belong to their respective owners.
-          </p>
-          <nav className="site-footer-links" aria-label="Legal and help">
-            <Link href="/disclaimer">Disclaimer &amp; acknowledgments</Link>
-            <Link href="/legal">Terms &amp; Privacy</Link>
-            <Link href="/docs">Docs</Link>
-            <a href="mailto:support@splitsy.xyz">Contact</a>
-          </nav>
-          <p className="site-footer-copy">© 2026 Splitsy · Not financial advice.</p>
-        </footer>
+        <SiteFooter />
       </body>
     </html>
   );
