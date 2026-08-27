@@ -1,25 +1,16 @@
 "use client";
 
 import {
-  AlertTriangle,
-  ArrowLeftRight,
-  BadgeDollarSign,
   Bot,
+  Check,
   ChevronDown,
-  CheckCircle2,
   ExternalLink,
-  Info,
-  Landmark,
   Link2,
   Loader2,
   Mail,
   Moon,
-  Send,
-  ShieldCheck,
   Sun,
   Wallet,
-  WalletCards,
-  X,
 } from "lucide-react";
 import * as Dialog from "@radix-ui/react-dialog";
 import { AnimatePresence, motion } from "framer-motion";
@@ -30,12 +21,11 @@ import Link from "next/link";
 import { ChangeEvent, DragEvent, FormEvent, ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { getAddress } from "viem";
 import { arcTestnet } from "viem/chains";
-import { useAccount, useConnect, useDisconnect, useSwitchChain } from "wagmi";
-import { getWalletClient } from "wagmi/actions";
-import { ConnectButton } from "@rainbow-me/rainbowkit";
+import { useAccount, useConnect, useDisconnect } from "wagmi";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { DiscordIcon, XIcon } from "@/components/landing/ProviderIcons";
 import BillVerification from "./BillVerification";
+import WalletMark from "./WalletMark";
 import XAuthControl from "./XAuthControl";
 import SignInMenu from "./SignInMenu";
 import XHistoryPanel from "./XHistoryPanel";
@@ -115,7 +105,7 @@ import type { AccountProvider, IdentityProvider } from "@/lib/types";
 import type { TreasurySettleSelection } from "@/lib/dashboard-types";
 import { shouldPayLeg } from "@/lib/treasury";
 import { useTheme } from "@/lib/use-theme";
-import { wagmiConfig } from "@/lib/wagmi";
+import { arcWalletClient } from "@/lib/wagmi";
 
 // A collapse/expand toggle that survives reloads. null = auto (caller decides
 // from list length); an explicit tap persists true/false to localStorage.
@@ -179,10 +169,12 @@ type RecurringMemberInput = {
   provider?: IdentityProvider | "wallet";
 };
 type FlowStepState = "pending" | "active" | "done" | "error";
-type FlowStepIcon = "switch" | "approve" | "pay" | "bridge" | "claim";
+// `icon: FlowStepIcon` stood here, mapping each step to a lucide glyph for the
+// circle the progress dialog drew around it. The dialog numbers its steps now —
+// which is the fact a reader wanted from that circle, and it comes from the
+// array — so the field went with the glyph. See ProgressModal.
 type FlowStep = {
   key: string;
-  icon: FlowStepIcon;
   label: string;
   hint: string;
   state: FlowStepState;
@@ -347,6 +339,12 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
   // Set on success by BOTH creation paths, so the confirmation can offer the
   // link regardless of which wallet wrote the bill.
   const [shareLinkUrl, setShareLinkUrl] = useState<string>("");
+  // The number the confirmation poster sets as its headline. It cannot read
+  // submittedBillId for it: that one is scoped to the review panel and is cleared
+  // by the resetSplitForm() which is itself what REVEALS the confirmation. Set by
+  // both creation paths, cleared when a new bill starts.
+  const [liveBillId, setLiveBillId] = useState<string>("");
+  const [linkCopied, setLinkCopied] = useState(false);
   const [bridgeSession, setBridgeSession] = useState<BrowserWalletSession | null>(null);
   const [recurringCycle, setRecurringCycle] = useState<RecurringCycle>("weekly");
   const [customCycleDays, setCustomCycleDays] = useState("30");
@@ -417,7 +415,6 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
   const { address, connector } = useAccount();
   const { connectors, connectAsync } = useConnect();
   const { disconnectAsync } = useDisconnect();
-  const { switchChainAsync } = useSwitchChain();
 
   // Which address to read the registry for: the connected browser wallet, or —
   // for a signed-in social user with no browser wallet — their DCW address, so
@@ -731,6 +728,8 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
     setBillMessage("");
     setBillState("idle");
     setSubmittedBillId(null);
+    setLiveBillId("");
+    setLinkCopied(false);
   }
 
   function updateBillField(field: keyof ParsedBill, value: string) {
@@ -834,8 +833,7 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
       if (!address) {
         await connectAsync({ connector: activeConnector, chainId: arcTestnet.id });
       }
-      await switchChainAsync({ chainId: arcTestnet.id });
-      const nextWalletClient = await getWalletClient(wagmiConfig, { chainId: arcTestnet.id });
+      const nextWalletClient = await arcWalletClient();
       const [bill, recurring] = await Promise.all([
         createBillSplitWallet(nextWalletClient),
         createRecurringWallet(nextWalletClient),
@@ -1013,10 +1011,13 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
       setBillMessage("Manual shares cannot be larger than the bill Total USD amount.");
       return;
     }
-    // The previous bill's link is deliberately NOT cleared by resetSplitForm()
-    // (that runs on success and is what reveals the confirmation). Clear it as a
-    // new submit starts instead, so a failed create can't leave a stale link.
+    // The previous bill's link and number are deliberately NOT cleared by
+    // resetSplitForm() (that runs on success and is what reveals the
+    // confirmation). Clear them as a new submit starts instead, so a failed
+    // create can't leave a stale link on screen.
     setShareLinkUrl("");
+    setLiveBillId("");
+    setLinkCopied(false);
     const rows = displayParticipants.filter((p) => p.walletAddress.trim());
     if (rows.length === 0) {
       setBillState("error");
@@ -1191,7 +1192,10 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
           return;
         }
         setBillState("success");
-        setBillMessage(`Bill #${data.billId} is live on Arc from your Splitsy wallet. Tagged people will see it after signing in.`);
+        // Prose only. The bill number is the confirmation poster's headline, so
+        // repeating "Bill #N is live on Arc" here would set it twice.
+        setLiveBillId(String(data.billId));
+        setBillMessage("Written from your Splitsy wallet. Everyone you tagged sees their share the moment they sign in — no wallet setup, no address to send them.");
         setShareLinkUrl(shareToken ? `${window.location.origin}/pay/${shareToken}` : "");
         resetSplitForm();
         void refreshBillRegistry();
@@ -1226,7 +1230,8 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
       setSubmittedBillId(result.billId);
       setShareLinkUrl(shareToken ? `${window.location.origin}/pay/${shareToken}` : "");
       setBillState("success");
-      setBillMessage(`Bill #${result.billId.toString()} is live on Arc. Payers will see it when they connect.`);
+      setLiveBillId(result.billId.toString());
+      setBillMessage("Signed from your own wallet. Each payer settles their own share straight into the bill, and you claim what arrives.");
       const publishedReceipt = receiptCommit;
       resetSplitForm();
       // resetSplitForm() unmounts the review panel and surfaces the "Bill #N is
@@ -1268,9 +1273,9 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
       status: "running",
       errorMessage: "",
       steps: [
-        { key: "switch", icon: "switch", label: "Connect to Arc Testnet", hint: "Approve the network switch in your wallet", state: "active" },
-        { key: "approve", icon: "approve", label: "Approve USDC", hint: "Let the bill registry move your USDC", state: "pending" },
-        { key: "pay", icon: "pay", label: "Send payment", hint: "Settle the debt on Arc with a memo", state: "pending" },
+        { key: "switch", label: "Connect to Arc Testnet", hint: "Approve the network switch in your wallet", state: "active" },
+        { key: "approve", label: "Approve USDC", hint: "Let the bill registry move your USDC", state: "pending" },
+        { key: "pay", label: "Send payment", hint: "Settle the debt on Arc with a memo", state: "pending" },
       ],
     });
   }
@@ -1289,8 +1294,8 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
       errorMessage: "",
       runningLabel: "Processing from your Circle wallet — this can take a moment",
       steps: [
-        { key: "approve", icon: "approve", label: "Approve USDC", hint: "Your Circle wallet lets the bill registry move USDC", state: "active" },
-        { key: "pay", icon: "pay", label: "Send payment", hint: "Settle the debt on Arc", state: "pending" },
+        { key: "approve", label: "Approve USDC", hint: "Your Circle wallet lets the bill registry move USDC", state: "active" },
+        { key: "pay", label: "Send payment", hint: "Settle the debt on Arc", state: "pending" },
       ],
     });
   }
@@ -1306,7 +1311,7 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
       errorMessage: "",
       runningLabel: "Processing from your Circle wallet — this can take a moment",
       steps: [
-        { key: "claim", icon: "claim", label: "Claim funds", hint: "Pull paid USDC from the registry to your wallet", state: "active" },
+        { key: "claim", label: "Claim funds", hint: "Pull paid USDC from the registry to your wallet", state: "active" },
       ],
     });
   }
@@ -1321,9 +1326,9 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
       status: "running",
       errorMessage: "",
       steps: [
-        { key: "approve", icon: "approve", label: "Approve USDC", hint: `Allow CCTP to move USDC on ${source}`, state: "active" },
-        { key: "bridge", icon: "bridge", label: "Bridge via CCTP", hint: "Burn on the source chain, then await Circle's attestation", state: "pending" },
-        { key: "claim", icon: "claim", label: "Claim on Arc", hint: "Mint the bridged USDC on Arc Testnet", state: "pending" },
+        { key: "approve", label: "Approve USDC", hint: `Allow CCTP to move USDC on ${source}`, state: "active" },
+        { key: "bridge", label: "Bridge via CCTP", hint: "Burn on the source chain, then await Circle's attestation", state: "pending" },
+        { key: "claim", label: "Claim on Arc", hint: "Mint the bridged USDC on Arc Testnet", state: "pending" },
       ],
     });
   }
@@ -1650,13 +1655,12 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
       // registry v2 is at most two: one approval, then one settle carrying every
       // claim and pay leg. A collect-only settle skips the approval entirely.
       steps: [
-        { key: "switch", icon: "switch", label: "Connect to Arc Testnet", hint: "Approve the network switch in your wallet", state: "active" as const },
+        { key: "switch", label: "Connect to Arc Testnet", hint: "Approve the network switch in your wallet", state: "active" as const },
         ...(payLegs.length
-          ? ([{ key: "approve", icon: "approve", label: "Approve USDC once", hint: "One approval covers every payment below", state: "pending" }] satisfies FlowStep[])
+          ? ([{ key: "approve", label: "Approve USDC once", hint: "One approval covers every payment below", state: "pending" }] satisfies FlowStep[])
           : []),
         {
           key: "settle",
-          icon: payLegs.length ? "pay" : "claim",
           label: `Settle ${claimLegs.length + payLegs.length} position${claimLegs.length + payLegs.length === 1 ? "" : "s"}`,
           hint: "One transaction: collect what you are owed, pay what you owe",
           state: "pending",
@@ -2826,36 +2830,88 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
             />
 
             {/* After a successful submit the split form resets (unmounting the
-                panel that shows billMessage), so surface the "Bill #N is live"
-                confirmation here until a new bill is started. It sits directly
-                under the hero — above the inbox/claim panels — because creating
-                a bill smooth-scrolls back to the top; anywhere lower and the
-                confirmation scrolls out of view the moment it appears. */}
-            {billState === "success" && billMessage && !billReadyForSplit ? (
-              <div className="flex flex-col gap-3">
-                <Message tone="success">{billMessage}</Message>
-                {shareLinkUrl ? (
-                  <div className="flex flex-col gap-2 rounded-[var(--radius)] border border-[var(--accent)] bg-[var(--accent-soft)] p-3 text-sm">
-                    <span className="font-semibold text-[var(--text)]">Anyone with this link can pay</span>
-                    <div className="flex flex-wrap items-center gap-2">
-                      <code className="amount-text min-w-0 flex-1 truncate rounded-[var(--radius)] border border-[var(--border)] bg-[var(--surface-strong)] px-2 py-1.5 text-xs text-[var(--text)]">
-                        {shareLinkUrl}
-                      </code>
-                      <button
-                        className="secondary-button"
-                        onClick={() => void navigator.clipboard.writeText(shareLinkUrl)}
-                        type="button"
-                      >
-                        <Link2 size={15} />
-                        Copy link
-                      </button>
-                    </div>
-                    <span className="text-xs text-[var(--text-muted)]">
-                      Save it now — it isn&apos;t shown again anywhere.
-                    </span>
+                review panel), so the commit reports itself here instead — as the
+                bills tab's fifth poster rather than as a tinted box with a tick
+                in it. It sits directly under the hero, above the inbox/claim
+                panels, because creating a bill smooth-scrolls back to the top;
+                anywhere lower and the confirmation scrolls out of view the
+                moment it appears.
+
+                The number is the headline because the number is the thing the
+                creator now has to keep. The prose under it says which wallet
+                signed and what happens next; the link, when there is one, is a
+                labelled figure on its own rule like every other value in this
+                tab. */}
+            {billState === "success" && liveBillId && !billReadyForSplit ? (
+              <section className="bill-poster bill-live">
+                <div className="bill-poster-head">
+                  <span className="settle-label" data-tone="ok">
+                    Committed
+                  </span>
+                  <div className="bill-poster-marks">
+                    <span className="bill-poster-fact">Arc Testnet</span>
+                    {/* The registry it now lives in, as evidence rather than as
+                        decoration — same mono link the recurring posters use. */}
+                    <a
+                      className="iou-row-tx"
+                      href={`https://testnet.arcscan.app/address/${BILL_SPLIT_REGISTRY_ADDRESS}`}
+                      rel="noreferrer"
+                      target="_blank"
+                    >
+                      {shortAddress(BILL_SPLIT_REGISTRY_ADDRESS)}
+                      <ExternalLink size={11} />
+                    </a>
                   </div>
-                ) : null}
-              </div>
+                </div>
+
+                <div className="bill-poster-body">
+                  <div className="bill-live-lede">
+                    <h3 className="bill-display bill-live-title">
+                      Bill <b>#{liveBillId}</b> is live
+                    </h3>
+                    {/* Not the review panel's ref-driven stamp: that one is a
+                        gsap pop keyed to a panel this state has already
+                        unmounted. Same mark, drawn by CSS on mount. */}
+                    <span className="settlement-stamp bill-live-stamp">On Arc</span>
+                  </div>
+                  <p className="bill-poster-note">{billMessage}</p>
+
+                  {shareLinkUrl ? (
+                    <div className="bill-cell bill-live-link">
+                      <span className="settle-label">Anyone with this link can pay</span>
+                      <div className="bill-live-link-row">
+                        <a className="bill-live-url" href={shareLinkUrl} rel="noreferrer" target="_blank">
+                          {shareLinkUrl}
+                        </a>
+                        <button
+                          className="iou-provider bill-live-copy"
+                          onClick={() => {
+                            void navigator.clipboard.writeText(shareLinkUrl);
+                            setLinkCopied(true);
+                            window.setTimeout(() => setLinkCopied(false), 1800);
+                          }}
+                          type="button"
+                        >
+                          {linkCopied ? (
+                            <>
+                              <Check size={12} /> copied
+                            </>
+                          ) : (
+                            <>
+                              <Link2 size={12} /> copy
+                            </>
+                          )}
+                        </button>
+                      </div>
+                      <div className="bill-cell-rule" />
+                      <p className="bill-options-hint">
+                        Save it now — it isn&apos;t shown again anywhere. Whoever holds it can cover any payer&apos;s
+                        share without signing in.
+                      </p>
+                    </div>
+                  ) : null}
+                </div>
+              </section>
             ) : null}
 
             <div className="space-y-5">
@@ -3694,9 +3750,13 @@ function BillActivityDetail({ debt }: { debt: BillSplitDebt }) {
     <>
           <BillVerification billId={debt.billId} metadataHash={debt.metadataHash} />
           {activity.status === "loading" ? (
-            <p className="text-sm text-[var(--text-muted)]">Loading on-chain activity…</p>
+            <p className="bill-poster-msg" role="status">
+              Reading this bill&apos;s activity from Arc…
+            </p>
           ) : activity.status === "error" ? (
-            <Message tone="error">Could not load on-chain activity. Try again shortly.</Message>
+            <p className="bill-poster-msg" data-tone="error" role="status">
+              Couldn&apos;t read the on-chain activity — try again shortly.
+            </p>
           ) : data ? (
             <div className="space-y-4 text-sm">
               <div className="history-detail-grid">
@@ -3715,7 +3775,7 @@ function BillActivityDetail({ debt }: { debt: BillSplitDebt }) {
                       {shortAddress(data.createdTxHash)}
                     </a>
                   ) : data.createdAt === null ? (
-                    <p className="mt-1 text-[var(--text-muted)]">—</p>
+                    <p className="mt-1 text-[var(--pay-poster-dim)]">—</p>
                   ) : null}
                 </div>
                 <div>
@@ -3747,7 +3807,7 @@ function BillActivityDetail({ debt }: { debt: BillSplitDebt }) {
                       </a>
                     ))
                   ) : (
-                    <span className="text-[var(--text-muted)]">—</span>
+                    <span className="text-[var(--pay-poster-dim)]">—</span>
                   )}
                 </div>
               </div>
@@ -3761,7 +3821,7 @@ function BillActivityDetail({ debt }: { debt: BillSplitDebt }) {
                         <span>
                           <span className="font-mono text-xs">{shortAddress(payment.payer)}</span> paid{" "}
                           <span className="amount-text">${billUnitsToUsdc(payment.amount)}</span>
-                          <span className="text-[var(--text-muted)]"> · {formatTimestamp(payment.timestamp)}</span>
+                          <span className="text-[var(--pay-poster-dim)]"> · {formatTimestamp(payment.timestamp)}</span>
                         </span>
                         <a className="history-tx-link" href={`https://testnet.arcscan.app/tx/${payment.txHash}`} rel="noreferrer" target="_blank">
                           tx
@@ -3770,7 +3830,7 @@ function BillActivityDetail({ debt }: { debt: BillSplitDebt }) {
                     ))}
                   </ul>
                 ) : (
-                  <p className="mt-1 text-[var(--text-muted)]">No payments recorded in the recent block window.</p>
+                  <p className="mt-1 text-[var(--pay-poster-dim)]">No payments recorded in the recent block window.</p>
                 )}
               </div>
 
@@ -3782,7 +3842,7 @@ function BillActivityDetail({ debt }: { debt: BillSplitDebt }) {
                       <li className="history-event-row" key={claim.txHash}>
                         <span>
                           <span className="amount-text">${billUnitsToUsdc(claim.amount)}</span> claimed
-                          <span className="text-[var(--text-muted)]"> · {formatTimestamp(claim.timestamp)}</span>
+                          <span className="text-[var(--pay-poster-dim)]"> · {formatTimestamp(claim.timestamp)}</span>
                         </span>
                         <a className="history-tx-link" href={`https://testnet.arcscan.app/tx/${claim.txHash}`} rel="noreferrer" target="_blank">
                           tx
@@ -3794,7 +3854,9 @@ function BillActivityDetail({ debt }: { debt: BillSplitDebt }) {
               ) : null}
             </div>
           ) : (
-            <p className="text-sm text-[var(--text-muted)]">No on-chain activity found in the recent block window.</p>
+            <p className="bill-poster-msg" role="status">
+              No on-chain activity in the recent block window.
+            </p>
           )}
     </>
   );
@@ -4830,14 +4892,24 @@ function RecurringWorkspace({
   );
 }
 
-const flowStepIcons: Record<FlowStepIcon, typeof ShieldCheck> = {
-  switch: WalletCards,
-  approve: ShieldCheck,
-  pay: Send,
-  bridge: ArrowLeftRight,
-  claim: Landmark,
-};
-
+// The progress dialog, in the poster's voice.
+//
+// It was the app's last spec-sheet surface and the most-seen one: every pay,
+// claim and bridge opens it. A bordered white card, a filled circle with a glyph
+// in it for the flow, a second filled circle per step joined by a 2px connector,
+// weight-740 step labels, and a filled black pill to close. None of that survived
+// anywhere else in the product, and this is the one panel a user cannot dismiss
+// while it works.
+//
+// It now says the same things the way the rest of the app does: a caps rail fact,
+// one display line, a standfirst, the steps as numbered entries each on their own
+// rule, and the commit word to close. Nothing draws a box; state is the rule under
+// a step and the words in its hint.
+//
+// The step glyphs went with the boxes — a step's ordinal is what a reader needs
+// ("which of three am I on"), it comes free from the array, and it is how 01–04
+// are already numbered on every poster in the bills tab. That is what retired
+// FlowStep.icon.
 function ProgressModal({ flow, onClose }: { flow: ProgressFlow; onClose: () => void }) {
   const running = flow.status === "running";
   const succeeded = flow.status === "success";
@@ -4848,16 +4920,6 @@ function ProgressModal({ flow, onClose }: { flow: ProgressFlow; onClose: () => v
   // it is burned on the source chain and claimable only against the attestation.
   // "No funds were lost" is true of a reverted payment and misleading here.
   const burned = isBridge && flow.steps.find((step) => step.key === "bridge")?.state === "done";
-
-  const headIcon = succeeded ? (
-    <CheckCircle2 size={22} />
-  ) : flow.status === "error" ? (
-    <AlertTriangle size={22} />
-  ) : isBridge ? (
-    <ArrowLeftRight size={22} />
-  ) : (
-    <BadgeDollarSign size={22} />
-  );
 
   const title = isBridge
     ? succeeded
@@ -4890,10 +4952,6 @@ function ProgressModal({ flow, onClose }: { flow: ProgressFlow; onClose: () => v
             : `Paid $${flow.amountLabel} USDC ${flow.contextLabel}.`
         : `${verb} $${flow.amountLabel} USDC ${destination} ${flow.contextLabel}.`;
 
-  const explorerLinks = flow.steps
-    .filter((step) => step.explorerUrl)
-    .map((step) => ({ key: step.key, label: step.label, url: step.explorerUrl as string }));
-
   return (
     <Dialog.Root
       open={flow.open}
@@ -4904,99 +4962,81 @@ function ProgressModal({ flow, onClose }: { flow: ProgressFlow; onClose: () => v
       }}
     >
       <Dialog.Portal>
-        <Dialog.Overlay className="pay-modal-overlay" />
+        <Dialog.Overlay className="flow-backdrop" />
         <Dialog.Content
-          aria-describedby="pay-modal-sub"
-          className={`pay-modal pay-modal-${flow.status}`}
+          aria-describedby="flow-sub"
+          className="flow-panel"
+          data-status={flow.status}
           onEscapeKeyDown={(event) => running && event.preventDefault()}
           onInteractOutside={(event) => running && event.preventDefault()}
         >
-          <div className="pay-modal-head">
-            <span className={`pay-modal-icon pay-modal-icon-${flow.status}`} aria-hidden="true">
-              {headIcon}
-            </span>
-            <div className="min-w-0">
-              <Dialog.Title className="pay-modal-title">{title}</Dialog.Title>
-              <Dialog.Description className="pay-modal-sub" id="pay-modal-sub">
-                {subtitle}
-              </Dialog.Description>
+          <div className="flow-head">
+            <div className="bill-poster-head">
+              {/* The rail fact: which bill this is about. Deliberately NOT the
+                  amount as well — the standfirst two lines down is already a
+                  sentence with the figure in it, and saying "$42.60 USDC" twice
+                  in four lines reads as a rendering bug.
+
+                  Nothing sits opposite it. The dismiss is the word in the foot,
+                  and a second one up here said "close" 500px from a button that
+                  says "done" for the identical action. Escape still closes it —
+                  Radix handles that, and the guard below is what seals the dialog
+                  while a transaction is actually in flight. */}
+              <span className="settle-label">{flow.contextLabel}</span>
             </div>
-            {!running ? (
-              <Dialog.Close className="icon-button pay-modal-close" aria-label="Close">
-                <X size={17} />
-              </Dialog.Close>
-            ) : null}
+            <Dialog.Title className="flow-title" data-status={flow.status}>
+              {title}
+            </Dialog.Title>
+            <Dialog.Description className="bill-poster-note" id="flow-sub">
+              {subtitle}
+            </Dialog.Description>
           </div>
 
-          <ol className="pay-steps">
-            {flow.steps.map((step) => {
-              const StepIcon = flowStepIcons[step.icon];
-              return (
-                <li className="pay-step" data-state={step.state} key={step.key}>
-                  <span className="pay-step-icon" aria-hidden="true">
-                    {step.state === "active" ? (
-                      <Loader2 className="animate-spin" size={16} />
-                    ) : step.state === "done" ? (
-                      <CheckCircle2 size={16} />
-                    ) : step.state === "error" ? (
-                      <AlertTriangle size={16} />
-                    ) : (
-                      <StepIcon size={15} />
-                    )}
+          <ol className="flow-steps">
+            {flow.steps.map((step, index) => (
+              <li className="flow-step" data-state={step.state} key={step.key}>
+                <div className="flow-step-line">
+                  <span className="settle-label">
+                    {String(index + 1).padStart(2, "0")} · {step.label}
                   </span>
-                  <span className="pay-step-body">
-                    <span className="pay-step-label">{step.label}</span>
-                    <span className="pay-step-hint">
-                      {step.state === "done"
-                        ? "Confirmed"
-                        : step.state === "error"
-                          ? "Failed"
-                          : step.hint}
-                    </span>
-                  </span>
-                </li>
-              );
-            })}
+                  {/* The step's own evidence, on the step — where it belongs.
+                      These used to be collected into a separate link block under
+                      the whole list, which left the reader matching hashes to
+                      rows by name. */}
+                  {step.explorerUrl ? (
+                    <a className="iou-row-tx" href={step.explorerUrl} rel="noreferrer" target="_blank">
+                      transaction
+                      <ExternalLink size={11} />
+                    </a>
+                  ) : step.state === "active" ? (
+                    <Loader2 aria-hidden className="flow-step-spin animate-spin" size={13} />
+                  ) : null}
+                </div>
+                <p className="flow-step-hint">
+                  {step.state === "done" ? "confirmed" : step.state === "error" ? "failed" : step.hint}
+                </p>
+                <div className="flow-step-rule" />
+              </li>
+            ))}
           </ol>
 
-          {explorerLinks.length > 0 ? (
-            <div className="pay-modal-links">
-              {explorerLinks.map((link) => (
-                <a className="pay-modal-link" href={link.url} key={link.key} rel="noreferrer" target="_blank">
-                  <ExternalLink size={13} />
-                  {link.label} transaction
-                </a>
-              ))}
-            </div>
-          ) : null}
-
-          <div className="pay-modal-foot">
-            <span className={`pay-modal-status pay-modal-status-${flow.status}`}>
-              {running ? (
-                <>
-                  <Loader2 className="animate-spin" size={15} />
-                  {flow.runningLabel ?? (isBridge ? "Keep this open until the bridge finishes" : "Confirm each step in your wallet")}
-                </>
-              ) : succeeded ? (
-                <>
-                  <CheckCircle2 size={15} />
-                  All transactions confirmed
-                </>
-              ) : burned ? (
-                <>
-                  <AlertTriangle size={15} />
-                  Burned on the source chain — the USDC is still waiting to be claimed on Arc
-                </>
-              ) : (
-                <>
-                  <AlertTriangle size={15} />
-                  No funds were lost
-                </>
-              )}
-            </span>
+          <div className="bill-poster-foot flow-foot">
+            <p
+              className="bill-poster-msg"
+              data-tone={succeeded ? "success" : flow.status === "error" ? "error" : undefined}
+              role="status"
+            >
+              {running
+                ? (flow.runningLabel ?? (isBridge ? "Keep this open until the bridge finishes" : "Confirm each step in your wallet"))
+                : succeeded
+                  ? "All transactions confirmed"
+                  : burned
+                    ? "Burned on the source chain — the USDC is still waiting to be claimed on Arc"
+                    : "No funds were lost"}
+            </p>
             {!running ? (
-              <button className="primary-button" onClick={onClose} type="button">
-                {succeeded ? "Done" : "Close"}
+              <button className="settle-action" onClick={onClose} type="button">
+                {succeeded ? "done" : "close"} ›
               </button>
             ) : null}
           </div>
@@ -5261,25 +5301,11 @@ function PayerMark({ provider, target }: { provider: AccountProvider; target: st
 // One labelled figure on the poster's rail: caps label, the value, and the rule
 // that lights when the value has focus. See app/SpecCard.tsx for PosterCell and
 // PosterFact.
-
-function Message({ tone, children }: { tone: "error" | "neutral" | "success"; children: ReactNode }) {
-  return (
-    <div
-      className={`message ${
-        tone === "error" ? "message-error" : tone === "success" ? "message-success" : "message-neutral"
-      }`}
-    >
-      {tone === "error" ? (
-        <AlertTriangle className="mt-0.5 shrink-0" size={17} />
-      ) : tone === "success" ? (
-        <CheckCircle2 className="mt-0.5 shrink-0" size={17} />
-      ) : (
-        <Info className="mt-0.5 shrink-0" size={17} />
-      )}
-      {children}
-    </div>
-  );
-}
+//
+// The old <Message> tone box stood here — a tinted, bordered card with an icon in
+// it, and the last piece of that system left in the app. Every status this file
+// reports now takes .bill-poster-msg, the same one-line caps register /pay and
+// the agents panel use, so a result reads the same wherever it lands.
 
 // One tab on the header rail. The same control the dashboard's view pair and the
 // Bills tab's One-off/Recurring rail are built from — .iou-provider for the
@@ -5307,44 +5333,8 @@ function TabButton({
   );
 }
 
-// The wallet, on the rail. RainbowKit's own ConnectButton is a filled pill with a
-// shadow and a chain glyph — the last boxed control in the header — so this
-// renders its three states as marks instead: the way in, the chain to fix, or the
-// account you are signed in as.
-//
-// The chain glyph is not replaced. It was an unlabelled icon for a single-chain
-// app that stamps "Arc Testnet" under its own logo, and the only chain state worth
-// a word in the header is the one that stops a payment going through.
-function WalletMark() {
-  return (
-    <ConnectButton.Custom>
-      {({ account, chain, mounted, openAccountModal, openChainModal, openConnectModal }) => {
-        // Pre-hydration there is no truthful answer, and "connect a wallet" shown
-        // to someone already connected is worse than a beat of nothing.
-        if (!mounted) return null;
-        if (!account || !chain) {
-          return (
-            <button className="iou-provider bill-toggle" onClick={openConnectModal} type="button">
-              Connect wallet
-            </button>
-          );
-        }
-        if (chain.unsupported) {
-          return (
-            <button className="iou-provider bill-toggle app-warn" onClick={openChainModal} type="button">
-              Wrong network
-            </button>
-          );
-        }
-        return (
-          <button className="iou-provider bill-toggle" onClick={openAccountModal} type="button">
-            {account.displayName}
-          </button>
-        );
-      }}
-    </ConnectButton.Custom>
-  );
-}
+// The wallet, on the rail — moved to app/WalletMark.tsx so /pay's header can
+// render the same mark without importing this module.
 
 function sourceLabel(id: BridgeSourceChain) {
   return bridgeSourceChains.find((chain) => chain.id === id)?.label ?? id;

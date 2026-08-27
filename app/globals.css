@@ -34,16 +34,30 @@
   --success: var(--settled-green);
   --success-soft: rgba(23, 165, 107, 0.12);
 
-  /* The pay page's poster and CTA bar are one editorial surface. They used to
-     be hardcoded to ink/paper, which left the page half near-black and half
-     pure white in light mode and put two mismatched navies side by side in
-     dark. Both halves now flip together: cream poster beside a white roster in
-     light, ink poster beside the navy roster in dark. */
-  --pay-poster-bg: var(--paper-50);
+  /* The ground every poster surface mixes its dims against, and the fill its
+     panels paint. Cool, not cream.
+
+     --paper-50 was right when /pay was a printed card. The redesign made every
+     surface in this app a frosted pane over the shared .app-backdrop blooms
+     instead, and a warm ground under cool glass is a yellow cast — which is why
+     .pay-shell, .pay-bar and .iou-page each carried an identical local override
+     of this line, and why the two surfaces that forgot to (the settle deck, and
+     the sheets it portals to <body>) still read warm. One cool default is the
+     fix; a sixth local copy would not have been.
+
+     Slightly lighter than --background because that is what the white pane in
+     the bloom stack does to it: this is the flat stand-in for that pane, and it
+     must stay a flat COLOUR — half the rules in this file color-mix() against
+     it, and color-mix has no opinion about gradients.
+
+     Surfaces painted on the RAW background rather than on a pane — .site-footer,
+     .lp-paper, .bill-poster, .app-masthead — override this to var(--background).
+     That is a different ground, not a missing patch. */
+  --pay-poster-bg: #f3f8fb;
   --pay-poster-fg: var(--ink-950);
-  /* 0.6 cleared 4.5:1 on the cream poster by a hair, which is not enough for
-     what it is asked to carry here: 0.69rem uppercase at weight 300, tracked out
-     to 0.18em. 0.75 takes it to ~8:1. Dark's ink ground never had the problem. */
+  /* 0.6 cleared 4.5:1 by a hair, which is not enough for what it is asked to
+     carry here: 0.69rem uppercase at weight 300, tracked out to 0.18em. 0.75
+     takes it to ~8:1. Dark's ink ground never had the problem. */
   --pay-poster-dim: rgba(7, 20, 33, 0.75);
   --pay-poster-rule: rgba(7, 20, 33, 0.14);
   --pay-poster-settled: #dceee3;
@@ -305,10 +319,6 @@ a {
   --logo-width: clamp(9.6rem, 13vw, 12.8rem);
 }
 
-.logo-crop-docs {
-  --logo-width: clamp(8.5rem, 12vw, 10rem);
-}
-
 .logo-crop-image {
   position: absolute;
   top: calc(var(--logo-width) * -0.26);
@@ -518,67 +528,11 @@ input[type="number"],
   padding: 0.85rem;
 }
 
-.message {
-  display: flex;
-  gap: 0.55rem;
-  border-radius: var(--radius);
-  border: 1px solid var(--border);
-  padding: 0.85rem;
-  font-size: 0.875rem;
-}
-
-.message-neutral {
-  background: var(--surface-muted);
-  color: var(--text-soft);
-}
-
-.message-error {
-  border-color: var(--danger-border);
-  background: var(--danger-bg);
-  color: var(--danger-text);
-}
-
-/* Post-operation confirmations ("Bill #N is live on Arc", "Paid…", "Claimed…"):
-   green instead of muted gray, with a pop-in and a one-shot glow ring so the
-   result of the action the user just took is impossible to miss. */
-.message-success {
-  border-color: var(--success);
-  background: var(--success-soft);
-  color: var(--success);
-  font-weight: 600;
-  animation:
-    message-success-pop 0.38s cubic-bezier(0.22, 1.2, 0.36, 1),
-    message-success-glow 1.4s ease-out 0.15s;
-}
-
-@keyframes message-success-pop {
-  0% {
-    opacity: 0;
-    transform: translateY(8px) scale(0.96);
-  }
-  100% {
-    opacity: 1;
-    transform: translateY(0) scale(1);
-  }
-}
-
-@keyframes message-success-glow {
-  0% {
-    box-shadow: 0 0 0 0 var(--success-soft), 0 0 0 0 var(--success);
-  }
-  60% {
-    box-shadow: 0 0 0 12px transparent, 0 0 18px 0 var(--success-soft);
-  }
-  100% {
-    box-shadow: 0 0 0 0 transparent, 0 0 0 0 transparent;
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .message-success {
-    animation: none;
-  }
-}
+/* .message / .message-neutral / .message-error / .message-success stood here: a
+   bordered, tinted box with an icon in it, plus a pop-and-glow keyframe pair for
+   the success case. Deleted with its last caller. Every status in the app now
+   takes .bill-poster-msg — one caps line, tone by colour — because a system where
+   nothing else draws a box cannot have one shape that shouts. */
 
 .status-dot {
   display: inline-flex;
@@ -794,6 +748,103 @@ input[type="number"],
   color: var(--pay-poster-fg);
 }
 
+/* ── The verification note (a History row's two checks) ───────────────────────
+   .doc-note plus a measure and the tone pair it shares with .pay-note (see
+   "the tone pair is shared" above). What it replaced was the app's last tinted
+   card; the rule is now the whole frame, and the verdict is the caps label on it.
+
+   Every line inside can go warn on its own — a bill can be genuine on Arc AND
+   have had its total changed, so the two findings need to disagree in colour
+   without the note's own rule flipping twice. */
+.bill-verify {
+  margin-top: 0.9rem;
+  max-width: 78ch;
+}
+
+.bill-verify > p {
+  font-size: 0.78rem;
+  line-height: 1.6;
+  color: var(--pay-poster-dim);
+}
+
+.bill-verify > p[data-tone="warn"] { color: var(--warning-text); }
+
+.bill-verify > p > b {
+  font-weight: 500;
+  color: var(--pay-poster-fg);
+}
+
+/* Its own line, so the two disclosures sit on one baseline under the findings
+   rather than stacking as two more paragraphs. */
+.bill-verify-tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem 1.35rem;
+  margin-top: 0.9rem;
+}
+
+.bill-verify-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3em;
+}
+
+/* The chevron is the marker, so it has to turn — Tailwind's rotate-180 sets the
+   transform but nothing here was transitioning it. */
+.bill-verify-toggle > svg { transition: transform var(--dur-2) var(--ease-out); }
+
+/* Used by the loading line, which is the one status in here with a spinner. */
+.bill-verify-line {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45em;
+}
+
+.bill-verify-receipt {
+  margin-top: 0.8rem;
+}
+
+.bill-verify-receipt > p {
+  font-size: 0.78rem;
+  color: var(--pay-poster-dim);
+  margin-bottom: 0.45rem;
+}
+
+.bill-verify-receipt img {
+  max-height: 16rem;
+  width: auto;
+  border: 1px solid var(--pay-poster-rule);
+  border-radius: 0.6rem;
+}
+
+.bill-verify-detail {
+  display: grid;
+  gap: 0.65rem;
+  margin-top: 0.8rem;
+  border-top: 1px solid color-mix(in srgb, var(--pay-poster-rule) 60%, transparent);
+  padding-top: 0.8rem;
+}
+
+.bill-verify-detail > p {
+  font-size: 0.78rem;
+  line-height: 1.6;
+  color: var(--pay-poster-dim);
+}
+
+.bill-verify-detail > p > b {
+  font-weight: 500;
+  color: var(--pay-poster-fg);
+}
+
+/* The commitment itself. Mono and wrapping anywhere: it is a 66-character hex
+   string in a column that is narrower than that at every width. */
+.bill-verify-hash {
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  overflow-wrap: anywhere;
+}
+
 .receipt-index {
   font-family: var(--font-geist-mono), "Geist Mono", "SFMono-Regular", Consolas, "Liberation Mono", monospace;
   color: var(--receipt-muted);
@@ -878,650 +929,6 @@ input[type="number"],
   height: auto;
 }
 
-.docs-shell {
-  /* Transparent so the shared HeroBackground blobs (mounted in the root layout)
-     show through, matching the main app. DocsShell drives the root data-theme so
-     the body canvas underneath tracks the docs light/dark toggle. */
-  background: transparent;
-  color: #17212b;
-  --docs-bg: #f6f8fb;
-  --docs-text: #17212b;
-  --docs-muted: #4a5b6c;
-  --docs-border: #dce4ee;
-  --docs-card: #ffffff;
-  --docs-card-soft: #fbfcfe;
-  --docs-link: #1f66ff;
-  --docs-accent-soft: #eef4ff;
-  --docs-code-bg: #f6f8fb;
-  --docs-code-text: #26384a;
-  --docs-callout-bg: #f4f8ff;
-}
-
-.docs-shell[data-docs-theme="dark"] {
-  background: transparent;
-  color: #edf6fb;
-  --docs-bg: #08111b;
-  --docs-text: #edf6fb;
-  --docs-muted: #9fb2c4;
-  --docs-border: rgba(231, 237, 242, 0.14);
-  --docs-card: #101f30;
-  --docs-card-soft: #13283c;
-  --docs-link: #7ab8ff;
-  --docs-accent-soft: rgba(122, 184, 255, 0.14);
-  --docs-code-bg: #0b1826;
-  --docs-code-text: #dbeafe;
-  --docs-callout-bg: rgba(122, 184, 255, 0.1);
-}
-
-.docs-hero {
-  border-bottom: 1px solid var(--docs-border);
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(246, 248, 251, 0.96)),
-    radial-gradient(circle at 20% 12%, rgba(43, 121, 255, 0.12), transparent 34%);
-}
-
-.docs-shell[data-docs-theme="dark"] .docs-hero {
-  background:
-    linear-gradient(180deg, rgba(16, 31, 48, 0.96), rgba(8, 17, 27, 0.98)),
-    radial-gradient(circle at 20% 12%, rgba(98, 168, 241, 0.11), transparent 34%);
-}
-
-.docs-topbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 1rem;
-  max-width: 1180px;
-  margin: 0 auto;
-  padding: 1rem 1.25rem;
-}
-
-.docs-brand {
-  display: inline-flex;
-  align-items: center;
-  color: var(--docs-text);
-  font-size: 1.05rem;
-  font-weight: 800;
-  text-decoration: none;
-}
-
-.docs-toplinks {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.85rem;
-  font-size: 0.9rem;
-}
-
-.docs-toplinks a {
-  color: var(--docs-muted);
-  text-decoration: none;
-}
-
-.docs-toplinks a:hover {
-  color: var(--docs-link);
-}
-
-.docs-theme-toggle {
-  display: inline-flex;
-  min-height: 2.35rem;
-  align-items: center;
-  justify-content: center;
-  border: 1px solid var(--docs-border);
-  border-radius: 999px;
-  background: var(--docs-card);
-  color: var(--docs-text);
-  padding: 0 0.7rem;
-  transition:
-    transform 150ms ease,
-    background-color 160ms ease,
-    border-color 160ms ease;
-}
-
-.docs-theme-toggle:hover {
-  transform: translateY(-1px);
-}
-
-.docs-hero-grid {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 22rem;
-  gap: 2rem;
-  max-width: 1180px;
-  margin: 0 auto;
-  padding: 4.5rem 1.25rem 4rem;
-}
-
-.docs-eyebrow {
-  color: #1f66ff;
-  font-size: 0.78rem;
-  font-weight: 800;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
-.docs-hero h1 {
-  max-width: 780px;
-  margin-top: 0.65rem;
-  font-family: var(--font-display);
-  font-size: clamp(2.4rem, 5vw, 4.4rem);
-  font-weight: 600;
-  letter-spacing: 0;
-  line-height: 1.02;
-}
-
-.docs-lede {
-  max-width: 760px;
-  margin-top: 1.25rem;
-  color: var(--docs-muted);
-  font-size: 1.06rem;
-  line-height: 1.75;
-}
-
-.docs-hero-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.8rem;
-  margin-top: 1.7rem;
-}
-
-.docs-primary-link,
-.docs-secondary-link {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.45rem;
-  border-radius: 7px;
-  padding: 0.72rem 0.95rem;
-  font-weight: 750;
-  text-decoration: none;
-}
-
-.docs-primary-link {
-  background: #1f66ff;
-  color: white;
-}
-
-.docs-secondary-link {
-  border: 1px solid var(--docs-border);
-  color: var(--docs-text);
-  background: var(--docs-card);
-}
-
-.docs-hero-panel {
-  align-self: start;
-  border: 1px solid var(--docs-border);
-  border-radius: 8px;
-  background: color-mix(in srgb, var(--docs-card) 76%, transparent);
-  box-shadow: 0 24px 50px rgba(29, 48, 73, 0.08);
-  padding: 1rem;
-}
-
-.docs-hero-panel div {
-  display: grid;
-  gap: 0.2rem;
-  padding: 0.9rem 0.5rem;
-  border-bottom: 1px solid var(--docs-border);
-}
-
-.docs-hero-panel div:last-child {
-  border-bottom: 0;
-}
-
-.docs-hero-panel span {
-  color: var(--docs-muted);
-  font-size: 0.78rem;
-  font-weight: 750;
-  text-transform: uppercase;
-}
-
-.docs-hero-panel strong {
-  color: var(--docs-text);
-  font-size: 1rem;
-}
-
-.docs-layout {
-  display: grid;
-  grid-template-columns: 15rem minmax(0, 1fr);
-  gap: 2.5rem;
-  max-width: 1180px;
-  margin: 0 auto;
-  padding: 2.5rem 1.25rem 5rem;
-}
-
-.docs-sidebar {
-  position: sticky;
-  top: 1rem;
-  align-self: start;
-  display: grid;
-  gap: 0.25rem;
-  border: 1px solid var(--docs-border);
-  border-radius: 8px;
-  background: var(--docs-card);
-  padding: 0.8rem;
-}
-
-.docs-sidebar p {
-  padding: 0.45rem 0.5rem;
-  color: var(--docs-muted);
-  font-size: 0.72rem;
-  font-weight: 850;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
-.docs-sidebar a {
-  border-radius: 6px;
-  color: var(--docs-muted);
-  padding: 0.48rem 0.5rem;
-  text-decoration: none;
-}
-
-/* Pin the "Contents" label and search box above reordered links. */
-.docs-sidebar > p { order: -2; }
-.docs-sidebar > .docs-search-wrap { order: -1; }
-
-.docs-sidebar a:hover {
-  background: var(--docs-card-soft);
-  color: var(--docs-link);
-}
-
-.docs-search {
-  display: flex;
-  align-items: center;
-  gap: 0.4rem;
-  border: 1px solid var(--docs-border);
-  border-radius: 6px;
-  padding: 0.35rem 0.5rem;
-  color: var(--docs-muted);
-}
-
-.docs-search input {
-  background: none;
-  border: none;
-  color: var(--docs-text);
-  font-size: 0.8rem;
-  outline: none;
-  width: 100%;
-}
-
-.docs-search input::placeholder {
-  color: var(--docs-muted);
-}
-
-.docs-search-wrap {
-  display: grid;
-  gap: 0.35rem;
-  margin-bottom: 0.4rem;
-}
-
-.docs-search-clear {
-  display: grid;
-  place-items: center;
-  border: none;
-  background: none;
-  color: var(--docs-muted);
-  cursor: pointer;
-  padding: 0.1rem;
-  border-radius: 4px;
-}
-
-.docs-search-clear:hover {
-  color: var(--docs-text);
-  background: var(--docs-card-soft);
-}
-
-.docs-search-meta {
-  padding: 0 0.5rem;
-  font-size: 0.72rem;
-  color: var(--docs-muted);
-}
-
-.docs-search-hint {
-  opacity: 0.7;
-}
-
-/* Custom clear button replaces the native one — avoid a double ×. */
-.docs-search input::-webkit-search-cancel-button {
-  display: none;
-}
-
-/* Keyboard-active sidebar result. */
-.docs-sidebar a.docs-search-active {
-  background: var(--docs-card-soft);
-  color: var(--docs-link);
-}
-
-/* In-article term highlight. */
-.docs-section mark.docs-mark {
-  background: var(--docs-accent-soft);
-  color: var(--docs-link);
-  border-radius: 3px;
-  padding: 0.05rem 0.1rem;
-  border: none;
-  font: inherit;
-}
-
-/* Brief flash when a result is jumped to. */
-.docs-search-hit {
-  animation: docs-hit-flash 1.2s ease-out;
-}
-
-@keyframes docs-hit-flash {
-  0%   { box-shadow: 0 0 0 4px var(--docs-accent-soft); }
-  100% { box-shadow: 0 0 0 0 transparent; }
-}
-
-.docs-content {
-  min-width: 0;
-}
-
-.docs-section {
-  scroll-margin-top: 1.5rem;
-  border: 1px solid var(--docs-border);
-  border-radius: 8px;
-  background: var(--docs-card);
-  padding: clamp(1.25rem, 3vw, 2rem);
-  margin-bottom: 1.2rem;
-}
-
-.docs-heading {
-  display: flex;
-  align-items: center;
-  gap: 0.65rem;
-  margin-bottom: 1rem;
-}
-
-.docs-heading span {
-  display: grid;
-  place-items: center;
-  width: 2.2rem;
-  height: 2.2rem;
-  border-radius: 7px;
-  background: var(--docs-accent-soft);
-  color: var(--docs-link);
-}
-
-.docs-heading h2 {
-  font-family: var(--font-display);
-  font-size: clamp(1.55rem, 2.6vw, 2rem);
-  font-weight: 600;
-}
-
-.docs-section h3 {
-  color: var(--docs-text);
-  font-size: 1.02rem;
-  font-weight: 760;
-}
-
-.docs-subheading {
-  margin-top: 2rem;
-  font-size: 1.12rem !important;
-}
-
-.docs-section p,
-.docs-section li {
-  color: var(--docs-muted);
-  line-height: 1.75;
-}
-
-.docs-section p + p {
-  margin-top: 0.85rem;
-}
-
-.docs-section code {
-  border: 1px solid var(--docs-border);
-  border-radius: 5px;
-  background: var(--docs-code-bg);
-  color: var(--docs-code-text);
-  padding: 0.1rem 0.28rem;
-  font-size: 0.88em;
-}
-
-.docs-code {
-  margin-top: 1rem;
-  padding: 0.9rem 1rem;
-  border: 1px solid var(--docs-border);
-  border-radius: 10px;
-  background: var(--docs-code-bg);
-  color: var(--docs-code-text);
-  font-size: 0.8rem;
-  line-height: 1.65;
-  overflow-x: auto;
-  white-space: pre;
-}
-
-.docs-card-grid {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 0.9rem;
-  margin-top: 1.25rem;
-}
-
-.docs-card-grid.two {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-}
-
-.docs-card {
-  border: 1px solid var(--docs-border);
-  border-radius: 8px;
-  background: var(--docs-card-soft);
-  padding: 1rem;
-}
-
-.docs-card-icon {
-  display: inline-flex;
-  color: var(--docs-link);
-}
-
-.docs-card-icon svg {
-  width: 1.25rem;
-  height: 1.25rem;
-}
-
-.docs-card h3 {
-  margin-top: 0.7rem;
-}
-
-.docs-card p {
-  margin-top: 0.4rem;
-  font-size: 0.93rem;
-}
-
-.docs-steps {
-  display: grid;
-  gap: 0.8rem;
-}
-
-.docs-step {
-  display: grid;
-  grid-template-columns: auto 1fr;
-  gap: 0.85rem;
-  border: 1px solid var(--docs-border);
-  border-radius: 8px;
-  padding: 1rem;
-  background: var(--docs-card-soft);
-}
-
-.docs-step > span {
-  display: grid;
-  place-items: center;
-  width: 2rem;
-  height: 2rem;
-  border-radius: 999px;
-  background: #1f66ff;
-  color: white;
-  font-weight: 850;
-}
-
-.docs-step p {
-  margin-top: 0.25rem;
-}
-
-.docs-table-wrap {
-  overflow-x: auto;
-  margin-top: 1rem;
-  border: 1px solid var(--docs-border);
-  border-radius: 8px;
-}
-
-.docs-table-wrap table {
-  width: 100%;
-  min-width: 680px;
-  border-collapse: collapse;
-}
-
-.docs-table-wrap th,
-.docs-table-wrap td {
-  border-bottom: 1px solid var(--docs-border);
-  padding: 0.85rem;
-  text-align: left;
-  vertical-align: top;
-}
-
-.docs-table-wrap th {
-  background: var(--docs-card-soft);
-  color: var(--docs-text);
-  font-size: 0.78rem;
-  font-weight: 850;
-  text-transform: uppercase;
-}
-
-.docs-table-wrap tr:last-child td {
-  border-bottom: 0;
-}
-
-.docs-callout {
-  margin-top: 1.1rem;
-  border-left: 4px solid var(--docs-link);
-  border-radius: 7px;
-  background: var(--docs-callout-bg);
-  padding: 1rem;
-}
-
-.docs-callout p {
-  margin-top: 0.3rem;
-}
-
-.docs-sources {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.65rem;
-  margin-top: 1.25rem;
-  border-top: 1px solid var(--docs-border);
-  padding-top: 1rem;
-}
-
-.docs-sources strong {
-  width: 100%;
-  color: var(--docs-text);
-}
-
-.docs-sources a {
-  border: 1px solid var(--docs-border);
-  border-radius: 999px;
-  color: var(--docs-link);
-  padding: 0.42rem 0.65rem;
-  text-decoration: none;
-}
-
-.docs-architecture {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 0.9rem;
-}
-
-.docs-architecture > div {
-  border: 1px solid var(--docs-border);
-  border-radius: 8px;
-  padding: 1rem;
-  background: var(--docs-card-soft);
-}
-
-.docs-stack {
-  display: grid;
-  gap: 0.5rem;
-  margin-top: 1rem;
-}
-
-.docs-stack div {
-  display: grid;
-  grid-template-columns: 13rem 1fr;
-  gap: 1rem;
-  border-bottom: 1px solid var(--docs-border);
-  padding: 0.75rem 0;
-}
-
-.docs-stack div:last-child {
-  border-bottom: 0;
-}
-
-.docs-stack strong {
-  color: var(--docs-text);
-}
-
-.docs-stack span {
-  color: var(--docs-muted);
-}
-
-.docs-list {
-  display: grid;
-  gap: 0.65rem;
-  padding-left: 1.1rem;
-}
-
-.docs-section pre {
-  overflow-x: auto;
-  margin: 1rem 0;
-  border: 1px solid var(--docs-border);
-  border-radius: 8px;
-  background: var(--docs-code-bg);
-  color: var(--docs-code-text);
-  padding: 1rem;
-}
-
-.docs-section pre code {
-  border: 0;
-  background: transparent;
-  color: inherit;
-  padding: 0;
-}
-
-@media (max-width: 980px) {
-  .docs-hero-grid,
-  .docs-layout {
-    grid-template-columns: 1fr;
-  }
-
-  .docs-sidebar {
-    position: static;
-  }
-
-  .docs-card-grid,
-  .docs-card-grid.two,
-  .docs-architecture {
-    grid-template-columns: 1fr;
-  }
-
-  .docs-stack div {
-    grid-template-columns: 1fr;
-    gap: 0.25rem;
-  }
-}
-
-@media (max-width: 640px) {
-  .docs-topbar {
-    align-items: flex-start;
-    flex-direction: column;
-  }
-
-  .docs-hero-grid {
-    padding-top: 2.8rem;
-  }
-
-  .docs-hero-actions a {
-    width: 100%;
-    justify-content: center;
-  }
-}
-
 @keyframes debt-pop {
   0% {
     opacity: 0;
@@ -1594,270 +1001,165 @@ input[type="number"],
   }
 }
 
-/* Payment progress modal */
-.pay-modal-overlay {
+/* ── The flow dialog (every pay, claim and bridge) ────────────────────────────
+   The panel that reports a transaction while it happens, rebuilt out of the same
+   pieces as the posters behind it. What it replaced — .pay-modal and its
+   .pay-step family — was a bordered white card with a filled glyph circle for the
+   flow, a second filled circle per step joined by a 2px connector, weight-740
+   step labels and a filled pill to close. It was the app's most-seen surface and
+   the last one still built that way.
+
+   Two rules govern what is here. Nothing draws a box: the ground is the poster's,
+   the boundary is one hairline. And a step's state is the rule under it — dim
+   waiting, ink working, green done, warn failed — which is the same sentence
+   .bill-cell-rule and .settle-rule already say everywhere else.
+
+   Centred rather than the settle deck's bottom sheet: this one is modal on
+   purpose (it seals itself while a transaction is in flight) and its steps are a
+   list to read, not a surface to thumb through. */
+.flow-backdrop {
   position: fixed;
   inset: 0;
   z-index: 60;
-  background: color-mix(in srgb, var(--ink-950) 56%, transparent);
-  backdrop-filter: blur(6px);
-  animation: pay-overlay-in 200ms ease-out both;
+  background: color-mix(in srgb, var(--ink-950) 52%, transparent);
+  backdrop-filter: blur(18px);
+  animation: flow-backdrop-in var(--dur-2) var(--ease-out) both;
 }
 
-.pay-modal {
+.flow-panel {
   position: fixed;
   left: 50%;
   top: 50%;
   z-index: 61;
-  width: min(31rem, calc(100vw - 1.75rem));
+  width: min(34rem, calc(100vw - 1.75rem));
+  max-height: min(84dvh, 46rem);
+  overflow-y: auto;
   transform: translate(-50%, -50%);
-  border: 1px solid var(--border);
-  border-radius: calc(var(--radius) * 1.75);
-  background: var(--surface-strong);
+  /* Its own ground, because it is portalled to <body> and inherits none of the
+     page's. The same correction .bill-poster makes: the app's mist, not the cream
+     :root hands the /pay poster. */
+  --pay-poster-bg: var(--background);
+  background: var(--pay-poster-bg);
+  color: var(--pay-poster-fg);
+  border-radius: 1.4rem;
+  /* The one boundary, and it takes the tone — the panel's whole frame is this
+     line, so it is where "running / settled / failed" is stated in colour. */
+  border-top: 2px solid var(--pay-poster-rule);
   box-shadow: var(--shadow);
-  padding: clamp(1.25rem, 3.4vw, 1.75rem);
-  animation: pay-modal-in 300ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  padding: clamp(1.5rem, 1rem + 2.4vw, 2.75rem);
+  animation: flow-panel-in var(--dur-3) var(--ease-out) both;
 }
 
-.pay-modal:focus {
-  outline: none;
+.flow-panel[data-status="success"] { border-top-color: var(--success); }
+.flow-panel[data-status="error"] { border-top-color: var(--warning-text); }
+.flow-panel[data-status="running"] { border-top-color: var(--accent); }
+
+.flow-panel:focus { outline: none; }
+
+/* The head reuses .bill-poster-head for its rail (fact left, control right) and
+   .bill-poster-note for the standfirst, so this panel's first three lines are
+   arranged exactly like a poster's. */
+.flow-head > .bill-poster-head { gap: 0.5rem 1.5rem; }
+
+.flow-title {
+  font-family: var(--font-clash), system-ui, sans-serif;
+  font-weight: 300;
+  font-size: clamp(1.9rem, 1.2rem + 2.2vw, 3.1rem);
+  line-height: 1;
+  letter-spacing: -0.03em;
+  margin: 0.45rem 0 0;
 }
 
-.pay-modal-head {
-  display: flex;
-  align-items: center;
-  gap: 0.85rem;
-}
+.flow-title[data-status="success"] { color: var(--success); }
+.flow-title[data-status="error"] { color: var(--warning-text); }
 
-.pay-modal-icon {
-  display: inline-flex;
-  width: 2.85rem;
-  height: 2.85rem;
-  flex: none;
-  align-items: center;
-  justify-content: center;
-  border-radius: 999px;
-  background: var(--accent-soft);
-  color: var(--accent);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 32%, transparent);
-}
-
-.pay-modal-icon-running {
-  animation: pay-pulse 1.8s ease-in-out infinite;
-}
-
-.pay-modal-icon-success {
-  background: var(--success-soft);
-  color: var(--success);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--success) 34%, transparent);
-}
-
-.pay-modal-icon-error {
-  background: var(--danger-bg);
-  color: var(--danger-text);
-  box-shadow: inset 0 0 0 1px var(--danger-border);
-}
-
-.pay-modal-title {
-  font-family: var(--font-display);
-  font-size: 1.05rem;
-  font-weight: 400;
-  letter-spacing: -0.02em;
-  color: var(--text);
-  line-height: 1.2;
-}
-
-.pay-modal-sub {
-  margin-top: 0.18rem;
-  font-size: 0.82rem;
-  color: var(--text-muted);
-  line-height: 1.4;
-}
-
-.pay-modal-close {
-  margin-left: auto;
-  width: 2.1rem;
-  height: 2.1rem;
-}
-
-.pay-steps {
-  margin: 1.4rem 0 0;
+.flow-steps {
+  margin: clamp(1.6rem, 1rem + 2vw, 2.6rem) 0 0;
   padding: 0;
   list-style: none;
+}
+
+.flow-step + .flow-step { margin-top: 0.35rem; }
+
+/* Pending steps recede rather than disappear: the reader is being told what is
+   still to come, which is the reassurance the panel exists to give. */
+.flow-step[data-state="pending"] { opacity: 0.52; }
+
+.flow-step-line {
   display: flex;
-  flex-direction: column;
-}
-
-.pay-step {
-  position: relative;
-  display: flex;
-  gap: 0.85rem;
-  padding: 0.55rem 0;
-}
-
-.pay-step:not(:last-child)::before {
-  content: "";
-  position: absolute;
-  left: calc(1.05rem - 1px);
-  top: 2.5rem;
-  bottom: -0.1rem;
-  width: 2px;
-  background: var(--border);
-  transition: background-color 240ms ease;
-}
-
-.pay-step[data-state="done"]:not(:last-child)::before {
-  background: var(--success);
-}
-
-.pay-step-icon {
-  position: relative;
-  z-index: 1;
-  display: inline-flex;
-  width: 2.1rem;
-  height: 2.1rem;
-  flex: none;
-  align-items: center;
-  justify-content: center;
-  border-radius: 999px;
-  border: 1px solid var(--border);
-  background: var(--surface-muted);
-  color: var(--text-muted);
-  transition:
-    border-color 220ms ease,
-    background-color 220ms ease,
-    color 220ms ease,
-    box-shadow 220ms ease;
-}
-
-.pay-step[data-state="active"] .pay-step-icon {
-  border-color: var(--accent);
-  background: var(--accent-soft);
-  color: var(--accent);
-  box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 14%, transparent);
-}
-
-.pay-step[data-state="done"] .pay-step-icon {
-  border-color: var(--success);
-  background: var(--success);
-  color: #ffffff;
-}
-
-.pay-step[data-state="error"] .pay-step-icon {
-  border-color: var(--danger-border);
-  background: var(--danger-bg);
-  color: var(--danger-text);
-}
-
-.pay-step-body {
-  display: flex;
-  flex-direction: column;
-  padding-top: 0.12rem;
-}
-
-.pay-step-label {
-  font-size: 0.9rem;
-  font-weight: 740;
-  color: var(--text);
-}
-
-.pay-step[data-state="pending"] .pay-step-label {
-  color: var(--text-muted);
-}
-
-.pay-step-hint {
-  margin-top: 0.12rem;
-  font-size: 0.76rem;
-  color: var(--text-muted);
-}
-
-.pay-step[data-state="active"] .pay-step-hint {
-  color: var(--accent);
-}
-
-.pay-step[data-state="error"] .pay-step-hint {
-  color: var(--danger-text);
-}
-
-.pay-modal-foot {
-  margin-top: 1.5rem;
-  display: flex;
-  align-items: center;
+  flex-wrap: wrap;
+  align-items: baseline;
   justify-content: space-between;
-  gap: 0.75rem;
+  gap: 0.3rem 1.25rem;
 }
 
-.pay-modal-status {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.4rem;
-  font-size: 0.8rem;
-  font-weight: 640;
-  color: var(--text-muted);
-}
+/* The step's name goes to full ink while it is the live one and stays there once
+   it is done — a finished step is evidence, not history to grey out. */
+.flow-step[data-state="active"] > .flow-step-line > .settle-label { color: var(--pay-poster-fg); }
+.flow-step[data-state="done"] > .flow-step-line > .settle-label { color: var(--success); }
+.flow-step[data-state="error"] > .flow-step-line > .settle-label { color: var(--warning-text); }
 
-.pay-modal-status-success {
-  color: var(--success);
-}
-
-.pay-modal-status-error {
-  color: var(--danger-text);
-}
-
-.pay-modal-links {
-  margin-top: 1.1rem;
-  display: flex;
-  flex-direction: column;
-  gap: 0.35rem;
-  border-top: 1px solid var(--border);
-  padding-top: 1rem;
-}
-
-.pay-modal-link {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.4rem;
+.flow-step-hint {
+  margin: 0.3rem 0 0.5rem;
   font-size: 0.78rem;
-  font-weight: 620;
-  color: var(--accent);
-  text-decoration: none;
+  line-height: 1.5;
+  color: var(--pay-poster-dim);
 }
 
-.pay-modal-link:hover {
-  text-decoration: underline;
+.flow-step[data-state="error"] > .flow-step-hint { color: var(--warning-text); }
+
+.flow-step-spin { color: var(--accent); }
+
+/* The state, as one pixel. Identical grammar to .bill-cell-rule: dim at rest, 2px
+   and lit when it is the one that matters. */
+.flow-step-rule {
+  height: 1px;
+  background: var(--pay-poster-rule);
+  transition: background var(--dur-2) var(--ease-out), height var(--dur-2) var(--ease-out);
 }
 
-@keyframes pay-overlay-in {
+.flow-step[data-state="active"] > .flow-step-rule {
+  height: 2px;
+  background: var(--accent);
+  /* Only the live step animates, and only along its own rule — the old dialog
+     pulsed a glow ring around a circle instead, which drew the eye to the chrome
+     rather than to the progress. */
+  background-image: linear-gradient(90deg, transparent, color-mix(in srgb, var(--arc-cyan) 70%, transparent), transparent);
+  background-size: 40% 100%;
+  background-repeat: no-repeat;
+  animation: flow-step-sweep 1.6s ease-in-out infinite;
+}
+
+.flow-step[data-state="done"] > .flow-step-rule { height: 2px; background: var(--success); }
+.flow-step[data-state="error"] > .flow-step-rule { height: 2px; background: var(--warning-text); }
+
+/* The status line and the commit word, on the poster's own foot. */
+.flow-foot { align-items: center; }
+.flow-foot > .bill-poster-msg { margin: 0; max-width: 34ch; }
+
+@keyframes flow-backdrop-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes flow-panel-in {
   from {
     opacity: 0;
+    transform: translate(-50%, calc(-50% + 14px)) scale(0.98);
   }
-
-  to {
-    opacity: 1;
-  }
-}
-
-@keyframes pay-modal-in {
-  from {
-    opacity: 0;
-    transform: translate(-50%, calc(-50% + 12px)) scale(0.97);
-  }
-
   to {
     opacity: 1;
     transform: translate(-50%, -50%) scale(1);
   }
 }
 
-@keyframes pay-pulse {
-  0%,
-  100% {
-    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 32%, transparent), 0 0 0 0 color-mix(in srgb, var(--accent) 26%, transparent);
-  }
+@keyframes flow-step-sweep {
+  from { background-position: -60% 0; }
+  to { background-position: 160% 0; }
+}
 
-  50% {
-    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 32%, transparent), 0 0 0 8px color-mix(in srgb, var(--accent) 0%, transparent);
-  }
+@media (prefers-reduced-motion: reduce) {
+  .flow-step[data-state="active"] > .flow-step-rule { animation: none; background-image: none; }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -2291,7 +1593,6 @@ input[type="number"],
   border-top-color: rgba(255, 255, 255, 0.78);
   border-radius: calc(var(--radius) + 4px);
   backdrop-filter: blur(28px) saturate(1.5);
-  -webkit-backdrop-filter: blur(28px) saturate(1.5);
   box-shadow: var(--shadow-soft);
 }
 
@@ -2547,7 +1848,6 @@ input[type="number"],
      page through is a header you cannot read. */
   background: color-mix(in srgb, var(--background) 90%, transparent);
   backdrop-filter: blur(14px);
-  -webkit-backdrop-filter: blur(14px);
 }
 
 /* The logo shrinks as the header docks, so the sticky band costs less of the
@@ -3655,20 +2955,7 @@ a.job-trail-tx:hover {
    roster harder so rows of numbers stay flat and readable, the bar hardest
    because it floats over content. Dark mode never had the problem: the blooms
    are already dark there and the ink poster is the language the settle deck
-   speaks in, so every rule below hands dark its flat ground back.
-
-   --pay-poster-bg stays a flat COLOUR, not the glass stack: the rules below
-   color-mix() against it and color-mix has no opinion about gradients. Same
-   override, for the same reason, as .iou-page. */
-
-.pay-shell,
-.pay-bar {
-  --pay-poster-bg: #f3f8fb;
-}
-
-:root[data-theme="dark"] :is(.pay-shell, .pay-bar) {
-  --pay-poster-bg: var(--ink-950);
-}
+   speaks in, so every rule below hands dark its flat ground back. */
 
 /* Every small uppercase mark on this page. Sibling of .settle-label, and here
    for the same finding: Clash at 300 draws hairlines, and an 11px hairline
@@ -3683,32 +2970,64 @@ a.job-trail-tx:hover {
   color: var(--pay-poster-dim);
 }
 
+/* Header and body as one viewport-tall column, so nothing on this page has to
+   know how tall the masthead is. Both rules below used to spell that as
+   `calc(100dvh - 4rem)` — a constant measured off the slim Tailwind band this
+   route used to carry, which the app's real masthead exceeds at every width and
+   nearly doubles below `md`, where it wraps to two rows. Measured after the
+   change: the masthead is 116px at 1440, so the old constant was leaving the
+   poster 52px taller than the viewport. The flex column gets the same answer
+   from the layout instead of from a number kept in sync by hand.
+
+   The sticky bar is deliberately NOT a child of this: see PayClient. Its height
+   IS still a number — the bar is a deliberately fixed-height row, and a column
+   reserving space for it has to state what it is reserving. Measured at 91px;
+   6rem carries that plus the gap that keeps the reserve from reading as a touch.
+   Change the bar's padding or type and this is the line to change with it. */
+.pay-frame {
+  --pay-bar-h: 6rem;
+  display: flex;
+  flex-direction: column;
+  min-height: 100dvh;
+}
+
 .pay-shell {
+  flex: 1;
   display: grid;
   grid-template-columns: minmax(0, 0.85fr) minmax(0, 1.15fr);
-  min-height: calc(100dvh - 4rem);
 }
 
 .pay-poster {
   position: sticky;
   top: 0;
+  /* Not stretched: a sticky item filling its grid area has no room to move. Which
+     is also why the height below is stated rather than inherited. */
   align-self: start;
   /* min-height, not height: at this type scale a long merchant name would
-     otherwise overflow a fixed-height box. Short bills still pin the footer to
-     the bottom of the viewport. */
-  min-height: calc(100dvh - 4rem);
+     otherwise overflow a fixed-height box. 100% is the grid row, which the frame
+     has already sized to the viewport under the header. */
+  min-height: 100%;
   display: flex;
   flex-direction: column;
   justify-content: space-between;
   gap: 2rem;
-  padding: clamp(2rem, 1rem + 3vw, 4rem);
+  --pay-pad: clamp(2rem, 1rem + 3vw, 4rem);
+  padding: var(--pay-pad);
   /* An accent bloom over a translucent pane, so the poster is a pane of the app's
      own surface rather than a card sitting beside it. */
   background:
     radial-gradient(120% 92% at 0% 0%, color-mix(in srgb, var(--accent) 13%, transparent), transparent 62%),
     linear-gradient(180deg, rgba(255, 255, 255, 0.6), rgba(255, 255, 255, 0.34));
+  /* Unprefixed ONLY — never hand-write -webkit-backdrop-filter beside it.
+     Lightning CSS (Tailwind v4's transformer) treats the pair as one logical
+     property and emits just the author's last form, so `backdrop-filter` followed
+     by `-webkit-backdrop-filter` compiled to the -webkit- line ALONE: the standard
+     property vanished from the served CSS, `getComputedStyle().backdropFilter`
+     read `none`, and this page's whole glass material — poster, roster and bar —
+     silently stopped frosting in any engine without the alias. Left to itself the
+     transformer adds the prefix, which is what the two rules in this file that
+     never had a hand-written twin have always shipped. */
   backdrop-filter: blur(28px) saturate(1.5);
-  -webkit-backdrop-filter: blur(28px) saturate(1.5);
   border-right: 1px solid var(--pay-poster-rule);
   color: var(--pay-poster-fg);
 }
@@ -3716,7 +3035,6 @@ a.job-trail-tx:hover {
 :root[data-theme="dark"] .pay-poster {
   background: var(--pay-poster-bg);
   backdrop-filter: none;
-  -webkit-backdrop-filter: none;
   border-right-color: transparent;
 }
 
@@ -3803,38 +3121,126 @@ a.job-trail-tx:hover {
 
 .pay-poster[data-settled="true"] .pay-progress > span { background: var(--success); }
 
-.escrow-badge {
+/* Escrow, on the poster. What stood here was `.escrow-badge`: a tinted fill, a
+   1px border and a 6px radius — a callout box, which is one of the four things
+   the redesign took out of every other route (see .doc-note, which is the
+   replacement it was written as: "a document does not need a box to raise its
+   voice").
+
+   So this is .doc-note plus the two things a poster needs that a document does
+   not: a measure, since the poster column is wide enough to run this to 90
+   characters, and a tone. The tone rides on the note rather than the label
+   because .doc-note's own `> .settle-label` pins the label to full ink, and a
+   [data-tone] on the child would lose to it — the rule and the label have to
+   agree about which state this is. */
+.pay-note {
+  margin-top: clamp(1rem, 0.8rem + 0.6vw, 1.4rem);
+  max-width: 44ch;
+}
+
+.pay-note > p {
+  font-size: 0.8rem;
+  line-height: 1.5;
+  color: var(--pay-poster-dim);
+}
+
+/* The tone pair is shared with .bill-verify (the History row's verification
+   note): both are a .doc-note whose rule and label carry a verdict, and one copy
+   of that mapping is the only way the two stay the same colour. */
+:is(.pay-note, .bill-verify)[data-tone="warn"] { border-top-color: var(--warning-text); }
+:is(.pay-note, .bill-verify)[data-tone="warn"] > .settle-label { color: var(--warning-text); }
+:is(.pay-note, .bill-verify)[data-tone="ok"] { border-top-color: var(--success); }
+:is(.pay-note, .bill-verify)[data-tone="ok"] > .settle-label { color: var(--success); }
+
+/* The roster with nothing left in it. Display type at the column's scale, not
+   the poster's: this sits in the narrower half, where .pay-merchant's 7.5rem
+   would break "Everyone's covered" across three lines. */
+.pay-cleared {
+  font-family: var(--font-clash), system-ui, sans-serif;
+  font-weight: 300;
+  font-size: clamp(2rem, 1.2rem + 2.4vw, 3.4rem);
+  line-height: 1;
+  letter-spacing: -0.03em;
+  margin: 0.2rem 0 0.9rem;
+}
+
+/* No bill to poster: a dead token, an unreachable chain, the beat before the
+   first read. The poster's own arrangement — rail, display line, prose, one
+   control — on the page's shared ground, since there is no bill for a pane to
+   be about. Measured, because .pay-merchant is sized for a merchant name and
+   these are sentences. */
+.pay-void {
   display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  margin-top: 0.75rem;
-  padding: 0.5rem 0.75rem;
-  border-radius: 6px;
-  background: color-mix(in srgb, var(--warning-bg) 15%, transparent);
-  border: 1px solid color-mix(in srgb, var(--warning-text) 34%, transparent);
-  font-size: 0.75rem;
-  line-height: 1.4;
-  color: var(--warning-text);
+  flex: 1;
+  flex-direction: column;
+  justify-content: center;
+  gap: 0.35rem;
+  padding: clamp(2rem, 1rem + 3vw, 4rem);
+  color: var(--pay-poster-fg);
 }
 
-.escrow-badge[data-released='true'] {
-  background: color-mix(in srgb, var(--success-soft) 15%, transparent);
-  border-color: color-mix(in srgb, var(--success) 52%, transparent);
-  color: color-mix(in srgb, var(--success) 78%, var(--text));
+/* The measure belongs to the headline, not to the column: on the column it also
+   caps the caps rail above it, and 0.18em tracking inside 34 characters wraps
+   "READING THIS BILL FROM ARC" onto two lines with the spinner stranded beside
+   the first. .pay-fine brings its own 44ch. */
+.pay-void > .pay-merchant {
+  max-width: 24ch;
+  font-size: clamp(2.4rem, 1.2rem + 3.6vw, 4.6rem);
 }
 
-.escrow-badge svg {
-  flex-shrink: 0;
+.pay-void > .pay-fine {
+  margin-top: 0.9rem;
+}
+
+/* The way out, sized under the headline rather than beside it. .settle-action is
+   scaled for the settle deck, where it answers a 9rem merchant name and its own
+   4.4rem is half that; here the headline is 4.6rem, so the same figure put two
+   things on the screen at one size and left the page with no first thing to read.
+   Its poster top margin comes down with it — at 4rem the control had drifted off
+   the end of the sentence it belongs to. */
+.pay-void > .settle-action {
+  font-size: clamp(1.6rem, 1rem + 1.6vw, 2.4rem);
+  margin-top: clamp(1.4rem, 1rem + 1vw, 2.2rem);
 }
 
 /* The roster is a harder pane than the poster: it holds rows of names and
    figures, and a bloom coming up through a column of numbers is noise. Whiter
    fill, same blur — glass, further from the light. */
 .pay-roster {
-  padding: clamp(1.25rem, 0.8rem + 1.6vw, 2.5rem);
+  --pay-pad: clamp(1.25rem, 0.8rem + 1.6vw, 2.5rem);
+  padding: var(--pay-pad);
   background: linear-gradient(180deg, rgba(255, 255, 255, 0.78), rgba(255, 255, 255, 0.62));
   backdrop-filter: blur(28px) saturate(1.4);
-  -webkit-backdrop-filter: blur(28px) saturate(1.4);
+}
+
+/* The bar floats over the bottom of both columns, and the poster's space-between
+   puts its fine print at precisely that edge — 32px of "Details verified against
+   Arc" was under the bar, which is the one claim on this page a stranger has to
+   take on trust. So both columns account for the bar's height, but not the same
+   way:
+
+   The roster is a scrolling list, so it reserves the height as padding. The
+   poster reserves it from its HEIGHT instead. Padding was tried on both and is
+   wrong here: the poster is `min-height: 100%` of the viewport row, so 6rem of
+   bottom padding pushed its intrinsic content over the viewport, the poster grew,
+   space-between stopped holding the fine print at a known edge, and a partly-paid
+   escrow bill — the state with one extra note in the column — came out 4px UNDER
+   the bar again. Shortening the box instead means space-between lands the fine
+   print exactly above the bar, and the poster only outgrows the viewport when its
+   own content genuinely does.
+
+   Only when there IS a bar: a settled bill renders none, and a reserved strip
+   under a settled poster is a hole. Below 860px the bar goes `fixed` and the
+   poster scrolls above it, so down there only the roster reserves — which it
+   already does, in that query. */
+@media (min-width: 861px) {
+  .pay-frame:has(~ .pay-bar) .pay-poster {
+    min-height: calc(100% - var(--pay-bar-h));
+  }
+
+  .pay-frame:has(~ .pay-bar) .pay-roster {
+    padding-bottom: calc(var(--pay-pad) + var(--pay-bar-h));
+  }
 }
 
 :root[data-theme="dark"] .pay-roster {
@@ -3891,14 +3297,13 @@ a.job-trail-tx:hover {
   font-size: clamp(1.3rem, 1rem + 1.3vw, 2.2rem);
 }
 
+/* The mark on a settled row. It was a bordered, radiused chip in a 700-weight
+   face this page does not otherwise use — the last box in the roster. The word
+   carries it instead: .settle-label's register in the success tone, which is how
+   the rest of the system says "done" without drawing anything. Hence one
+   declaration, and .settle-label beside it in the markup. */
 .pay-stamp {
-  border: 1px solid var(--success);
-  border-radius: 4px;
   color: var(--success);
-  font-size: 0.62rem;
-  font-weight: 700;
-  letter-spacing: 0.1em;
-  padding: 0.15rem 0.4rem;
 }
 
 /* ── The action bar ───────────────────────────────────────────────────────────
@@ -3930,7 +3335,6 @@ a.job-trail-tx:hover {
      beneath it. */
   background: linear-gradient(180deg, rgba(255, 255, 255, 0.88), rgba(255, 255, 255, 0.8));
   backdrop-filter: blur(30px) saturate(1.5);
-  -webkit-backdrop-filter: blur(30px) saturate(1.5);
   box-shadow: 0 -1px 0 rgba(255, 255, 255, 0.7) inset, 0 -18px 44px rgba(7, 20, 33, 0.07);
   color: var(--pay-poster-fg);
 }
@@ -4136,7 +3540,10 @@ select.pay-method option {
 
 @media (max-width: 860px) {
   .pay-shell { grid-template-columns: minmax(0, 1fr); }
-  .pay-poster { position: static; height: auto; }
+  /* Stacked, the poster is one of two auto rows rather than a full-height column
+     beside one, so its viewport min-height has nothing left to do — and `100%` of
+     a row sized by its own content is circular. */
+  .pay-poster { position: static; height: auto; min-height: 0; }
   .pay-bar { position: fixed; left: 0; right: 0; bottom: 0; }
   .pay-roster { padding-bottom: 11rem; }
 }
@@ -4159,21 +3566,21 @@ select.pay-method option {
   height: 100dvh;
   overflow-y: auto;
   scroll-snap-type: y mandatory;
-  /* Light mode: same liquid-glass stack as /owe — three accent/cyan blooms frosted
-     by a translucent white pane. Dark mode overrides this back to the flat ink
-     poster below. */
-  background:
-    linear-gradient(
-      180deg,
-      rgba(255, 255, 255, 0.9),
-      rgba(255, 255, 255, 0.32) 16%,
-      rgba(255, 255, 255, 0.46) 60%,
-      rgba(255, 255, 255, 0.72)
-    ),
-    radial-gradient(62% 48% at 6% 2%, color-mix(in srgb, var(--accent) 28%, transparent), transparent 64%),
-    radial-gradient(48% 42% at 92% 8%, color-mix(in srgb, var(--arc-cyan) 32%, transparent), transparent 68%),
-    radial-gradient(70% 52% at 72% 96%, color-mix(in srgb, var(--accent) 18%, transparent), transparent 62%),
-    var(--background);
+  /* Light mode: no local background, the same way .iou-page paints none — the
+     global .app-backdrop already lays the liquid-glass stack down, and the deck
+     is a fixed-height scroller over a fixed-position backdrop, so it shows
+     through unscrolled.
+
+     It used to paint its own copy of that stack, and the copy had drifted: a
+     milkier white pane (0.9/0.32/0.46/0.72 against the backdrop's
+     0.72/0.14/0.26/0.54), an arc-cyan bloom top-right that exists nowhere else
+     in the app, and — because an opaque stack occludes what is behind it — no
+     .app-backdrop::after, so this was the one surface whose gradients could
+     band. Three ways for the settle tab to be a different colour from every
+     other tab. Dark mode keeps its flat ink ground below.
+
+     Nothing else here changes: the sections, their reveals and the settled wash
+     are all painted by .settle-section, over whatever ground this is. */
   color: var(--pay-poster-fg);
 }
 
@@ -4252,7 +3659,8 @@ body:has(.app-shell[data-app-tab="iou"]) .site-footer {
      .settle-triggers are absolutely positioned and would break if this rule
      touched their `position`. An inactive section is transformed and makes its
      own stacking context; an active one is not, and without isolation its
-     negative-z children would slide behind the deck's background gradient. */
+     negative-z children would slide behind the ground the deck sits on — the
+     .app-backdrop in light, the deck's own flat ink in dark. */
   isolation: isolate;
 }
 
@@ -4354,8 +3762,8 @@ body:has(.app-shell[data-app-tab="iou"]) .site-footer {
 }
 
 /* Weight, not colour, is what was failing here: Clash at 300 draws hairlines,
-   and an 11px hairline tracked out to 0.18em is close to invisible on the cream
-   poster whatever you do to its opacity. 500 at 0.72rem is the same mark, legibly
+   and an 11px hairline tracked out to 0.18em is close to invisible on a bright
+   ground whatever you do to its opacity. 500 at 0.72rem is the same mark, legibly
    drawn. Shared with .settle-label — same type, same job. */
 .settle-rail {
   position: absolute;
@@ -4806,12 +4214,9 @@ select.settle-trigger option {
    .settle-section ancestor, which does not exist here, so .settle-action lands
    un-clipped on this page with no override needed. */
 
-/* The one place /owe departs from the /pay poster: its ground.
-   --paper-50 is a warm cream, which is right on a payment link arriving cold
-   from a message, and wrong here — /owe is reached from inside the app, where
-   every other surface is cool grey, so the cream read as a yellow cast. Light
-   mode is built from .tab-hero's palette instead, so the page sits in the app's
-   colours; dark mode never had the problem and keeps the ink poster.
+/* The one place /owe departs from the /pay poster: its ground was the whole
+   departure, and it is now the app's default (see --pay-poster-bg at :root), so
+   there is nothing left here to override.
 
    Read the stack bottom-up and it is a sheet of glass over coloured liquid:
    the app's mist, three overlapping blooms that are the liquid, then a
@@ -4819,12 +4224,10 @@ select.settle-trigger option {
    edge, thinning through the body, settling again at the foot. No
    backdrop-filter: with nothing behind the page to sample there is nothing for
    it to blur, and the white pane over saturated blooms IS what frosting does to
-   colour. To dial the effect, the three bloom percentages are the knob.
-
-   --pay-poster-bg stays a flat COLOUR, not the stack: half the rules in this
-   block color-mix() against it, and color-mix has no opinion about gradients. */
+   colour. To dial the effect, the three bloom percentages are the knob — and
+   they live on .app-backdrop, which paints this for every surface that leaves
+   its own background alone. */
 .iou-page {
-  --pay-poster-bg: #f3f8fb;
   min-height: 100dvh;
   display: flex;
   flex-direction: column;
@@ -4836,7 +4239,6 @@ select.settle-trigger option {
 }
 
 :root[data-theme="dark"] .iou-page {
-  --pay-poster-bg: var(--ink-950);
   background: var(--pay-poster-bg);
 }
 
@@ -6167,6 +5569,14 @@ select.settle-trigger option {
     padding-left: clamp(0.85rem, 0.7rem + 0.5vw, 1.4rem);
     border-left: 1px solid var(--pay-poster-rule);
   }
+
+  /* /pay's masthead carries no tab rail — a share link is opened by people with
+     no session — so there is nothing to the tools' left for the rule to divide
+     them from, and it would hang off the header on its own. */
+  .app-rails > .app-tools:only-child {
+    padding-left: 0;
+    border-left: 0;
+  }
 }
 
 /* The theme, as a glyph. It was tried as a ruled Light/Dark pair — unambiguous,
@@ -6537,6 +5947,133 @@ select.settle-trigger option {
 
 .bill-poster-msg[data-tone="error"] { color: var(--warning-text); }
 .bill-poster-msg[data-tone="success"] { color: var(--success); }
+
+/* ── The commit, reporting itself (bills tab, after a successful write) ────────
+   What stood here was the app's last tone box: a green .message card with a tick
+   in it, and under it a second card — accent border, accent fill, a bordered
+   <code> and a filled "Copy link" pill — for the share link. Two boxes, in a tab
+   where nothing else draws one.
+
+   It is a poster now, and the one the creator reads most carefully, so it gets
+   the arrangement rather than a variation on it: the number as the masthead
+   (that is the thing they now have to keep), the prose as the standfirst, and the
+   link as a labelled figure on its own rule like every other value in this tab.
+
+   The top rule draws itself in. Elsewhere in this system a drawn rule means "this
+   is the live one"; here it means the section arrived, which is the same claim
+   about the same pixel. */
+.bill-live {
+  /* Overrides .bill-poster's static border-top with an inset that can animate —
+     a border cannot be scaled from one edge, and a transform on the section
+     itself would take the type with it. */
+  border-top: 0;
+  position: relative;
+}
+
+.bill-live::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto;
+  height: 2px;
+  background: var(--success);
+  transform: scaleX(0);
+  transform-origin: left;
+  animation: bill-live-rule var(--dur-4) var(--ease-out) 60ms forwards;
+}
+
+@keyframes bill-live-rule {
+  to { transform: scaleX(1); }
+}
+
+/* The masthead and its stamp on one baseline, with the stamp pinned to the end of
+   the row so it never lands inside the headline's own measure. */
+.bill-live-lede {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem clamp(1rem, 0.6rem + 1.6vw, 2.5rem);
+}
+
+/* .bill-display sized for a sentence rather than for an OCR merchant name: it
+   caps at 5rem there because a merchant is one word in a column of its own, and
+   this is four words over the full section width. */
+.bill-live-title {
+  margin: 0;
+  max-width: 30ch;
+  font-size: clamp(1.9rem, 1.1rem + 3.2vw, 3.9rem);
+}
+
+/* The number, which is the whole point of the line. Weight, not colour — the rule
+   above and the stamp beside it are already carrying "this succeeded", and a third
+   green thing in one row reads as a warning about a warning. */
+.bill-live-title > b {
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+
+/* .settlement-stamp is the review panel's gsap-driven mark; this state has already
+   unmounted that panel, so the same mark is drawn here in CSS. Smaller, because
+   there it stamps a whole receipt and here it annotates one line. */
+.bill-live-stamp {
+  flex: none;
+  font-size: 0.72rem;
+  animation: bill-live-stamp-in 0.42s cubic-bezier(0.34, 1.56, 0.64, 1) 180ms both;
+}
+
+@keyframes bill-live-stamp-in {
+  from { opacity: 0; transform: rotate(-14deg) scale(1.3); }
+  to { opacity: 1; transform: rotate(-7deg) scale(1); }
+}
+
+/* A .bill-cell, so the rule under it lights on focus-within exactly as a rail
+   figure's does — the link and its copy control are the two things in here you
+   can put a caret or a focus ring on. */
+.bill-live-link {
+  margin-top: clamp(1.5rem, 1rem + 1.6vw, 2.5rem);
+  max-width: 62ch;
+}
+
+.bill-live-link-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem 1.25rem;
+}
+
+/* A URL is evidence you copy, not prose: mono and dim, like every hash in this
+   system. `anywhere` rather than a truncation, because a share link that is cut
+   off is the one string on this page that must never be misread — and it is the
+   only thing shown once and never again. */
+.bill-live-url {
+  min-width: 0;
+  font-family: var(--font-mono);
+  font-size: 0.82rem;
+  letter-spacing: 0.01em;
+  line-height: 1.5;
+  color: var(--pay-poster-fg);
+  overflow-wrap: anywhere;
+  text-decoration: underline;
+  text-underline-offset: 0.25em;
+  text-decoration-color: var(--pay-poster-rule);
+  transition: text-decoration-color var(--dur-1) var(--ease-out);
+}
+
+.bill-live-url:hover,
+.bill-live-url:focus-visible { text-decoration-color: currentColor; }
+
+.bill-live-copy {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 0.35em;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bill-live::before { animation: none; transform: scaleX(1); }
+  .bill-live-stamp { animation: none; }
+}
 
 /* ── Recurring: the interval ──────────────────────────────────────────────────
    The one value on either bills subtab that is a closed set of more than two
@@ -7085,4 +6622,1058 @@ select.settle-trigger option {
   .bill-meter-rule::after,
   .bill-meter-cell { transition: none; }
   .bill-record-detail { animation: none; }
+}
+
+/* ============================================================================
+   The two legal documents (/disclaimer, /legal)
+   ==========================================================================
+
+   Every other surface on this site is a poster: a sheet you scan once and act on.
+   These two are documents — read through, quoted a clause at a time, arrived at
+   by link from somewhere else. They were also the last two routes still wearing
+   the pre-redesign skin, and wearing all four of the things the redesign took out
+   everywhere else: an icon in a circle beside every heading, a bordered "at a
+   glance" panel, tinted callout boxes, and a theme toggle of their own writing a
+   second storage key (splitsy-docs-theme) that nothing else on the site reads.
+
+   So they are rebuilt from the pieces every section above them is built from —
+   .lp-paper for the ground, .bill-poster for a section, .bill-section-title for a
+   section that names itself, .settle-label for a caps rail, a.lp-row for a ruled
+   row that lights, and a hairline wherever the old page drew a box. What is added
+   below is only the three things a document needs that a poster does not:
+
+     a stable ordinal  The index and the clauses are two renderings of one array
+                       (components/LegalDoc.tsx), so a clause cannot be listed
+                       under a number it does not print, and "clause 07" keeps
+                       meaning clause 07 as the document grows. That is
+                       .bill-section-index's own rule — numbers are stable —
+                       applied to the one kind of page where people cite them.
+     a measure         Poster copy is a caption and can take the full 88rem. This
+                       is prose, and prose set that wide is prose nobody
+                       finishes.
+     a rhythm          --lp-section-y is 11rem, tuned for nine landing sections
+                       you scroll past. Nineteen clauses at that spacing is a
+                       document you scroll through instead of reading.
+
+   Four of the rules below — .doc-index, .doc-index-n, .doc-prose, .doc-note — are
+   shared with /docs, which is a document too and needed exactly these things. They
+   are named .doc- rather than .legal- because none of them was ever about a
+   licence; a numbered index row, a measured column of prose and a note that raises
+   its voice with a rule instead of a box belong to any document on this site. What
+   stays .legal- is what these two own: .legal-paper, .legal-head, .legal-glance,
+   .legal-contents. /docs declares its own. */
+.legal-paper {
+  /* The air above a section's rule. One number for the whole document's rhythm,
+     the way the colophon has one --foot-gap, rather than a clamp per band. */
+  --legal-gap: clamp(2.5rem, 1.8rem + 2.4vw, 4.25rem);
+  /* And the air below it. The landing hangs its whole section gap under the rule
+     and nothing above, which works at 11rem — at a document's spacing it would
+     leave the rule touching the last line of the clause before it. So the gap is
+     split, and split unevenly: a rule that opens a clause belongs nearer to the
+     clause it opens than to the one it closed. Re-declaring the landing's own
+     custom property means every rule already drawing itself from it follows, and
+     nothing that draws them is touched. */
+  --lp-section-y: calc(var(--legal-gap) * 0.5);
+  /* One measure for every column of prose in the document. Near
+     .bill-poster-note's 78ch — the widest text the app sets anywhere — because
+     that is the width this page's voice was tuned at. */
+  --doc-measure: 74ch;
+}
+
+/* .lp-paper zeroes a poster's padding so the drawn rule can carry the rhythm;
+   this gives back only the half of it that belongs above the rule. */
+.legal-paper .bill-poster {
+  padding-top: var(--legal-gap);
+}
+
+/* The document closes on its own control, with the colophon's 2px rule directly
+   under it — so the last section takes the whole gap rather than the half every
+   boundary inside the document gets. */
+.legal-paper .bill-poster[data-last] {
+  padding-bottom: var(--legal-gap);
+}
+
+/* The document's head. Deliberately not a .bill-poster: it opens the page the way
+   the hero does, so it draws no rule above itself, and the first rule in the
+   document is the one under the head — the boundary that means something. */
+.legal-head {
+  padding-top: clamp(3.5rem, 2.5rem + 3vw, 6rem);
+}
+
+/* The standfirst names the same two clauses the colophon's disclaimer does — it is
+   testnet, and the money is not money — and .lp-lede styles no emphasis of its
+   own, so it takes the system's: weight and ink, never a colour on its own. */
+.legal-head .lp-lede strong {
+  font-weight: 500;
+  color: var(--pay-poster-fg);
+}
+
+/* ── At a glance ──────────────────────────────────────────────────────────────
+   The four facts a reader needs before the first clause: what this is, which
+   network, whose money, whose project. It was a bordered panel floated beside the
+   title. It is the app's own contents rail now — caps label, one line, hairline —
+   the same rail the hero prints its three proof figures on and the bills tab
+   prints its four steps on.
+
+   A <dl>, because four labelled facts are a definition list and nothing in
+   .bill-contents cares what element carries it. It is also the one thing here a
+   screen reader can announce as pairs. */
+.legal-glance dd {
+  margin: 0;
+}
+
+/* ── The index ────────────────────────────────────────────────────────────────
+   The clause numbers in the order the clauses appear, each row the anchor that
+   lands on one. a.lp-row's ruled row at index scale: the ordinal in the left
+   column, the clause name beside it, the whole row lighting on hover — the row
+   the landing's stack list is built from, doing the job it suits even better.
+
+   Grouped by part, one column per part, and every group keeps its own top and
+   bottom rule. Not one continuous list flowed into columns: a single ruled list
+   split across tracks leaves a rule hanging with nothing beside it, which is the
+   bug the colophon's ledger comment describes at length. */
+.doc-index {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: start;
+  gap: clamp(1.5rem, 1.1rem + 1.2vw, 2.5rem) clamp(1.5rem, 1rem + 2.5vw, 4rem);
+}
+
+/* One part is one list, and a contents list is read down rather than scanned
+   across — so it keeps a reading width instead of ruling 88rem of empty row. The
+   head takes the same cap, because a fact set at the far end of an 88rem rail over
+   a 46rem list is the unfinished grid this system keeps warning about, not air.
+
+   Keyed off the attribute alone rather than off .legal-contents, because how many
+   parts a document has is what this rule is actually about, and there are three
+   documents on the site now. /disclaimer declares one, /legal three, /docs four. */
+[data-parts="1"] :is(.bill-poster-head, .doc-index) {
+  max-width: 46rem;
+}
+
+/* Two parts or more and the cap does not apply: a contents page grouped by part is
+   the one place in a document that earns the full measure. auto-fit rather than a
+   declared count, so a document that grows a fifth part needs no rule changed. */
+@media (min-width: 900px) {
+  [data-parts]:not([data-parts="1"]) .doc-index {
+    grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+  }
+}
+
+/* The part label. .bill-subhead is "a block inside a section" — a caps label with
+   a rule running out to the end of its column — which is exactly what a group of
+   the index is. Its own margins are section-scale; inside this grid the grid owns
+   the gaps. */
+.doc-index .bill-subhead {
+  margin-top: 0;
+  margin-bottom: 0.5rem;
+}
+
+/* An index row is a reference, not a decision, and there are nineteen of them in
+   the longer document — so it comes in from .lp-row's figure-scale padding. */
+.doc-index .lp-row {
+  grid-template-columns: 2.25rem minmax(0, 1fr);
+  gap: 0 0.75rem;
+  padding: clamp(0.55rem, 0.48rem + 0.25vw, 0.75rem) 0;
+}
+
+/* Mono and tabular, so every ordinal in the column starts on the same stem — the
+   reason the colophon sets its addresses in mono too.
+   60%, not the 52% .lp-row-proof sets a small mono note at: an ordinal is text a
+   reader can cite, so it holds 4.5:1 on this ground, and 60% is the quietest mix
+   that does (52% measures 3.6:1 in light). The hierarchy against the clause name
+   beside it is carried by size and typeface instead — 11.5px mono against 17.2px
+   Clash — which separates them further than any amount of grey would. */
+.doc-index-n {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  font-variant-numeric: tabular-nums;
+  color: color-mix(in srgb, var(--pay-poster-fg) 60%, var(--pay-poster-bg));
+  transition: color var(--dur-1) var(--ease-out);
+}
+
+/* The clause name IS the link, so it takes full ink rather than
+   .bill-contents-label's 62% — that mix is tuned for a step in a sequence you are
+   being walked through, not for a line you are meant to click. */
+.doc-index .bill-contents-label {
+  color: var(--pay-poster-fg);
+}
+
+/* The row lights as one thing: .lp-row already washes its own ground, and the
+   ordinal comes up to meet the name. This is the gesture
+   .bill-contents-entry[data-state="active"] makes, borrowed for hover. */
+.doc-index a:hover .doc-index-n,
+.doc-index a:focus-visible .doc-index-n {
+  color: var(--pay-poster-fg);
+}
+
+.doc-index a:focus-visible {
+  outline: 1px solid currentColor;
+  outline-offset: -0.15em;
+}
+
+/* ── The clause ───────────────────────────────────────────────────────────────
+   Body copy, and the only place on this site with enough of it in a row that
+   element selectors are cheaper than a class on every paragraph. Keeping a clause
+   as plain <p>, <ul> and <strong> is the point: a legal document has to stay
+   editable by someone reading it as prose rather than as markup. */
+
+/* The ordinal, lifted out of watermark territory. .bill-section-index sets it at a
+   fifth of the ink, which is right where it was written for — the dashboard and
+   agents tabs, where the numeral marks a section you scrolled to and nobody ever
+   says it out loud. In a document it is the citation: the index points at it and a
+   reader quotes it, so it has to be legible, and 20% measures 1.5:1 against this
+   ground. 48% clears the 3:1 large-text floor in light (4.6:1 in dark) while still
+   sitting less than half the weight of the ink title beside it, which is what keeps
+   it from competing for the read.
+
+   True of all three documents — /docs cites section numbers in the same breath as
+   /legal cites clauses. */
+:is(.legal-paper, .doc-paper) .bill-section-index {
+  color: color-mix(in srgb, var(--pay-poster-fg) 48%, var(--pay-poster-bg));
+}
+
+.doc-prose {
+  max-width: var(--doc-measure);
+  margin-top: clamp(0.9rem, 0.7rem + 0.6vw, 1.45rem);
+  font-size: 0.95rem;
+  line-height: 1.7;
+  color: var(--pay-poster-dim);
+  text-wrap: pretty;
+}
+
+.doc-prose > * + * {
+  margin-top: 0.9em;
+}
+
+.doc-prose p {
+  margin: 0;
+}
+
+/* Emphasis is weight and ink — the two things this system emphasises with, and the
+   same pair the colophon's disclaimer sets on the two clauses that change what its
+   sentence means. */
+.doc-prose strong {
+  font-weight: 500;
+  color: var(--pay-poster-fg);
+}
+
+.doc-prose code {
+  font-family: var(--font-mono);
+  font-size: 0.86em;
+  color: var(--pay-poster-fg);
+  overflow-wrap: anywhere;
+}
+
+/* .bill-toggle's gesture, in the one place that class cannot be used: it draws its
+   rule with an absolutely positioned ::after pinned left:0/right:0, which measures
+   the line box — right for a caps control on a rail, wrong for an inline link that
+   can wrap mid-sentence. text-decoration wraps by construction, so this is the
+   same picture built out of it: a receded rule at rest, ink when you reach it. The
+   link also sits a register brighter than the prose around it, so it is not colour
+   alone carrying the distinction. */
+.doc-prose a {
+  color: var(--pay-poster-fg);
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-decoration-color: color-mix(in srgb, currentColor 40%, transparent);
+  text-underline-offset: 0.2em;
+  transition: text-decoration-color var(--dur-1) var(--ease-out);
+}
+
+.doc-prose a:hover,
+.doc-prose a:focus-visible {
+  text-decoration-color: currentColor;
+}
+
+.doc-prose a:focus-visible {
+  outline: 1px solid currentColor;
+  outline-offset: 0.25em;
+}
+
+/* A list, on a site that draws no bullets anywhere. So each item is a ruled row —
+   .lp-row's arrangement at prose scale — and the list reads as a schedule of terms
+   rather than as prose with dots in front of it. The items carry the rules;
+   nothing is drawn around the group. */
+.doc-prose ul {
+  margin: clamp(1.05rem, 0.85rem + 0.5vw, 1.5rem) 0 0;
+  padding: 0;
+  list-style: none;
+  border-top: 1px solid var(--pay-poster-rule);
+}
+
+.doc-prose li {
+  margin: 0;
+  padding: clamp(0.7rem, 0.6rem + 0.4vw, 1rem) 0;
+  border-bottom: 1px solid var(--pay-poster-rule);
+}
+
+/* A paragraph after a list has to clear the last rule, which the em-based stack
+   above knows nothing about. */
+.doc-prose ul + p {
+  margin-top: clamp(1.05rem, 0.85rem + 0.5vw, 1.5rem);
+}
+
+/* ── A note inside a clause ───────────────────────────────────────────────────
+   What was a tinted, bordered callout. A document does not need a box to raise its
+   voice: the rule above it goes to full ink, which is the mark this system already
+   uses for a boundary that matters (the colophon's 2px top rule) and for a field
+   that has your attention (a lit .bill-cell-rule). Same information, one pixel, no
+   panel. */
+.doc-note {
+  border-top: 1px solid var(--pay-poster-fg);
+  padding-top: 0.75rem;
+}
+
+.doc-note > .settle-label {
+  display: block;
+  color: var(--pay-poster-fg);
+}
+
+.doc-note > p {
+  margin-top: 0.45rem;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .doc-index-n,
+  .doc-prose a {
+    transition: none;
+  }
+}
+
+/* ============================================================================
+   The reference document (/docs)
+   ==========================================================================
+
+   The third document on the site, and the last route that was still wearing the
+   pre-redesign skin. It wore more of it than /legal and /disclaimer did. Those
+   two carried the four things the redesign took out everywhere else — an icon in
+   a circle beside every heading, a bordered "at a glance" panel, tinted callout
+   boxes, and a theme toggle writing a storage key nothing else reads. This page
+   carried all four plus a fifth: a complete parallel palette. --docs-bg,
+   --docs-text, --docs-muted, --docs-border, --docs-card, --docs-card-soft,
+   --docs-link, --docs-accent-soft, --docs-code-bg, --docs-callout-bg, in a
+   light and a dark set each — 643 lines deciding, on one route, what dark mode
+   means. It now reads --pay-poster-fg / --pay-poster-bg / --pay-poster-rule
+   like everything else, and there is one answer to that question again.
+
+   So the chrome is gone and the vocabulary above it does the work: .lp-paper for
+   the ground, .bill-poster for a section, .bill-section-title for a section that
+   names itself, .bill-table for a table, a.lp-row for a ruled row that lights,
+   .lp-step-num for a position in a sequence, and .doc-note wherever the old page
+   drew a tinted box. 37 bordered cards, 40 numbered circles and 16 callouts are
+   re-housed without a new component between them.
+
+   What a REFERENCE document needs that the two legal documents did not:
+
+     a rail       /legal is nineteen short clauses. This is sixteen sections and
+                  1,600 lines, five of which are 60% of it — autopay-agents alone
+                  is longer than the whole disclaimer. An index you passed 900
+                  lines ago is not an index, so it comes with you.
+     a search     Which is a real, tested feature and stays. The awkward part is
+                  that it writes to the same rail the rail's own scroll-spy does
+                  (see "the two modes" below) — two mechanisms describing the same
+                  sixteen rows, and only one of them can be telling the truth.
+     no reveal    Held to harder than on /legal, and for a better reason. The
+                  search reads section.textContent and wraps hits in <mark>. A
+                  document shipped at autoAlpha: 0 would be a document whose
+                  search highlights things you cannot see. The .lp-paper section
+                  rules still draw themselves — pure CSS off a view() timeline.
+
+   Everything below is prefixed .doc-, and shares .doc-index / .doc-index-n /
+   .doc-prose / .doc-note with the two legal documents. Those four were written as
+   .legal-* when there was only one kind of document on the site; they were always
+   about a document rather than about a licence, and there are now three. */
+.doc-paper {
+  /* The document's rhythm, split the way .legal-paper splits it and for the same
+     reason: the landing hangs its whole 11rem gap under a rule and nothing above,
+     which at a document's spacing leaves the rule touching the last line of the
+     section before it. A rule that opens a section belongs nearer the section it
+     opens than the one it closed. */
+  --doc-gap: clamp(2.5rem, 1.8rem + 2.4vw, 4.25rem);
+  --lp-section-y: calc(var(--doc-gap) * 0.5);
+  /* One measure for prose, declared here because .doc-prose is shared and reads
+     it from whichever ground it lands on. Narrower than /legal's 74ch: this page
+     sets its body in a column beside a rail rather than across the sheet, and the
+     column is already close to a measure by the time the rail has taken its
+     width. */
+  --doc-measure: 72ch;
+  /* Where the rail comes to rest, and — the point of one number for both — what
+     every section scrolls itself clear of when the index sends you to it. The
+     .lp-masthead is sticky and roughly 5rem tall at its largest; a rail parked
+     under it and an anchor landing under it are the same measurement, and keeping
+     them as one property is what stops a heading from arriving behind the header
+     the next time the logo is resized. */
+  --doc-rail-top: clamp(5.25rem, 4.4rem + 2vw, 6.75rem);
+}
+
+/* .lp-paper zeroes a poster's own padding so the drawn rule carries the rhythm;
+   this gives back the half of it that belongs above the rule. */
+.doc-paper .bill-poster {
+  padding-top: var(--doc-gap);
+}
+
+/* The last section closes on the colophon's 2px rule, so it takes the whole gap
+   rather than the half every boundary inside the document gets. */
+.doc-paper .bill-poster[data-last] {
+  padding-bottom: var(--doc-gap);
+}
+
+/* ── The head ─────────────────────────────────────────────────────────────────
+   Deliberately not a .bill-poster: it opens the page the way the hero does, so it
+   draws no rule above itself and the first rule in the document is the one under
+   the head — the boundary that means something. */
+.doc-head {
+  padding-top: clamp(3.5rem, 2.5rem + 3vw, 6rem);
+}
+
+/* The four facts a reader wants before the first section: what the asset is,
+   which network, which payment types, how cross-chain works. It was a bordered
+   panel floated beside the title. It is the app's own contents rail now — caps
+   label, one line, hairline — the rail the hero prints its proof figures on.
+
+   A <dl>, because four labelled facts are a definition list, and the one thing
+   here a screen reader can announce as pairs. */
+.doc-glance dd {
+  margin: 0;
+}
+
+/* ── The index poster ─────────────────────────────────────────────────────────
+   Sixteen sections in four parts, and the only place in the document that earns
+   the full 88rem. The grid itself is the shared [data-parts] rule further down
+   this file — it keys off how many parts a document has, which is the document's
+   business and not this rule's. */
+
+/* ── The layout ───────────────────────────────────────────────────────────────
+   A rail and a column. The rail is inside the flow rather than fixed, so it
+   scrolls the head away with the rest of the page and only becomes sticky once it
+   is the thing beside the body.
+
+   No rule between the two columns. A vertical hairline down 1,600 lines would be
+   the longest mark on the page, and the rail's own rows are already ruled — the
+   gap does the separating, which is what a gap is for. */
+.doc-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0 clamp(1.75rem, 1rem + 3vw, 4.5rem);
+  align-items: start;
+}
+
+@media (min-width: 1000px) {
+  .doc-layout {
+    grid-template-columns: clamp(11rem, 15vw, 14.5rem) minmax(0, 1fr);
+  }
+}
+
+/* ── The rail ─────────────────────────────────────────────────────────────────
+   The index, travelling. Its rows are the index's rows — the same .doc-index
+   arrangement, the same mono ordinal — because a reader who used the poster to
+   get here should not have to learn a second list to keep navigating.
+
+   `order` is set inline on these links by the search (see reorderSidebar in
+   DocsSearchInput.tsx), so this has to stay a flex or grid container for ranking
+   to mean anything. It is a grid, and the two things that must not be re-ranked
+   pin themselves to the front. */
+.doc-rail {
+  position: sticky;
+  top: var(--doc-rail-top);
+  display: grid;
+  align-content: start;
+  /* Sixteen rows plus a field, against a viewport that might be 600px tall. The
+     rail scrolls inside itself rather than running off the bottom of the screen,
+     and overscroll-behavior stops that inner scroll from stealing the page's once
+     it bottoms out. */
+  max-height: calc(100vh - var(--doc-rail-top) - 2rem);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  /* Room for the last row's rule to sit clear of the fade at the foot. */
+  padding-bottom: 0.5rem;
+  scrollbar-width: thin;
+}
+
+.doc-rail > .settle-label { order: -2; }
+.doc-rail > .doc-search-wrap { order: -1; }
+
+/* .doc-index is the poster's grid of PART GROUPS — its gap is the air between two
+   columns of contents, which between sixteen consecutive rows would be three
+   screens of rail. Here it is one flat list, so the gap comes off and the rows
+   carry their own rhythm through .lp-row's padding.
+
+   It stays a grid rather than becoming a block: the search ranks these rows by
+   writing `order` on them, and `order` on a block child is ignored. */
+.doc-rail-index {
+  gap: 0;
+}
+
+/* Narrower than the poster's 2.25rem ordinal column and tighter than its rows. A
+   rail is 13rem wide against the poster's 88rem, and "Net-settlement treasury"
+   has to fit beside its number without wrapping to three lines. */
+.doc-rail .doc-index .lp-row {
+  grid-template-columns: 1.6rem minmax(0, 1fr);
+  gap: 0 0.45rem;
+  padding: 0.5rem 0;
+}
+
+.doc-rail .bill-contents-label {
+  font-size: 0.85rem;
+  line-height: 1.25;
+}
+
+/* The rail's own heading and field are not part of the ranked list, so the rule
+   under the field closes them off from it. */
+.doc-rail > .doc-search-wrap {
+  margin-bottom: 0.35rem;
+  padding-bottom: 0.75rem;
+  border-bottom: 1px solid var(--pay-poster-rule);
+}
+
+.doc-rail > .settle-label {
+  margin-bottom: 0.75rem;
+}
+
+/* On a phone the rail does not become a second sixteen-link list stacked above
+   the article — the index poster three screens up is already that list. It
+   collapses to the field alone, and the field is the part worth keeping at hand.
+   `contents` rather than `display: none` so the field stays in the flow and the
+   search keeps its container. */
+@media (max-width: 999px) {
+  .doc-rail {
+    position: static;
+    max-height: none;
+    overflow: visible;
+  }
+
+  .doc-rail > :is(.settle-label, .doc-index) {
+    display: none;
+  }
+
+  .doc-rail > .doc-search-wrap {
+    margin-bottom: clamp(1.25rem, 1rem + 1vw, 2rem);
+  }
+}
+
+/* ── The two modes ────────────────────────────────────────────────────────────
+   The rail answers two different questions and cannot answer both at once.
+
+   With an empty field it is an INDEX: sixteen rows in document order, and
+   scroll-spy marks the one you are reading. That mark is
+   .bill-contents-entry[data-state="active"]'s gesture, borrowed — label to ink,
+   rule to a lit 2px — the same primitive the bills tab uses for step progress.
+
+   With a query it is a RESULT LIST: non-matches hidden, survivors re-ranked by
+   score. Scroll-spy pointing at "wherever you happen to be" while the rows read
+   "best three matches, ranked" is two mechanisms describing the same rows
+   differently, and the ranking is the one the reader just asked for. So the spy
+   goes quiet HERE rather than in DocsRail: the observer keeps its own book on
+   which section you are in — it has to, or the mark would be wrong the moment
+   the field is cleared — and this rule is what stops that book from being read
+   out. It also covers the mark already on a row when the query is typed, which
+   no amount of care in the observer would, since typing scrolls nothing and so
+   fires no callback to clear it. */
+.doc-rail[data-searching="true"] .doc-index-row[data-state] {
+  --doc-spy: 0;
+}
+
+.doc-index-row {
+  position: relative;
+}
+
+/* The lit rule. Drawn on the row rather than borrowed from .bill-cell-rule
+   because these rows are anchors in a ruled list, not cells in a grid — the row
+   already owns a foot rule from .lp-row, and this rides on top of it at full ink
+   instead of adding a second line under it. */
+.doc-index-row::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -1px;
+  height: 2px;
+  background: var(--pay-poster-fg);
+  opacity: 0;
+  transition: opacity var(--dur-2) var(--ease-out);
+}
+
+.doc-index-row[data-state="active"]::after {
+  opacity: var(--doc-spy, 1);
+}
+
+.doc-index-row[data-state="active"] :is(.doc-index-n, .bill-contents-label) {
+  color: var(--pay-poster-fg);
+}
+
+.doc-rail[data-searching="true"] .doc-index-row[data-state="active"] .doc-index-n {
+  color: color-mix(in srgb, var(--pay-poster-fg) 60%, var(--pay-poster-bg));
+}
+
+/* ── The field ────────────────────────────────────────────────────────────────
+   It was a bordered, rounded, filled input with an icon inside it. On a page
+   whose rule is that nothing draws a box, a search field is the hardest case —
+   the box IS the affordance almost everywhere else. So it is built the way every
+   editable value in the app is built: a bare input with a rule under it, the rule
+   going to full ink when the field has focus. That is .bill-cell's lit hairline
+   and .iou-field's bare input, in the one place on this page that takes typing. */
+.doc-search-wrap {
+  display: block;
+}
+
+.doc-search {
+  display: grid;
+  grid-template-columns: 0.85rem minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.5rem;
+  padding-bottom: 0.4rem;
+  border-bottom: 1px solid var(--pay-poster-rule);
+  color: color-mix(in srgb, var(--pay-poster-fg) 55%, var(--pay-poster-bg));
+  transition: border-color var(--dur-1) var(--ease-out), color var(--dur-1) var(--ease-out);
+}
+
+.doc-search:focus-within {
+  border-bottom-color: var(--pay-poster-fg);
+  color: var(--pay-poster-fg);
+}
+
+.doc-search svg {
+  width: 0.85rem;
+  height: 0.85rem;
+}
+
+.doc-search input {
+  min-width: 0;
+  border: 0;
+  background: none;
+  padding: 0;
+  font-family: var(--font-clash), system-ui, sans-serif;
+  font-size: 0.86rem;
+  color: var(--pay-poster-fg);
+}
+
+/* The field carries its own shortcut in the placeholder, so the page never needs
+   a keycap graphic to advertise it. */
+.doc-search input::placeholder {
+  color: color-mix(in srgb, var(--pay-poster-fg) 45%, var(--pay-poster-bg));
+}
+
+.doc-search input:focus {
+  outline: none;
+}
+
+/* Safari draws its own ✕ inside a type="search"; there is already one, and it is
+   the one that clears React state rather than just the DOM value. */
+.doc-search input::-webkit-search-cancel-button {
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+.doc-search-clear {
+  display: flex;
+  border: 0;
+  background: none;
+  padding: 0;
+  color: inherit;
+  cursor: pointer;
+  transition: color var(--dur-1) var(--ease-out);
+}
+
+.doc-search-clear:hover,
+.doc-search-clear:focus-visible {
+  color: var(--pay-poster-fg);
+}
+
+.doc-search-clear:focus-visible {
+  outline: 1px solid currentColor;
+  outline-offset: 0.2em;
+}
+
+/* The count. .bill-poster-fact's register — a fact about the page rather than a
+   control over it, so it is not tracked out. */
+.doc-search-meta {
+  margin-top: 0.5rem;
+  font-family: var(--font-clash), system-ui, sans-serif;
+  font-size: 0.72rem;
+  color: var(--pay-poster-dim);
+}
+
+.doc-search-hint {
+  color: color-mix(in srgb, var(--pay-poster-fg) 42%, var(--pay-poster-bg));
+}
+
+/* The keyboard-active result, distinct from the row you happen to be reading:
+   this one is where ↵ will take you. A left mark rather than a wash, so it cannot
+   be confused with either hover or the spy's lit foot rule. */
+.doc-rail a.doc-search-active {
+  box-shadow: inset 0.15rem 0 0 var(--pay-poster-fg);
+}
+
+.doc-rail a.doc-search-active :is(.doc-index-n, .bill-contents-label) {
+  color: var(--pay-poster-fg);
+}
+
+/* A matched term in the body. Not a highlighter: a wash of ink at 12% with the
+   text going to full ink, which is the same "this one" the app makes everywhere
+   else. Yellow on a page with no other tint would be the only colour in 1,600
+   lines that meant nothing about money. */
+mark.doc-mark {
+  border-radius: 1px;
+  background: color-mix(in srgb, var(--pay-poster-fg) 12%, transparent);
+  color: var(--pay-poster-fg);
+  padding: 0 0.1em;
+}
+
+/* Where ↵ just landed you, for a beat. The rule the section already has, brought
+   to full ink and released — no ring, no flash, no scale. */
+.doc-search-hit {
+  animation: doc-search-hit 1.2s var(--ease-out);
+}
+
+@keyframes doc-search-hit {
+  0%, 70% { background: color-mix(in srgb, var(--pay-poster-fg) 7%, transparent); }
+  100% { background: transparent; }
+}
+
+/* ── A section ────────────────────────────────────────────────────────────────
+   .bill-poster, and the ordinal the index sent you here by. scroll-margin so an
+   anchor lands under the sticky masthead rather than behind it — one property,
+   shared with the rail's rest position, so the two can never drift apart. */
+.doc-section {
+  scroll-margin-top: var(--doc-rail-top);
+}
+
+/* The section boundary, drawn.
+ *
+ * The landing hangs this off .lp-measure's ::before, so the rule spans the text
+ * column exactly rather than the section's full box. That cannot be borrowed here:
+ * these sections live inside the layout's second column, and a .lp-measure inside
+ * one would re-apply an 88rem cap and a page gutter to a column that already has
+ * both. So the rule goes on the section itself — which it can, because unlike the
+ * landing's demo sections there is never a second measure inside one for it to
+ * divide a section from itself.
+ *
+ * Same keyframe, same view() timeline, same range as every other section boundary
+ * on the site. Scroll-driven in CSS: nothing to schedule, nothing for GSAP to own,
+ * and it cannot desync from the scroll because it IS the scroll. Where
+ * animation-timeline is unsupported the declaration is dropped and the animation
+ * runs once on load, ending on the same drawn rule — the fallback is the correct
+ * picture rather than a broken one. */
+.doc-section::before {
+  content: "";
+  display: block;
+  height: 1px;
+  margin-bottom: var(--lp-section-y);
+  background: var(--pay-poster-rule);
+  transform-origin: left;
+  animation: lp-draw 0.9s var(--ease-out) both;
+  animation-timeline: view();
+  animation-range: entry 4% cover 20%;
+}
+
+/* Body copy, and — like the legal documents — the only place on this site with
+   enough of it in a row that element selectors are cheaper than a class on every
+   paragraph. There are over a hundred of them here. Keeping a section as plain
+   <p>, <ul>, <strong> and <code> is the point: reference documentation has to
+   stay editable by someone reading it as prose rather than as markup. */
+.doc-section :is(p, ul) {
+  max-width: var(--doc-measure);
+}
+
+.doc-section p {
+  margin: clamp(0.9rem, 0.7rem + 0.5vw, 1.35rem) 0 0;
+  font-size: 0.95rem;
+  line-height: 1.7;
+  color: var(--pay-poster-dim);
+  text-wrap: pretty;
+}
+
+.doc-section :is(strong, b) {
+  font-weight: 500;
+  color: var(--pay-poster-fg);
+}
+
+.doc-section em {
+  font-style: italic;
+}
+
+.doc-section code {
+  font-family: var(--font-mono);
+  font-size: 0.86em;
+  color: var(--pay-poster-fg);
+  overflow-wrap: anywhere;
+}
+
+.doc-section :is(p, li) a:not(.lp-row) {
+  color: var(--pay-poster-fg);
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-decoration-color: color-mix(in srgb, currentColor 40%, transparent);
+  text-underline-offset: 0.2em;
+  transition: text-decoration-color var(--dur-1) var(--ease-out);
+}
+
+.doc-section :is(p, li) a:not(.lp-row):hover,
+.doc-section :is(p, li) a:not(.lp-row):focus-visible {
+  text-decoration-color: currentColor;
+}
+
+.doc-section :is(p, li) a:focus-visible {
+  outline: 1px solid currentColor;
+  outline-offset: 0.25em;
+}
+
+/* A list, on a site that draws no bullets anywhere. Each item is a ruled row, so
+   the list reads as a schedule of terms rather than as prose with dots in front
+   of it. The items carry the rules; nothing is drawn around the group.
+ *
+ * :not(.lp-rows) / :not(.lp-row) because the ruled groups further down this block
+ * are real lists too — sixteen steps are a sequence and thirty-seven points are a
+ * set, so they are <ol>/<ul> of <li> rather than divs, and the search reads them
+ * as list items. Without the guard this rule would reach them: a second top margin
+ * inside .doc-rows' grid, and .lp-row's padding overridden by an element selector
+ * that outranks it. A Tailwind m-0 cannot undo it either — globals.css is
+ * unlayered and utilities are in @layer utilities, so a utility never beats a
+ * property a class in this file already set. */
+.doc-section ul:not(.lp-rows) {
+  margin: clamp(1.05rem, 0.85rem + 0.5vw, 1.5rem) 0 0;
+  padding: 0;
+  list-style: none;
+  border-top: 1px solid var(--pay-poster-rule);
+}
+
+.doc-section li:not(.lp-row) {
+  margin: 0;
+  padding: clamp(0.7rem, 0.6rem + 0.4vw, 1rem) 0;
+  border-bottom: 1px solid var(--pay-poster-rule);
+  font-size: 0.95rem;
+  line-height: 1.7;
+  color: var(--pay-poster-dim);
+}
+
+/* A paragraph after a list has to clear the last rule, which the margin above
+   knows nothing about. */
+.doc-section ul:not(.lp-rows) + p {
+  margin-top: clamp(1.05rem, 0.85rem + 0.5vw, 1.5rem);
+}
+
+/* ── A subhead ────────────────────────────────────────────────────────────────
+   Twenty-five of these, and they are sentences: "Why a developer-controlled
+   wallet (and not a user-controlled one)". So this takes .bill-subhead's
+   ARRANGEMENT — a label with a rule running out to the end of its column — but
+   not its caps. 0.18em of tracking across sixty characters is a line nobody
+   reads; that register was written for four capitals on a rail.
+
+   Set in the display face at body-copy-plus, at full ink, so it separates from
+   the paragraph under it by weight and typeface rather than by size alone.
+
+   Scoped under .doc-section throughout this block, and not for tidiness:
+   .bill-subhead, .lp-row and .doc-section p are all declared LATER in this file,
+   so a bare .doc-* class would lose the cascade to the very rules it means to
+   adjust. Two classes deep is the cheapest way to sit above them without
+   !important. */
+.doc-section .doc-subhead {
+  gap: 1rem;
+  margin: clamp(1.9rem, 1.3rem + 1.6vw, 2.9rem) 0 0.35rem;
+}
+
+.doc-section .doc-subhead > span {
+  font-family: var(--font-clash), system-ui, sans-serif;
+  font-weight: 400;
+  font-size: clamp(1rem, 0.95rem + 0.25vw, 1.15rem);
+  line-height: 1.3;
+  letter-spacing: -0.01em;
+  color: var(--pay-poster-fg);
+  text-wrap: balance;
+}
+
+/* ── A group of related points ────────────────────────────────────────────────
+   Thirty-seven bordered cards, each with an icon in a tinted square. The icons
+   are gone (the redesign's own note lists "an icon in a circle beside every
+   heading" among the things it removed, and the replacement mark is the ordinal),
+   and so are the boxes. What is left is what the card was actually for: a title
+   and two sentences about it, one of a set.
+
+   So they are .lp-row's ruled rows in two columns. Two, not the old three-to-four
+   — a row's title and body stack, and at four tracks the body is six words wide.
+   Each column keeps its own top and bottom rule rather than one list flowed
+   across tracks, which leaves a rule hanging with nothing beside it. */
+.doc-rows {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: start;
+  gap: 0 clamp(1.5rem, 1rem + 2.5vw, 4rem);
+  margin-top: clamp(1.4rem, 1rem + 1.4vw, 2.25rem);
+}
+
+@media (min-width: 900px) {
+  .doc-rows[data-cols="2"] {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+/* .lp-rows draws the head rule for a list; inside this grid each column is its
+   own list and draws its own. */
+.doc-rows > .lp-rows {
+  min-width: 0;
+}
+
+/* Collapsed to one column, two stacked lists meet as a 2px line — the first
+   list's last .lp-row draws a foot rule and the second list draws a head rule on
+   top of it. 2px is this system's mark for a boundary that matters (the
+   colophon's top rule, a lit field); a seam between column one and column two is
+   not one. */
+@media (max-width: 899px) {
+  .doc-rows > .lp-rows + .lp-rows {
+    border-top: 0;
+  }
+}
+
+.doc-section .doc-row {
+  display: block;
+}
+
+.doc-row-title {
+  display: block;
+  font-family: var(--font-clash), system-ui, sans-serif;
+  font-weight: 400;
+  font-size: clamp(0.95rem, 0.9rem + 0.25vw, 1.08rem);
+  line-height: 1.3;
+  letter-spacing: -0.01em;
+  color: var(--pay-poster-fg);
+  text-wrap: pretty;
+}
+
+/* The body of a row is prose, but a row is not a paragraph in a column of them —
+   it sits under its own title, so it comes in tighter than .doc-section p. */
+.doc-section .doc-row > p {
+  margin-top: 0.4rem;
+  font-size: 0.9rem;
+  line-height: 1.65;
+}
+
+/* ── A sequence ───────────────────────────────────────────────────────────────
+   Forty numbered steps, each formerly a numeral in a filled circle. The numeral
+   survives; the circle does not. .lp-step-num is the landing's own answer to this
+   — mono, dimmed a register back, "a position in a sequence, not a word, and the
+   eye should be able to skip it" — and a step's number is exactly that. It runs
+   inline ahead of the title rather than in a gutter column, because at this
+   density a 2.5rem gutter of mostly-whitespace is the widest thing in the
+   section. */
+.doc-step-n {
+  margin-right: 0.55rem;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── A note ───────────────────────────────────────────────────────────────────
+   .doc-note itself is shared with the two legal documents, where it lands inside
+   a .doc-prose column and takes its air from that column's `> * + *`. Here it
+   lands between a section's own paragraphs, which have no such stack — so the two
+   margins it needs are given back.
+ *
+ * Both scoped two classes deep, and not for tidiness: .doc-section p is declared
+ * after .doc-note in this file at the same specificity, so it wins the tie on
+ * source order. Left alone it puts a whole paragraph's top margin between the lit
+ * rule and the label under it, which is the one gap in the note that is carrying
+ * the meaning. */
+.doc-section .doc-note {
+  margin-top: clamp(1.4rem, 1rem + 1.4vw, 2.25rem);
+}
+
+.doc-section .doc-note > p {
+  margin-top: 0.45rem;
+}
+
+/* ── A table ──────────────────────────────────────────────────────────────────
+   Fifteen of them, and .bill-table already draws the one this system wants. One
+   override: it right-aligns every column after the first, because it was written
+   for figures on a receipt. These are prose — a purpose, a role, what a status
+   means — and prose ragged off a right edge in a three-column table is unreadable
+   at any width.
+
+   tabular-nums comes off for the same reason: there are no columns of figures to
+   line up here, and tabular digits inside a sentence set the word "0.005" wider
+   than the words around it. */
+.doc-section .bill-table :is(th, td):not(:first-child) {
+  text-align: left;
+}
+
+.doc-section .bill-table td {
+  font-variant-numeric: normal;
+  line-height: 1.6;
+  color: var(--pay-poster-dim);
+  vertical-align: top;
+}
+
+.doc-section .bill-table :is(th, td) {
+  padding-right: clamp(1rem, 0.7rem + 1.2vw, 2rem);
+}
+
+.doc-section .bill-table td:first-child {
+  color: var(--pay-poster-fg);
+}
+
+/* A table is the one thing on the page allowed to be wider than the measure —
+   three columns of prose inside 72ch is three columns of single words. */
+.doc-section .bill-table-wrap {
+  margin-top: clamp(1.2rem, 0.9rem + 1vw, 1.9rem);
+  max-width: none;
+}
+
+/* ── A code block ─────────────────────────────────────────────────────────────
+   One block, and it is the metadataHash preimage — the thing a payer recomputes
+   to check a bill. It was a rounded, bordered, filled panel. It is ruled top and
+   bottom instead: the same two rules a .bill-poster is bounded by, at the scale of
+   a block inside one. */
+.doc-code {
+  overflow-x: auto;
+  margin: clamp(1.2rem, 0.9rem + 1vw, 1.9rem) 0 0;
+  padding: clamp(0.9rem, 0.7rem + 0.6vw, 1.35rem) 0;
+  border-top: 1px solid var(--pay-poster-rule);
+  border-bottom: 1px solid var(--pay-poster-rule);
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  line-height: 1.7;
+  color: var(--pay-poster-fg);
+  white-space: pre;
+  tab-size: 2;
+}
+
+/* ── The references ───────────────────────────────────────────────────────────
+   Four links out, in a document whose whole subject is that its claims are
+   checkable. a.lp-row's ruled row that lights, with the arrow leaning on hover —
+   no lift, no card to lift. */
+.doc-sources {
+  margin-top: clamp(1.4rem, 1rem + 1.4vw, 2.25rem);
+}
+
+.doc-sources .lp-row {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.doc-sources svg {
+  flex: none;
+  transition: transform var(--dur-2) var(--ease-out);
+}
+
+.doc-sources a:hover svg,
+.doc-sources a:focus-visible svg {
+  transform: translate(0.15em, -0.15em);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .doc-index-row::after,
+  .doc-search,
+  .doc-search-clear,
+  .doc-sources svg,
+  .doc-section :is(p, li) a {
+    transition: none;
+  }
+
+  .doc-search-hit {
+    animation: none;
+  }
+
+  /* The rule stops drawing itself and is simply there. `animation: none` drops the
+     `from { scaleX(0) }` with it, so the untransformed rule is the full-width one —
+     the same picture the animation ends on. */
+  .doc-section::before {
+    animation: none;
+  }
 }

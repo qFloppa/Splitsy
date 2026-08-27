@@ -1,6 +1,6 @@
 "use client";
 
-import { AlertTriangle, CalendarClock, CheckCircle2, ChevronDown, Info, Loader2, ShieldCheck } from "lucide-react";
+import { ChevronDown, Loader2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import {
   BILL_SPLIT_REGISTRY_ADDRESS,
@@ -196,6 +196,15 @@ export function useBillVerification(billId: bigint, metadataHash: `0x${string}`)
 }
 
 // The inline verification panel, as the Bills tab and History render it.
+//
+// Same two checks the settle deck's sheet reports (VerifiedSheetBody in
+// app/SettleDeck.tsx), in the same voice. It used to be the app's loudest tone
+// box — a tinted, bordered card, a hard-coded #dc2626, an icon on every one of
+// eight lines and a bold heading over them — sitting inside a History row where
+// everything around it is type on a hairline. Now it is a .doc-note: one rule
+// that takes the tone, a caps label that names the verdict, and the findings as
+// footnotes under it. Nothing is illustrated, because none of the icons were
+// saying anything the sentence beside them wasn't.
 export default function BillVerification({
   billId,
   metadataHash,
@@ -210,15 +219,15 @@ export default function BillVerification({
 
   if (status === "loading") {
     return (
-      <p className="mt-2 flex items-center gap-1.5 text-xs text-[var(--text-muted)]">
-        <Loader2 className="animate-spin" size={13} /> Checking this bill against Arc…
+      <p className="bill-poster-msg bill-verify-line" role="status">
+        <Loader2 className="animate-spin" size={12} /> Checking this bill against Arc…
       </p>
     );
   }
 
   if (status === "unpublished" || status === "error") {
     return (
-      <p className="mt-2 text-xs text-[var(--text-muted)]">
+      <p className="bill-poster-msg" role="status">
         {status === "unpublished"
           ? "On-chain verification isn’t available for this bill."
           : "Couldn’t reach the verifier — refresh to retry."}
@@ -235,138 +244,83 @@ export default function BillVerification({
   // the user free to hide it via the toggle.
   const receiptOpen = showReceipt ?? altered;
   const title = altered
-    ? `Warning — the total was changed${merchant ? ` — ${merchant}` : ""}`
+    ? `Warning — the total was changed${merchant ? ` · ${merchant}` : ""}`
     : verified
-      ? `Verified on Arc${merchant ? ` — ${merchant}` : ""}`
+      ? `Verified on Arc${merchant ? ` · ${merchant}` : ""}`
       : "This bill doesn’t match Arc";
   return (
-    <div
-      className={`mt-2 rounded-[var(--radius)] border p-2.5 text-xs ${
-        safe
-          ? "border-[color-mix(in_srgb,var(--accent)_40%,transparent)] bg-[color-mix(in_srgb,var(--accent)_10%,transparent)]"
-          : "border-[color-mix(in_srgb,#dc2626_45%,transparent)] bg-[color-mix(in_srgb,#dc2626_10%,transparent)]"
-      }`}
-    >
-      <div className="flex items-start gap-1.5 font-semibold">
-        {safe ? (
-          <ShieldCheck className="mt-0.5 shrink-0 text-[var(--accent)]" size={15} />
-        ) : (
-          <AlertTriangle className="mt-0.5 shrink-0 text-[#dc2626]" size={15} />
-        )}
-        <span>{title}</span>
-      </div>
+    <div className="doc-note bill-verify" data-tone={safe ? "ok" : "warn"}>
+      <p className="settle-label">{title}</p>
 
-      {/* Two independent checks, shown separately so it's clear what passed and
+      {/* Two independent checks, kept apart so it stays clear what passed and
           what didn't: (1) do the details match the chain, (2) does the charged
           total match the receipt. */}
-      <div className="mt-2 space-y-1.5">
-        {/* Check 1 — commitment integrity. */}
-        {verified ? (
-          <p className="flex items-start gap-1.5 text-[var(--accent)]">
-            <CheckCircle2 className="mt-0.5 shrink-0" size={13} />
-            <span className="text-[var(--text)]">Genuine bill on Arc — the details shown here are exactly what the creator committed (not tampered with since).</span>
-          </p>
-        ) : (
-          <p className="flex items-start gap-1.5 font-semibold text-[#dc2626]">
-            <AlertTriangle className="mt-0.5 shrink-0" size={13} />
-            <span>Details don’t match Arc — don’t pay until the creator re-checks this bill.</span>
-          </p>
-        )}
+      {verified ? (
+        <p>
+          Genuine bill on Arc — the details shown here are exactly what the creator committed, and can’t have been
+          edited since.
+        </p>
+      ) : (
+        <p data-tone="warn">Details don’t match Arc — don’t pay until the creator re-checks this bill.</p>
+      )}
 
-        {/* Committed pay-by date, if the creator set one. Positive framing:
-            paying on time builds reputation; it's a nudge, not a threat. */}
-        {verified && dueDate ? (
-          <p className="flex items-start gap-1.5 text-[var(--text-muted)]">
-            <CalendarClock className="mt-0.5 shrink-0" size={13} />
-            <span>
-              Pay by {new Date(dueDate * 1000).toLocaleDateString()} to keep your on-chain payment reputation strong.
-            </span>
-          </p>
-        ) : null}
+      {/* Committed pay-by date, if the creator set one. Positive framing:
+          paying on time builds reputation; it's a nudge, not a threat. */}
+      {verified && dueDate ? (
+        <p>
+          Pay by {new Date(dueDate * 1000).toLocaleDateString()} to keep your on-chain payment reputation strong.
+        </p>
+      ) : null}
 
-        {/* Check 2 — does the charged total match the receipt? Only meaningful
-            once the commitment itself is verified. */}
-        {verified && audit.state === "checking" ? (
-          <p className="flex items-center gap-1.5 text-[var(--text-muted)]">
-            <Loader2 className="animate-spin" size={13} /> Checking the total against the receipt…
-          </p>
+      {verified ? (
+        <p data-tone={altered ? "warn" : undefined}>
+          {audit.state === "checking"
+            ? "Checking the total against the receipt…"
+            : audit.state === "ok"
+              ? `Total matches the receipt (~$${audit.onchainUsd.toFixed(2)}).`
+              : audit.state === "altered"
+                ? `Total was changed — the receipt reads about $${audit.scannedUsd.toFixed(2)}, but you’re charged $${audit.onchainUsd.toFixed(2)}. Ask the creator before paying.`
+                : audit.state === "no-receipt"
+                  ? "No receipt was uploaded — the creator typed this total by hand, so it can’t be checked against a bill."
+                  : "Couldn’t re-read the total automatically — open the receipt below and compare it yourself."}
+        </p>
+      ) : null}
+
+      <div className="bill-verify-tools">
+        {verified && receiptUrl ? (
+          <button className="iou-provider bill-verify-toggle" onClick={() => setShowReceipt(!receiptOpen)} type="button">
+            <ChevronDown className={receiptOpen ? "rotate-180" : ""} size={12} />
+            {receiptOpen ? "hide receipt" : "the receipt on chain"}
+          </button>
         ) : null}
-        {verified && audit.state === "ok" ? (
-          <p className="flex items-start gap-1.5 text-[var(--accent)]">
-            <CheckCircle2 className="mt-0.5 shrink-0" size={13} />
-            <span className="text-[var(--text)]">Total matches the receipt (~${audit.onchainUsd.toFixed(2)}).</span>
-          </p>
-        ) : null}
-        {verified && audit.state === "altered" ? (
-          <p className="flex items-start gap-1.5 font-semibold text-[#dc2626]">
-            <AlertTriangle className="mt-0.5 shrink-0" size={13} />
-            <span>
-              Total was changed — the receipt reads about ${audit.scannedUsd.toFixed(2)}, but you’re charged $
-              {audit.onchainUsd.toFixed(2)}. Ask the creator before paying.
-            </span>
-          </p>
-        ) : null}
-        {verified && audit.state === "no-receipt" ? (
-          <p className="flex items-start gap-1.5 text-[var(--text-muted)]">
-            <Info className="mt-0.5 shrink-0" size={13} />
-            <span>No receipt was uploaded — the creator typed this total by hand, so it can’t be checked against a bill.</span>
-          </p>
-        ) : null}
-        {verified && audit.state === "unavailable" ? (
-          <p className="flex items-start gap-1.5 text-[var(--text-muted)]">
-            <Info className="mt-0.5 shrink-0" size={13} />
-            <span>Couldn’t re-read the total automatically — open the receipt below and compare it yourself.</span>
-          </p>
-        ) : null}
+        <button className="iou-provider bill-verify-toggle" onClick={() => setShowDetail((open) => !open)} type="button">
+          <ChevronDown className={showDetail ? "rotate-180" : ""} size={12} />
+          what does this mean
+        </button>
       </div>
 
-      {verified && receiptUrl ? (
-        <div className="mt-2">
-          <button
-            className="inline-flex items-center gap-1 text-[var(--text-muted)] underline underline-offset-2"
-            onClick={() => setShowReceipt(!receiptOpen)}
-            type="button"
-          >
-            <ChevronDown className={`transition-transform ${receiptOpen ? "rotate-180" : ""}`} size={12} />
-            {receiptOpen ? "Hide receipt" : "View the receipt committed on-chain"}
-          </button>
-          {receiptOpen ? (
-            <div className="mt-1.5">
-              <p className="mb-1 text-[var(--text-muted)]">Check the total matches what you’re charged:</p>
-              <a href={receiptUrl} rel="noreferrer" target="_blank">
-                {/* Plain img: a Supabase Storage URL isn't in next.config's allowed domains. */}
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img
-                  alt="Receipt committed on-chain for this bill"
-                  className="max-h-64 w-auto rounded-[var(--radius)] border border-[var(--receipt-border-soft)]"
-                  src={receiptUrl}
-                />
-              </a>
-            </div>
-          ) : null}
+      {verified && receiptUrl && receiptOpen ? (
+        <div className="bill-verify-receipt">
+          <p>Check the total matches what you’re charged:</p>
+          <a href={receiptUrl} rel="noreferrer" target="_blank">
+            {/* Plain img: a Supabase Storage URL isn't in next.config's allowed domains. */}
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img alt="Receipt committed on-chain for this bill" src={receiptUrl} />
+          </a>
         </div>
       ) : null}
 
-      <button
-        className="mt-2 inline-flex items-center gap-1 text-[var(--text-muted)] underline underline-offset-2"
-        onClick={() => setShowDetail((open) => !open)}
-        type="button"
-      >
-        <ChevronDown className={`transition-transform ${showDetail ? "rotate-180" : ""}`} size={12} />
-        What does this mean?
-      </button>
       {showDetail ? (
-        <div className="mt-1.5 space-y-2 text-[var(--text-muted)]">
+        <div className="bill-verify-detail">
           <p>
-            <span className="font-semibold text-[var(--text)]">1. Genuine bill on Arc.</span> When this bill
-            was created, Splitsy wrote a tamper-proof fingerprint of its details onto the Arc blockchain,
-            where it can’t be edited. Your browser recomputed that fingerprint and
+            <b>1. Genuine bill on Arc.</b> When this bill was created, Splitsy wrote a tamper-proof fingerprint of its
+            details onto the Arc blockchain, where it can’t be edited. Your browser recomputed that fingerprint and
             {verified
               ? " it matches — so the merchant, total, and split shown here are exactly what the creator committed. (This does NOT mean the total is correct — that’s check 2.)"
               : " it does NOT match — so what you’re shown is not what was committed. Don’t pay."}
           </p>
           <p>
-            <span className="font-semibold text-[var(--text)]">2. Total matches the receipt.</span>{" "}
+            <b>2. Total matches the receipt.</b>{" "}
             {audit.state === "no-receipt"
               ? "This bill has no receipt — the creator entered the total by hand, so there’s nothing to cross-check the amount against."
               : audit.state === "ok"
@@ -375,7 +329,7 @@ export default function BillVerification({
                   ? "Your browser re-read the committed receipt: the total the creator committed doesn’t match the amount printed on the receipt. The bill is genuine, but the charged total is wrong."
                   : "The receipt image is committed, but your browser couldn’t re-read its total automatically — open it above and compare by eye."}
           </p>
-          <p className="break-all font-mono text-[10px]">On-chain hash: {metadataHash}</p>
+          <p className="bill-verify-hash">{metadataHash}</p>
         </div>
       ) : null}
     </div>

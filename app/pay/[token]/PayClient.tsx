@@ -1,20 +1,21 @@
 "use client";
 
-import { ConnectButton } from "@rainbow-me/rainbowkit";
-import { CheckCircle2, Loader2, Lock, Moon, Sun } from "lucide-react";
+import { CheckCircle2, Loader2, Moon, Sun } from "lucide-react";
+import Image from "next/image";
 import Link from "next/link";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { useAccount } from "wagmi";
 import { getWalletClient, switchChain, writeContract, waitForTransactionReceipt } from "wagmi/actions";
 import { arcTestnet } from "viem/chains";
 import { formatUnits } from "viem";
 import SignInMenu from "@/app/SignInMenu";
+import WalletMark from "@/app/WalletMark";
 import XAuthControl from "@/app/XAuthControl";
 import { Switch } from "@/app/SettlementAgentsPanel";
 import { ProviderIcon } from "@/app/ProviderTag";
 import type { AccountProvider } from "@/lib/types";
 import { useTheme } from "@/lib/use-theme";
-import { wagmiConfig } from "@/lib/wagmi";
+import { arcWalletClient, wagmiConfig } from "@/lib/wagmi";
 import { coveredByOthers, payableRows, selectionTotalUnits } from "@/lib/pay-link";
 import {
   approveBillRegistry,
@@ -75,6 +76,103 @@ const usd = (units: string) => `$${Number(billUnitsToUsdc(BigInt(units))).toFixe
 // claiming none.
 const KNOWN_PROVIDERS = new Set(["x", "discord", "email", "wallet"]);
 
+// The app's masthead, minus the tab rail: a share link is opened by people with
+// no session, and tabs into an app they have not signed into are five dead ends.
+// Everything else is the header the rest of the product wears — the brand lockup,
+// the tools in .iou-provider's register, one hairline closing it off. What stood
+// here before was a Tailwind band with a `text-sm font-bold` wordmark, RainbowKit's
+// own filled pill, and a bordered .icon-button circle: three pieces of chrome the
+// redesign had already removed everywhere else.
+//
+// It keeps the strap that the app shows only on its landing tab, and for the same
+// reason turned outward: this page is read cold, by someone who may never have
+// heard of Splitsy, and the one fact they must have before paying anything is that
+// the money is testnet money. The breathing dot says it louder than the poster's
+// dim label does.
+//
+// The frame is why this is one component rather than a header beside a main. The
+// poster wants the viewport under the header, and that used to be spelled
+// `calc(100dvh - 4rem)` — a constant measured off the old slim band, wrong for
+// this header at every width and wrong twice over below `md`, where it wraps to
+// two rows. A flex column of 100dvh hands the same answer down without anyone
+// having to know the number.
+//
+// theme/setTheme are props, not a second useTheme() — the hook holds its own state
+// per instance, so two of them would drift apart on the first toggle.
+function PayFrame({
+  children,
+  setTheme,
+  theme,
+}: Pick<ReturnType<typeof useTheme>, "setTheme" | "theme"> & { children: ReactNode }) {
+  return (
+    <div className="pay-frame">
+      <header className="app-masthead z-30">
+        <div className="mx-auto max-w-[88rem] px-4 py-3 sm:px-6 lg:px-8">
+          <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+            <div className="min-w-0 shrink">
+              <Link aria-label="Splitsy home" className="brand-lockup" href="/">
+                <span className="logo-crop logo-crop-app">
+                  <Image
+                    alt="Splitsy"
+                    className="logo-crop-image"
+                    height={1024}
+                    priority
+                    src="/splitsy.png"
+                    width={1536}
+                  />
+                </span>
+              </Link>
+              {/* A <p>, not the app's <h1>: on this page the merchant name is the
+                  document's heading. */}
+              <div className="app-strap">
+                <p className="settle-label app-strapline">Split bills, settle cleanly</p>
+                <span className="settle-label app-network">Arc Testnet</span>
+              </div>
+            </div>
+            <div className="app-rails">
+              <div className="app-tools">
+                <Link className="iou-provider bill-toggle" href="/docs">
+                  Docs
+                </Link>
+                <SignInMenu />
+                <WalletMark />
+                <button
+                  aria-label={`Switch to ${theme === "light" ? "dark" : "light"} mode`}
+                  className="iou-provider app-icon"
+                  onClick={() => setTheme((current) => (current === "light" ? "dark" : "light"))}
+                  type="button"
+                >
+                  {theme === "light" ? <Moon size={16} /> : <Sun size={16} />}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </header>
+      {children}
+    </div>
+  );
+}
+
+// The states with no bill to poster: a token that opens nothing, a chain that
+// can't be read, and the beat before the first read lands. All three used to be a
+// bare centred block with `text-2xl font-semibold` over a bordered
+// .secondary-button — and none of them rendered the header at all, so a mistyped
+// link led to a page with no way back and no sign of whose page it was.
+//
+// Now they speak in the poster's own voice, because that is what they stand in
+// for: a caps rail, one display line, prose on a readable measure, and at most one
+// borderless control.
+function PayVoid({ children, label, title }: { children?: ReactNode; label: string; title: string }) {
+  return (
+    <main className="pay-void">
+      <p className="pay-label">{label}</p>
+      <h1 className="pay-merchant">{title}</h1>
+      {children}
+    </main>
+  );
+}
+
 export default function PayClient({ token }: { token: string }) {
   const { theme, setTheme } = useTheme();
   const account = useAccount();
@@ -112,35 +210,42 @@ export default function PayClient({ token }: { token: string }) {
 
   if (loadError === "not_found") {
     return (
-      <main className="mx-auto flex min-h-[70dvh] max-w-lg flex-col items-center justify-center gap-3 px-6 text-center">
-        <h1 className="text-2xl font-semibold text-[var(--text)]">This link doesn&apos;t open a bill</h1>
-        <p className="text-[var(--text-muted)]">
-          It may have been mistyped, or the bill was created without a share link.
-        </p>
-        <Link className="secondary-button mt-2" href="/">
-          Go to Splitsy
-        </Link>
-      </main>
+      <PayFrame setTheme={setTheme} theme={theme}>
+        <PayVoid label="No such bill" title="This link doesn't open a bill">
+          <p className="pay-fine">It may have been mistyped, or the bill was created without a share link.</p>
+          <Link className="settle-action" href="/">
+            Splitsy ›
+          </Link>
+        </PayVoid>
+      </PayFrame>
     );
   }
 
   if (loadError) {
     return (
-      <main className="mx-auto flex min-h-[70dvh] max-w-lg flex-col items-center justify-center gap-3 px-6 text-center">
-        <h1 className="text-2xl font-semibold text-[var(--text)]">Couldn&apos;t reach Arc</h1>
-        <p className="text-[var(--text-muted)]">The bill exists, but its live balances couldn&apos;t be read just now.</p>
-        <button className="secondary-button mt-2" onClick={() => void load()} type="button">
-          Try again
-        </button>
-      </main>
+      <PayFrame setTheme={setTheme} theme={theme}>
+        <PayVoid label="Arc unreachable" title="Couldn't reach Arc">
+          <p className="pay-fine">The bill exists, but its live balances couldn&apos;t be read just now.</p>
+          <button className="settle-action" onClick={() => void load()} type="button">
+            Try again ›
+          </button>
+        </PayVoid>
+      </PayFrame>
     );
   }
 
   if (!bill) {
     return (
-      <main className="flex min-h-[70dvh] items-center justify-center">
-        <Loader2 className="animate-spin text-[var(--text-muted)]" size={22} />
-      </main>
+      <PayFrame setTheme={setTheme} theme={theme}>
+        <main className="pay-void">
+          {/* The same mark a signing row shows, at the scale of the whole page —
+              a caps line, not a lone spinner on an empty screen. */}
+          <p className="pay-label inline-flex items-center gap-2" role="status">
+            <Loader2 className="animate-spin" size={14} />
+            Reading this bill from Arc
+          </p>
+        </main>
+      </PayFrame>
     );
   }
 
@@ -201,6 +306,14 @@ export default function PayClient({ token }: { token: string }) {
     const legs = bill!.rows.filter((r) => selected.has(r.address) && BigInt(r.remainingUnits) > 0n);
     if (legs.length === 0) return;
 
+    // A share link is read cold, so "no wallet here at all" is an ordinary state
+    // on this page. Said in words, because what wagmi throws for it is
+    // "ConnectorNotConnectedError".
+    if (!account.address) {
+      setMessage("Connect a browser wallet to pay on Arc — or use the Splitsy wallet if you have an account.");
+      return;
+    }
+
     setPaying(true);
     setMessage("");
     // Tracked locally as well as in state: settleRun needs the finished map, and
@@ -211,7 +324,11 @@ export default function PayClient({ token }: { token: string }) {
     setRowStates({ ...states });
 
     try {
-      const walletClient = await getWalletClient(wagmiConfig, { chainId: arcTestnet.id });
+      // Whatever chain the payer arrived on, the registry is on Arc. Announced
+      // rather than done silently: the wallet is about to raise a network prompt,
+      // and an unexplained one reads as a phishing attempt.
+      setMessage("Switching to Arc Testnet…");
+      const walletClient = await arcWalletClient();
       const wallet = await createBillSplitWallet(walletClient);
       await ensureBillSplitWalletOnArc(wallet);
 
@@ -428,9 +545,7 @@ export default function PayClient({ token }: { token: string }) {
 
       // From here the money is on Arc in the payer's wallet, so this is the
       // ordinary browser-wallet settlement — same approve-then-payDebtFor shape.
-      const wallet = await createBillSplitWallet(
-        await getWalletClient(wagmiConfig, { chainId: arcTestnet.id }),
-      );
+      const wallet = await createBillSplitWallet(await arcWalletClient());
       await ensureBillSplitWalletOnArc(wallet);
 
       setMessage("Approving USDC…");
@@ -463,25 +578,8 @@ export default function PayClient({ token }: { token: string }) {
 
   return (
     <>
-      <header className="flex items-center justify-between border-b border-[var(--border)] bg-[color:var(--header-bg)] px-5 py-3 backdrop-blur-xl">
-        <Link className="text-sm font-bold tracking-tight text-[var(--text)] no-underline" href="/">
-          Splitsy
-        </Link>
-        <div className="flex items-center gap-2">
-          <SignInMenu />
-          <ConnectButton accountStatus="address" chainStatus="icon" showBalance={false} />
-          <button
-            aria-label={`Switch to ${theme === "light" ? "dark" : "light"} mode`}
-            className="icon-button shrink-0"
-            onClick={() => setTheme((current) => (current === "light" ? "dark" : "light"))}
-            type="button"
-          >
-            {theme === "light" ? <Moon size={17} /> : <Sun size={17} />}
-          </button>
-        </div>
-      </header>
-
-      <main className="pay-shell">
+      <PayFrame setTheme={setTheme} theme={theme}>
+        <main className="pay-shell">
         <aside className="pay-poster" data-settled={bill.settled}>
           <div>
             <p className="pay-label">Bill #{bill.billId} · Arc Testnet</p>
@@ -493,23 +591,29 @@ export default function PayClient({ token }: { token: string }) {
             ) : (
               <p className="pay-amount">{usd(remainingUnits.toString())}</p>
             )}
-            <p className="amount-text mt-1 text-sm text-[var(--pay-poster-dim)]">
+            <p className="settle-meta amount-text">
               {bill.settled ? `${usd(bill.totalOwedUnits)} of ${usd(bill.totalOwedUnits)}` : `still owed of ${usd(bill.totalOwedUnits)}`}
             </p>
             <div className="pay-progress">
               <span style={{ width: `${Math.min(100, pct)}%` }} />
             </div>
+            {/* Escrow, as a note rather than the tinted bordered chip it was: the
+                rule above it carries the emphasis and the caps label carries the
+                tone. No icon — the label says it, and this system stopped
+                illustrating its own headings. */}
             {inEscrow ? (
-              <div className="escrow-badge">
-                <Lock size={14} />
-                <span>
-                  {paidCount}/{totalCount} paid — funds held in escrow until all shares are covered
-                </span>
+              <div className="doc-note pay-note" data-tone="warn">
+                <p className="settle-label">
+                  {paidCount}/{totalCount} paid · held in escrow
+                </p>
+                <p>Every payment stays in the bill until all shares are covered.</p>
               </div>
             ) : escrowReleased ? (
-              <div className="escrow-badge" data-released="true">
-                <CheckCircle2 size={14} />
-                <span>All shares paid — {bill.creator.label ?? "creator"} can claim {usd(bill.totalOwedUnits)}</span>
+              <div className="doc-note pay-note" data-tone="ok">
+                <p className="settle-label">All shares paid</p>
+                <p>
+                  {bill.creator.label ?? "The creator"} can collect {usd(bill.totalOwedUnits)}.
+                </p>
               </div>
             ) : null}
           </div>
@@ -525,25 +629,35 @@ export default function PayClient({ token }: { token: string }) {
               Created by {bill.creator.label ?? `${bill.creator.address.slice(0, 6)}…${bill.creator.address.slice(-4)}`}
               {bill.dueDate > 0 ? ` · due ${new Date(bill.dueDate * 1000).toLocaleDateString()}` : ""}
             </p>
-            {bill.escrowUntilFull ? <p>Held in escrow until every share is paid</p> : null}
+            {/* Only while the note above isn't already saying it. This line states
+                the bill's rule; the note states the same rule with the group's
+                actual numbers in it, so together they said escrow twice — and the
+                duplicate was what pushed the last line of this block under the
+                action bar in exactly the state that adds the note. */}
+            {bill.escrowUntilFull && !inEscrow && !escrowReleased ? (
+              <p>Held in escrow until every share is paid</p>
+            ) : null}
           </div>
         </aside>
 
         <section className="pay-roster">
           {bill.settled ? (
-            <div className="flex min-h-[40dvh] flex-col items-center justify-center gap-2 text-center">
-              <p className="pay-row-name text-2xl">Everyone&apos;s covered</p>
-              <p className="max-w-xs text-sm text-[var(--text-muted)]">
+            // Left-aligned, like every row that was here a moment ago. Centring
+            // one state of a column breaks the column.
+            <>
+              <p className="pay-label">Nothing left to pay</p>
+              <p className="pay-cleared">Everyone&apos;s covered</p>
+              <p className="pay-fine">
                 All {bill.rows.length} shares are paid. {bill.creator.label ?? "The creator"} can collect{" "}
                 {usd(bill.totalOwedUnits)} from Arc.
               </p>
-            </div>
+            </>
           ) : (
             <>
               <p className="pay-label">
                 {paying ? "Settling — don't close this tab" : "Choose who you're covering"}
               </p>
-              {message ? <p className="mt-2 text-sm text-[var(--warning-text)]">{message}</p> : null}
+              {message ? <p className="bill-poster-msg" data-tone="error">{message}</p> : null}
               <div className="mt-2">
                 {bill.rows.map((row) => {
                   const state = rowStates[row.address]?.status ?? "idle";
@@ -587,7 +701,7 @@ export default function PayClient({ token }: { token: string }) {
                         </p>
                       </div>
                       {done ? (
-                        <span className="pay-stamp">PAID</span>
+                        <span className="settle-label pay-stamp">Paid</span>
                       ) : (
                         <span className="pay-row-amount">{usd(row.remainingUnits)}</span>
                       )}
@@ -596,13 +710,18 @@ export default function PayClient({ token }: { token: string }) {
                 })}
               </div>
               {open.length === 0 ? (
-                <p className="mt-4 text-sm text-[var(--text-muted)]">Every share on this bill is already settled.</p>
+                <p className="pay-fine mt-4">Every share on this bill is already settled.</p>
               ) : null}
             </>
           )}
         </section>
       </main>
+      </PayFrame>
 
+      {/* Outside the frame on purpose: the frame is exactly one viewport tall, and
+          this bar is sticky to the BOTTOM of the document so it stays pinned over
+          the roster however far it scrolls. Inside, it would pin to the frame's
+          own bottom edge and scroll away with the first screen. */}
       {bill.settled ? null : (
         <div className="pay-bar">
           <div className="pay-bar-sum" data-armed={selected.size > 0}>

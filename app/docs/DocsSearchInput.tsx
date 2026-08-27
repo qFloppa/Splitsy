@@ -32,7 +32,7 @@ export default function DocsSearchInput() {
     // gated by words.length > 0), so there is no hydration mismatch.
     if (typeof document === "undefined") return [];
     const sections = Array.from(
-      document.querySelectorAll<HTMLElement>(".docs-section")
+      document.querySelectorAll<HTMLElement>(".doc-section")
     );
     if (words.length === 0) {
       return sections.map((s) => ({
@@ -45,7 +45,13 @@ export default function DocsSearchInput() {
     const scored: Scored[] = [];
     for (const section of sections) {
       const title = headingText(section);
-      const subheads = Array.from(section.querySelectorAll("h3, .docs-callout strong, .docs-card h3"))
+      // What counts as a subhead now that the bordered cards and tinted callouts
+      // are ruled rows and .doc-note. Weighted between the section title and the
+      // body, so a query that names a row's title ranks that section above one
+      // that merely mentions the words in a paragraph.
+      const subheads = Array.from(
+        section.querySelectorAll(".doc-subhead, .doc-row-title, .doc-note > .settle-label")
+      )
         .map((el) => el.textContent ?? "")
         .join(" ");
       const body = section.textContent ?? "";
@@ -74,7 +80,7 @@ export default function DocsSearchInput() {
   // Apply visibility + reordering + highlighting as a single DOM pass.
   const apply = useCallback(() => {
     const visibleIds = new Set(results.map((r) => r.id));
-    const sections = document.querySelectorAll<HTMLElement>(".docs-section");
+    const sections = document.querySelectorAll<HTMLElement>(".doc-section");
 
     sections.forEach((section) => {
       const show = words.length === 0 || visibleIds.has(section.id);
@@ -82,9 +88,18 @@ export default function DocsSearchInput() {
       if (show) highlightTerms(section, words);
     });
 
-    // Reorder + filter sidebar links to match ranking.
-    const sidebar = document.querySelector<HTMLElement>(".docs-sidebar");
-    if (sidebar) reorderSidebar(sidebar, results, words.length === 0);
+    // Reorder + filter rail rows to match ranking, and tell the rail it is in
+    // result-list mode rather than index mode — the .doc-rail[data-searching]
+    // rules in globals.css read this to put the scroll-spy's mark out, because a
+    // marked "you are here" row inside a list ordered by score describes the rail
+    // two ways at once. In CSS rather than in DocsRail: the mark already on a row
+    // when the query is typed has to go too, and typing scrolls nothing, so the
+    // observer gets no callback to clear it.
+    const sidebar = document.querySelector<HTMLElement>(".doc-rail");
+    if (sidebar) {
+      sidebar.dataset.searching = words.length > 0 ? "true" : "false";
+      reorderSidebar(sidebar, results, words.length === 0);
+    }
   }, [results, words]);
 
   useEffect(() => { apply(); }, [apply]);
@@ -97,10 +112,10 @@ export default function DocsSearchInput() {
   // The sidebar links themselves are the result list (filtered + re-ranked
   // by apply); mark the keyboard-active one.
   useEffect(() => {
-    const links = document.querySelectorAll<HTMLAnchorElement>(".docs-sidebar a[href^='#']");
+    const links = document.querySelectorAll<HTMLAnchorElement>(".doc-rail a[href^='#']");
     const activeId = words.length > 0 ? results[activeIndex]?.id : undefined;
     links.forEach((l) => {
-      l.classList.toggle("docs-search-active", l.getAttribute("href") === `#${activeId}`);
+      l.classList.toggle("doc-search-active", l.getAttribute("href") === `#${activeId}`);
     });
   }, [activeIndex, results, words]);
 
@@ -134,8 +149,8 @@ export default function DocsSearchInput() {
       : (document.getElementById(r.id) as HTMLElement | null);
     target?.scrollIntoView({ behavior: "smooth", block: "start" });
     // Brief focus ring so the user sees where they landed.
-    target?.classList.add("docs-search-hit");
-    window.setTimeout(() => target?.classList.remove("docs-search-hit"), 1200);
+    target?.classList.add("doc-search-hit");
+    window.setTimeout(() => target?.classList.remove("doc-search-hit"), 1200);
   }
 
   function onKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
@@ -148,8 +163,8 @@ export default function DocsSearchInput() {
   const isEmpty = words.length > 0 && results.length === 0;
 
   return (
-    <div className="docs-search-wrap">
-      <div className="docs-search">
+    <div className="doc-search-wrap">
+      <div className="doc-search">
         <Search size={15} />
         <input
           ref={inputRef}
@@ -164,7 +179,7 @@ export default function DocsSearchInput() {
           <button
             type="button"
             aria-label="Clear search"
-            className="docs-search-clear"
+            className="doc-search-clear"
             onClick={() => { setQuery(""); inputRef.current?.focus(); }}
           >
             <X size={14} />
@@ -173,13 +188,13 @@ export default function DocsSearchInput() {
       </div>
 
       {words.length > 0 && (
-        <div className="docs-search-meta" role="status" aria-live="polite">
+        <div className="doc-search-meta" role="status" aria-live="polite">
           {isEmpty ? (
             <span>No matches for &ldquo;{query}&rdquo;</span>
           ) : (
             <span>
               {results.length} {results.length === 1 ? "match" : "matches"}
-              <span className="docs-search-hint"> · ↵ jump</span>
+              <span className="doc-search-hint"> · ↵ jump</span>
             </span>
           )}
         </div>
@@ -190,15 +205,21 @@ export default function DocsSearchInput() {
 
 /* ---------- DOM helpers ---------- */
 
+// The section's title, read off data-title rather than out of its <h2>. The
+// heading prints its ordinal inside itself now (<span class="bill-section-index">
+// 09</span> Autopay agents), so textContent would score the words "09" as part of
+// the title and rank a search for a number above a search for a subject. The
+// attribute carries what app/docs/sections.ts declared and nothing else.
 function headingText(section: HTMLElement): string {
-  const h2 = section.querySelector("h2");
-  return (h2?.textContent ?? section.id).trim();
+  return (section.dataset.title ?? section.querySelector("h2")?.textContent ?? section.id).trim();
 }
 
-/** Find the id of the first paragraph/heading that matches all words, for deep scroll. */
+/** Find the id of the first block that matches all words, for deep scroll. */
 function firstMatchingParaId(section: HTMLElement, words: string[]): string | null {
   if (words.length === 0) return null;
-  const blocks = section.querySelectorAll<HTMLElement>("p, h3, li, .docs-callout strong");
+  const blocks = section.querySelectorAll<HTMLElement>(
+    "p, .doc-subhead, li, .doc-row-title, .doc-note > .settle-label"
+  );
   for (const block of blocks) {
     if (block.id && matchAll(block.textContent ?? "", words)) return block.id;
   }
@@ -255,7 +276,7 @@ function highlightTerms(section: HTMLElement, words: string[]) {
     while ((m = re.exec(value)) && marked < HIGHLIGHT_CAP) {
       if (m.index > last) frag.appendChild(document.createTextNode(value.slice(last, m.index)));
       const mark = document.createElement("mark");
-      mark.className = "docs-mark";
+      mark.className = "doc-mark";
       mark.textContent = m[0];
       frag.appendChild(mark);
       last = m.index + m[0].length;
@@ -267,7 +288,7 @@ function highlightTerms(section: HTMLElement, words: string[]) {
 }
 
 function clearHighlights(section: HTMLElement) {
-  const marks = section.querySelectorAll<HTMLElement>("mark.docs-mark");
+  const marks = section.querySelectorAll<HTMLElement>("mark.doc-mark");
   for (const mark of marks) {
     const text = document.createTextNode(mark.textContent ?? "");
     mark.replaceWith(text);
@@ -281,11 +302,20 @@ function reorderSidebar(
   results: Scored[],
   empty: boolean
 ) {
-  // Rank via CSS `order` on the sidebar grid — never move React-owned DOM nodes.
+  // Rank via CSS `order` on the rail's grid — never move React-owned DOM nodes.
+  //
+  // `order` and `display` go on the <li>, not on the <a> inside it. `order` only
+  // moves an element among its own parent's grid children, and since the rail
+  // became a real <ol> (sixteen ordered destinations are a list, and the printed
+  // ordinal only means something if the order is real) the <a>'s parent is an <li>
+  // that is not itself a grid container. Styling the link would rank nothing and
+  // hide only the text, leaving sixteen empty ruled rows behind. Falling back to
+  // the link keeps this correct if the row is ever flattened again.
   const links = Array.from(sidebar.querySelectorAll<HTMLAnchorElement>("a[href^='#']"));
   const rank = empty ? null : new Map(results.map((r, i) => [r.id, i]));
-  links.forEach((l) => {
-    const id = l.getAttribute("href")?.slice(1) ?? "";
+  links.forEach((link) => {
+    const l = (link.closest("li") as HTMLElement | null) ?? link;
+    const id = link.getAttribute("href")?.slice(1) ?? "";
     if (!rank) {
       l.style.display = "";
       l.style.order = "";
