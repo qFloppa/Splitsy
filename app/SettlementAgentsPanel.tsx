@@ -39,10 +39,9 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { ChevronDown } from "lucide-react";
 import { AnimatePresence, motion } from "framer-motion";
 import { useAccount, useSignMessage } from "wagmi";
-import { getWalletClient } from "wagmi/actions";
 import { createPublicClient, http } from "viem";
 import { arcTestnet } from "viem/chains";
-import { wagmiConfig } from "@/lib/wagmi";
+import { arcWalletClient } from "@/lib/wagmi";
 import { assertReceiptSuccess } from "@/lib/bill-split-contracts";
 import { ARC_USDC_ADDRESS, publicClient, usdcAbi } from "@/lib/recurring-contracts";
 import { buildLinkMessage, buildSigninMessage, SESSION_ENDED_EVENT } from "@/lib/agent-link";
@@ -464,7 +463,7 @@ export default function SettlementAgentsPanel({ onState }: { onState?: (state: A
     try {
       if (source === "browser") {
         if (!connectedAddress) return fail("Connect a browser wallet first.");
-        const walletClient = await getWalletClient(wagmiConfig, { chainId: arcTestnet.id });
+        const walletClient = await arcWalletClient();
         const hash = await walletClient.writeContract({
           address: ARC_USDC_ADDRESS,
           abi: usdcAbi,
@@ -637,7 +636,7 @@ export default function SettlementAgentsPanel({ onState }: { onState?: (state: A
     }
     setSaving(true);
     try {
-      const walletClient = await getWalletClient(wagmiConfig, { chainId: arcTestnet.id });
+      const walletClient = await arcWalletClient();
       const publicClient = createPublicClient({ chain: arcTestnet, transport: http() });
       const hash = await walletClient.sendTransaction({
         to: mandateAddress as `0x${string}`,

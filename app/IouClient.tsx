@@ -6,9 +6,7 @@ import { ExternalLink, Mail, Wallet } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { flushSync } from "react-dom";
-import { arcTestnet } from "viem/chains";
-import { useAccount, useSwitchChain } from "wagmi";
-import { getWalletClient } from "wagmi/actions";
+import { useAccount } from "wagmi";
 import { ConnectButton } from "@rainbow-me/rainbowkit";
 import { explorerTxUrl, waitForCircleTxUrl } from "@/lib/arc-explorer";
 import { billMetadataHash } from "@/lib/bill-metadata";
@@ -42,7 +40,7 @@ import {
 } from "@/lib/iou";
 import { providerDisplay } from "@/lib/provider-display";
 import type { AccountProvider, IdentityProvider } from "@/lib/types";
-import { wagmiConfig } from "@/lib/wagmi";
+import { arcWalletClient } from "@/lib/wagmi";
 import { DISCORD_PATH } from "./ProviderTag";
 
 type Me = { id: string; provider?: AccountProvider | null; handle: string; walletAddress: string | null };
@@ -171,7 +169,6 @@ export default function IouClient({ onReceipts }: { onReceipts: () => void }) {
   const seq = useRef(0);
 
   const { address, connector } = useAccount();
-  const { switchChainAsync } = useSwitchChain();
 
   const set = (patch: Partial<Draft>) => setDraft((d) => ({ ...d, ...patch }));
 
@@ -571,8 +568,7 @@ export default function IouClient({ onReceipts }: { onReceipts: () => void }) {
   async function connectWallet() {
     if (!connector) throw new Error("No browser wallet connected.");
     if (!address) throw new Error("Wallet address not available.");
-    await switchChainAsync({ chainId: arcTestnet.id });
-    return createBillSplitWallet(await getWalletClient(wagmiConfig, { chainId: arcTestnet.id }));
+    return createBillSplitWallet(await arcWalletClient());
   }
 
   // Server-signed: a one-participant bill in the registry. I'm the splitter, so
