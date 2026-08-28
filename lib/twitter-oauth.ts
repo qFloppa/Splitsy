@@ -9,9 +9,10 @@ import { createHash, randomBytes } from "crypto";
 // user's profile via GET /2/users/me (handle + email) is a separate, billed
 // step added later.
 
-// x.com also serves these; the twitter.com hosts remain valid and are the
-// historically documented endpoints.
-export const TWITTER_AUTHORIZE_URL = "https://twitter.com/i/oauth2/authorize";
+// Authorize is user-facing, so it uses x.com — twitter.com only 302s there and
+// the interstitial looks like a phishing redirect. The api.twitter.com hosts
+// below are server-to-server and still valid.
+export const TWITTER_AUTHORIZE_URL = "https://x.com/i/oauth2/authorize";
 export const TWITTER_TOKEN_URL = "https://api.twitter.com/2/oauth2/token";
 export const TWITTER_USERS_ME_URL = "https://api.twitter.com/2/users/me";
 
