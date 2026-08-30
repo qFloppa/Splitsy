@@ -1,24 +1,8 @@
 "use client";
 
-import { AnimatePresence, motion } from "framer-motion";
-import {
-  ArrowDownLeft,
-  ArrowDownToLine,
-  ArrowUpFromLine,
-  ArrowUpRight,
-  Check,
-  Copy,
-  ExternalLink,
-  GripVertical,
-  KeyRound,
-  Loader2,
-  LogOut,
-  RefreshCw,
-  Wallet,
-  X,
-} from "lucide-react";
-import Image from "next/image";
-import { useEffect, useRef, useState } from "react";
+import { AnimatePresence, motion, useDragControls } from "framer-motion";
+import { ArrowUpRight, Check, Loader2, X } from "lucide-react";
+import { useEffect, useState } from "react";
 import { waitForCircleTxUrl } from "@/lib/arc-explorer";
 import { readArcUsdcBalance, billUnitsToUsdc } from "@/lib/bill-split-contracts";
 import { providerDisplay } from "@/lib/provider-display";
@@ -28,11 +12,22 @@ import { ProviderIcon } from "./ProviderTag";
 type Me = { id: string; provider?: AccountProvider | null; handle: string; name: string | null; avatarUrl: string | null; walletAddress: string | null };
 type Tab = "info" | "send" | "receive" | "history";
 
-function Usdc({ size = 14 }: { size?: number }) {
-  return <Image src="/usd-coin-usdc-seeklogo.png" alt="USDC" width={size} height={size} className="inline-block align-text-bottom" />;
+const TABS: { id: Tab; label: string }[] = [
+  { id: "info", label: "wallet" },
+  { id: "send", label: "send" },
+  { id: "receive", label: "receive" },
+  { id: "history", label: "history" },
+];
+
+// "USDC" is a word here, not the seeklogo PNG this panel used to inline eight
+// times. Every other surface in the app already says it as text — this file was
+// the only one left importing the image, and eight 12px logos in a 352px column
+// is a currency symbol used as decoration.
+function Unit() {
+  return <span className="wallet-unit">USDC</span>;
 }
 
-// The signed-in user's own handle with its platform badge and correct prefix
+// The signed-in user's own handle with its platform mark and correct prefix
 // (X carries "@", Discord/Email don't), linking to the X profile when there is
 // one. Mirrors how tagged people render elsewhere via ProviderTag.
 function OwnHandle({ me, badge = 13 }: { me: Me; badge?: number }) {
@@ -40,20 +35,25 @@ function OwnHandle({ me, badge = 13 }: { me: Me; badge?: number }) {
   const inner = (
     <>
       <ProviderIcon provider={d.provider} size={badge} />
-      <strong className="text-[var(--text)]">
-        {d.prefix}
-        {d.label}
-      </strong>
+      {d.prefix}
+      {d.label}
     </>
   );
   if (d.profileUrl) {
     return (
-      <a href={d.profileUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 align-middle hover:underline">
+      <a href={d.profileUrl} target="_blank" rel="noreferrer" className="wallet-handle">
         {inner}
       </a>
     );
   }
-  return <span className="inline-flex items-center gap-1 align-middle">{inner}</span>;
+  return <span className="wallet-handle">{inner}</span>;
+}
+
+// A caps word that names a value below it. The panel's every heading is one of
+// these — the four icons in tinted circles that used to sit beside them are gone
+// with the rest of the pre-redesign skin.
+function Label({ children }: { children: React.ReactNode }) {
+  return <p className="settle-label">{children}</p>;
 }
 
 export default function XAuthControl() {
@@ -69,7 +69,21 @@ export default function XAuthControl() {
   // the panel opens so the unlock gate is the first thing a locked user sees —
   // unlocking here is what lets Pay/Claim buttons elsewhere go through.
   const [unlocked, setUnlocked] = useState<boolean | null>(null);
-  const ref = useRef<HTMLDivElement>(null);
+  // Only the head rail drags. See .wallet-grip: with `drag` on the whole pane a
+  // pointer-down in the amount field moved the window instead of typing, and the
+  // `select-none` that came with it meant the address could not be selected by
+  // hand at all.
+  const dragControls = useDragControls();
+
+  // It claims role="dialog", so Escape has to close it — a panel that says it is
+  // a dialog and then swallows the one key every dialog answers to is worse than
+  // one that never said so.
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setOpen(false);
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [open]);
 
   useEffect(() => {
     let active = true;
@@ -182,30 +196,31 @@ export default function XAuthControl() {
     return null;
   }
 
-  const short = me.walletAddress ? `${me.walletAddress.slice(0, 6)}…${me.walletAddress.slice(-4)}` : null;
-
   return (
-    <div ref={ref}>
-      {/* Floating avatar toggle — pulses to invite a click, uses the X avatar. */}
+    <>
+      {/* The trigger: the word that names the control, and the avatar that says
+          whose it is. The old version was a blue-ringed circle carrying a wallet
+          glyph badge that re-said "wallet" a second time over the first. */}
       <motion.button
         type="button"
         onClick={() => setOpen((o) => !o)}
         aria-label="Open your wallet"
-        className="fixed bottom-6 right-6 z-[65] flex h-14 w-14 items-center justify-center rounded-full border-2 border-[#2775ca] bg-[var(--surface)] shadow-xl"
-        initial={{ scale: 0 }}
-        animate={{ scale: 1 }}
-        whileHover={{ scale: 1.08 }}
-        whileTap={{ scale: 0.95 }}
-        transition={{ type: "spring", stiffness: 300, damping: 18 }}
+        aria-expanded={open}
+        className="wallet-hail"
+        initial={{ opacity: 0, y: 8 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.42, ease: [0.22, 1, 0.36, 1] }}
       >
-        {me.avatarUrl ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img src={me.avatarUrl} alt="" width={48} height={48} className="h-12 w-12 rounded-full" />
-        ) : (
-          <Wallet size={22} className="text-[#2775ca]" />
-        )}
-        <span className="absolute -right-0.5 -top-0.5 flex h-5 w-5 items-center justify-center rounded-full bg-[#2775ca] text-white">
-          <Wallet size={11} />
+        <span className="wallet-hail-word">wallet</span>
+        <span className="wallet-hail-mark">
+          {me.avatarUrl ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={me.avatarUrl} alt="" width={42} height={42} />
+          ) : (
+            <span className="wallet-initial" aria-hidden>
+              {me.handle.replace(/^@/, "").charAt(0) || "S"}
+            </span>
+          )}
         </span>
       </motion.button>
 
@@ -213,55 +228,49 @@ export default function XAuthControl() {
         {open ? (
           <motion.div
             drag
+            dragListener={false}
+            dragControls={dragControls}
             dragMomentum={false}
             dragElastic={0.12}
-            initial={{ opacity: 0, scale: 0.9, y: 12 }}
-            animate={{ opacity: 1, scale: 1, y: 0 }}
-            exit={{ opacity: 0, scale: 0.9, y: 12 }}
-            transition={{ type: "spring", stiffness: 340, damping: 26 }}
-            whileDrag={{ scale: 1.03, boxShadow: "0 24px 60px rgba(0,0,0,0.45)" }}
-            className="fixed bottom-24 right-6 z-[70] w-80 select-none rounded-[var(--radius)] border border-[var(--border)] bg-[var(--surface-muted)] shadow-2xl"
+            initial={{ opacity: 0, y: 14, scale: 0.98 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 14, scale: 0.98 }}
+            transition={{ type: "spring", stiffness: 340, damping: 28 }}
+            className="wallet-panel"
+            role="dialog"
+            aria-label="Your wallet"
           >
-            <div className="flex cursor-grab items-center justify-between rounded-t-[var(--radius)] border-b border-[var(--border)] bg-[var(--surface)] px-3 py-2 active:cursor-grabbing">
-              <span className="flex items-center gap-1.5 text-xs font-semibold text-[var(--text-muted)]">
-                <GripVertical size={14} />
-                My wallet
-              </span>
-              <div className="flex items-center gap-2">
+            <div
+              className="wallet-grip"
+              onPointerDown={(e) => {
+                // The rail carries two controls of its own; a pointer-down on
+                // either has to reach them rather than arm a window drag.
+                if ((e.target as HTMLElement).closest("button")) return;
+                dragControls.start(e);
+              }}
+            >
+              <span className="settle-label">wallet</span>
+              <span className="wallet-grip-end">
                 <form action="/api/auth/logout" method="post">
-                  <button type="submit" aria-label="Log out" className="text-[var(--text-muted)] hover:text-[var(--text)]">
-                    <LogOut size={14} />
+                  <button type="submit" className="iou-provider">
+                    sign out
                   </button>
                 </form>
-                <button type="button" onClick={() => setOpen(false)} aria-label="Close" className="text-[var(--text-muted)] hover:text-[var(--text)]">
+                <button type="button" onClick={() => setOpen(false)} aria-label="Close" className="wallet-x">
                   <X size={15} />
                 </button>
-              </div>
+              </span>
             </div>
 
-            <div className="p-4">
-              <div className="flex items-center gap-3">
+            <div className="wallet-body">
+              <div className="wallet-who">
                 {me.avatarUrl ? (
                   // eslint-disable-next-line @next/next/no-img-element
-                  <img src={me.avatarUrl} alt="" width={36} height={36} className="h-9 w-9 rounded-full" />
+                  <img src={me.avatarUrl} alt="" width={27} height={27} className="wallet-who-avatar" />
                 ) : null}
-                <div className="min-w-0">
-                  <p className="flex items-center gap-1 truncate text-sm font-semibold">
-                    <OwnHandle me={me} />
-                  </p>
-                  <p className="flex items-center gap-1 text-xs text-[var(--text-muted)]">
-                    <Usdc size={12} /> {balance ?? "…"} USDC
-                    <button
-                      type="button"
-                      onClick={refreshBalance}
-                      disabled={refreshing}
-                      aria-label="Refresh balance"
-                      className="ml-0.5 text-[var(--text-muted)] transition hover:text-[var(--text)] disabled:opacity-60"
-                    >
-                      <RefreshCw size={12} className={refreshing ? "animate-spin" : ""} />
-                    </button>
-                  </p>
-                </div>
+                <span className="wallet-who-name">
+                  <OwnHandle me={me} />
+                </span>
               </div>
 
               {hasPin === false ? (
@@ -275,75 +284,81 @@ export default function XAuthControl() {
                 <UnlockGate onUnlocked={() => setUnlocked(true)} />
               ) : (
                 <>
-              <div className="mt-3 grid grid-cols-4 gap-1 rounded-full bg-[var(--surface)] p-1 text-xs font-semibold">
-                {(["info", "send", "receive", "history"] as const).map((t) => (
-                  <button
-                    key={t}
-                    type="button"
-                    onClick={() => setTab(t)}
-                    className={`rounded-full py-1.5 capitalize transition ${
-                      tab === t ? "bg-[#2775ca] text-white" : "text-[var(--text-muted)] hover:text-[var(--text)]"
-                    }`}
-                  >
-                    {t === "info" ? "Wallet" : t}
-                  </button>
-                ))}
-              </div>
-
-              <div className="mt-3 border-t border-[var(--border)] pt-3">
-                {tab === "info" ? (
-                  <>
-                    <div className="flex items-center gap-2">
-                      <span className="flex h-8 w-8 items-center justify-center rounded-full bg-[#2775ca]/15 text-[#2775ca]">
-                        <Wallet size={16} />
-                      </span>
-                      <p className="text-sm font-semibold">Your wallet</p>
+                  {/* The figure, once. It used to be printed twice — a caption
+                      beside the handle and again inside the Wallet tab — which is
+                      two answers to one question on a 352px column. */}
+                  <div className="wallet-band">
+                    <div className="iou-rail">
+                      <span>balance</span>
+                      <button type="button" onClick={refreshBalance} disabled={refreshing}>
+                        {refreshing ? "reading…" : "refresh"}
+                      </button>
                     </div>
-                    <p className="mt-2 text-sm text-[var(--text-muted)]">
-                      A Circle wallet on <strong className="text-[var(--text)]">Arc Testnet</strong>, tied to{" "}
-                      <OwnHandle me={me} />. Pay and get paid in USDC — no crypto setup needed.
+                    <p className="wallet-figure">
+                      {balance ?? "—"}
+                      <Unit />
                     </p>
-                    {me.walletAddress ? (
+                  </div>
+
+                  <div className="wallet-tabs">
+                    {TABS.map((t) => (
+                      <button
+                        key={t.id}
+                        type="button"
+                        onClick={() => setTab(t.id)}
+                        aria-current={tab === t.id ? "true" : undefined}
+                        className="iou-provider bill-toggle"
+                      >
+                        {t.label}
+                      </button>
+                    ))}
+                  </div>
+
+                  <div className="wallet-tab-body">
+                    {tab === "info" ? (
                       <>
-                        <div className="mt-3 flex items-center justify-between gap-2 rounded-md border border-[var(--border)] bg-[var(--surface)] px-2 py-1.5">
-                          <code className="text-xs">{short}</code>
-                          <button type="button" onClick={copyAddress} className="flex items-center gap-1 text-xs font-semibold text-[#1d9bf0]">
-                            {copied ? <Check size={13} /> : <Copy size={13} />}
-                            {copied ? "Copied" : "Copy"}
-                          </button>
-                        </div>
-                        <p className="mt-2 flex items-center gap-1 text-sm">
-                          Balance: <Usdc /> <strong className="amount-text">{balance ?? "…"} USDC</strong>
+                        <p className="wallet-note">
+                          A Circle wallet on <b>Arc Testnet</b>, tied to <OwnHandle me={me} />. Pay and get paid in
+                          USDC — no crypto setup needed.
                         </p>
-                        <a
-                          href="https://faucet.circle.com"
-                          target="_blank"
-                          rel="noreferrer"
-                          className="mt-3 inline-flex items-center gap-1.5 rounded-full bg-[#2775ca]/15 px-3 py-1.5 text-xs font-semibold text-[#2775ca] transition hover:bg-[#2775ca]/25"
-                        >
-                          <ExternalLink size={13} />
-                          Add test USDC · faucet.circle.com
-                        </a>
+                        {me.walletAddress ? (
+                          <div className="wallet-band">
+                            <div className="iou-rail">
+                              <span>address</span>
+                              <button type="button" onClick={copyAddress}>
+                                {copied ? "copied" : "copy"}
+                              </button>
+                            </div>
+                            <p className="wallet-proof">{me.walletAddress}</p>
+                            <a
+                              href="https://faucet.circle.com"
+                              target="_blank"
+                              rel="noreferrer"
+                              className="settle-trigger wallet-out"
+                            >
+                              add test USDC
+                              <ArrowUpRight className="lp-row-out" size={13} />
+                            </a>
+                          </div>
+                        ) : (
+                          <p className="wallet-note">Your wallet is being created — refresh in a moment.</p>
+                        )}
                       </>
+                    ) : tab === "send" ? (
+                      <SendTab balance={balance} onSent={refreshBalanceAfterSend} />
+                    ) : tab === "receive" ? (
+                      <ReceiveTab address={me.walletAddress} copied={copied} onCopy={copyAddress} />
                     ) : (
-                      <p className="mt-2 text-sm text-[var(--text-muted)]">Your wallet is being created — refresh in a moment.</p>
+                      <HistoryTab />
                     )}
-                  </>
-                ) : tab === "send" ? (
-                  <SendTab balance={balance} onSent={refreshBalanceAfterSend} />
-                ) : tab === "receive" ? (
-                  <ReceiveTab address={me.walletAddress} short={short} copied={copied} onCopy={copyAddress} />
-                ) : (
-                  <HistoryTab ownShort={short} />
-                )}
-              </div>
+                  </div>
                 </>
               )}
             </div>
           </motion.div>
         ) : null}
       </AnimatePresence>
-    </div>
+    </>
   );
 }
 
@@ -390,49 +405,48 @@ function SetPinGate({ onDone }: { onDone: () => void }) {
   }
 
   return (
-    <div className="mt-3 border-t border-[var(--border)] pt-3">
-      <div className="flex items-center gap-2">
-        <span className="flex h-8 w-8 items-center justify-center rounded-full bg-[#2775ca]/15 text-[#2775ca]">
-          <KeyRound size={16} />
-        </span>
-        <p className="text-sm font-semibold">Choose a wallet PIN</p>
-      </div>
-      <p className="mt-2 text-xs text-[var(--text-muted)]">
+    <div className="wallet-band">
+      <Label>choose a wallet PIN</Label>
+      <p className="wallet-note">
         Set a 4–8 digit PIN before using your wallet. You&apos;ll need it to send USDC. Enter it twice to confirm.
       </p>
-      <input
-        value={pin}
-        onChange={(e) => setPin(e.target.value.replace(/\D/g, ""))}
-        type="password"
-        inputMode="numeric"
-        maxLength={8}
-        autoFocus
-        placeholder="Choose a PIN"
-        className="mt-3 w-full rounded-md border border-[var(--border)] bg-[var(--surface)] px-2 py-1.5 text-sm tracking-[0.3em]"
-      />
-      <input
-        value={confirm}
-        onChange={(e) => setConfirm(e.target.value.replace(/\D/g, ""))}
-        type="password"
-        inputMode="numeric"
-        maxLength={8}
-        placeholder="Confirm PIN"
-        onKeyDown={(e) => e.key === "Enter" && valid && match && !busy && create()}
-        className="mt-2 w-full rounded-md border border-[var(--border)] bg-[var(--surface)] px-2 py-1.5 text-sm tracking-[0.3em]"
-      />
+      <div className="wallet-line" data-pin>
+        <input
+          value={pin}
+          onChange={(e) => setPin(e.target.value.replace(/\D/g, ""))}
+          type="password"
+          inputMode="numeric"
+          maxLength={8}
+          autoFocus
+          aria-label="Choose a PIN"
+          placeholder="••••"
+        />
+      </div>
+      <div className="wallet-line" data-pin>
+        <input
+          value={confirm}
+          onChange={(e) => setConfirm(e.target.value.replace(/\D/g, ""))}
+          type="password"
+          inputMode="numeric"
+          maxLength={8}
+          aria-label="Confirm PIN"
+          placeholder="••••"
+          onKeyDown={(e) => e.key === "Enter" && valid && match && !busy && create()}
+        />
+      </div>
       {confirm.length > 0 && !match ? (
-        <p className="mt-2 text-xs text-[var(--warning-text)]">The PINs don&apos;t match yet.</p>
+        <p className="wallet-note" data-tone="warn">
+          The PINs don&apos;t match yet.
+        </p>
       ) : null}
-      <button
-        type="button"
-        onClick={create}
-        disabled={busy || !valid || !match}
-        className="primary-button mt-3 w-full justify-center disabled:opacity-50"
-      >
-        {busy ? <Loader2 size={15} className="animate-spin" /> : <KeyRound size={15} />}
-        Set PIN
+      <button type="button" onClick={create} disabled={busy || !valid || !match} className="settle-action">
+        {busy ? "…" : "set PIN"} ›
       </button>
-      {message ? <p className="mt-2 text-xs text-[var(--warning-text)]">{message}</p> : null}
+      {message ? (
+        <p className="wallet-note" data-tone="warn" role="status">
+          {message}
+        </p>
+      ) : null}
     </div>
   );
 }
@@ -469,60 +483,50 @@ function UnlockGate({ onUnlocked }: { onUnlocked: () => void }) {
   }
 
   return (
-    <div className="mt-3 border-t border-[var(--border)] pt-3">
-      <div className="flex items-center gap-2">
-        <span className="flex h-8 w-8 items-center justify-center rounded-full bg-[#2775ca]/15 text-[#2775ca]">
-          <KeyRound size={16} />
-        </span>
-        <p className="text-sm font-semibold">Unlock your wallet</p>
-      </div>
-      <p className="mt-2 text-xs text-[var(--text-muted)]">
+    <div className="wallet-band">
+      <Label>unlock your wallet</Label>
+      <p className="wallet-note">
         Enter your PIN once — stays unlocked for 5 minutes, for paying, claiming, and sending.
       </p>
-      <input
-        value={pin}
-        onChange={(e) => setPin(e.target.value.replace(/\D/g, ""))}
-        type="password"
-        inputMode="numeric"
-        maxLength={8}
-        autoFocus
-        placeholder="Wallet PIN"
-        onKeyDown={(e) => e.key === "Enter" && pin && !busy && unlock()}
-        className="mt-3 w-full rounded-md border border-[var(--border)] bg-[var(--surface)] px-2 py-1.5 text-sm tracking-[0.3em]"
-      />
-      <button
-        type="button"
-        onClick={unlock}
-        disabled={busy || !pin}
-        className="primary-button mt-3 w-full justify-center disabled:opacity-50"
-      >
-        {busy ? <Loader2 size={15} className="animate-spin" /> : <KeyRound size={15} />}
-        Unlock
+      <div className="wallet-line" data-pin>
+        <input
+          value={pin}
+          onChange={(e) => setPin(e.target.value.replace(/\D/g, ""))}
+          type="password"
+          inputMode="numeric"
+          maxLength={8}
+          autoFocus
+          aria-label="Wallet PIN"
+          placeholder="••••"
+          onKeyDown={(e) => e.key === "Enter" && pin && !busy && unlock()}
+        />
+      </div>
+      <button type="button" onClick={unlock} disabled={busy || !pin} className="settle-action">
+        {busy ? "…" : "unlock"} ›
       </button>
-      {message ? <p className="mt-2 text-xs text-[var(--warning-text)]">{message}</p> : null}
+      {message ? (
+        <p className="wallet-note" data-tone="warn" role="status">
+          {message}
+        </p>
+      ) : null}
     </div>
   );
 }
 
-function ReceiveTab({ address, short, copied, onCopy }: { address: string | null; short: string | null; copied: boolean; onCopy: () => void }) {  if (!address) return <p className="text-sm text-[var(--text-muted)]">Your wallet is being created — refresh in a moment.</p>;
+function ReceiveTab({ address, copied, onCopy }: { address: string | null; copied: boolean; onCopy: () => void }) {
+  if (!address) return <p className="wallet-note">Your wallet is being created — refresh in a moment.</p>;
   return (
     <div>
-      <div className="flex items-center gap-2">
-        <span className="flex h-8 w-8 items-center justify-center rounded-full bg-[#17a56b]/15 text-[#17a56b]">
-          <ArrowDownToLine size={16} />
-        </span>
-        <p className="text-sm font-semibold">
-          Receive <Usdc />
-        </p>
+      <div className="iou-rail">
+        <span>receive to</span>
+        <button type="button" onClick={onCopy}>
+          {copied ? "copied" : "copy"}
+        </button>
       </div>
-      <p className="mt-2 text-sm text-[var(--text-muted)]">
-        Share this address to receive USDC on <strong className="text-[var(--text)]">Arc Testnet</strong>.
+      <p className="wallet-proof">{address}</p>
+      <p className="wallet-note">
+        Share this address to receive USDC on <b>Arc Testnet</b>.
       </p>
-      <div className="mt-3 break-all rounded-md border border-[var(--border)] bg-[var(--surface)] p-2 text-xs">{address}</div>
-      <button type="button" onClick={onCopy} className="mt-2 flex items-center gap-1 text-xs font-semibold text-[#1d9bf0]">
-        {copied ? <Check size={13} /> : <Copy size={13} />}
-        {copied ? "Copied" : `Copy ${short}`}
-      </button>
     </div>
   );
 }
@@ -600,44 +604,48 @@ function SendTab({ balance, onSent }: { balance: string | null; onSent: () => vo
   if (!unlocked) {
     return (
       <div>
-        <p className="text-sm font-semibold">Unlock your wallet</p>
-        <p className="mt-1 text-xs text-[var(--text-muted)]">Enter your PIN once — stays unlocked for 5 minutes.</p>
-        <input
-          value={pin}
-          onChange={(e) => setPin(e.target.value.replace(/\D/g, ""))}
-          type="password"
-          inputMode="numeric"
-          maxLength={8}
-          placeholder="Wallet PIN"
-          onKeyDown={(e) => e.key === "Enter" && pin && unlock()}
-          className="mt-2 w-full rounded-md border border-[var(--border)] bg-[var(--surface)] px-2 py-1.5 text-sm tracking-[0.3em]"
-        />
-        <button type="button" onClick={unlock} disabled={!pin} className="primary-button mt-2 w-full justify-center disabled:opacity-50">
-          Unlock
+        <Label>unlock to send</Label>
+        <p className="wallet-note">Enter your PIN once — stays unlocked for 5 minutes.</p>
+        <div className="wallet-line" data-pin>
+          <input
+            value={pin}
+            onChange={(e) => setPin(e.target.value.replace(/\D/g, ""))}
+            type="password"
+            inputMode="numeric"
+            maxLength={8}
+            aria-label="Wallet PIN"
+            placeholder="••••"
+            onKeyDown={(e) => e.key === "Enter" && pin && unlock()}
+          />
+        </div>
+        <button type="button" onClick={unlock} disabled={!pin} className="settle-action">
+          unlock ›
         </button>
-        {message ? <p className="mt-2 text-xs text-[var(--warning-text)]">{message}</p> : null}
+        {message ? (
+          <p className="wallet-note" data-tone="warn" role="status">
+            {message}
+          </p>
+        ) : null}
       </div>
     );
   }
 
   if (phase === "done") {
     return (
-      <div className="text-center">
-        <span className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-[#17a56b]/15 text-[#17a56b]">
-          <Check size={24} />
-        </span>
-        <p className="mt-2 text-sm font-semibold">Sent!</p>
+      <div>
+        <Label>sent</Label>
+        <p className="wallet-figure" data-tone="ok">
+          <span className="settle-tick">
+            <Check strokeWidth={3} />
+          </span>
+        </p>
         {sentTxUrl ? (
-          <a
-            href={sentTxUrl}
-            target="_blank"
-            rel="noreferrer"
-            className="mt-2 inline-flex items-center gap-1 text-xs font-semibold text-[#1d9bf0]"
-          >
-            <ExternalLink size={12} /> View transaction
+          <a href={sentTxUrl} target="_blank" rel="noreferrer" className="settle-trigger wallet-out">
+            view transaction
+            <ArrowUpRight className="lp-row-out" size={13} />
           </a>
         ) : (
-          <p className="mt-2 flex items-center justify-center gap-1 text-xs text-[var(--text-muted)]">
+          <p className="wallet-note">
             <Loader2 size={11} className="animate-spin" /> confirming on Arc…
           </p>
         )}
@@ -647,9 +655,9 @@ function SendTab({ balance, onSent }: { balance: string | null; onSent: () => vo
             setSentTxUrl(null);
             setPhase("form");
           }}
-          className="secondary-button mt-3 w-full justify-center"
+          className="settle-action"
         >
-          Done
+          done ›
         </button>
       </div>
     );
@@ -657,47 +665,43 @@ function SendTab({ balance, onSent }: { balance: string | null; onSent: () => vo
 
   return (
     <div>
-      <div className="flex items-center gap-2">
-        <span className="flex h-8 w-8 items-center justify-center rounded-full bg-[#2775ca]/15 text-[#2775ca]">
-          <ArrowUpFromLine size={16} />
-        </span>
-        <p className="text-sm font-semibold">
-          Send <Usdc />
-        </p>
+      <div className="iou-rail">
+        <span>send to</span>
+        <span>{balance ?? "…"} left</span>
       </div>
-      <p className="mt-1 flex items-center gap-1 text-xs text-[var(--text-muted)]">
-        Balance: <Usdc size={12} /> {balance ?? "…"} · Arc Testnet
-      </p>
-      <input
-        value={to}
-        onChange={(e) => setTo(e.target.value)}
-        placeholder="Recipient 0x… address"
-        className="mt-3 w-full rounded-md border border-[var(--border)] bg-[var(--surface)] px-2 py-1.5 text-xs"
-      />
-      <input
-        value={amount}
-        onChange={(e) => setAmount(e.target.value)}
-        inputMode="decimal"
-        placeholder="Amount (USDC)"
-        className="mt-2 w-full rounded-md border border-[var(--border)] bg-[var(--surface)] px-2 py-1.5 text-sm"
-      />
-      <button
-        type="button"
-        onClick={send}
-        disabled={phase === "sending" || !to || !amount}
-        className="primary-button mt-3 w-full justify-center disabled:opacity-50"
-      >
-        {phase === "sending" ? <Loader2 size={15} className="animate-spin" /> : <ArrowUpFromLine size={15} />}
-        {phase === "sending" ? "Sending…" : "Send"}
+      <div className="wallet-line" data-mono>
+        <input
+          value={to}
+          onChange={(e) => setTo(e.target.value)}
+          aria-label="Recipient address"
+          placeholder="0x…"
+        />
+      </div>
+      <div className="wallet-line" data-figure>
+        <input
+          value={amount}
+          onChange={(e) => setAmount(e.target.value)}
+          inputMode="decimal"
+          aria-label="Amount in USDC"
+          placeholder="0.00"
+        />
+        <Unit />
+      </div>
+      <button type="button" onClick={send} disabled={phase === "sending" || !to || !amount} className="settle-action">
+        {phase === "sending" ? "…" : "send"} ›
       </button>
-      {message ? <p className="mt-2 text-xs text-[var(--warning-text)]">{message}</p> : null}
+      {message ? (
+        <p className="wallet-note" data-tone="warn" role="status">
+          {message}
+        </p>
+      ) : null}
     </div>
   );
 }
 
 type WalletTx = { id: string; direction: "in" | "out"; amount: string; address: string; state: string; txHash: string | null; date: string };
 
-function HistoryTab({ ownShort }: { ownShort: string | null }) {
+function HistoryTab() {
   const [txs, setTxs] = useState<WalletTx[] | null>(null);
   const [explorer, setExplorer] = useState("https://testnet.arcscan.app");
 
@@ -711,44 +715,55 @@ function HistoryTab({ ownShort }: { ownShort: string | null }) {
       .catch(() => setTxs([]));
   }, []);
 
-  if (txs === null) return <p className="text-sm text-[var(--text-muted)]">Loading…</p>;
-  if (txs.length === 0) return <p className="text-sm text-[var(--text-muted)]">No transactions yet.</p>;
+  if (txs === null) return <p className="wallet-note">Reading the chain…</p>;
+  if (txs.length === 0) return <p className="wallet-note">No transactions yet.</p>;
 
   return (
-    <div className="max-h-64 space-y-2 overflow-y-auto">
+    <div className="wallet-rows">
       {txs.map((t) => {
         const inbound = t.direction === "in";
         const other = t.address ? `${t.address.slice(0, 6)}…${t.address.slice(-4)}` : "—";
-        return (
-          <div key={t.id} className="flex items-center justify-between rounded-md border border-[var(--border)] bg-[var(--surface)] px-2 py-1.5">
-            <span className="flex items-center gap-2">
-              <span className={`flex h-7 w-7 items-center justify-center rounded-full ${inbound ? "bg-[#17a56b]/15 text-[#17a56b]" : "bg-[#2775ca]/15 text-[#2775ca]"}`}>
-                {inbound ? <ArrowDownLeft size={14} /> : <ArrowUpRight size={14} />}
+        // A row that is also a link out is an <a class="lp-row">; one with no hash
+        // to point at yet is the same row without the link, so the list keeps its
+        // rhythm while a transaction confirms.
+        const body = (
+          <>
+            <span>
+              <span className="wallet-dir" data-in={inbound ? "" : undefined}>
+                {inbound ? "received" : "sent"}
               </span>
-              <span className="text-xs">
-                <span className="block font-semibold">{inbound ? "Received" : "Sent"}</span>
-                <span className="text-[var(--text-muted)]">
-                  {inbound ? "from" : "to"} {other}
-                  {t.date ? ` · ${new Date(t.date).toLocaleDateString()}` : ""}
-                </span>
+              <span className="lp-row-body">
+                {" "}
+                {inbound ? "from" : "to"} {other}
+                {t.date ? ` · ${new Date(t.date).toLocaleDateString()}` : ""}
               </span>
             </span>
-            <span className="flex items-center gap-1.5 text-right">
-              <span className={`flex items-center gap-1 text-xs font-semibold ${inbound ? "text-[#17a56b]" : "text-[var(--text)]"}`}>
+            <span className="wallet-amount">
+              <span className="wallet-dir" data-in={inbound ? "" : undefined}>
                 {inbound ? "+" : "−"}
-                <Usdc size={12} />
                 {t.amount}
               </span>
-              {t.txHash ? (
-                <a href={`${explorer}/tx/${t.txHash}`} target="_blank" rel="noreferrer" aria-label="View on explorer" className="text-[var(--text-muted)] hover:text-[#1d9bf0]">
-                  <ExternalLink size={12} />
-                </a>
-              ) : null}
+              {t.txHash ? <ArrowUpRight className="lp-row-out" size={12} /> : null}
             </span>
+          </>
+        );
+        return t.txHash ? (
+          <a
+            key={t.id}
+            href={`${explorer}/tx/${t.txHash}`}
+            target="_blank"
+            rel="noreferrer"
+            className="lp-row"
+            aria-label={`${inbound ? "Received" : "Sent"} ${t.amount} USDC — view on explorer`}
+          >
+            {body}
+          </a>
+        ) : (
+          <div key={t.id} className="lp-row">
+            {body}
           </div>
         );
       })}
-      <p className="pt-1 text-center text-[10px] text-[var(--text-muted)]">Own address {ownShort}</p>
     </div>
   );
 }

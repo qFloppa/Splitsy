@@ -7677,3 +7677,510 @@ mark.doc-mark {
     animation: none;
   }
 }
+
+/* ============================================================================
+   The wallet panel (the floating control, every route)
+   ==========================================================================
+
+   The Splitsy DCW's own surface: what it holds, where it sits, what it just did.
+   It was the last control still wearing the pre-redesign skin, and — being a
+   panel rather than a page — it wore the boxed version of all of it: a
+   --surface-muted slab with a border and a drop shadow, four icons in tinted
+   #2775ca circles beside four headings, a rounded-full segmented tab bar with a
+   solid blue pill on the live tab, five bordered input boxes, bordered history
+   rows, and eleven hardcoded hexes (#2775ca, #1d9bf0, #17a56b) standing in for
+   three tokens that already exist.
+
+   So it is rebuilt as what every other surface here is: a poster, at panel
+   scale. Nothing below is a new vocabulary — .settle-label for the caps rails,
+   .iou-provider/.bill-toggle for the tab words and their self-drawing rules,
+   .settle-action for the verb, a.lp-row for the history rows, --pay-poster-*
+   for every colour, and a hairline wherever the old panel drew a box. What is
+   added is only what a 22rem-wide poster needs that a viewport-wide one does
+   not: its own type scale, since every figure and verb in this file is sized off
+   `vw` for a surface that spans the screen, and this one spans 352px at every
+   width.
+
+   It paints --pay-poster-bg flat rather than the translucent pane .pay-poster
+   frosts in light mode. Same reason .settle-sheet does: those two are the only
+   surfaces here that float over arbitrary page content instead of over the
+   backdrop, and a 0.34-alpha white over a dense receipt table is a panel you
+   cannot read. The accent bloom goes over the flat ground instead, so it still
+   reads as a pane of the app's own material — and the token stays the flat
+   colour the placeholder/dim color-mix()es below need it to be. */
+.wallet-panel {
+  position: fixed;
+  z-index: 70;
+  right: 1.5rem;
+  bottom: 5.5rem;
+  width: min(22rem, calc(100vw - 3rem));
+  border-radius: 1.1rem;
+  border: 1px solid var(--pay-poster-rule);
+  /* Flat ground, accent bloom over it — .pay-poster's gesture, .settle-sheet's
+     opacity. The bloom is listed first because a later layer paints underneath. */
+  background:
+    radial-gradient(118% 88% at 0% 0%, color-mix(in srgb, var(--accent) 12%, transparent), transparent 64%),
+    var(--pay-poster-bg);
+  color: var(--pay-poster-fg);
+  /* A free-floating pane is the one surface here that has to say how far off the
+     page it is. .settle-sheet needs no lift because it is anchored to the
+     viewport edge with a blurred backdrop behind it; this has neither. */
+  box-shadow: var(--shadow);
+}
+
+/* The trigger. A caps word and the account's own avatar on one baseline — not a
+   filled circle with a glyph badge, which is the only mark on the old panel that
+   was doing two jobs: naming the control, and re-saying "wallet" a second time
+   in a blue dot over the first. The word names it; the avatar says whose. */
+.wallet-hail {
+  position: fixed;
+  z-index: 65;
+  right: 1.5rem;
+  bottom: 1.5rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.7rem;
+  border: 0;
+  background: none;
+  padding: 0.4rem 0;
+  font-family: var(--font-clash), system-ui, sans-serif;
+  font-size: 0.72rem;
+  font-weight: 500;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--pay-poster-dim);
+  transition: color var(--dur-1) var(--ease-out);
+}
+
+/* The word sits on the page's own ground, not the panel's, and on a route with a
+   busy backdrop a bare hairline word can land on a bloom. A short pill of the
+   page ground behind it is the least chrome that keeps it legible everywhere —
+   and it is the ground, not a tint, so it reads as the page and not as a badge. */
+.wallet-hail-word {
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--background) 88%, transparent);
+  padding: 0.3rem 0.6rem;
+  backdrop-filter: blur(8px);
+}
+
+.wallet-hail-mark {
+  display: grid;
+  place-items: center;
+  width: 2.6rem;
+  height: 2.6rem;
+  border-radius: 999px;
+  /* The ring is the hairline every other boundary here is, and it lights with
+     the word — one gesture, not a border that is always on. */
+  border: 1px solid var(--pay-poster-rule);
+  background: var(--pay-poster-bg);
+  overflow: hidden;
+  transition: border-color var(--dur-1) var(--ease-out);
+}
+
+.wallet-hail-mark > img { width: 100%; height: 100%; object-fit: cover; }
+
+.wallet-hail:hover, .wallet-hail:focus-visible { color: var(--pay-poster-fg); }
+.wallet-hail:is(:hover, :focus-visible) .wallet-hail-mark { border-color: currentColor; }
+
+/* The head rail, and the only part of the panel that drags — framer-motion's
+   dragListener is off and this starts it by hand. The old panel put `drag` on the
+   whole pane, which meant a pointer-down on the address or in the amount field
+   moved the window instead of selecting or typing, and `select-none` over the
+   body meant the address could not be selected by hand at all. Confining the
+   gesture to the rail is what lets the body below be ordinary selectable text. */
+.wallet-grip {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.9rem 1.1rem 0.75rem;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+
+.wallet-grip:active { cursor: grabbing; }
+
+.wallet-grip-end {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.9rem;
+}
+
+/* Close is the one glyph on this panel. It is not a heading's illustration —
+   it is the control, and no word says "dismiss this" more briefly than the mark
+   every window in every OS closes with. */
+.wallet-x {
+  align-self: center;
+  border: 0;
+  background: none;
+  padding: 0;
+  color: var(--pay-poster-dim);
+  transition: color var(--dur-1) var(--ease-out);
+}
+
+.wallet-x:hover, .wallet-x:focus-visible { color: var(--pay-poster-fg); }
+
+.wallet-body {
+  padding: 0 1.1rem 1.15rem;
+}
+
+/* Every band inside the panel is separated by the hairline it is under, the way
+   .iou-ledger and .lp-rows do it — not by a card of its own. */
+.wallet-band {
+  border-top: 1px solid var(--pay-poster-rule);
+  margin-top: 0.9rem;
+  padding-top: 0.9rem;
+}
+
+.wallet-who {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  min-width: 0;
+}
+
+.wallet-who-avatar {
+  flex: none;
+  width: 1.7rem;
+  height: 1.7rem;
+  border-radius: 999px;
+  object-fit: cover;
+}
+
+.wallet-who-name {
+  min-width: 0;
+  font-size: 0.92rem;
+  overflow-wrap: anywhere;
+}
+
+/* The account's own handle with its platform mark — at full ink wherever it
+   appears, including mid-sentence inside a --pay-poster-dim paragraph, because it
+   names who the wallet belongs to and that is the one fact in the copy. */
+.wallet-handle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3em;
+  color: var(--pay-poster-fg);
+  text-decoration: none;
+}
+
+.wallet-handle:hover, .wallet-handle:focus-visible { text-decoration: underline; }
+
+/* The X badge ships as the official black-ground mark, and ProviderIcon renders it
+   as a raw <img> with no theme handling — so on this app's ink ground it is a black
+   square on a black field, i.e. nothing. Inverting yields the white-ground variant
+   X publishes for exactly this case.
+   Deliberately NOT scoped to .wallet-panel: that img is the one mark every surface
+   printing a tagged handle shares, and the same square disappears on the settle
+   deck, the /pay poster and the IOU ledger. Same `filter: invert(1)` correction
+   .bill-date's calendar indicator takes a few thousand lines up. */
+:root[data-theme="dark"] img[src="/x.png"] {
+  filter: invert(1);
+}
+
+/* The balance. .bill-figure's treatment at a scale that fits 352px: Clash 300,
+   tabular, tight — the same figure the /pay poster and the bills tab set, just
+   not sized off a viewport this panel does not span. */
+.wallet-figure {
+  display: flex;
+  align-items: baseline;
+  gap: 0.3rem;
+  margin: 0.35rem 0 0;
+  font-family: var(--font-clash), system-ui, sans-serif;
+  font-weight: 300;
+  font-size: 2.5rem;
+  line-height: 1;
+  letter-spacing: -0.03em;
+  font-variant-numeric: tabular-nums;
+}
+
+.wallet-unit {
+  font-size: 0.9rem;
+  letter-spacing: 0.06em;
+  color: var(--pay-poster-dim);
+}
+
+/* Arriving money is the same event a settled bill is, so it takes --success
+   rather than a green of its own. */
+.wallet-figure[data-tone="ok"] { color: var(--success); }
+
+/* The tab rail. Four .bill-toggle words; the live one goes to ink and draws its
+   own rule, which is the same mark the header's view pair and the dashboard's
+   filters make. `space-between` rather than a gap: at 0.18em tracking these four
+   words fill the rail almost exactly, and a fixed gap would either crowd them or
+   leave the last one short of the edge. */
+.wallet-tabs {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.4rem;
+  margin-top: 1.15rem;
+}
+
+/* The tab rail gets no hairline of its own, and neither does the body under it.
+   The live tab already draws one — .bill-toggle's ::after — and a second rule a
+   line above or below it would fence the four words in on both sides, which is
+   the segmented pill with the solid blue capsule this panel was rebuilt to lose.
+   One mark, made by the thing it describes. */
+.wallet-tab-body {
+  margin-top: 1rem;
+}
+
+/* A line of type that happens to be editable — the panel's version of the bare
+   .iou-field on a rule. The rule lights on focus rather than a ring drawing,
+   because a ring here is the input box this panel spent its redesign losing. */
+.wallet-line {
+  display: flex;
+  align-items: baseline;
+  gap: 0.4rem;
+  margin-top: 0.3rem;
+  padding-bottom: 0.4rem;
+  border-bottom: 1px solid var(--pay-poster-rule);
+  transition: border-color var(--dur-1) var(--ease-out);
+}
+
+.wallet-line:focus-within { border-bottom-color: var(--pay-poster-fg); }
+
+.wallet-line > input {
+  flex: 1;
+  min-width: 0;
+  appearance: none;
+  border: 0;
+  background: none;
+  padding: 0;
+  outline: none;
+  color: inherit;
+  font-size: 0.92rem;
+}
+
+.wallet-line > input::placeholder { color: color-mix(in srgb, var(--pay-poster-fg) 30%, var(--pay-poster-bg)); }
+
+/* An address is checked character by character, so it is set in the mono face at
+   the size .lp-row-proof sets a hash — not in the text face at body size. */
+.wallet-line[data-mono] > input,
+.wallet-proof {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  letter-spacing: 0.01em;
+  overflow-wrap: anywhere;
+}
+
+.wallet-proof {
+  margin: 0.5rem 0 0;
+  color: color-mix(in srgb, var(--pay-poster-fg) 62%, var(--pay-poster-bg));
+}
+
+/* A PIN is digits nobody reads back, so it is tracked out and set in tabular
+   figures — the dots line up, and a mistyped length is visible at a glance. */
+.wallet-line[data-pin] > input {
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.4em;
+}
+
+/* The amount is the thing someone opened this tab to set, so it is the figure —
+   .settle-amount's own reasoning, at the scale this panel can hold one at. */
+.wallet-line[data-figure] > input {
+  font-family: var(--font-clash), system-ui, sans-serif;
+  font-weight: 300;
+  font-size: 2.1rem;
+  line-height: 1.15;
+  letter-spacing: -0.03em;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Panel-scale prose. .lp-row-body's register — a sentence about the thing rather
+   than the thing — since that is what every line of copy in here is. */
+.wallet-note {
+  margin: 0.5rem 0 0;
+  font-size: 0.82rem;
+  line-height: 1.55;
+  color: var(--pay-poster-dim);
+}
+
+.wallet-note > b { font-weight: 400; color: var(--pay-poster-fg); }
+
+.wallet-note[data-tone="warn"] { color: var(--warning-text); }
+
+/* The verb, at panel scale. Everything else about it — the receded rest colour
+   that still clears 4.5:1, the tracking, the borderlessness — is .settle-action's
+   and is not restated; only the size, which that class takes from `vw`. */
+.wallet-panel .settle-action {
+  font-size: 1.45rem;
+  margin-top: 0.9rem;
+}
+
+/* History. a.lp-row's ruled rows, so a transaction list is the same object as the
+   contract rows in the colophon and the sources under a doc — two columns, the
+   arrow leaning on hover, no card to lift. The old rows were bordered boxes with
+   the direction in a tinted circle; the direction is a word now. */
+.wallet-rows {
+  max-height: 15rem;
+  overflow-y: auto;
+  border-top: 1px solid var(--pay-poster-rule);
+}
+
+.wallet-rows .lp-row {
+  grid-template-columns: minmax(0, 1fr) auto;
+  padding: 0.6rem 0;
+  font-size: 0.82rem;
+}
+
+.wallet-rows .lp-row:last-child { border-bottom: 0; }
+
+.wallet-dir[data-in] { color: var(--success); }
+
+.wallet-amount {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.3rem;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* The arrow leans on every link out. The rule that does this elsewhere is scoped
+   to `:is(.lp-paper, .site-footer)`, and this panel is neither — it cannot borrow
+   .lp-paper for it either, because that class re-points --pay-poster-bg at the
+   page background and every color-mix() above reads that token. */
+.wallet-panel .lp-row-out {
+  transition: transform var(--dur-2) var(--ease-out);
+}
+
+.wallet-panel a:hover .lp-row-out,
+.wallet-panel a:focus-visible .lp-row-out {
+  transform: translate(0.15em, -0.15em);
+}
+
+/* A link out standing on its own under the block it belongs to. */
+.wallet-out {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4em;
+  margin-top: 0.9rem;
+}
+
+/* Air above whatever follows a field, so two values on one tab read as two
+   rather than as one that wrapped. */
+.wallet-line + .settle-label,
+.wallet-line + .iou-rail,
+.wallet-line + .wallet-line { margin-top: 1rem; }
+
+/* A rail that labels a value takes .iou-rail's caps type and its borderless
+   word-controls; the value under it just needs to clear it. */
+.iou-rail + .wallet-proof { margin-top: 0.5rem; }
+
+/* No avatar to show. The initial set in the display face is the mark — a platform
+   logo in a 42px ring would say which service the account is on, which is not the
+   question a trigger answers, and the word beside it already says what it opens. */
+.wallet-initial {
+  font-family: var(--font-clash), system-ui, sans-serif;
+  font-weight: 300;
+  font-size: 1.15rem;
+  letter-spacing: 0;
+  text-transform: uppercase;
+  color: var(--pay-poster-dim);
+}
+
+/* The one spinner in the panel sits inside a running line of copy. */
+.wallet-note > svg {
+  display: inline;
+  vertical-align: -0.1em;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .wallet-hail,
+  .wallet-hail-mark,
+  .wallet-x,
+  .wallet-line { transition: none; }
+}
+
+/* ── The sign-in poster (/signin/email) ───────────────────────────────────────
+   The email OTP flow is the composer pattern, not a form: two steps, one value
+   each, and the value is the whole screen. So it is /owe's own surface —
+   .iou-page for the ground, .iou-rail for the corner marks, .iou-composer for
+   the centred column, a bare .iou-field on .iou-rule for the value, and
+   .settle-action for the verb — and the only rules it adds are the four that
+   surface cannot answer for it.
+
+   It replaces a rounded-3xl bordered card with a drop shadow, an envelope in a
+   tinted --accent square, and two .field-control boxes: the last card on the
+   site, on the one screen a new user sees before anything else. */
+.iou-page[data-signin] {
+  /* Sized to its content, not to the viewport. /owe takes 100dvh because a
+     ledger grows under its composer and the footer is hidden on that tab; this
+     route has neither, and a 100dvh poster over a colophon is a screen that
+     scrolls for no reason. */
+  min-height: min(46rem, 86dvh);
+}
+
+/* A measure, which /owe does not need and this does. There the sentence runs the
+   width of the poster, so .iou-rule under it is a rule under type; here the value
+   is one short token and the same full-bleed rule was a 1800px line ruling 500px
+   of email — it read as a divider the page had left behind rather than as the
+   underline of the field above it. Capping the column caps the rule with it, and
+   the prose, the check and the verb all start and end on the same two edges. */
+[data-signin] .iou-composer {
+  width: 100%;
+  max-width: 42rem;
+}
+
+/* The verb is subordinate to the value here, and has to be told so. .settle-action
+   is sized for /owe, where the sentence above it is 7rem and 4.4rem of "commit" is
+   the quieter of the two; against a 2.9rem email the same clamp made the button
+   the loudest thing on a sign-in screen and the address an afterthought. The
+   margin comes down with it — 4rem of air is the gap between a full-height
+   poster's last line and its action, not this poster's. */
+[data-signin] .settle-action {
+  font-size: clamp(1.4rem, 1rem + 1.2vw, 2rem);
+  margin-top: clamp(1.4rem, 1rem + 1.2vw, 2.2rem);
+}
+
+/* The value, at the scale a value is read at. .iou-sentence is sized off `vw`
+   for a sentence that spans the poster; an email address is one unbroken token
+   that would set 30 characters at 7rem and wrap three times. */
+[data-signin] .iou-sentence {
+  font-size: clamp(1.5rem, 0.9rem + 2.4vw, 2.9rem);
+  letter-spacing: -0.01em;
+}
+
+/* A mirror measures with `white-space: pre` and so never wraps — left alone, a
+   long address would size its slot past the poster it is centred in. The cap goes
+   on the slot rather than on the mirror, which is the correction .bill-poster
+   makes for the same reason: the mirror keeps overflowing invisibly, the slot
+   stops at the column, and the input scrolls inside it. */
+[data-signin] .iou-slot {
+  max-width: 100%;
+  min-width: 0;
+}
+
+/* Except the code, which is six digits and is the one value on this route that
+   can take the full display scale — tracked out and tabular, so the count is
+   legible without being counted. */
+[data-signin] .iou-sentence[data-code] {
+  font-size: clamp(2.4rem, 1.4rem + 3.4vw, 4.5rem);
+  letter-spacing: 0.22em;
+  font-variant-numeric: tabular-nums;
+}
+
+/* The ordinal, which is this design's mark for a step — the numbered circle and
+   the icon-in-a-square are the two things it replaces. Mono and tabular so
+   "01" and "02" occupy one width and the label beside them never shifts. */
+.signin-step {
+  display: flex;
+  align-items: baseline;
+  gap: 0.7rem;
+}
+
+.signin-step > b {
+  font-family: var(--font-mono);
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+  color: color-mix(in srgb, var(--pay-poster-fg) 52%, var(--pay-poster-bg));
+}
+
+/* Turnstile draws its own bordered widget and there is nothing to be done about
+   that — it is a cross-origin iframe. What can be done is stop it sitting in the
+   middle of the column like a card: it goes down on the meta rail with the other
+   footnotes, at the left margin everything else on this poster starts from. */
+.signin-check {
+  margin-top: 1rem;
+}
