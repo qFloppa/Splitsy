@@ -12,12 +12,31 @@
 //
 // The markup to inject lives in scripts/shot-fixtures.mjs, keyed by <name>.
 import { spawn } from "node:child_process";
-import { mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { mkdirSync, writeFileSync, rmSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import fixtures from "./shot-fixtures.mjs";
 
-const CHROME = "C:/Program Files (x86)/Google/Chrome/Application/chrome.exe";
+// Chrome's install root is not the same on every machine — a 64-bit install lands
+// in "Program Files", a 32-bit one in "Program Files (x86)", and a per-user
+// install in LOCALAPPDATA. This used to name the x86 path alone and died with a
+// spawn ENOENT anywhere else, which reads as "the screenshot tool is broken"
+// rather than "look one directory over". Edge is last because it is Chromium and
+// speaks the same CDP, so it is a working fallback rather than a wrong answer.
+const CHROME_CANDIDATES = [
+  process.env.CHROME_PATH,
+  "C:/Program Files/Google/Chrome/Application/chrome.exe",
+  "C:/Program Files (x86)/Google/Chrome/Application/chrome.exe",
+  process.env.LOCALAPPDATA && `${process.env.LOCALAPPDATA}/Google/Chrome/Application/chrome.exe`,
+  "C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe",
+  "C:/Program Files/Microsoft/Edge/Application/msedge.exe",
+].filter(Boolean);
+
+const CHROME = CHROME_CANDIDATES.find((p) => existsSync(p));
+if (!CHROME) {
+  console.error(`No Chrome found. Set CHROME_PATH, or install one of:\n  ${CHROME_CANDIDATES.join("\n  ")}`);
+  process.exit(1);
+}
 // Per-run port. A fixed 9222 attaches to whatever headless instance a previous
 // run left behind (or, worse, to the developer's own browser if they happen to be
 // debugging), and the script then hangs waiting for a load event on someone
