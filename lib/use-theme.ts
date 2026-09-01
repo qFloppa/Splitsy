@@ -8,14 +8,13 @@ const STORAGE_KEY = "splitsy-theme";
 
 // One source of truth for theming across the landing page and the app.
 // Resolution order: explicit user choice (sessionStorage, same key the app has
-// always used) → OS preference → light. The <html data-theme> attribute is the
-// only switch the CSS reads; app/theme-script.ts sets it pre-paint so neither
-// surface flashes the wrong theme on load.
+// always used) → light. A first visit is light whatever the OS prefers — the
+// paper look is the design, not a fallback. The <html data-theme> attribute is
+// the only switch the CSS reads; the inline script in app/layout.tsx sets it
+// pre-paint (same rule, duplicated there) so neither surface flashes dark.
 export function resolveInitialTheme(): AppTheme {
   if (typeof window === "undefined") return "light";
-  const stored = window.sessionStorage.getItem(STORAGE_KEY);
-  if (stored === "dark" || stored === "light") return stored;
-  return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+  return window.sessionStorage.getItem(STORAGE_KEY) === "dark" ? "dark" : "light";
 }
 
 export function useTheme() {
@@ -25,15 +24,6 @@ export function useTheme() {
     document.documentElement.dataset.theme = theme;
     sessionStorage.setItem(STORAGE_KEY, theme);
   }, [theme]);
-
-  // Follow live OS changes only while the user hasn't made an explicit choice.
-  useEffect(() => {
-    if (sessionStorage.getItem(STORAGE_KEY)) return;
-    const media = window.matchMedia("(prefers-color-scheme: dark)");
-    const onChange = (event: MediaQueryListEvent) => setThemeState(event.matches ? "dark" : "light");
-    media.addEventListener("change", onChange);
-    return () => media.removeEventListener("change", onChange);
-  }, []);
 
   // Explicit toggles get a brief cross-fade: .theme-fade forces color/background
   // transitions on everything for one beat, then unwinds so it can't tax

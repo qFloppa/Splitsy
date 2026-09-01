@@ -299,7 +299,10 @@ const RECORD_STEPS: Record<"handle" | "wallet" | "empty", Step> = {
   empty: { index: "05", kicker: "Records", title: "Nothing has settled yet" },
 };
 
-export default function HomeClient({ testCycleEnabled = false }: { testCycleEnabled?: boolean }) {  const [activeTab, setActiveTab] = useState<AppTab>("bills");
+export default function HomeClient({ testCycleEnabled = false }: { testCycleEnabled?: boolean }) {
+  // IOU is where you land: an amount and a name is the shortest thing the app
+  // does, and it reads as a page rather than a form. Bills is one tap away.
+  const [activeTab, setActiveTab] = useState<AppTab>("iou");
   // What the agents tab's masthead needs to light its contents rail. Reported up
   // by SettlementAgentsPanel, which is the only thing that knows — same shape as
   // XHistoryPanel's onCount, and for the same reason: the rail is above the

@@ -127,8 +127,11 @@ for (const theme of themes) {
   await cdp.send("Page.enable", {}, sessionId);
   await cdp.send("Runtime.enable", {}, sessionId);
   await cdp.send("Emulation.setDeviceMetricsOverride", { width: 1440, height: 1100, deviceScaleFactor: 2, mobile: false }, sessionId);
-  // Before navigation: resolveInitialTheme reads prefers-color-scheme on first paint.
-  await cdp.send("Emulation.setEmulatedMedia", { features: [{ name: "prefers-color-scheme", value: theme }] }, sessionId);
+  // Before navigation: the app resolves its theme from sessionStorage only (a
+  // first visit is always light), so seed the choice rather than emulating
+  // prefers-color-scheme — addScriptToEvaluateOnNewDocument runs ahead of the
+  // inline theme script in <head>.
+  await cdp.send("Page.addScriptToEvaluateOnNewDocument", { source: `try{sessionStorage.setItem("splitsy-theme",${JSON.stringify(theme)})}catch(e){}` }, sessionId);
 
   const loaded = cdp.once("Page.loadEventFired");
   await cdp.send("Page.navigate", { url }, sessionId);

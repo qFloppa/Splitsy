@@ -104,14 +104,15 @@ export default async function RootLayout({
       suppressHydrationWarning
     >
       <head>
-        {/* Resolve the theme before first paint (stored choice → OS preference)
-            so neither the landing page nor the app flashes the wrong theme.
-            Must stay inline: any async load reintroduces the flash. */}
+        {/* Resolve the theme before first paint (stored choice, else light — see
+            resolveInitialTheme in lib/use-theme.ts) so neither the landing page
+            nor the app flashes the wrong theme. Must stay inline: any async load
+            reintroduces the flash. */}
         <script
           nonce={nonce}
           dangerouslySetInnerHTML={{
             __html:
-              '(function(){try{var t=sessionStorage.getItem("splitsy-theme");if(t!=="dark"&&t!=="light"){t=window.matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light";}document.documentElement.dataset.theme=t;}catch(e){}})();',
+              '(function(){try{document.documentElement.dataset.theme=sessionStorage.getItem("splitsy-theme")==="dark"?"dark":"light";}catch(e){}})();',
           }}
         />
       </head>
