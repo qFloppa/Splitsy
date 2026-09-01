@@ -35,16 +35,42 @@ money.
 
 ## Decision
 
-Run **two stacks from one branch**, selected by a `WALLET_PROVIDER` env var.
+Run **two wallet stacks from one repo**, selected by a `WALLET_PROVIDER` env var,
+and get there in two phases so the live site is never the thing being
+experimented on.
 
-| Domain | `WALLET_PROVIDER` | Wallets | Network | Database |
-|---|---|---|---|---|
-| `testnet.splitsy.xyz` | `circle` | Circle DCW | Arc Testnet | existing Supabase |
-| `splitsy.xyz` | `privy` | Privy | Arc Testnet, then mainnet | **new** Supabase |
+**Phase 1 — build beside the live site (Tasks 1–7).** Work on the branch
+`privy-wallet-stack`. `splitsy.xyz` keeps its domain, its database, its Circle
+env and its `main` deployment — unchanged and unredeployed. The Privy stack goes
+up on Vercel's **Preview** environment at `privy.splitsy.xyz`, pointed at the
+`splitsy-test` Supabase project.
 
-Not a migration. Both implementations ship simultaneously and stay live. The
-testnet subdomain preserves today's behaviour byte-for-byte, including the
-Circle SDK, the Gas Station notes, and the SCP monitor.
+| | `splitsy.xyz` (Production) | `privy.splitsy.xyz` (Preview) |
+|---|---|---|
+| Branch | `main` | `privy-wallet-stack` |
+| `WALLET_PROVIDER` | unset → `circle` | `privy` |
+| Wallets | Circle DCW (SCA) | Privy embedded (EOA) |
+| Network | Arc Testnet | Arc Testnet |
+| Database | `mhm233's Project` | `splitsy-test` |
+
+**Phase 2 — the flip (Task 8), only when explicitly chosen.** Merging to `main`
+and moving the domains are two separate decisions, taken days apart. Merging
+alone changes nothing a user can see, because Production never sets
+`WALLET_PROVIDER` and `walletProviderName()` defaults to `circle`. Only the
+domain move makes `splitsy.xyz` the Privy stack and demotes today's build to
+`testnet.splitsy.xyz`. Rollback at that point is a domain move, not a deploy.
+
+Not a migration. Both implementations ship and stay live. The demoted subdomain
+preserves today's behaviour byte-for-byte, including the Circle SDK, the Gas
+Station notes, and the SCP monitor.
+
+### Why the default direction matters
+
+`walletProviderName()` returns `privy` only on an exact string match, and
+`circle` for everything else — a typo, a capitalised value, a variable an
+environment forgot. The fallback is the stack whose USDC is worthless. That is
+the most load-bearing line in the change: it means every way of being wrong
+lands somewhere harmless.
 
 ### Why an interface with two implementations is justified here
 

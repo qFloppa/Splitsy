@@ -18,6 +18,8 @@
 - **Dependency versions are pinned exactly** in `package.json` (no `^`), except `@types/*` and tooling. Add `@privy-io/server-auth` pinned to the exact version resolved at install time.
 - **`.env.example` is gitignored repo-wide.** Document every new env var as a comment block in `.env.local` only.
 - **One branch, both stacks.** Every change must leave `WALLET_PROVIDER=circle` behaviourally identical to today. A task that changes Circle-stack behaviour is a failed task.
+- **All work happens on the branch `privy-wallet-stack`, never on `main`.** The live `splitsy.xyz` deployment tracks `main`, so a push to `main` reaches production even when behaviour is meant to be identical. The branch is what makes "no risk to the live build" a structural fact rather than a promise. Merging to `main` is a separate decision (see Task 8), and merging still changes nothing for users because `WALLET_PROVIDER` stays unset in the Production environment.
+- **No production configuration changes before Task 8.** Tasks 1–7 touch only local files, the `splitsy-test` Supabase project, and Vercel's **Preview** environment.
 - **Both stacks target Arc Testnet** (chain id `5042002`, USDC `0x3600000000000000000000000000000000000000`). Do not introduce mainnet constants.
 - **No new client-side dependency.** Privy is server-only in this plan; do not add `@privy-io/react-auth` or touch `proxy.ts`'s CSP.
 
@@ -1242,12 +1244,21 @@ git commit -m "feat(agents): fund-mode default and an enclave-enforced cap on Pr
 
 ---
 
-### Task 6: Split the deployments
+### Task 6: Stand the Privy stack up beside the live one
 
-The existing Vercel project keeps every env var it has and only changes domain, to
-`testnet.splitsy.xyz`. A **new** project takes `splitsy.xyz` with the Privy env and
-a fresh database. That direction is the low-risk one: the working deployment is
-never reconfigured, only renamed.
+Nothing here touches `splitsy.xyz`. The live deployment keeps every env var it
+has, keeps its domain, and keeps serving the Circle stack — it is not
+reconfigured, renamed or redeployed by this task.
+
+The Privy stack goes up on **Vercel's Preview environment** for the
+`privy-wallet-stack` branch, at a stable hostname of its own. Vercel scopes env
+vars per environment (Production / Preview / Development), which is exactly the
+axis needed here: Production has no `WALLET_PROVIDER`, so it stays on Circle by
+the default in `walletProviderName()`; Preview sets it to `privy` and points at a
+different database.
+
+Renaming the live deployment to `testnet.splitsy.xyz` and handing `splitsy.xyz`
+to the Privy stack is **Task 8**, deferred until it is chosen deliberately.
 
 **Files:**
 - Modify: `app/layout.tsx` (stack banner)
@@ -1256,11 +1267,14 @@ never reconfigured, only renamed.
 
 **Interfaces:**
 - Consumes: `WALLET_PROVIDER` from Task 2.
-- Produces: `NEXT_PUBLIC_STACK_LABEL` — when set, a banner names the stack. Unset on production.
+- Produces: `NEXT_PUBLIC_STACK_LABEL` — when set, a banner names the stack. Unset in Production.
 
-- [ ] **Step 1: Create the Privy stack's database**
+- [ ] **Step 1: Restore the Privy stack's database**
 
-Create a new Supabase project. Run every schema file, in this order (the later ones alter tables the earlier ones create):
+There is already a second Supabase project in the same org: **`splitsy-test`**
+(ref `hdyioojrozodmutpldsu`), currently INACTIVE. Restore that one rather than
+creating a new project, then run every schema file in this order (the later ones
+alter tables the earlier ones create):
 
 ```
 schema-users.sql
@@ -1280,9 +1294,10 @@ schema-privy-wallets.sql
 
 Read each file before running it — if any contains a data migration rather than pure DDL, note it and skip that part on an empty database.
 
-Separate databases are not optional: `users.circle_wallet_id` holds an opaque
-provider id, and one row cannot name both a Circle wallet and a Privy one. See
-the design doc.
+Never point the Preview environment at the live project's database.
+`users.circle_wallet_id` holds an opaque provider id and one row cannot name a
+wallet in both systems — and sharing it would put this stack's writes in front of
+live users, which is the one outcome this whole task is arranged to prevent.
 
 - [ ] **Step 2: Add the stack banner**
 
@@ -1299,66 +1314,81 @@ In `app/layout.tsx`, inside the body wrapper above the page content:
 Document it in `.env.local`:
 
 ```
-# Banner text shown at the top of every page. Set on the testnet deployment
-# ("Arc Testnet — play money") and left UNSET on production, so forgetting it
-# can only ever under-warn a testnet user, never mislabel production.
+# Banner text shown at the top of every page. Set in Vercel's PREVIEW
+# environment ("Privy stack — Arc Testnet") and left UNSET in Production, so
+# forgetting it can only ever under-warn a preview visitor, never mislabel the
+# live site.
 NEXT_PUBLIC_STACK_LABEL=
 ```
 
 Read `node_modules/next/dist/docs/` on how `NEXT_PUBLIC_*` inlining works in this Next version before assuming a server component can read it at request time — if it is build-time only, each deployment gets its own build anyway, which is fine.
 
-- [ ] **Step 3: Move the existing project to the testnet subdomain**
+- [ ] **Step 3: Give the branch a stable preview hostname**
 
-In the existing Vercel project: add `testnet.splitsy.xyz`, make it primary, and
-remove `splitsy.xyz`. Set `NEXT_PUBLIC_STACK_LABEL=Arc Testnet — play money`.
-Change nothing else. Redeploy.
+Vercel's per-deployment preview URLs carry a fresh hash on every push, which no
+OAuth provider can be told about in advance. Assign a domain to the branch
+instead — in the existing project, Domains → add `privy.splitsy.xyz` and assign it
+to the `privy-wallet-stack` branch.
 
-- [ ] **Step 4: Register the new OAuth redirect URIs**
+Adding a domain to a branch does not affect Production. `splitsy.xyz` keeps its
+own assignment; confirm it is still listed as Production before moving on.
 
-Every provider validates the exact callback origin, so the testnet subdomain must
-be registered or sign-in breaks the moment the domain moves. Add
-`https://testnet.splitsy.xyz/api/auth/<provider>/callback` for:
+- [ ] **Step 4: Register the preview hostname with every provider**
 
-- X developer portal (app settings → callback URI / redirect URL)
-- Discord developer portal (OAuth2 → redirects)
-- Google Cloud console (credentials → authorised redirect URIs). Also set
-  `GOOGLE_OAUTH_REDIRECT_ORIGIN=https://testnet.splitsy.xyz` on this deployment.
+Each provider validates the exact callback origin, so sign-in fails on the preview
+host until it is registered. **Add**, never replace — the `splitsy.xyz` entries are
+what keep the live site working:
 
-Keep the `splitsy.xyz` entries — the new project needs them.
+- X developer portal (app settings → callback URI / redirect URL): add
+  `https://privy.splitsy.xyz/api/auth/twitter/callback`
+- Discord developer portal (OAuth2 → redirects): add
+  `https://privy.splitsy.xyz/api/auth/discord/callback`
+- Google Cloud console (credentials → authorised redirect URIs): add
+  `https://privy.splitsy.xyz/api/auth/google/callback`
+- Cloudflare Turnstile: the widget is domain-bound (`@marsidev/react-turnstile` is
+  a dependency), so add `privy.splitsy.xyz` to its allowed hostnames or the
+  challenge fails on the preview host only.
 
-- [ ] **Step 5: Verify the testnet stack before touching production**
+If any console has a redirect-URI limit you would have to free up by deleting an
+entry, stop and report it — deleting a live entry is how this task would break
+production.
 
-Visit `https://testnet.splitsy.xyz`. Expected: the banner shows, all four sign-ins
-complete, the wallet panel reads a balance, and one off-chain debt pays. Nothing
-about this deployment changed except its name, so any failure here is a redirect
-URI, not the code.
+- [ ] **Step 5: Configure the Preview environment**
 
-- [ ] **Step 6: Create the production project**
-
-New Vercel project, same repo, same `main` branch. Copy every env var from the
-testnet project, then change:
+In the existing Vercel project, set these on **Preview only** (Vercel's env-var
+scope selector; do not tick Production):
 
 ```
 WALLET_PROVIDER=privy
-NEXT_PUBLIC_STACK_LABEL=            # unset
-SUPABASE_URL / SUPABASE_*           # the Task 1 project
-PRIVY_APP_ID / PRIVY_APP_SECRET / PRIVY_KEY_QUORUM_ID / PRIVY_AGENT_POLICY_ID
-GOOGLE_OAUTH_REDIRECT_ORIGIN=https://splitsy.xyz
-SESSION_SECRET=                     # a NEW 32+ byte secret, not the testnet one
+NEXT_PUBLIC_STACK_LABEL=Privy stack — Arc Testnet
 ```
 
-Delete from this project: `CIRCLE_API_KEY`, `CIRCLE_ENTITY_SECRET`,
-`CIRCLE_WALLET_SET_ID`, `CIRCLE_WEBHOOKS_ENABLED`, and the autopay mandate
-address var. The mandate one is load-bearing: `isMandateConfigured()` must be
-false so `syncMandateOnchain` cannot reach `encodeExecuteBatch` on an EOA.
+- [ ] **Step 6: Point Preview at the Privy stack's own resources**
+
+Still on **Preview only**, override these so the preview never reads or writes the
+live project's data or Circle's wallets:
+
+```
+SUPABASE_URL / SUPABASE_*           # the splitsy-test project from Step 1
+PRIVY_APP_ID / PRIVY_APP_SECRET / PRIVY_KEY_QUORUM_ID / PRIVY_AGENT_POLICY_ID
+GOOGLE_OAUTH_REDIRECT_ORIGIN=https://privy.splitsy.xyz
+SESSION_SECRET=                     # a NEW 32+ byte secret, not Production's
+```
+
+Leave **unset in Preview** (empty, not inherited): `CIRCLE_API_KEY`,
+`CIRCLE_ENTITY_SECRET`, `CIRCLE_WALLET_SET_ID`, `CIRCLE_WEBHOOKS_ENABLED`, and the
+autopay mandate address var.
+
+The mandate one is load-bearing: `isMandateConfigured()` must be false so
+`syncMandateOnchain` cannot reach `encodeExecuteBatch` on a Privy EOA. Check how
+Vercel handles a Production var when Preview does not define it — if Preview
+inherits rather than blanks it, set each of these to an empty string explicitly.
 
 A distinct `SESSION_SECRET` is defence in depth rather than a live hole: the
 session cookie is set without a `domain` attribute (`lib/oauth-callback.ts:116-122`),
-so it is host-scoped and does not cross between the two hostnames on its own. The
-separate secret means a leaked testnet secret still cannot mint a production
-session even if that ever changes.
-
-Add `splitsy.xyz` as this project's domain.
+so it is host-scoped and does not cross between hostnames on its own. The separate
+secret means a leaked preview secret still cannot mint a live session even if that
+ever changes.
 
 - [ ] **Step 7: Write down which deployment is which**
 
@@ -1367,42 +1397,57 @@ Create `docs/deployments.md`:
 ```markdown
 # Deployments
 
-Two stacks, one branch. `WALLET_PROVIDER` is the only switch.
+One repo, two wallet stacks. `WALLET_PROVIDER` is the only switch, and `circle` is
+the default in `walletProviderName()` — so an environment that forgets the variable
+falls back to the stack whose money is worthless, never the other way round.
 
-| | testnet.splitsy.xyz | splitsy.xyz |
+| | splitsy.xyz (Production) | privy.splitsy.xyz (Preview) |
 |---|---|---|
-| `WALLET_PROVIDER` | `circle` (unset) | `privy` |
+| Branch | `main` | `privy-wallet-stack` |
+| `WALLET_PROVIDER` | unset → `circle` | `privy` |
 | Wallets | Circle DCW, SCA | Privy embedded, EOA |
 | Network | Arc Testnet (5042002) | Arc Testnet (5042002) |
-| Database | original Supabase project | separate Supabase project |
+| Database | `mhm233's Project` | `splitsy-test` |
 | Autopay money mode | `mandate` | `funded` |
 | Mandate address env | set | **must stay unset** |
 | Circle env vars | set | absent |
-| Banner | "Arc Testnet — play money" | none |
+| Banner | none | "Privy stack — Arc Testnet" |
 
-Arc mainnet is not live for either yet — see
+Both stacks share the same deployed Arc Testnet contracts (BillSplitRegistry,
+RecurringTabFactory, the ERC-8004 registrar). That is deliberate — no redeploy is
+needed while both are on testnet — but it means preview activity lands on the same
+contracts the live site reads. Live users never see it, because each stack reads by
+its own wallet addresses out of its own database.
+
+Arc mainnet is not live for either yet: see
 `docs/superpowers/specs/2026-09-01-privy-wallet-stack-design.md` "Deliberately
-deferred". Both stacks run Arc Testnet until Circle publishes the mainnet chain
-id, RPC and USDC address.
+deferred". Handing `splitsy.xyz` to the Privy stack is Task 8 of
+`docs/superpowers/plans/2026-09-01-privy-wallet-stack.md` and has not happened.
 
-Never point both projects at one database: `users.circle_wallet_id` holds an
-opaque provider id and one row cannot name a wallet in both systems.
+Never point the two at one database: `users.circle_wallet_id` holds an opaque
+provider id and one row cannot name a wallet in both systems.
 ```
 
-- [ ] **Step 8: Verify production**
+- [ ] **Step 8: Verify the preview stack, then verify the live one is untouched**
 
-Visit `https://splitsy.xyz`. Expected: no banner, all four sign-ins complete, a
-Privy wallet address appears, and a `privy_wallets` row lands in the new database.
-Fund it and pay one debt end to end.
+Push the branch and wait for the preview deploy. Visit
+`https://privy.splitsy.xyz`. Expected: the banner shows, all four sign-ins
+complete, a Privy wallet address appears, and a `privy_wallets` row lands in
+`splitsy-test`. Fund it and pay one debt end to end.
 
-Then re-check `https://testnet.splitsy.xyz` still works. Two stacks, one branch,
-both green.
+Then visit `https://splitsy.xyz`. Expected: **no banner**, and everything exactly as
+before — this deployment still serves `main`, which has none of this code. If a
+banner appears on `splitsy.xyz`, `NEXT_PUBLIC_STACK_LABEL` was scoped to
+Production by mistake; fix it before doing anything else.
+
+Last check, in the Vercel dashboard: confirm the Production deployment's commit is
+still the one that was live before this task began.
 
 - [ ] **Step 9: Commit**
 
 ```bash
 git add app/layout.tsx docs/deployments.md
-git commit -m "chore(deploy): split the testnet and production stacks"
+git commit -m "chore(deploy): stand the Privy stack up on a preview host"
 ```
 
 ---
@@ -1482,6 +1527,82 @@ git commit -m "fix(wallets): close the gaps the two-stack walkthrough found"
 
 ---
 
+### Task 8: The domain flip — do not start until it is explicitly asked for
+
+Everything before this leaves `splitsy.xyz` alone. This task is the only one that
+changes what a live user gets, and it is split into two decisions that are
+deliberately independent: **merging the code** and **flipping the domains**. Do the
+first, live with it, then do the second.
+
+**Files:** none. Git and dashboards only.
+
+- [ ] **Step 1: Merge the branch**
+
+```bash
+git checkout main && git pull && git merge --no-ff privy-wallet-stack
+git push origin main
+```
+
+This changes nothing for users. Production has no `WALLET_PROVIDER`, so
+`walletProviderName()` returns `circle` and every route resolves to the same
+Circle backend it used before. The refactor is the only thing that ships.
+
+- [ ] **Step 2: Verify the live site after the merge — the real gate**
+
+This is the moment Task 2's "the Circle stack cannot tell it happened" claim is
+tested against production rather than a dev server. On `https://splitsy.xyz`, as a
+real signed-in user: read a balance, pay one off-chain debt, send from the wallet
+panel, open the history tab, create one on-chain bill.
+
+Expected: no banner, no behaviour change, no new errors in the Vercel logs.
+
+If anything is off, roll back immediately — Vercel's Deployments tab can promote
+the previous production deployment in seconds, which is faster and safer than a
+revert commit. Do that first, then diagnose.
+
+Then leave it alone for a few days. The point of separating this from Step 3 is to
+learn whether the refactor is quiet under real traffic before any domain moves.
+
+- [ ] **Step 3: Create the second Vercel project**
+
+Only once Step 2 has been quiet. New Vercel project, same repo, same `main`
+branch, and copy the **Preview** env values from Task 6 into its **Production**
+scope — `WALLET_PROVIDER=privy`, the `splitsy-test` Supabase vars, the four Privy
+vars, a fresh `SESSION_SECRET`, no Circle vars, no mandate address.
+
+Two projects now build on every push to `main`. That is the cost of the split.
+
+- [ ] **Step 4: Register the testnet hostname before it exists**
+
+Add `https://testnet.splitsy.xyz/api/auth/<provider>/callback` to the X, Discord
+and Google consoles, and `testnet.splitsy.xyz` to Turnstile. Keep every existing
+entry. Doing this first means the swap in Step 5 cannot strand sign-in.
+
+- [ ] **Step 5: Swap the domains**
+
+In the **new** project: add `splitsy.xyz`. In the **old** project: add
+`testnet.splitsy.xyz`, set `NEXT_PUBLIC_STACK_LABEL=Arc Testnet — play money`, and
+set `GOOGLE_OAUTH_REDIRECT_ORIGIN=https://testnet.splitsy.xyz`. Then move
+`splitsy.xyz` off the old project.
+
+Vercel will not let one domain sit on two projects, so the order is: prepare the
+new project fully, then release the domain from the old one and claim it. Expect a
+brief window where `splitsy.xyz` does not resolve. Do this at a quiet hour.
+
+- [ ] **Step 6: Verify both, and know the way back**
+
+`splitsy.xyz` → Privy stack, no banner, sign-in works, a wallet appears, one debt
+pays. `testnet.splitsy.xyz` → Circle stack, banner shows, same five flows.
+
+Rollback is a domain move, not a deploy: put `splitsy.xyz` back on the old
+project. The old project still has its database, its Circle env and its users
+untouched, which is why nothing in Tasks 1–7 was allowed to modify it.
+
+Update `docs/deployments.md` to match reality once this is done — its table still
+describes the preview arrangement.
+
+---
+
 ## Self-Review
 
 Checked against the spec:
@@ -1495,6 +1616,14 @@ Checked against the spec:
   PIN deferred → `lib/pin.ts` and the PIN routes are on the do-not-touch list.
   Arc mainnet deferred → not in any task. Open question 1 → Task 5 Step 1. Open
   question 2 → Task 1 Step 3.
+- **The live site is protected structurally, not by care.** Three independent
+  mechanisms, and any one of them alone would be enough: the work lives on
+  `privy-wallet-stack` while Production serves `main`; `walletProviderName()`
+  defaults to `circle`, so an environment that forgets the variable falls back to
+  the harmless stack; and the Privy env is scoped to Vercel's Preview environment,
+  pointing at a different database. Tasks 1–7 change no Production setting at all.
+  Task 8 is where a live user first sees a difference, and it exists as a separate
+  task so that it cannot happen by momentum.
 - **One design choice worth re-reading before you start.** The agent wallet gets
   its own Privy user keyed `agent:<userId>` rather than a second `wallet_index` on
   the user's own Privy user, because the pay wallet's key is
