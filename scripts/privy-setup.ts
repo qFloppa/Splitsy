@@ -6,9 +6,20 @@
 //
 //   new PrivyClient({appId, appSecret})            object, as the plan had it
 //   privy.users().create({linked_accounts, wallets})   as the plan had it
-//   privy.wallets().ethereum().sendTransaction(walletId, {...})
-//        the wallet id is a POSITIONAL first argument, not a walletId field, and
-//        the transaction sits under params.transaction, not a top-level key
+//   privy.wallets().ethereum().signTransaction(walletId, {params: {transaction}})
+//        NOT sendTransaction. Privy will not broadcast on Arc: sendTransaction
+//        takes a caip2 and answers 401 "App is not authorized to transact on
+//        chain eip155:5042002". eth_signTransaction takes no caip2 at all — the
+//        chain id rides inside the transaction — so it is outside that gate.
+//        Privy signs, we broadcast with viem. The wallet id is a POSITIONAL first
+//        argument, and the transaction sits under params.transaction.
+//
+// Signing rather than sending means WE own the nonce and the fee estimate, which
+// Privy owned before. This script is single-threaded so it cannot notice, but
+// lib/privy-wallet.ts will serve concurrent requests, and two sends from one
+// wallet racing on the same nonce is a real failure mode there.
+// ponytail: no nonce coordination, one pending nonce read per run — Task 3 needs a
+// per-wallet lock or a nonce it tracks itself.
 //
 // Bodies are snake_case all the way down (chain_type, additional_signers,
 // signer_id, custom_user_id, chain_id, gas_limit). No wallet_index input exists:
@@ -17,7 +28,7 @@
 // "custom_jwt". policy_ids is optional here, so it is left off.
 //
 // Everything lives on https://api.privy.io now — POST /v1/users to create,
-// POST /v1/users/custom_auth/id to look up, POST /v1/wallets/<id>/rpc to send.
+// POST /v1/users/custom_auth/id to look up, POST /v1/wallets/<id>/rpc to sign.
 // There is no auth.privy.io host in this SDK.
 //
 // A 404 THROWS `NotFoundError` rather than returning null, which is why the
@@ -39,9 +50,19 @@
 // Then fund the printed address from https://faucet.circle.com and run again
 // with an amount to send:  npm run privy:setup -- 0.01 0xRecipient
 import { NotFoundError, PrivyClient, isEmbeddedWalletLinkedAccount, type User } from "@privy-io/node";
-import { createPublicClient, encodeFunctionData, erc20Abi, formatUnits, getAddress, http, parseUnits } from "viem";
+import {
+  createPublicClient,
+  encodeFunctionData,
+  erc20Abi,
+  formatUnits,
+  getAddress,
+  http,
+  numberToHex,
+  parseUnits,
+  recoverTransactionAddress,
+} from "viem";
 import { arcTestnet } from "viem/chains";
-import { ARC_TESTNET_NETWORK, ARC_TESTNET_RPC, ARC_TESTNET_USDC } from "../lib/x402/constants.ts";
+import { ARC_TESTNET_RPC, ARC_TESTNET_USDC } from "../lib/x402/constants.ts";
 
 const appId = process.env.PRIVY_APP_ID ?? "";
 const appSecret = process.env.PRIVY_APP_SECRET ?? "";
@@ -141,25 +162,57 @@ if (!amount || !recipient) {
   process.exit(0);
 }
 
-const { hash } = await privy
+// Because we broadcast, the transaction has to be complete before Privy sees it:
+// Privy signs exactly what it is given and cannot fill in a nonce or a fee for a
+// chain it does not serve. prepareTransactionRequest is viem's one call for all of
+// it — pending nonce, gas limit, EIP-1559 fees. `to` and `data` are passed from
+// here rather than read back off `prepared`, where both are optional: a `to` that
+// came back empty would sign a CONTRACT CREATION instead of a transfer.
+const data = encodeFunctionData({ abi: erc20Abi, functionName: "transfer", args: [recipient, parseUnits(amount, 6)] });
+const prepared = await publicClient.prepareTransactionRequest({
+  account: getAddress(wallet.address),
+  to: ARC_TESTNET_USDC,
+  data,
+  type: "eip1559",
+});
+
+const { signed_transaction } = await privy
   .wallets()
   .ethereum()
-  .sendTransaction(wallet.id, {
-    caip2: ARC_TESTNET_NETWORK,
+  .signTransaction(wallet.id, {
     params: {
       transaction: {
         to: ARC_TESTNET_USDC,
-        data: encodeFunctionData({
-          abi: erc20Abi,
-          functionName: "transfer",
-          args: [recipient, parseUnits(amount, 6)],
-        }),
+        data,
+        nonce: numberToHex(prepared.nonce),
+        chain_id: arcTestnet.id,
+        type: 2,
+        gas_limit: numberToHex(prepared.gas),
+        max_fee_per_gas: numberToHex(prepared.maxFeePerGas),
+        max_priority_fee_per_gas: numberToHex(prepared.maxPriorityFeePerGas),
       },
     },
     authorization_context: authorizationContext,
   });
+
+// Recover the signer from the RLP Privy handed back and refuse to broadcast unless
+// it is this wallet. A signature over the wrong payload, or one carrying the wrong
+// recovery parity, resolves to a DIFFERENT address — which either burns gas on a
+// revert or, worse, spends from an account we did not mean to touch. The prefix
+// check is what makes the cast below honest rather than assumed: we asked for a
+// type-2 transaction, so confirm the RLP really is one.
+if (!signed_transaction.startsWith("0x02")) {
+  throw new Error(`Expected an EIP-1559 (type 2) signed transaction, got one starting ${signed_transaction.slice(0, 4)}`);
+}
+const serializedTransaction = signed_transaction as `0x02${string}`;
+const signer = await recoverTransactionAddress({ serializedTransaction });
+if (signer !== getAddress(wallet.address)) {
+  throw new Error(`Signature recovers to ${signer}, not ${getAddress(wallet.address)} — refusing to broadcast`);
+}
+
+const hash = await publicClient.sendRawTransaction({ serializedTransaction });
 console.log(`sent        https://testnet.arcscan.app/tx/${hash}`);
-// That call returns when Privy has BROADCAST, not when Arc accepted it, so the
-// receipt is the only thing that proves the USDC moved.
-const receipt = await publicClient.waitForTransactionReceipt({ hash: hash as `0x${string}`, timeout: 60_000 });
+// sendRawTransaction returns once the node ACCEPTED the transaction, not once it
+// is in a block, so the receipt is still the only thing that proves USDC moved.
+const receipt = await publicClient.waitForTransactionReceipt({ hash, timeout: 60_000 });
 console.log(`status      ${receipt.status}`);
