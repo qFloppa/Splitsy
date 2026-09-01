@@ -62,8 +62,11 @@ const privy = new PrivyClient({ appId, appSecret });
 const publicClient = createPublicClient({ chain: arcTestnet, transport: http(ARC_TESTNET_RPC) });
 
 // Validate the money arguments before touching the network, and never let a typo
-// arrive as a bare BigInt SyntaxError. getAddress throws on a bad length or a
-// mismatched checksum, and returns the checksummed form.
+// arrive as a bare BigInt SyntaxError. getAddress rejects anything that is not 20
+// hex bytes and returns the checksummed form — but note it does NOT reject a
+// well-formed address with a WRONG checksum, it silently re-checksums it, so this
+// catches malformed input and not a transposed character. Nothing downstream may
+// treat a value that passed through here as checksum-verified.
 const [amount, recipientArg] = process.argv.slice(2);
 if (amount !== undefined && !/^\d+(\.\d+)?$/.test(amount)) {
   throw new Error(`Amount must be a plain decimal number of USDC, got "${amount}"`);
