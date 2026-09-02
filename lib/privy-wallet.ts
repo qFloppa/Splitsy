@@ -25,6 +25,7 @@ import {
   getAddress,
   http,
   numberToHex,
+  parseTransaction,
   parseUnits,
   recoverTransactionAddress,
 } from "viem";
@@ -215,7 +216,18 @@ async function signAndBroadcast(
         throw new Error(`Signature recovers to ${signer}, not ${from} — refusing to broadcast`);
       }
 
-      return { hash: await publicClient.sendRawTransaction({ serializedTransaction }), from, nonce: tx.nonce };
+      // The nonce is read back OUT OF THE SIGNED BYTES, not carried over from the
+      // request. The recovery check above cannot notice a substituted nonce — it
+      // proves only who signed — and the dropped verdict in send() is an argument
+      // about which nonce this transaction occupies, so it has to be the nonce the
+      // chain will see. Costs no RPC call. An unparseable nonce fails here, before
+      // the broadcast, rather than turning into a proof about the wrong slot.
+      const nonce = parseTransaction(serializedTransaction).nonce;
+      if (nonce === undefined) {
+        throw new Error("Privy returned a signed transaction with no nonce — refusing to broadcast");
+      }
+
+      return { hash: await publicClient.sendRawTransaction({ serializedTransaction }), from, nonce };
     } catch (e) {
       if (attempt >= SEND_ATTEMPTS || !isNonceCollision(e)) throw e;
     }
@@ -254,33 +266,89 @@ export function verdictAfterWait(
   return nonceConsumed ? "dropped" : "indeterminate";
 }
 
+type Sent = { hash: `0x${string}`; from: `0x${string}`; nonce: number };
+type Receipt = Awaited<ReturnType<typeof publicClient.getTransactionReceipt>>;
+type Outcome = { verdict: "mined" | "dropped" | "indeterminate"; receipt: Receipt | null };
+const INDETERMINATE: Outcome = { verdict: "indeterminate", receipt: null };
+
+// The probe's own budget. Its reads normally answer in tens of milliseconds, and
+// ~0.6s of setup plus pollMs plus this has to fit inside Vercel's ~10s default.
+const PROBE_MS = 1_500;
+const rejectAfter = (ms: number) =>
+  new Promise<never>((_, reject) => {
+    setTimeout(() => reject(new Error(`chain probe gave up after ${ms}ms`)), ms);
+  });
+
+// Everything the chain has to say about a wait that ran out, on one budget.
+//
+// NONCE FIRST, RECEIPT SECOND, and that order is the whole guarantee: a slot already
+// consumed at the earlier read, with still no receipt at the later one, cannot have
+// been consumed by us — a receipt never disappears — so it was different bytes. The
+// other order leaves a window in which our own transaction mines between the two
+// reads and gets called dead.
+async function probeChain(sent: Sent, err: unknown): Promise<Outcome> {
+  const nonceConsumed = (await publicClient.getTransactionCount({ address: sent.from, blockTag: "latest" })) > sent.nonce;
+  const read = () =>
+    publicClient.getTransactionReceipt({ hash: sent.hash }).catch((e) => {
+      if (e instanceof TransactionReceiptNotFoundError) return null;
+      throw e;
+    });
+
+  let receipt = await read();
+  const verdict = verdictAfterWait(err, nonceConsumed, receipt !== null);
+  if (verdict !== "dropped") return { verdict, receipt };
+
+  // "dropped" is the only untagged answer, so it gets ONE MORE, FRESH receipt read
+  // before anyone acts on it. The read above can be served by the dedupe entry of a
+  // request the WAIT issued — viem keys one in-flight promise per method+params and
+  // holds it across the retry sequence (buildRequest.js:25-28, withDedupe.js) — which
+  // is an OLDER view than the nonce read, which is not deduped. A load-balanced
+  // endpoint answering the two from different nodes does the same thing. By now that
+  // entry has settled and been evicted, so this is genuinely new, and a receipt here
+  // wins: better a settlement counted twice than a debt paid twice.
+  receipt = await read();
+  return receipt ? { verdict: "mined", receipt } : { verdict: "dropped", receipt: null };
+}
+
 // One contract write, waited to a receipt.
 //
 // A THROW AFTER THE BROADCAST IS INDETERMINATE, NOT "DIDN'T HAPPEN" — but on Arc a
 // hash alone does not prove the transaction will mine, which is the one place this
 // cannot copy lib/circle-dcw.ts. eth_sendRawTransaction answers with a hash for
 // transactions Arc then DISCARDS: the loser of a same-nonce race and a gapped nonce
-// both come back accepted and then vanish. So a wait that produced no receipt asks
-// the chain which of those happened, and verdictAfterWait decides what it means.
+// both come back accepted and then vanish. So a wait that ran out asks the chain
+// which of those happened, and probeChain decides what it means.
 //
-// The two reads are ordered NONCE FIRST, RECEIPT SECOND, and that order is the whole
-// guarantee. A nonce already consumed at the earlier read, with still no receipt at
-// the later one, cannot have been consumed by us — a receipt never disappears — so
-// it was different bytes. The other order leaves a window in which our own
-// transaction mines between the two reads and gets called dead.
+// checkReplacement is OFF, against viem's default. With it on, once the wait has
+// resolved our hash — and Arc serves an unmined transaction by hash for ~1.2s, so it
+// will — any transaction it later finds sharing our (from, nonce) is treated as our
+// replacement and ITS receipt resolves the wait (waitForTransactionReceipt.js:158-186).
+// This would then return success carrying OUR hash and a STRANGER'S status, and a debt
+// would be marked paid, with a hash that resolves on the explorer, off money that went
+// somewhere else. Nothing here ever replaces a transaction on purpose: the retry fires
+// only on "nonce too low", which means that slot is already gone, so the re-read
+// returns a higher nonce. Replacement detection has nothing to detect and one way to
+// be wrong.
 //
-// pollMs defaults to 8s rather than the 60s the Circle backend uses: Arc confirms in
-// ~1.2s (measured), and the routes on this path export no maxDuration, so Vercel's
-// ~10s default kills the request long before a 60s wait ends — and a killed request
-// writes no row saying what it did. Callers with a bigger budget pass their own
-// (app/api/agents/autopay/route.ts passes 25s inside maxDuration = 300).
+// pollingInterval is named because arcTestnet declares no blockTime, so viem falls
+// back to 4s (createClient.js:9-11) — two receipt checks inside the whole wait, at ~0s
+// and ~4s, on a chain that mines every 0.56s. 1s keeps the ordinary slow-ish send on
+// the wait's own path instead of leaning on the probe.
+//
+// pollMs defaults to 6s, not the Circle backend's 60s: Arc confirms in ~1.2s
+// (measured) with ~0.6s of work ahead of it, and the routes on this path export no
+// maxDuration, so Vercel's ~10s default kills the request long before a 60s wait ends
+// — and a killed request writes no row saying what it did. 6s rather than 8s because
+// at a 1s poll it still gets six checks, and the 2s it gives back is what the probe
+// spends. Callers with a bigger budget pass their own (app/api/agents/autopay 25s,
+// app/api/pay/[token]/social 60s).
 async function send(
   walletId: string,
   to: `0x${string}`,
   data: `0x${string}`,
-  pollMs = 8_000,
+  pollMs = 6_000,
 ): Promise<TxResult> {
-  let sent: { hash: `0x${string}`; from: `0x${string}`; nonce: number };
+  let sent: Sent;
   try {
     sent = await signAndBroadcast(walletId, to, data);
   } catch (e) {
@@ -298,30 +366,29 @@ async function send(
 
   const { hash } = sent;
   try {
-    const receipt = await publicClient.waitForTransactionReceipt({ hash, timeout: pollMs });
+    const receipt = await publicClient.waitForTransactionReceipt({
+      hash,
+      timeout: pollMs,
+      pollingInterval: 1_000,
+      checkReplacement: false,
+    });
     return { id: hash, state: receiptToState(receipt.status), txHash: hash };
   } catch (err) {
-    // Only asked when the wait actually ran out; for any other error the answer is
-    // fixed, and two more RPC calls on an RPC that just failed would decide nothing.
-    // An unreadable chain also decides nothing: anything thrown in here leaves the
-    // verdict indeterminate rather than letting a network blip declare money gone.
-    let nonceConsumed = false;
-    let receipt: Awaited<ReturnType<typeof publicClient.getTransactionReceipt>> | null = null;
-    if (err instanceof WaitForTransactionReceiptTimeoutError) {
-      try {
-        nonceConsumed = (await publicClient.getTransactionCount({ address: sent.from, blockTag: "latest" })) > sent.nonce;
-        receipt = await publicClient.getTransactionReceipt({ hash }).catch((e) => {
-          if (e instanceof TransactionReceiptNotFoundError) return null;
-          throw e;
-        });
-      } catch {
-        nonceConsumed = false;
-      }
-    }
+    // Probed only when the wait actually ran out: for any other error the answer is
+    // fixed, and two more calls on an RPC that just failed would decide nothing. The
+    // probe is bounded because the budget is nearly spent by here and a slow RPC is
+    // precisely why the wait timed out — a probe that does not answer in time, or an
+    // unreadable chain, leaves the verdict indeterminate, which is the answer that
+    // never invents a settlement.
+    const outcome =
+      err instanceof WaitForTransactionReceiptTimeoutError
+        ? await Promise.race([probeChain(sent, err), rejectAfter(PROBE_MS)]).catch(() => INDETERMINATE)
+        : INDETERMINATE;
 
-    const verdict = verdictAfterWait(err, nonceConsumed, receipt !== null);
-    if (verdict === "mined" && receipt) return { id: hash, state: receiptToState(receipt.status), txHash: hash };
-    if (verdict === "dropped") {
+    if (outcome.verdict === "mined" && outcome.receipt) {
+      return { id: hash, state: receiptToState(outcome.receipt.status), txHash: hash };
+    }
+    if (outcome.verdict === "dropped") {
       throw new Error(
         `Privy tx ${hash} was dropped before it mined — nonce ${sent.nonce} went to another transaction, nothing moved`,
         { cause: err },
@@ -353,9 +420,12 @@ const ethereumWallet = (u: User) =>
 // created: the quorum arrives in `additional_signers`, while `owner_id` is a different
 // quorum Privy assigns, so both are accepted.
 //
-// This matters only on the adopt path. A wallet held by an app we do not share a
-// quorum with looks perfectly fine until the first signature answers 401 — by which
-// time somebody may have funded it.
+// Asked ONLY about a wallet that predates this call. Anything we create ourselves is
+// created with walletSpec(), so it carries the quorum by construction, and asking
+// would put a read-after-write on the signup path — if a fresh wallet's signers are
+// not immediately readable, every first-time signup on this stack would throw instead
+// of returning a wallet. An adopted wallet is the real hazard: a foreign quorum looks
+// perfectly fine until the first signature answers 401, possibly after funding.
 async function serverCanSign(walletId: string): Promise<boolean> {
   const quorum = quorumId();
   const wallet = await privy().wallets().get(walletId);
@@ -390,10 +460,15 @@ export const backend: WalletBackend = {
     // dropped connection can never masquerade as "no such user".
     const custom_user_id = `${namespace}:${key}`;
     let user: User;
+    // Whether the wallet we end up with predates this call, which is the only case
+    // serverCanSign is asked about. A lookup hit means it might; anything we create
+    // below carries our quorum by construction.
+    let adopted = true;
     try {
       user = await privy().users().getByCustomAuthID({ custom_user_id });
     } catch (caught) {
       if (!(caught instanceof NotFoundError)) throw caught;
+      adopted = false;
       user = await privy()
         .users()
         .create({ linked_accounts: [{ type: "custom_auth", custom_user_id }], wallets: walletSpec() });
@@ -401,9 +476,11 @@ export const backend: WalletBackend = {
 
     // The identity can outlive a call whose wallet creation failed (a bad quorum
     // id, say). Without this, that key is a dead end no retry gets past.
-    const wallet =
-      ethereumWallet(user) ??
-      ethereumWallet(await privy().users().pregenerateWallets(user.id, { wallets: walletSpec() }));
+    let wallet = ethereumWallet(user);
+    if (!wallet) {
+      adopted = false;
+      wallet = ethereumWallet(await privy().users().pregenerateWallets(user.id, { wallets: walletSpec() }));
+    }
     if (!wallet) throw new Error("Privy returned no Ethereum wallet");
     // Without a wallet id the server cannot sign, so stop here rather than after
     // somebody has funded an address that can never spend.
@@ -417,7 +494,7 @@ export const backend: WalletBackend = {
     // wallet may carry someone else's quorum, which fails as a Privy 401 at the first
     // signature rather than here. Checked before the row lands, so a key that resolves
     // is a key that can spend.
-    if (!(await serverCanSign(wallet.id))) {
+    if (adopted && !(await serverCanSign(wallet.id))) {
       throw new Error(
         `Privy wallet ${wallet.address} is not signable by PRIVY_KEY_QUORUM_ID — it carries a different ` +
           "key quorum, so the server could create it but never transact with it.",

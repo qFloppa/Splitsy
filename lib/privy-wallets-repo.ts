@@ -26,9 +26,11 @@ export async function getPrivyWallet(namespace: string, key: string): Promise<Pr
   return (data as PrivyWalletRow) ?? null;
 }
 
-// Upsert, not insert: two concurrent taggings of the same handle both reach here
-// and the second must return the FIRST wallet rather than raise. The primary key
-// makes that a no-op collision instead of a duplicate wallet in use.
+// Upsert, not insert: two concurrent taggings of the same handle both reach here and
+// the primary key makes the second a no-op collision instead of a duplicate wallet in
+// use. Which wallet the losing CALLER then returns is decided one layer up — the
+// upsert reports nothing, so lib/privy-wallet.ts re-reads the row afterwards and
+// returns whatever it says.
 export async function insertPrivyWallet(row: PrivyWalletRow): Promise<void> {
   const client = requireClient();
   const { error } = await client

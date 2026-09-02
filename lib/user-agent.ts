@@ -120,10 +120,12 @@ const APPROVAL_MULTIPLE = 100n;
 // is safe to hand a caller: the next thing they do is fund() or payDebtFor,
 // which pulls against it, and a pull against an allowance that never mined
 // fails after the job has already been created and priced. So every outcome
-// that is not a terminal success throws — including the quiet one, where
-// executeContract's ~60s poll times out and it RETURNS "PENDING" rather
-// than raising. Both Task 7 call sites already sit inside a try that turns a
-// throw into a skipped settlement, which is the outcome we want.
+// that is not a terminal success throws — including the quiet one, where the
+// Circle backend's poll times out and RETURNS "PENDING" rather than raising
+// (lib/circle-dcw.ts:167; the Privy backend throws instead, tagged or not
+// depending on whether the transaction can still mine). Both Task 7 call sites
+// already sit inside a try that turns a throw into a skipped settlement, which is
+// the outcome we want.
 export async function ensureAgentAllowance(
   agent: UserAgent,
   spender: `0x${string}`,
