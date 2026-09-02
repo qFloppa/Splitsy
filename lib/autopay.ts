@@ -166,9 +166,12 @@ export function buildGrant(mode: MoneyMode, mandate: MandateFacts, rules: Mirror
 // and is the safer default: the contract reverts on its own numbers regardless
 // of what this server believes. Privy embedded wallets are EOAs, and
 // encodeExecuteBatch sends executeBatch calldata to the wallet's own address —
-// which an EOA cannot execute. Defaulting a Privy deployment to `mandate` would
-// arm nothing and silently disable autopay, so it defaults to `funded` and the
-// enclave policy is what caps the spend instead of the contract.
+// which an EOA does not execute and, measured on Arc rather than assumed, does
+// not revert on either: the transaction SUCCEEDS, burns ~25k gas and does
+// nothing (tx 0x5870…dadf95). So defaulting a Privy deployment to `mandate`
+// would not fail loudly, it would report an armed mandate that does not exist.
+// It defaults to `funded` instead, and the enclave policy is what caps the spend
+// in place of the contract.
 export function defaultMoneyMode(provider: "circle" | "privy"): MoneyMode {
   return provider === "privy" ? "funded" : "mandate";
 }

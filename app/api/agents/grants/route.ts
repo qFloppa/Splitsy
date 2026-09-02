@@ -349,6 +349,21 @@ async function syncMandateOnchain(
   // landing without the other is a state the user never asked for. Re-approving
   // on every real change is also the top-up path — an allowance spent down over
   // a week is replenished by the next Save rather than silently running dry.
+  //
+  // SCA-only, and unreachable on the Privy stack twice over: moneyMode is always
+  // 'funded' there, so the PUT hands this `enabled: false` and the revoke branch
+  // above has already returned, and NEXT_PUBLIC_AUTOPAY_MANDATE_ADDRESS is unset
+  // so :312 returned before that. Guarded anyway, because the thing that goes
+  // wrong if either of those ever changes is not a revert. An EOA IGNORES
+  // calldata it cannot run and the transaction SUCCEEDS (measured: tx
+  // 0x5870…dadf95, status success, 25290 gas, nothing done), so this would hand
+  // back a tx hash for a mandate that was never written and the panel would show
+  // autopay armed. Throwing puts it in the PUT's 502 — "your rules were saved,
+  // but the on-chain mandate did not update" — which is the honest answer.
+  if (walletProviderName() === "privy") {
+    throw new Error("arming a mandate needs a smart contract wallet, and this deployment's wallets are EOAs");
+  }
+
   const data = encodeExecuteBatch([
     { to: ARC_USDC_ADDRESS, data: encodeApprove(MANDATE_ADDRESS, maxPerDay * APPROVAL_DAYS) },
     { to: MANDATE_ADDRESS, data: encodeSetMandate(agent, maxPerBill, maxPerDay, creators) },
