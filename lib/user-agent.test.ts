@@ -8,17 +8,21 @@
 // so they run the same way on a developer machine that has them and in CI that
 // does not: getConfig() returns null, getOrCreateWallet returns null before
 // it opens a socket, and the Supabase cache write is never reached either.
+// WALLET_PROVIDER goes with them: getOrCreateWallet resolves through the seam
+// now, so a shell that exports WALLET_PROVIDER=privy — the routine state while
+// the Privy stack is being worked on — would load that backend and throw here
+// instead, reddening a suite that has nothing to do with Privy.
 // Everything else here — the allowance, the identity mint — is genuinely
 // network-bound and has no seam; those are not tested rather than mocked.
 import test from "node:test";
 import assert from "node:assert/strict";
 import { agentToAdopt, getOrCreateUserAgent, wasAgentAdoptedFrom } from "./user-agent.ts";
 
-const CIRCLE_VARS = ["CIRCLE_API_KEY", "CIRCLE_ENTITY_SECRET", "CIRCLE_WALLET_SET_ID"] as const;
-const original = CIRCLE_VARS.map((k) => [k, process.env[k]] as const);
+const OFFLINE_VARS = ["CIRCLE_API_KEY", "CIRCLE_ENTITY_SECRET", "CIRCLE_WALLET_SET_ID", "WALLET_PROVIDER"] as const;
+const original = OFFLINE_VARS.map((k) => [k, process.env[k]] as const);
 
 test.before(() => {
-  for (const k of CIRCLE_VARS) delete process.env[k];
+  for (const k of OFFLINE_VARS) delete process.env[k];
 });
 
 test.after(() => {

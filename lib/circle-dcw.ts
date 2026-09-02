@@ -10,8 +10,9 @@ import {
 
 // Re-exported, not redeclared: this is the Circle BACKEND behind the seam in
 // lib/wallet-provider.ts, and both stacks must throw and test for the same
-// class. Importers that still reach for these here (scripts/reputation-backfill)
-// keep working, and `instanceof` holds whichever path they came in by.
+// class. Nothing imports these two from here today — every caller moved to the
+// seam — so this is insurance: it keeps `instanceof` holding by whichever path
+// an importer arrives, rather than letting a second same-named class exist.
 export { InsufficientFundsError, isBroadcast } from "./wallet-provider.ts";
 
 type Client = ReturnType<typeof initiateDeveloperControlledWalletsClient>;
