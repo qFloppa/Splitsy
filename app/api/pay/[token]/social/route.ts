@@ -14,6 +14,15 @@ export const dynamic = "force-dynamic";
 // has moved, returning no `results` at all. Mirrors app/api/agents/autopay.
 export const maxDuration = 300;
 
+// Both executeContract calls below pass this explicitly rather than taking the
+// backend's default, because the two backends default differently and this route
+// is the one that budgeted for the longer wait. Circle already defaults to 60s
+// (lib/circle-dcw.ts:101), so naming it changes nothing on that stack; the Privy
+// backend defaults to 8s to survive Vercel's unraised budget elsewhere, and
+// inheriting that here would call a slow-but-successful leg indeterminate inside
+// a route that has 300s to spend — the mid-batch case the comment above names.
+const LEG_POLL_MS = 60_000;
+
 const ARC_USDC_ADDRESS = (process.env.ARC_TESTNET_USDC_ADDRESS ??
   "0x3600000000000000000000000000000000000000") as `0x${string}`;
 const MAX_ROWS = 20;
@@ -91,7 +100,7 @@ export async function POST(request: Request, ctx: RouteContext<"/api/pay/[token]
   // registry has no batch pay-for-others: settle() batches, but its pay loop is
   // hardcoded to msg.sender's own debts (BillSplitRegistry.sol:589).
   try {
-    await executeContract(user.circle_wallet_id, ARC_USDC_ADDRESS, encodeApprove(REGISTRY_ADDRESS, total));
+    await executeContract(user.circle_wallet_id, ARC_USDC_ADDRESS, encodeApprove(REGISTRY_ADDRESS, total), LEG_POLL_MS);
   } catch (err) {
     if (err instanceof InsufficientFundsError) return Response.json({ error: "insufficient_funds" }, { status: 402 });
     return Response.json({ error: err instanceof Error ? err.message : "approval failed" }, { status: 502 });
@@ -107,6 +116,7 @@ export async function POST(request: Request, ctx: RouteContext<"/api/pay/[token]
         user.circle_wallet_id,
         REGISTRY_ADDRESS,
         encodePayDebtFor(billId, leg.address, leg.amount),
+        LEG_POLL_MS,
       );
       results.push({ address: leg.address, ok: true, txHash: tx.txHash ?? undefined });
     } catch (err) {
