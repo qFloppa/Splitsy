@@ -24,14 +24,14 @@
 // rather than tighten them, and TIGHTENING must never be harder than loosening.
 import { getProvenWalletAccount, getSessionUser } from "@/lib/session";
 import { getAutopayGrant, listAutopayLog, upsertAutopayGrant } from "@/lib/agents-repo";
-import type { AutopayGrant } from "@/lib/autopay";
+import { defaultMoneyMode, type AutopayGrant } from "@/lib/autopay";
 import {
   getAutopayMandateOnchain,
   getUsdcAllowanceOnchain,
   isMandateConfigured,
   MANDATE_ADDRESS,
 } from "@/lib/arc-read";
-import { executeContract, InsufficientFundsError } from "@/lib/wallet-provider";
+import { executeContract, InsufficientFundsError, walletProviderName } from "@/lib/wallet-provider";
 import { encodeApprove, encodeExecuteBatch, encodeRevokeMandate, encodeSetMandate } from "@/lib/registry-calldata";
 import { getSettler, isSettlerConfigured } from "@/lib/settler";
 
@@ -135,7 +135,7 @@ export async function GET(request: Request) {
   //     from the old flow governs nothing. Reading `enabled` off the chain here
   //     would show Idle for an account whose agent is settling bills, and show
   //     ceilings that nothing is checking against.
-  const funded = (rules?.moneyMode ?? "mandate") === "funded";
+  const funded = (rules?.moneyMode ?? defaultMoneyMode(walletProviderName())) === "funded";
   const chainCaps = !funded && dcwFacts?.enabled ? dcwFacts : null;
 
   const grant: AutopayGrant & { requireBillReview: boolean } = {
@@ -182,7 +182,7 @@ export async function GET(request: Request) {
     // mandate.
     agentAddress: (await resolveAgentAddress().catch(() => null))?.toLowerCase() ?? null,
     // Where BILL money comes from. Not a chain fact — it lives only here.
-    moneyMode: rules?.moneyMode ?? "mandate",
+    moneyMode: rules?.moneyMode ?? defaultMoneyMode(walletProviderName()),
     onchain,
   });
 }
@@ -226,10 +226,10 @@ export async function PUT(request: Request) {
 
   const enabled = raw.enabled === true;
 
-  // Anything that is not exactly 'funded' reads as 'mandate' — the mode where
-  // the CHAIN enforces the caps. A typo must never move someone into the mode
-  // where only this server says no.
-  const moneyMode = raw.moneyMode === "funded" ? "funded" : "mandate";
+  // Anything that is not exactly 'funded' reads as the stack's default — mandate
+  // on circle, where the chain enforces the caps, and funded on privy, whose EOA
+  // wallets cannot execute the approve+setMandate batch at all.
+  const moneyMode = raw.moneyMode === "funded" ? "funded" : defaultMoneyMode(walletProviderName());
 
   // Read before write: debtor_address is not in the upsert payload, but the row
   // type requires it, and a settings save must never disturb the link.

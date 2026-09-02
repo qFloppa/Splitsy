@@ -1,6 +1,13 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { buildGrant, decideAutopay, settlementRowFor, type AutopayGrant, type AutopayInput } from "./autopay.ts";
+import {
+  buildGrant,
+  decideAutopay,
+  defaultMoneyMode,
+  settlementRowFor,
+  type AutopayGrant,
+  type AutopayInput,
+} from "./autopay.ts";
 import { billMetadataHash, type BillPreimage } from "./bill-metadata.ts";
 
 const CREATOR = "0xAbC0000000000000000000000000000000000001";
@@ -311,4 +318,18 @@ test("each failure kind keeps its own slug, so the user is told what to fix", ()
   assert.equal(settlementRowFor(NOTHING, "wallet_unavailable", 8).reason, "agent_wallet_unavailable");
   assert.equal(settlementRowFor(NOTHING, "job", 8).reason, "job_failed");
   assert.equal(settlementRowFor(NOTHING, "other", 8).reason, "tx_failed");
+});
+
+// --- defaultMoneyMode --------------------------------------------------------
+// Which mode a deployment falls back to, per wallet stack. Both directions are
+// asserted because each one is a different failure: 'mandate' on privy arms
+// nothing and silently disables autopay, and 'funded' on circle would drop the
+// Circle stack out of the mode its contract enforces.
+
+test("the privy stack defaults to funded, because its EOAs cannot batch", () => {
+  assert.equal(defaultMoneyMode("privy"), "funded");
+});
+
+test("the circle stack still defaults to mandate, the mode the chain enforces", () => {
+  assert.equal(defaultMoneyMode("circle"), "mandate");
 });

@@ -310,6 +310,17 @@ async function settleOne(input: {
   // Mandate mode reads the day's spend from the contract's own token bucket, so
   // the figure the agent reasons about is the figure that will bind it. Funded
   // mode has no bucket — the log is the only record.
+  //
+  // Still the only record on the Privy stack, where the enclave policy
+  // (PRIVY_AGENT_POLICY_ID) holds the PER-TRANSACTION cap and nothing more.
+  // Privy's API can express a rolling daily total — an Aggregation over a
+  // rolling window, read by a policy condition — but @privy-io/node 0.34.0
+  // cannot reach it: its Aggregations resource is an empty class and PrivyClient
+  // exposes no aggregations() method, so one has to be created from the
+  // dashboard or raw REST. Until then this sum is the daily cap, and only the
+  // per-bill cap is enforced anywhere but here.
+  // ponytail: daily cap stays server-side on both stacks; upgrade path is a
+  // Privy aggregation once the SDK exposes one.
   const spentTodayUsdc =
     mode === "funded"
       ? await sumAutopaySpentTodayUsdc(userId)

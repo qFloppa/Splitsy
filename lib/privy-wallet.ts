@@ -405,7 +405,32 @@ async function send(
 // what lets the server transact later with no user present. A function, not a
 // const, so a missing quorum id fails the call that needed it rather than the
 // import — this module is loaded lazily by the seam and must not throw on load.
-const walletSpec = () => [{ chain_type: "ethereum" as const, additional_signers: [{ signer_id: quorumId() }] }];
+//
+// The namespace is a parameter because the AGENT wallet gets one thing no other
+// wallet does: the enclave policy. Keyed here rather than at one call site
+// because both creation paths in getOrCreateWallet mint wallets — an identity
+// that outlived a failed wallet creation gets its wallet from
+// pregenerateWallets — and a policy on only one of them would be a coin flip.
+//
+// Only at creation. An agent wallet minted before PRIVY_AGENT_POLICY_ID was set
+// carries no policy and cannot be given one from here; on a fresh deployment
+// there are none, which is why this carries no backfill.
+const walletSpec = (namespace: string) => [
+  {
+    chain_type: "ethereum" as const,
+    additional_signers: [
+      {
+        signer_id: quorumId(),
+        // The agent is the one wallet a server spends from with no user in
+        // the loop, so it is the one that gets an enclave-enforced ceiling.
+        // Pay wallets are only ever spent on a request the user made.
+        ...(namespace === "agent" && process.env.PRIVY_AGENT_POLICY_ID
+          ? { override_policy_ids: [process.env.PRIVY_AGENT_POLICY_ID] }
+          : {}),
+      },
+    ],
+  },
+];
 
 // A linked account can be an external wallet, or an embedded Solana, Bitcoin or
 // curve-signing one. This picks the Privy-held ETHEREUM wallet, the only kind the
@@ -471,7 +496,7 @@ export const backend: WalletBackend = {
       adopted = false;
       user = await privy()
         .users()
-        .create({ linked_accounts: [{ type: "custom_auth", custom_user_id }], wallets: walletSpec() });
+        .create({ linked_accounts: [{ type: "custom_auth", custom_user_id }], wallets: walletSpec(namespace) });
     }
 
     // The identity can outlive a call whose wallet creation failed (a bad quorum
@@ -479,7 +504,7 @@ export const backend: WalletBackend = {
     let wallet = ethereumWallet(user);
     if (!wallet) {
       adopted = false;
-      wallet = ethereumWallet(await privy().users().pregenerateWallets(user.id, { wallets: walletSpec() }));
+      wallet = ethereumWallet(await privy().users().pregenerateWallets(user.id, { wallets: walletSpec(namespace) }));
     }
     if (!wallet) throw new Error("Privy returned no Ethereum wallet");
     // Without a wallet id the server cannot sign, so stop here rather than after

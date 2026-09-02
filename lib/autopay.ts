@@ -160,6 +160,19 @@ export function buildGrant(mode: MoneyMode, mandate: MandateFacts, rules: Mirror
   };
 }
 
+// Which money mode a deployment falls back to when the user has no row yet.
+//
+// NOT a preference. The circle stack's DCWs are SCAs, so `mandate` works there
+// and is the safer default: the contract reverts on its own numbers regardless
+// of what this server believes. Privy embedded wallets are EOAs, and
+// encodeExecuteBatch sends executeBatch calldata to the wallet's own address —
+// which an EOA cannot execute. Defaulting a Privy deployment to `mandate` would
+// arm nothing and silently disable autopay, so it defaults to `funded` and the
+// enclave policy is what caps the spend instead of the contract.
+export function defaultMoneyMode(provider: "circle" | "privy"): MoneyMode {
+  return provider === "privy" ? "funded" : "mandate";
+}
+
 // How far the settlement got before the ceremony threw. The route fills this in
 // as it goes, because only the route can see it: a hash in hand means the send
 // was accepted, and `broadcast` means it left but nothing confirmed it.

@@ -14,6 +14,7 @@
     "settler:setup": "node --experimental-strip-types --env-file=.env.local scripts/settler-setup.ts",
     "agents:setup": "node --experimental-strip-types --env-file=.env.local scripts/service-agents-setup.ts",
     "privy:setup": "node --experimental-strip-types --env-file=.env.local scripts/privy-setup.ts",
+    "privy:policy": "node --experimental-strip-types --env-file=.env.local scripts/privy-policy.ts",
     "test:contracts": "hardhat test",
     "audit:contracts": "slither . --config-file slither.config.json",
     "test:scout": "node --test --experimental-strip-types lib/scout/decide.test.ts lib/scout/scan.test.ts lib/x402/spend.test.ts lib/image-size.test.ts",
