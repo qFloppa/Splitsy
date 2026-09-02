@@ -2,7 +2,7 @@ import { cookies } from "next/headers";
 import { getSessionUser } from "@/lib/session";
 import { verifyWalletUnlock, WALLET_UNLOCK_COOKIE } from "@/lib/session-core";
 import { encodeApprove } from "@/lib/registry-calldata";
-import { executeContractOnArc, InsufficientFundsError } from "@/lib/circle-dcw";
+import { executeContract, InsufficientFundsError } from "@/lib/wallet-provider";
 import { verifyFactoryTab, getTabMemberStandingOnchain } from "@/lib/recurring-read";
 
 export const runtime = "nodejs";
@@ -57,7 +57,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ tab
   }
 
   try {
-    const tx = await executeContractOnArc(user.circle_wallet_id, ARC_USDC_ADDRESS, encodeApprove(tabAddress, amount));
+    const tx = await executeContract(user.circle_wallet_id, ARC_USDC_ADDRESS, encodeApprove(tabAddress, amount));
     return Response.json({ ok: true, txHash: tx.txHash });
   } catch (err) {
     if (err instanceof InsufficientFundsError) return Response.json({ error: "insufficient_funds" }, { status: 402 });

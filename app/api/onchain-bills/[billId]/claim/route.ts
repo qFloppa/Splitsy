@@ -2,7 +2,7 @@ import { cookies } from "next/headers";
 import { getSessionUser } from "@/lib/session";
 import { verifyWalletUnlock, WALLET_UNLOCK_COOKIE } from "@/lib/session-core";
 import { encodeClaim } from "@/lib/registry-calldata";
-import { executeContractOnArc } from "@/lib/circle-dcw";
+import { executeContract } from "@/lib/wallet-provider";
 import { REGISTRY_ADDRESS, getBillOnchain, getClaimableOnchain } from "@/lib/arc-read";
 
 export const runtime = "nodejs";
@@ -37,7 +37,7 @@ export async function POST(_request: Request, { params }: { params: Promise<{ bi
   if (claimable <= 0n) return Response.json({ error: "Nothing to claim yet." }, { status: 409 });
 
   try {
-    const tx = await executeContractOnArc(user.circle_wallet_id, REGISTRY_ADDRESS, encodeClaim(BigInt(billId), claimable));
+    const tx = await executeContract(user.circle_wallet_id, REGISTRY_ADDRESS, encodeClaim(BigInt(billId), claimable));
     return Response.json({ ok: true, txHash: tx.txHash });
   } catch (err) {
     return Response.json({ error: err instanceof Error ? err.message : "claim failed" }, { status: 502 });

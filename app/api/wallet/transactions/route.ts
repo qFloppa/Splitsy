@@ -1,6 +1,6 @@
 import { formatUnits } from "viem";
 import { getSessionUser } from "@/lib/session";
-import { listWalletTransactions, type WalletTx } from "@/lib/circle-dcw";
+import { listTransactions, type WalletTx } from "@/lib/wallet-provider";
 import { readUsdcMovedInTx } from "@/lib/arc-read";
 
 export const runtime = "nodejs";
@@ -44,8 +44,9 @@ export async function GET() {
   }
 
   try {
-    const txs = await listWalletTransactions(user.circle_wallet_id);
-    const transactions = await enrich(txs, user.wallet_address as `0x${string}`);
+    const wallet = user.wallet_address as `0x${string}`;
+    const txs = await listTransactions(user.circle_wallet_id, wallet);
+    const transactions = await enrich(txs, wallet);
     return Response.json({ transactions, explorer: EXPLORER });
   } catch {
     return Response.json({ transactions: [] });

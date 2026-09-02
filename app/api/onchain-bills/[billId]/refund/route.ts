@@ -2,7 +2,7 @@ import { cookies } from "next/headers";
 import { getSessionUser } from "@/lib/session";
 import { verifyWalletUnlock, WALLET_UNLOCK_COOKIE } from "@/lib/session-core";
 import { encodeRefund } from "@/lib/registry-calldata";
-import { executeContractOnArc } from "@/lib/circle-dcw";
+import { executeContract } from "@/lib/wallet-provider";
 import { REGISTRY_ADDRESS, getBillOnchain, getParticipantOnchain } from "@/lib/arc-read";
 import { refundableNow } from "@/lib/treasury";
 
@@ -58,7 +58,7 @@ export async function POST(_request: Request, { params }: { params: Promise<{ bi
   }
 
   try {
-    const tx = await executeContractOnArc(user.circle_wallet_id, REGISTRY_ADDRESS, encodeRefund(id));
+    const tx = await executeContract(user.circle_wallet_id, REGISTRY_ADDRESS, encodeRefund(id));
     return Response.json({ ok: true, txHash: tx.txHash, amount: refundable.toString() });
   } catch (err) {
     return Response.json({ error: err instanceof Error ? err.message : "refund failed" }, { status: 502 });

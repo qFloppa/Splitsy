@@ -31,7 +31,7 @@ import {
   isMandateConfigured,
   MANDATE_ADDRESS,
 } from "@/lib/arc-read";
-import { executeContractOnArc, InsufficientFundsError } from "@/lib/circle-dcw";
+import { executeContract, InsufficientFundsError } from "@/lib/wallet-provider";
 import { encodeApprove, encodeExecuteBatch, encodeRevokeMandate, encodeSetMandate } from "@/lib/registry-calldata";
 import { getSettler, isSettlerConfigured } from "@/lib/settler";
 
@@ -324,7 +324,7 @@ async function syncMandateOnchain(
     // Already off. Revoking again is harmless on the contract but would cost a
     // transaction to prove nothing changed.
     if (!current) return null;
-    const tx = await executeContractOnArc(user.circle_wallet_id, MANDATE_ADDRESS, encodeRevokeMandate());
+    const tx = await executeContract(user.circle_wallet_id, MANDATE_ADDRESS, encodeRevokeMandate());
     return tx.txHash;
   }
 
@@ -354,7 +354,7 @@ async function syncMandateOnchain(
     { to: MANDATE_ADDRESS, data: encodeSetMandate(agent, maxPerBill, maxPerDay, creators) },
   ]);
 
-  const tx = await executeContractOnArc(user.circle_wallet_id, wallet, data);
+  const tx = await executeContract(user.circle_wallet_id, wallet, data);
   return tx.txHash;
 }
 

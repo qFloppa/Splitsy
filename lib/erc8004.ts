@@ -33,7 +33,6 @@
 import { createPublicClient, decodeEventLog, encodeFunctionData, http, keccak256, toHex } from "viem";
 import { arcTestnet } from "viem/chains";
 import { getParticipantOnchain, REGISTRY_ADDRESS } from "./arc-read.ts";
-import { executeContractOnArc, getOrCreateArcWallet } from "./circle-dcw.ts";
 import { getOnchainBillPreimage } from "./onchain-bill-preimage-repo.ts";
 import { RECURRING_TAB_FACTORY_ADDRESS } from "./recurring-read.ts";
 import {
@@ -47,6 +46,7 @@ import {
   setFeedbackTx,
 } from "./reputation-repo.ts";
 import { scorePaymentTiming } from "./reputation-score.ts";
+import { executeContract, getOrCreateWallet } from "./wallet-provider.ts";
 
 // Arc Testnet ERC-8004 registries (docs.arc.io); env-overridable for redeploys.
 export const IDENTITY_REGISTRY = (process.env.ERC8004_IDENTITY_REGISTRY ??
@@ -370,7 +370,7 @@ export async function uploadMetadataToIPFS(
 // ERC-8004 "owner cannot score own agent" rule satisfied.
 // It pays its own gas in USDC and must be faucet-funded once (see README).
 async function getValidatorWallet() {
-  const wallet = await getOrCreateArcWallet("splitsy", "reputation-validator");
+  const wallet = await getOrCreateWallet("splitsy", "reputation-validator");
   if (!wallet) throw new Error("Circle is not configured — no validator wallet");
   return wallet;
 }
@@ -384,7 +384,7 @@ async function getValidatorWallet() {
 // the registrar, scores. Faucet-funded once for gas, same as the validator
 // (see README).
 async function getRegistrarWallet() {
-  const wallet = await getOrCreateArcWallet("splitsy", "reputation-registrar");
+  const wallet = await getOrCreateWallet("splitsy", "reputation-registrar");
   if (!wallet) throw new Error("Circle is not configured — no registrar wallet");
   return wallet;
 }
@@ -426,7 +426,7 @@ export async function ensureServiceAgentIdentity(
   refId: string,
   agentType: AgentType,
 ): Promise<{ address: string; agentId: string }> {
-  const wallet = await getOrCreateArcWallet("splitsy", refId);
+  const wallet = await getOrCreateWallet("splitsy", refId);
   if (!wallet) throw new Error(`Circle is not configured — no ${refId} wallet`);
   const agentId = await ensureAgent(wallet.address, wallet.walletId, undefined, agentType);
   return { address: wallet.address, agentId };
@@ -516,7 +516,7 @@ export async function ensureAgent(
       functionName: "register",
       args: [metadataURI],
     });
-    const tx = await executeContractOnArc(circleWalletId, IDENTITY_REGISTRY, callData);
+    const tx = await executeContract(circleWalletId, IDENTITY_REGISTRY, callData);
     if (!tx.txHash) throw new Error("agent registration still pending — no tx hash");
 
     // Read the minted tokenId from the receipt's Transfer log rather than
@@ -549,7 +549,7 @@ export async function ensureAgent(
         functionName: "transferFrom",
         args: [minterAddress as `0x${string}`, walletAddress as `0x${string}`, BigInt(agentId)],
       });
-      await executeContractOnArc(circleWalletId, IDENTITY_REGISTRY, transferData);
+      await executeContract(circleWalletId, IDENTITY_REGISTRY, transferData);
     } catch (err) {
       console.error(
         `reputation: agent ${agentId} minted but transfer to ${walletAddress} failed (NFT stays with registrar):`,
@@ -739,7 +739,7 @@ async function commitFeedback(input: {
         feedbackHash,
       ],
     });
-    const tx = await executeContractOnArc(validator.walletId, REPUTATION_REGISTRY, callData);
+    const tx = await executeContract(validator.walletId, REPUTATION_REGISTRY, callData);
     await setFeedbackTx(input.payerAddress, input.registryAddress, input.storageKey, tx.txHash);
   } catch (err) {
     // Free the claim so a later replay can score this payment.

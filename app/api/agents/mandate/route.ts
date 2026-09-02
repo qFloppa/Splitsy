@@ -17,7 +17,7 @@ import {
   getParticipantsOnchain,
   REGISTRY_ADDRESS,
 } from "@/lib/arc-read";
-import { executeContractOnArc, InsufficientFundsError } from "@/lib/circle-dcw";
+import { executeContract, InsufficientFundsError } from "@/lib/wallet-provider";
 import { encodeAuthorizeCollect, encodeRevokeCollect } from "@/lib/registry-calldata";
 import { getSessionUser } from "@/lib/session";
 import { getUsersByWallets } from "@/lib/users-repo";
@@ -94,7 +94,7 @@ export async function POST(request: Request) {
   const data = authorized ? encodeAuthorizeCollect(billId) : encodeRevokeCollect(billId);
 
   try {
-    const tx = await executeContractOnArc(user.circle_wallet_id, REGISTRY_ADDRESS, data);
+    const tx = await executeContract(user.circle_wallet_id, REGISTRY_ADDRESS, data);
     return Response.json({ ok: true, authorized, txHash: tx.txHash });
   } catch (err) {
     if (err instanceof InsufficientFundsError) {

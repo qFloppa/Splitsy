@@ -1,7 +1,7 @@
 import { getSessionUser } from "@/lib/session";
 import { resolveParticipants } from "@/lib/wallet-resolve";
 import { encodeCreateTab } from "@/lib/registry-calldata";
-import { executeContractOnArc, InsufficientFundsError } from "@/lib/circle-dcw";
+import { executeContract, InsufficientFundsError } from "@/lib/wallet-provider";
 import {
   RECURRING_TAB_FACTORY_ADDRESS,
   getNextTabIdOnchain,
@@ -119,7 +119,7 @@ export async function POST(request: Request) {
 
   let txHash: string | null = null;
   try {
-    const tx = await executeContractOnArc(
+    const tx = await executeContract(
       user.circle_wallet_id,
       RECURRING_TAB_FACTORY_ADDRESS,
       encodeCreateTab(recipient, BigInt(intervalSeconds), BigInt(maxSettlements), members, fixedShares),

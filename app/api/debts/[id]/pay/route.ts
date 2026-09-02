@@ -1,7 +1,7 @@
 import { cookies } from "next/headers";
 import { getSessionUser } from "@/lib/session";
 import { getDebtForSettlement, markDebtPaid, markDebtSettling } from "@/lib/bills-repo";
-import { transferUsdcOnArc, InsufficientFundsError } from "@/lib/circle-dcw";
+import { transferUsdc, InsufficientFundsError } from "@/lib/wallet-provider";
 import { verifyWalletUnlock, WALLET_UNLOCK_COOKIE } from "@/lib/session-core";
 
 export const runtime = "nodejs";
@@ -46,7 +46,7 @@ export async function POST(_request: Request, { params }: { params: Promise<{ id
 
   let tx: { id: string; state: string };
   try {
-    tx = await transferUsdcOnArc(user.circle_wallet_id, creatorWallet, debt.amount_usdc);
+    tx = await transferUsdc(user.circle_wallet_id, creatorWallet, debt.amount_usdc);
   } catch (err) {
     if (err instanceof InsufficientFundsError) {
       return Response.json({ error: "insufficient_funds" }, { status: 402 });

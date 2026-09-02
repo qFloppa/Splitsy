@@ -291,7 +291,7 @@ export function encodeTabClaim(): `0x${string}` {
 // See https://developers.circle.com/wallets/batch-operations.md
 // Encoded here rather than passed as abiFunctionSignature/abiParameters because
 // Circle treats those as mutually exclusive with callData, and
-// executeContractOnArc already sends callData.
+// executeContract already sends callData.
 export const SCA_BATCH_ABI = [
   {
     type: "function",

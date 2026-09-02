@@ -23,7 +23,7 @@ import { after } from "next/server";
 import { getSessionUser } from "@/lib/session";
 import { verifyWalletUnlock, WALLET_UNLOCK_COOKIE } from "@/lib/session-core";
 import { encodeApprove, encodeExecuteBatch, encodeSettle } from "@/lib/registry-calldata";
-import { executeContractOnArc, InsufficientFundsError } from "@/lib/circle-dcw";
+import { executeContract, InsufficientFundsError } from "@/lib/wallet-provider";
 import {
   REGISTRY_ADDRESS,
   getBillIdsForParticipantOnchain,
@@ -150,7 +150,7 @@ export async function POST(request: Request) {
   //    executeBatch lives on an SCA account).
   let tx: { txHash: string | null };
   try {
-    tx = await executeContractOnArc(walletId, wallet, encodeExecuteBatch(calls));
+    tx = await executeContract(walletId, wallet, encodeExecuteBatch(calls));
   } catch (err) {
     if (err instanceof InsufficientFundsError) {
       return Response.json({ error: "insufficient_funds" }, { status: 402 });

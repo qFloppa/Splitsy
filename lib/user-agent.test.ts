@@ -6,7 +6,7 @@
 //
 // The fall-through cases are made offline by unsetting the Circle credentials,
 // so they run the same way on a developer machine that has them and in CI that
-// does not: getConfig() returns null, getOrCreateArcWallet returns null before
+// does not: getConfig() returns null, getOrCreateWallet returns null before
 // it opens a socket, and the Supabase cache write is never reached either.
 // Everything else here — the allowance, the identity mint — is genuinely
 // network-bound and has no seam; those are not tested rather than mocked.

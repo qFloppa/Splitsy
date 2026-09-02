@@ -13,10 +13,10 @@
 // 5 USDC can never spend 6. That is a simpler and more honest ceiling than a
 // mandate, and it needs no contract.
 import { getUsdcAllowanceOnchain, getUsdcBalanceOnchain } from "./arc-read.ts";
-import { executeContractOnArc, getOrCreateArcWallet } from "./circle-dcw.ts";
 import { ensureAgent } from "./erc8004.ts";
 import { encodeApprove } from "./registry-calldata.ts";
 import { setUserAgentWallet } from "./users-repo.ts";
+import { executeContract, getOrCreateWallet } from "./wallet-provider.ts";
 
 export type UserAgent = { address: `0x${string}`; walletId: string };
 
@@ -38,7 +38,7 @@ export async function getOrCreateUserAgent(user: {
   // 'agent' is a provider namespace of its own, so it can never collide with a
   // signin wallet ("<provider>:<id>"), a pre-mint wallet ("prem:…") or the
   // Splitsy service wallets ("splitsy:…").
-  const wallet = await getOrCreateArcWallet("agent", user.id);
+  const wallet = await getOrCreateWallet("agent", user.id);
   if (!wallet) return null;
 
   // Cache it, but never let a cache write fail the caller: the wallet exists on
@@ -121,7 +121,7 @@ const APPROVAL_MULTIPLE = 100n;
 // which pulls against it, and a pull against an allowance that never mined
 // fails after the job has already been created and priced. So every outcome
 // that is not a terminal success throws — including the quiet one, where
-// executeContractOnArc's ~60s poll times out and it RETURNS "PENDING" rather
+// executeContract's ~60s poll times out and it RETURNS "PENDING" rather
 // than raising. Both Task 7 call sites already sit inside a try that turns a
 // throw into a skipped settlement, which is the outcome we want.
 export async function ensureAgentAllowance(
@@ -132,7 +132,7 @@ export async function ensureAgentAllowance(
 ): Promise<void> {
   const allowance = await getUsdcAllowanceOnchain(agent.address, spender);
   if (allowance >= need) return;
-  const tx = await executeContractOnArc(
+  const tx = await executeContract(
     agent.walletId,
     ARC_USDC_ADDRESS,
     encodeApprove(spender, need * APPROVAL_MULTIPLE),

@@ -1,5 +1,18 @@
 import { randomUUID } from "node:crypto";
 import { initiateDeveloperControlledWalletsClient } from "@circle-fin/developer-controlled-wallets";
+import {
+  InsufficientFundsError,
+  type ProviderWallet,
+  type TxResult,
+  type WalletBackend,
+  type WalletTx,
+} from "./wallet-provider.ts";
+
+// Re-exported, not redeclared: this is the Circle BACKEND behind the seam in
+// lib/wallet-provider.ts, and both stacks must throw and test for the same
+// class. Importers that still reach for these here (scripts/reputation-backfill)
+// keep working, and `instanceof` holds whichever path they came in by.
+export { InsufficientFundsError, isBroadcast } from "./wallet-provider.ts";
 
 type Client = ReturnType<typeof initiateDeveloperControlledWalletsClient>;
 let cachedClient: Client | null = null;
@@ -19,8 +32,6 @@ function getConfig(): { client: Client; walletSetId: string } | null {
 
 const ARC_USDC_ADDRESS = process.env.ARC_TESTNET_USDC_ADDRESS ?? "0x3600000000000000000000000000000000000000";
 
-export type ArcWallet = { address: string; walletId: string };
-
 // Transfer USDC on Arc Testnet from a DCW to any address. The wallet pays its
 // own gas (USDC on Arc) at the MEDIUM fee level.
 // ponytail: no Gas Station paymaster — add a policy + sponsor gas if we want
@@ -36,7 +47,7 @@ export async function transferUsdcOnArc(
   fromWalletId: string,
   toAddress: string,
   amountUsdc: string,
-): Promise<{ id: string; state: string }> {
+): Promise<TxResult> {
   const config = getConfig();
   if (!config) throw new Error("Circle is not configured");
 
@@ -66,7 +77,10 @@ export async function transferUsdcOnArc(
     throw new Error(`Circle transfer failed: ${raw}`);
   }
   if (!res.data?.id) throw new Error("Circle transfer returned no transaction id");
-  return { id: res.data.id, state: res.data.state };
+  // txHash is null by construction: createTransaction answers with Circle's own
+  // id and never a hash, so callers learn that from the type rather than from
+  // absence. The privy backend fills it in.
+  return { id: res.data.id, state: res.data.state, txHash: null };
 }
 
 // Execute an arbitrary contract call from a DCW on Arc (createBill / approve /
@@ -84,7 +98,7 @@ export async function executeContractOnArc(
   contractAddress: string,
   callData: `0x${string}`,
   pollMs = 60_000,
-): Promise<{ id: string; state: string; txHash: string | null }> {
+): Promise<TxResult> {
   const config = getConfig();
   if (!config) throw new Error("Circle is not configured");
 
@@ -152,33 +166,6 @@ export async function executeContractOnArc(
   return { id, state: "PENDING", txHash: null };
 }
 
-// Whether a throw from executeContractOnArc happened AFTER Circle accepted the
-// transaction, so the caller must assume it may still mine.
-//
-// Read through a predicate rather than as a bare property test at each call
-// site, for the same reason as lib/settler.ts's isIndeterminate: this decides
-// whether a settlement is logged as spent, and a typo would silently pick the
-// wrong row. Absence means never-broadcast, which is the safe default — it is
-// the only answer that never invents a settlement.
-export const isBroadcast = (e: unknown): boolean => (e as { broadcast?: boolean })?.broadcast === true;
-
-export class InsufficientFundsError extends Error {
-  constructor() {
-    super("insufficient_funds");
-    this.name = "InsufficientFundsError";
-  }
-}
-
-export type WalletTx = {
-  id: string;
-  direction: "in" | "out";
-  amount: string;
-  address: string; // counterparty
-  state: string;
-  txHash: string | null;
-  date: string;
-};
-
 // Recent USDC transactions for a wallet, normalised for the history UI.
 export async function listWalletTransactions(walletId: string): Promise<WalletTx[]> {
   const config = getConfig();
@@ -212,7 +199,7 @@ export async function listWalletTransactions(walletId: string): Promise<WalletTx
 export async function getOrCreateArcWallet(
   provider: string,
   providerUserId: string,
-): Promise<ArcWallet | null> {
+): Promise<ProviderWallet | null> {
   const config = getConfig();
   if (!config) return null;
   const { client, walletSetId } = config;
@@ -233,3 +220,15 @@ export async function getOrCreateArcWallet(
   if (!wallet) throw new Error("Circle createWallets returned no wallet");
   return { address: wallet.address, walletId: wallet.id };
 }
+
+// The seam's circle half. Every caller goes through lib/wallet-provider.ts and
+// lands here whenever WALLET_PROVIDER is anything but "privy"; the four
+// functions above keep their own names for the Circle-only scripts that import
+// them directly (scripts/reputation-backfill.ts).
+export const backend: WalletBackend = {
+  getOrCreateWallet: getOrCreateArcWallet,
+  transferUsdc: transferUsdcOnArc,
+  executeContract: executeContractOnArc,
+  // Circle's own indexer already answers this; the address argument is unused.
+  listTransactions: (walletId) => listWalletTransactions(walletId),
+};

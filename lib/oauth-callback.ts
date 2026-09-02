@@ -1,7 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { upsertUserFromProvider, setUserWallet } from "@/lib/users-repo";
 import { resolveDebtsForHandle } from "@/lib/bills-repo";
-import { getOrCreateArcWallet } from "@/lib/circle-dcw";
+import { getOrCreateWallet } from "@/lib/wallet-provider";
 import { getPendingWallet, deletePendingWallet } from "@/lib/pending-wallets-repo";
 import { signSession, SESSION_COOKIE_NAME, SESSION_MAX_AGE } from "@/lib/session";
 import type { AccountProvider } from "@/lib/types";
@@ -97,7 +97,7 @@ export async function finishProviderLogin(params: {
         // row is what proves this was a taggable identity in the first place.
         await deletePendingWallet(pending.provider, pending.handle);
       } else {
-        const wallet = await getOrCreateArcWallet(provider, profile.providerUserId);
+        const wallet = await getOrCreateWallet(provider, profile.providerUserId);
         if (wallet) await setUserWallet(appUser.id, wallet.address, wallet.walletId);
       }
     } catch (walletErr) {

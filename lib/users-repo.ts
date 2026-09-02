@@ -125,7 +125,7 @@ export async function getUsersByWallets(
   if (!client) return result;
 
   // Lowercase .in() is safe: every wallet_address originates from Circle DCW
-  // (getOrCreateArcWallet -> setUserWallet, directly or via pending_wallets),
+  // (getOrCreateWallet -> setUserWallet, directly or via pending_wallets),
   // which returns lowercase hex — verified against all existing rows.
   const { data, error } = await client
     .from("users")

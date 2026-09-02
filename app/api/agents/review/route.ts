@@ -15,7 +15,7 @@
 // the same verdict shape, and the same fail-closed behaviour.
 import { reviewBill } from "@/lib/autopay-review";
 import type { BillPreimage } from "@/lib/bill-metadata";
-import { getOrCreateArcWallet } from "@/lib/circle-dcw";
+import { getOrCreateWallet } from "@/lib/wallet-provider";
 import { PRICES } from "@/lib/x402/pricing";
 import { withGateway } from "@/lib/x402/seller";
 
@@ -58,13 +58,14 @@ function isPreimageShaped(value: unknown): value is ReviewablePreimage {
 let auditorAddress: Promise<string | null> | null = null;
 
 function getAuditorAddress(): Promise<string | null> {
-  auditorAddress ??= getOrCreateArcWallet("splitsy", "auditor")
+  auditorAddress ??= getOrCreateWallet("splitsy", "auditor")
     .then((wallet) => {
-      // An unconfigured Circle returns null WITHOUT throwing (lib/circle-dcw.ts's
-      // getConfig), so this must throw to reach the catch below. Resolving the
-      // cached promise to null instead would pin the failure for the process's
-      // whole life: every later request would 500 in silence, and repairing the
-      // credentials would not fix it because nothing would re-ask Circle.
+      // An unconfigured backend returns null WITHOUT throwing (the circle stack's
+      // getConfig, in lib/circle-dcw.ts), so this must throw to reach the catch
+      // below. Resolving the cached promise to null instead would pin the failure
+      // for the process's whole life: every later request would 500 in silence,
+      // and repairing the credentials would not fix it because nothing would
+      // re-ask Circle.
       if (!wallet) throw new Error("Circle is not configured; no Auditor wallet to be paid at");
       return wallet.address;
     })

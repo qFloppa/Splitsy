@@ -1,5 +1,5 @@
 import { payViaGateway } from "@/lib/gateway-pay";
-import { getOrCreateArcWallet } from "@/lib/circle-dcw";
+import { getOrCreateWallet } from "@/lib/wallet-provider";
 
 export const runtime = "nodejs";
 
@@ -27,7 +27,7 @@ export async function POST(
 
   // Resolve the server wallet that will fund the settlement on Arc Testnet.
   // This wallet must be pre-funded; it is the "Gateway settler" identity.
-  const serverWallet = await getOrCreateArcWallet("splitsy", "gateway-settler");
+  const serverWallet = await getOrCreateWallet("splitsy", "gateway-settler");
   if (!serverWallet) {
     return Response.json(
       { error: "Circle is not configured — Gateway payments unavailable" },

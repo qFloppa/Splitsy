@@ -23,7 +23,7 @@ import {
   getParticipantsOnchain,
   REGISTRY_ADDRESS,
 } from "@/lib/arc-read";
-import { executeContractOnArc } from "@/lib/circle-dcw";
+import { executeContract } from "@/lib/wallet-provider";
 import { decideDunning, type DunningAction } from "@/lib/dunning";
 import { encodeCollectDebt } from "@/lib/registry-calldata";
 import { createSupabaseServerClient } from "@/lib/supabase";
@@ -136,7 +136,7 @@ async function handleDebtor(input: {
 
   if (decision.action === "collect") {
     try {
-      const tx = await executeContractOnArc(
+      const tx = await executeContract(
         input.creditor.walletId,
         REGISTRY_ADDRESS,
         encodeCollectDebt(billId, debtor, decision.amount),

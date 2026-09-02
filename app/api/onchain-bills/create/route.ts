@@ -4,7 +4,7 @@ import { triggerAutopay } from "@/lib/autopay-trigger";
 import { resolveParticipants } from "@/lib/wallet-resolve";
 import { billMetadataHash } from "@/lib/bill-metadata";
 import { encodeCreateBill } from "@/lib/registry-calldata";
-import { executeContractOnArc, InsufficientFundsError } from "@/lib/circle-dcw";
+import { executeContract, InsufficientFundsError } from "@/lib/wallet-provider";
 import { REGISTRY_ADDRESS, getBillOnchain, getBillIdsForSplitterOnchain } from "@/lib/arc-read";
 import { publishOnchainBillPreimage } from "@/lib/onchain-bill-preimage-repo";
 import { isShareToken } from "@/lib/pay-link";
@@ -104,7 +104,7 @@ export async function POST(request: Request) {
   // before Circle reported one, which the caller reads as "no link".
   let txHash: string | null = null;
   try {
-    ({ txHash } = await executeContractOnArc(user.circle_wallet_id, REGISTRY_ADDRESS, encodeCreateBill(metadataHash, addresses, owed, BigInt(dueDate ?? 0), escrowUntilFull)));
+    ({ txHash } = await executeContract(user.circle_wallet_id, REGISTRY_ADDRESS, encodeCreateBill(metadataHash, addresses, owed, BigInt(dueDate ?? 0), escrowUntilFull)));
   } catch (err) {
     if (err instanceof InsufficientFundsError) return Response.json({ error: "insufficient_funds" }, { status: 402 });
     return Response.json({ error: err instanceof Error ? err.message : "createBill failed" }, { status: 502 });

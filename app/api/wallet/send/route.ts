@@ -1,7 +1,7 @@
 import { cookies } from "next/headers";
 import { getSessionUser } from "@/lib/session";
 import { verifyWalletUnlock, WALLET_UNLOCK_COOKIE } from "@/lib/session-core";
-import { transferUsdcOnArc, InsufficientFundsError } from "@/lib/circle-dcw";
+import { transferUsdc, InsufficientFundsError } from "@/lib/wallet-provider";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -36,7 +36,7 @@ export async function POST(request: Request) {
   }
 
   try {
-    const tx = await transferUsdcOnArc(user.circle_wallet_id, to, amount.toFixed(6));
+    const tx = await transferUsdc(user.circle_wallet_id, to, amount.toFixed(6));
     if (tx.state === "FAILED" || tx.state === "DENIED" || tx.state === "CANCELLED") {
       return Response.json({ error: `Transfer ${tx.state.toLowerCase()}` }, { status: 502 });
     }

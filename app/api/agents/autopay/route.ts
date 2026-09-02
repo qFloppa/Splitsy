@@ -77,11 +77,11 @@ import {
 } from "@/lib/autopay";
 import { REVIEW_UNAVAILABLE, type ReviewInput, type ReviewVerdict } from "@/lib/autopay-review";
 import {
-  executeContractOnArc,
-  getOrCreateArcWallet,
+  executeContract,
+  getOrCreateWallet,
   InsufficientFundsError,
   isBroadcast,
-} from "@/lib/circle-dcw";
+} from "@/lib/wallet-provider";
 import {
   AGENTIC_COMMERCE_ADDRESS,
   COMPLETE_REASON,
@@ -548,7 +548,7 @@ async function runJob(input: {
   const { agent, settler, billId, debtor, progress } = input;
   // Its absence is the same fact as a missing Settler — a role in the ceremony
   // has no wallet — so it gets the same slug rather than the vaguer 'job_failed'.
-  const auditor = await getOrCreateArcWallet("splitsy", "auditor");
+  const auditor = await getOrCreateWallet("splitsy", "auditor");
   if (!auditor) throw new WalletUnavailableError("the Auditor wallet is unavailable");
 
   const expiredAt = BigInt(Math.floor(Date.now() / 1000)) + JOB_TTL_SECONDS;
@@ -557,7 +557,7 @@ async function runJob(input: {
   // 1. createJob — the user's agent is the client.
   let jobId: bigint;
   try {
-    const created = await executeContractOnArc(
+    const created = await executeContract(
       agent.walletId,
       AGENTIC_COMMERCE_ADDRESS,
       encodeCreateJob(settler, auditor.address as `0x${string}`, expiredAt, description),
@@ -592,7 +592,7 @@ async function runJob(input: {
   // 3. fund — the fee into escrow, preceded by the lazy approval.
   try {
     await ensureAgentAllowance(agent, AGENTIC_COMMERCE_ADDRESS, FEE_UNITS, CEREMONY_POLL_MS);
-    await executeContractOnArc(agent.walletId, AGENTIC_COMMERCE_ADDRESS, encodeFund(jobId), CEREMONY_POLL_MS);
+    await executeContract(agent.walletId, AGENTIC_COMMERCE_ADDRESS, encodeFund(jobId), CEREMONY_POLL_MS);
   } catch (err) {
     if (err instanceof InsufficientFundsError) throw err;
     throw new JobError("fund", err);
@@ -616,7 +616,7 @@ async function runJob(input: {
     // the user rather than to their agent.
     await ensureAgentAllowance(agent, REGISTRY_ADDRESS, input.amount, CEREMONY_POLL_MS);
     try {
-      const tx = await executeContractOnArc(
+      const tx = await executeContract(
         agent.walletId,
         REGISTRY_ADDRESS,
         encodePayDebtFor(billId, debtor, input.amount),
@@ -671,7 +671,7 @@ async function runJob(input: {
     if (!settled.exists || settled.paid < settled.owed) {
       throw new Error(`registry still shows ${settled.paid} paid of ${settled.owed} owed`);
     }
-    await executeContractOnArc(
+    await executeContract(
       auditor.walletId,
       AGENTIC_COMMERCE_ADDRESS,
       encodeComplete(jobId, COMPLETE_REASON),
