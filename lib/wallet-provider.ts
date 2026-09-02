@@ -67,14 +67,9 @@ export async function listTransactions(walletId: string, address: string) {
   return (await backend()).listTransactions(walletId, address);
 }
 
-// 0x + 64 hex. The discriminator exists because bill_debts.paid_tx_hash holds a
-// Circle transaction UUID on the circle stack and a real hash on the privy one,
-// and the history UI has to know which it is reading.
-// ponytail: lives here for now; Task 4 moves it to lib/arc-explorer.ts (no
-// dependencies, so browser components can import it) and re-exports it from here.
-export function looksLikeTxHash(value: string | null): boolean {
-  return value !== null && /^0x[0-9a-fA-F]{64}$/.test(value);
-}
+// Defined in arc-explorer.ts so browser components can import it too; re-exported
+// here because this is the module server code imports.
+export { looksLikeTxHash } from "./arc-explorer.ts";
 
 export class InsufficientFundsError extends Error {
   // Plain assignment, not a constructor parameter property: this module is

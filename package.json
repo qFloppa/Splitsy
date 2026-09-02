@@ -25,7 +25,7 @@
     "test:pay-link": "node --test --experimental-strip-types lib/pay-link.test.ts app/api/pay/build-rows.test.ts",
     "test:gateway": "node --test --experimental-strip-types lib/gateway-browser.test.ts",
     "test:wallet-chain": "node --test --experimental-strip-types lib/wagmi.test.ts",
-    "test:wallet-provider": "node --test --experimental-strip-types lib/wallet-provider.test.ts lib/privy-wallet.test.ts",
+    "test:wallet-provider": "node --test --experimental-strip-types lib/wallet-provider.test.ts lib/privy-wallet.test.ts lib/arc-explorer.test.ts",
     "test:settle": "node --test --experimental-strip-types lib/settle-items.test.ts lib/arc-read.test.ts",
     "test:iou": "node --test --experimental-strip-types lib/iou.test.ts",
     "test:footer": "node --test --experimental-strip-types lib/site-contracts.test.ts",

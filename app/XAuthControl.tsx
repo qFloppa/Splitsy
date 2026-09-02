@@ -318,7 +318,7 @@ export default function XAuthControl() {
                     {tab === "info" ? (
                       <>
                         <p className="wallet-note">
-                          A Circle wallet on <b>Arc Testnet</b>, tied to <OwnHandle me={me} />. Pay and get paid in
+                          A Splitsy wallet on <b>Arc Testnet</b>, tied to <OwnHandle me={me} />. Pay and get paid in
                           USDC — no crypto setup needed.
                         </p>
                         {me.walletAddress ? (

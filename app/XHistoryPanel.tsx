@@ -2,6 +2,7 @@
 
 import { ExternalLink } from "lucide-react";
 import { useEffect, useState } from "react";
+import { looksLikeTxHash } from "@/lib/arc-explorer";
 import { type ProviderPerson } from "@/lib/provider-display";
 import { ProviderTag } from "./ProviderTag";
 import { HistoryCard, PaidBillStamp } from "./HistoryCard";
@@ -83,7 +84,15 @@ export default function XHistoryPanel({ onCount }: { onCount?: (n: number) => vo
           </div>
           <div>
             {paid.map((d) => {
-              const hash = d.paid_tx_hash ? hashById[d.paid_tx_hash] : undefined;
+              // On the privy stack paid_tx_hash IS the chain hash, so the link is
+              // knowable from the stored value alone — no lookup to miss. The
+              // wallet endpoint answers {transactions: []} for any error, for a
+              // null wallet_address, and for a transfer outside its block window.
+              const hash = looksLikeTxHash(d.paid_tx_hash)
+                ? (d.paid_tx_hash as string)
+                : d.paid_tx_hash
+                  ? hashById[d.paid_tx_hash]
+                  : undefined;
               return (
                 <HistoryCard
                   key={d.id}
