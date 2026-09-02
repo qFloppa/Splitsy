@@ -15,7 +15,8 @@
 // call shape below is copied from it.
 import { NotFoundError, PrivyClient, isEmbeddedWalletLinkedAccount, type User } from "@privy-io/node";
 import {
-  TransactionNotFoundError,
+  TransactionReceiptNotFoundError,
+  WaitForTransactionReceiptTimeoutError,
   createPublicClient,
   encodeFunctionData,
   erc20Abi,
@@ -81,17 +82,23 @@ export type TransferLog = {
 
 // USDC Transfer logs → the history rows the wallet panel renders.
 //
-// ONE ROW PER LOG, never one per direction: a self-transfer matches both the
-// `from` and the `to` filter, and splitting by direction would print it twice as
-// a send and a receive of money that never left. `from === self` decides, so a
-// self-transfer reads as outgoing, which is what the wallet actually did.
+// ONE ROW PER TRANSACTION, never one per direction: listTransactions asks the node
+// twice, once for `from` and once for `to`, so a self-transfer arrives HERE TWICE.
+// Deduping inside means the mapper has no precondition its caller has to remember,
+// and the panel never sees two rows keyed on the same id (app/XAuthControl.tsx:752).
+// `from === self` decides direction, so a self-transfer reads as outgoing, which is
+// what the wallet actually did.
+//
+// ponytail: the key is the transaction hash, so a transaction carrying several USDC
+// transfers for this wallet shows one of them rather than the net. Batched
+// settlement is the only caller that does that, and Task 5 keeps it off this stack.
 //
 // ponytail: no block timestamps — that is one eth_getBlockByNumber per row, and
 // the panel already renders a row without a date (app/XAuthControl.tsx:738).
 // Fetch them if the history ever needs to be sorted by time rather than height.
 export function logsToWalletTxs(logs: TransferLog[], self: string): WalletTx[] {
   const me = self.toLowerCase();
-  return [...logs]
+  return [...new Map(logs.map((log) => [log.transactionHash, log])).values()]
     .sort((a, b) => (b.blockNumber === a.blockNumber ? 0 : b.blockNumber > a.blockNumber ? 1 : -1))
     .map((log) => {
       const outgoing = log.args.from.toLowerCase() === me;
@@ -149,17 +156,20 @@ const SEND_ATTEMPTS = 3;
 //
 // ponytail: two concurrent sends whose transactions come out BYTE-IDENTICAL —
 // same nonce, same recipient, same amount — sign to the same RLP, so both callers
-// wait on ONE transaction and both are told it succeeded. Right for a
-// double-submitted payment, wrong for two equal debts to the same creditor, which
-// app/api/debts/[id]/pay/route.ts pays as a bare transfer and would mark both paid
-// off one transfer. Registry writes carry the bill id, so they differ and drop one
-// side instead. Route a settlement through the registry, or give the caller a
-// per-payment marker, if bare transfers ever have to be told apart.
+// wait on ONE transaction and both are handed `COMPLETE` with THE SAME HASH. Right
+// for a double-submitted payment. Wrong for two equal debts to the same creditor,
+// which app/api/debts/[id]/pay/route.ts pays as a bare transfer: both rows get
+// marked paid, each carrying a hash that resolves on the explorer, so the ledger
+// looks right and one transfer is missing. Whoever reconciles is looking for two
+// paid rows sharing one paid_tx_hash, not for a failure. Registry writes carry the
+// bill id, so they differ and one side drops instead. Route a settlement through
+// the registry, or give the caller a per-payment marker, if bare transfers ever
+// have to be told apart.
 async function signAndBroadcast(
   walletId: string,
   to: `0x${string}`,
   data: `0x${string}`,
-): Promise<`0x${string}`> {
+): Promise<{ hash: `0x${string}`; from: `0x${string}`; nonce: number }> {
   const authorization_context = authorizationContext();
   // Privy signs by wallet id, but reading a nonce and estimating gas need the
   // address, and the seam hands down only the id.
@@ -205,68 +215,117 @@ async function signAndBroadcast(
         throw new Error(`Signature recovers to ${signer}, not ${from} — refusing to broadcast`);
       }
 
-      return await publicClient.sendRawTransaction({ serializedTransaction });
+      return { hash: await publicClient.sendRawTransaction({ serializedTransaction }), from, nonce: tx.nonce };
     } catch (e) {
       if (attempt >= SEND_ATTEMPTS || !isNonceCollision(e)) throw e;
     }
   }
 }
 
+// What a receipt wait that produced no receipt is allowed to tell a caller.
+//
+// "dropped" is the only UNTAGGED answer and the only one that can be wrong in the
+// unrecoverable direction. lib/autopay.ts:250 turns an untagged throw into
+// `decision: "skip", amountUsdc: 0` — handing back a daily cap that was really
+// spent, so two 8 USDC bills both pay against a 10 USDC cap — and
+// app/api/debts/[id]/pay/route.ts:47-58 answers 502 and leaves the debt pending, so
+// the user presses Pay again and a bare transfer executes twice. So it demands
+// PROOF, never absence:
+//
+//   mined         a receipt turned up after all. Beats every other signal — the
+//                 nonce being consumed by OUR OWN transaction must never read as
+//                 someone else consuming it.
+//   dropped       the wait genuinely ran out AND the nonce is consumed with no
+//                 receipt of ours, so the slot went to different bytes and this
+//                 transaction can never mine.
+//   indeterminate everything else, including any error that is not the timeout.
+//                 viem rejects the wait immediately on any non-not-found error from
+//                 the polled call (waitForTransactionReceipt.js:195-197) and does
+//                 not retry Arc's -32011 "request limit reached" (lib/x402/constants.ts:6),
+//                 so that path can fire a second after the broadcast — when unmined
+//                 is simply the normal state of a perfectly live transaction.
+export function verdictAfterWait(
+  err: unknown,
+  nonceConsumed: boolean,
+  mined: boolean,
+): "mined" | "dropped" | "indeterminate" {
+  if (mined) return "mined";
+  if (!(err instanceof WaitForTransactionReceiptTimeoutError)) return "indeterminate";
+  return nonceConsumed ? "dropped" : "indeterminate";
+}
+
 // One contract write, waited to a receipt.
 //
-// A THROW AFTER THE BROADCAST IS INDETERMINATE, NOT "DIDN'T HAPPEN" — but on Arc
-// a hash alone does not prove a broadcast, which is the one place this cannot
-// copy lib/circle-dcw.ts. Arc answers eth_sendRawTransaction with a hash for a
-// transaction it then DROPS: the loser of a same-nonce race and a gapped nonce
-// both come back accepted and then vanish, and eth_getTransactionByHash stops
-// knowing them. So the wait failing forks two ways:
+// A THROW AFTER THE BROADCAST IS INDETERMINATE, NOT "DIDN'T HAPPEN" — but on Arc a
+// hash alone does not prove the transaction will mine, which is the one place this
+// cannot copy lib/circle-dcw.ts. eth_sendRawTransaction answers with a hash for
+// transactions Arc then DISCARDS: the loser of a same-nonce race and a gapped nonce
+// both come back accepted and then vanish. So a wait that produced no receipt asks
+// the chain which of those happened, and verdictAfterWait decides what it means.
 //
-//   the node still knows the hash -> genuinely indeterminate, tagged
-//     `broadcast: true`, and callers read it through isBroadcast() to count the
-//     money as spent (app/api/agents/autopay/route.ts:639 charges the user's
-//     daily cap off exactly that).
-//   the node has forgotten it     -> dropped. Nothing moved and nothing will, so
-//     the throw is UNTAGGED, which is what stops a raced payment from spending a
-//     user's daily cap on a transaction that never existed.
+// The two reads are ordered NONCE FIRST, RECEIPT SECOND, and that order is the whole
+// guarantee. A nonce already consumed at the earlier read, with still no receipt at
+// the later one, cannot have been consumed by us — a receipt never disappears — so
+// it was different bytes. The other order leaves a window in which our own
+// transaction mines between the two reads and gets called dead.
 //
-// A throw from signAndBroadcast is the third case: never broadcast at all.
-//
-// ponytail: the drop is only discovered when the wait gives up, so a raced send
-// costs pollMs and then fails rather than retrying inside its own request. The
-// untagged throw is what makes the caller's next attempt correct. Move the wait
-// inside signAndBroadcast's loop if a raced payment ever has to survive its first
-// request instead of the next one.
+// pollMs defaults to 8s rather than the 60s the Circle backend uses: Arc confirms in
+// ~1.2s (measured), and the routes on this path export no maxDuration, so Vercel's
+// ~10s default kills the request long before a 60s wait ends — and a killed request
+// writes no row saying what it did. Callers with a bigger budget pass their own
+// (app/api/agents/autopay/route.ts passes 25s inside maxDuration = 300).
 async function send(
   walletId: string,
   to: `0x${string}`,
   data: `0x${string}`,
-  pollMs = 60_000,
+  pollMs = 8_000,
 ): Promise<TxResult> {
-  let hash: `0x${string}`;
+  let sent: { hash: `0x${string}`; from: `0x${string}`; nonce: number };
   try {
-    hash = await signAndBroadcast(walletId, to, data);
+    sent = await signAndBroadcast(walletId, to, data);
   } catch (e) {
-    const raw = e instanceof Error ? e.message : JSON.stringify(e);
     // Arc charges gas in USDC, so "not enough USDC" covers the amount and the gas
     // both, and the shortfall surfaces from the gas estimate as readily as from
     // the broadcast. Same detection the Circle backend does at lib/circle-dcw.ts:75.
+    const raw = e instanceof Error ? e.message : JSON.stringify(e);
     if (/insufficient|not enough|balance|exceeds/i.test(raw)) throw new InsufficientFundsError();
-    throw new Error(`Privy send failed: ${raw}`);
+    // Matched on the full text above, reported without it: viem inlines the RPC URL,
+    // and getUrl only strips basic-auth credentials, not a key in the path or query.
+    // ARC_TESTNET_RPC is env-driven precisely so it can be a keyed endpoint, and
+    // app/api/debts/[id]/pay/route.ts:53-57 hands this message to the caller.
+    throw new Error(`Privy send failed: ${raw.replace(/\nURL: \S+/g, "")}`);
   }
 
+  const { hash } = sent;
   try {
     const receipt = await publicClient.waitForTransactionReceipt({ hash, timeout: pollMs });
     return { id: hash, state: receiptToState(receipt.status), txHash: hash };
   } catch (err) {
-    // Only TransactionNotFoundError says the node has forgotten it. A connection
-    // failure here must NOT read as "dropped", or an RPC outage would report
-    // every unconfirmed send as money that never moved.
-    const dropped = await publicClient
-      .getTransaction({ hash })
-      .then(() => false)
-      .catch((e) => e instanceof TransactionNotFoundError);
-    if (dropped) {
-      throw new Error(`Privy tx ${hash} was dropped before it mined — nothing moved`, { cause: err });
+    // Only asked when the wait actually ran out; for any other error the answer is
+    // fixed, and two more RPC calls on an RPC that just failed would decide nothing.
+    // An unreadable chain also decides nothing: anything thrown in here leaves the
+    // verdict indeterminate rather than letting a network blip declare money gone.
+    let nonceConsumed = false;
+    let receipt: Awaited<ReturnType<typeof publicClient.getTransactionReceipt>> | null = null;
+    if (err instanceof WaitForTransactionReceiptTimeoutError) {
+      try {
+        nonceConsumed = (await publicClient.getTransactionCount({ address: sent.from, blockTag: "latest" })) > sent.nonce;
+        receipt = await publicClient.getTransactionReceipt({ hash }).catch((e) => {
+          if (e instanceof TransactionReceiptNotFoundError) return null;
+          throw e;
+        });
+      } catch {
+        nonceConsumed = false;
+      }
+    }
+
+    const verdict = verdictAfterWait(err, nonceConsumed, receipt !== null);
+    if (verdict === "mined" && receipt) return { id: hash, state: receiptToState(receipt.status), txHash: hash };
+    if (verdict === "dropped") {
+      throw new Error(
+        `Privy tx ${hash} was dropped before it mined — nonce ${sent.nonce} went to another transaction, nothing moved`,
+        { cause: err },
+      );
     }
     throw Object.assign(new Error(`Privy tx indeterminate — broadcast but unconfirmed: ${hash}`, { cause: err }), {
       broadcast: true as const,
@@ -286,6 +345,22 @@ const walletSpec = () => [{ chain_type: "ethereum" as const, additional_signers:
 // send path can use.
 const ethereumWallet = (u: User) =>
   u.linked_accounts.filter(isEmbeddedWalletLinkedAccount).find((a) => a.chain_type === "ethereum");
+
+// Whether OUR key quorum can sign for this wallet. The linked-account record cannot
+// answer that — it carries id, address, delegated and user_can_sign and nothing about
+// quorums (resources/users/users.d.ts, LinkedAccountEthereumEmbeddedWallet) — so the
+// wallet object is fetched and its signers read. Confirmed against a wallet this code
+// created: the quorum arrives in `additional_signers`, while `owner_id` is a different
+// quorum Privy assigns, so both are accepted.
+//
+// This matters only on the adopt path. A wallet held by an app we do not share a
+// quorum with looks perfectly fine until the first signature answers 401 — by which
+// time somebody may have funded it.
+async function serverCanSign(walletId: string): Promise<boolean> {
+  const quorum = quorumId();
+  const wallet = await privy().wallets().get(walletId);
+  return wallet.owner_id === quorum || (wallet.additional_signers ?? []).some((s) => s.signer_id === quorum);
+}
 
 // Arc's public RPC refuses an eth_getLogs range wider than ~25k blocks (-32012
 // "requested range too large") and caps one response at 20k logs, so a wallet's
@@ -331,14 +406,21 @@ export const backend: WalletBackend = {
       ethereumWallet(await privy().users().pregenerateWallets(user.id, { wallets: walletSpec() }));
     if (!wallet) throw new Error("Privy returned no Ethereum wallet");
     // Without a wallet id the server cannot sign, so stop here rather than after
-    // somebody has funded an address that can never spend. Two things land here: a
-    // wallet created without a server-side signer (check PRIVY_KEY_QUORUM_ID names
-    // a key quorum on THIS app), or a lookup that simply carried no id for a
-    // wallet that has one (check the wallet in the Privy dashboard).
+    // somebody has funded an address that can never spend.
     if (!wallet.id) {
       throw new Error(
         `Privy wallet ${wallet.address} has no server wallet id, so the server cannot sign for it — check ` +
           "PRIVY_KEY_QUORUM_ID, and that this PRIVY_APP_ID owns the wallet.",
+      );
+    }
+    // And a non-null id is not the same as a wallet WE can sign for — an adopted
+    // wallet may carry someone else's quorum, which fails as a Privy 401 at the first
+    // signature rather than here. Checked before the row lands, so a key that resolves
+    // is a key that can spend.
+    if (!(await serverCanSign(wallet.id))) {
+      throw new Error(
+        `Privy wallet ${wallet.address} is not signable by PRIVY_KEY_QUORUM_ID — it carries a different ` +
+          "key quorum, so the server could create it but never transact with it.",
       );
     }
 
@@ -349,7 +431,16 @@ export const backend: WalletBackend = {
       wallet_id: wallet.id,
       address: wallet.address,
     });
-    return { address: wallet.address, walletId: wallet.id };
+    // Re-read rather than returning what WE got from Privy. Two concurrent first-time
+    // resolutions of one key both miss the row and both create, and ignoreDuplicates
+    // makes the loser's write a silent no-op — so the loser would otherwise hand its
+    // own wallet to lib/oauth-callback.ts:94 to persist and display while the table
+    // holds the winner's, and money sent to it would be invisible to every later
+    // lookup. Whoever the row says won, both callers return.
+    const row = await getPrivyWallet(namespace, key);
+    return row
+      ? { address: row.address, walletId: row.wallet_id }
+      : { address: wallet.address, walletId: wallet.id };
   },
 
   transferUsdc(walletId, to, amountUsdc) {
@@ -391,11 +482,8 @@ export const backend: WalletBackend = {
       toBlock = fromBlock - 1n;
     }
 
-    // One row per TRANSACTION: a self-transfer comes back in both result sets, and
-    // the panel keys its rows on this id (app/XAuthControl.tsx:752).
-    // ponytail: so a transaction carrying several USDC transfers for this wallet
-    // shows one of them rather than the net. Batched settlement is the only caller
-    // that does that, and Task 5 keeps it off the Privy stack.
-    return logsToWalletTxs([...new Map(logs.map((log) => [log.transactionHash, log])).values()], self);
+    // One row per TRANSACTION: logsToWalletTxs dedupes on the hash, which is what a
+    // self-transfer needs — it comes back in both result sets above.
+    return logsToWalletTxs(logs, self);
   },
 };

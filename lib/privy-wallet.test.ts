@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { isNonceCollision, logsToWalletTxs, receiptToState } from "./privy-wallet.ts";
+import { WaitForTransactionReceiptTimeoutError } from "viem";
+import { isNonceCollision, logsToWalletTxs, receiptToState, verdictAfterWait } from "./privy-wallet.ts";
 
 const SELF = "0x1111111111111111111111111111111111111111";
 const OTHER = "0x2222222222222222222222222222222222222222";
@@ -27,8 +28,13 @@ test("direction is read from our own address, not from the log order", () => {
   assert.equal(txs[1]?.amount, "2.5");
 });
 
+// listTransactions hands this the SAME log twice for a self-transfer — it comes
+// back from both the `from` and the `to` filter — so the dedup has to live in here,
+// not at the call site. Two rows would also be two React keys of the same value on
+// the panel (app/XAuthControl.tsx:752).
 test("a self-transfer counts once as outgoing rather than twice", () => {
-  const txs = logsToWalletTxs([log(SELF, SELF, 1n, 1n, "0xcc")], SELF);
+  const one = log(SELF, SELF, 1n, 1n, "0xcc");
+  const txs = logsToWalletTxs([one, one], SELF);
   assert.equal(txs.length, 1);
   assert.equal(txs[0]?.direction, "out");
 });
@@ -52,4 +58,43 @@ test("a nonce collision retries; anything else must not", () => {
   assert.equal(isNonceCollision(new Error("insufficient funds for gas * price + value")), false);
   assert.equal(isNonceCollision(new Error("execution reverted")), false);
   assert.equal(isNonceCollision(undefined), false);
+});
+
+// The four ways a receipt wait can end, and what each one is allowed to tell a
+// caller about the money. "dropped" is the only untagged answer and the only one
+// that can be wrong in the unrecoverable direction: lib/autopay.ts:250 turns an
+// untagged throw into `decision: "skip", amountUsdc: 0`, handing back a daily cap
+// that was really spent, and app/api/debts/[id]/pay/route.ts leaves the debt
+// pending so the user pays a second time. So it needs PROOF, not absence.
+const timedOut = new WaitForTransactionReceiptTimeoutError({ hash: `0x${"a".repeat(64)}` });
+
+test("a receipt that turned up wins over every other signal", () => {
+  assert.equal(verdictAfterWait(timedOut, true, true), "mined");
+  assert.equal(verdictAfterWait(timedOut, false, true), "mined");
+  // Mined between the wait giving up and the nonce read: the slot is consumed by
+  // OUR OWN transaction, which must never read as dropped.
+  assert.equal(verdictAfterWait(new Error("some rpc failure"), true, true), "mined");
+});
+
+test("an exhausted wait plus a consumed nonce is the only dropped verdict", () => {
+  assert.equal(verdictAfterWait(timedOut, true, false), "dropped");
+});
+
+test("an unconsumed nonce means the transaction can still mine", () => {
+  assert.equal(verdictAfterWait(timedOut, false, false), "indeterminate");
+});
+
+test("anything but a timeout decides nothing — the wait never ran out", () => {
+  // viem rejects immediately on any non-not-found error from the polled call
+  // (waitForTransactionReceipt.js:195), and Arc answers -32011 "request limit
+  // reached" under load. Seconds after a broadcast, unmined is the normal state.
+  for (const err of [
+    new Error("request limit reached"),
+    new Error("socket hang up"),
+    undefined,
+    null,
+    "not even an error",
+  ]) {
+    assert.equal(verdictAfterWait(err, true, false), "indeterminate", `${err} must not decide dropped`);
+  }
 });
