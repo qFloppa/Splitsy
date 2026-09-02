@@ -15,11 +15,11 @@
 //        argument, and the transaction sits under params.transaction.
 //
 // Signing rather than sending means WE own the nonce and the fee estimate, which
-// Privy owned before. This script is single-threaded so it cannot notice, but
-// lib/privy-wallet.ts will serve concurrent requests, and two sends from one
-// wallet racing on the same nonce is a real failure mode there.
-// ponytail: no nonce coordination, one pending nonce read per run — Task 3 needs a
-// per-wallet lock or a nonce it tracks itself.
+// Privy owned before. This script is single-threaded so one pending-nonce read per
+// run is all it needs; lib/privy-wallet.ts serves concurrent requests and carries
+// the nonce handling for both of Arc's answers to a same-nonce race — a retry on
+// "nonce too low", and a dropped-not-indeterminate verdict for the racing loser
+// Arc accepts and then discards.
 //
 // Bodies are snake_case all the way down (chain_type, additional_signers,
 // signer_id, custom_user_id, chain_id, gas_limit). No wallet_index input exists:

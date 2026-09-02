@@ -1,5 +1,5 @@
 import { payViaGateway } from "@/lib/gateway-pay";
-import { getOrCreateWallet } from "@/lib/wallet-provider";
+import { getOrCreateWallet, walletProviderName } from "@/lib/wallet-provider";
 
 export const runtime = "nodejs";
 
@@ -15,6 +15,18 @@ export async function POST(
 ) {
   // token is not used in the MVP path (Gateway settles without reading the bill)
   await params;
+
+  // The wallet below comes from the provider seam, but payViaGateway is Circle's
+  // SDK and nothing else — on the Privy stack it would be handed a Privy wallet id
+  // and answer with a Circle error about a wallet that does not exist. Refused
+  // before the wallet is resolved, so this does not mint a Privy wallet it cannot
+  // then use. Porting Gateway settlement to Privy is its own piece of work.
+  if (walletProviderName() === "privy") {
+    return Response.json(
+      { error: "Gateway payments are only available on the Circle wallet stack" },
+      { status: 503 },
+    );
+  }
 
   const body = (await request.json().catch(() => ({}))) as RequestBody;
 
