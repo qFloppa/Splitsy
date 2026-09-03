@@ -18,12 +18,12 @@ export type ResolveDeps = {
 async function defaultMintPending(provider: IdentityProvider, handle: string): Promise<string> {
   // Lazy import: keeps the wallet backend's SDK out of this module's load-time
   // graph so unit tests (node --test) can import wallet-resolve.ts with stub deps.
-  const { getOrCreateWallet } = await import("./wallet-provider.ts");
+  const { getOrCreateWallet, walletProviderLabel } = await import("./wallet-provider.ts");
   const norm = normalizePendingHandle(handle);
   // Namespaced refId so a pre-mint can never collide with a real signin wallet
   // ("<provider>:<providerUserId>"). Keyed by handle, not user id.
   const wallet = await getOrCreateWallet("prem", `${provider}:${norm}`);
-  if (!wallet) throw new Error("Circle is not configured — cannot pre-mint a wallet");
+  if (!wallet) throw new Error(`${walletProviderLabel()} is not configured — cannot pre-mint a wallet`);
   await insertPendingWallet({
     provider,
     handle: norm,

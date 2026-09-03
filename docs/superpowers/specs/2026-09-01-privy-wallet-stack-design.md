@@ -150,7 +150,7 @@ one of the two stacks. Separate Supabase projects; no schema change.
 ## Deliberately deferred
 
 - **The PIN stays, in both stacks.** `verifyWalletUnlock` is a cookie check in
-  the route (`app/api/debts/[id]/pay/route.ts:19-22`), entirely independent of
+  the route (`app/api/debts/[id]/pay/route.ts:23-29`), entirely independent of
   which wallet signs, so it works unchanged on Privy. Retiring it in favour of
   Privy MFA is a follow-up, and it is 10 routes plus `lib/pin.ts` plus two
   gates in `app/XAuthControl.tsx:365-514` — orthogonal to this work.
@@ -167,10 +167,16 @@ one of the two stacks. Separate Supabase projects; no schema change.
 
 ## Open questions
 
-1. **Privy policy expressiveness** — can a policy express a rolling daily total,
-   or only per-transaction and per-destination limits? If only the latter,
-   `sumAutopaySpentTodayUsdc` stays in our route and only the per-bill cap moves
-   into the enclave. Task 5 resolves this against the live API.
+1. **Privy policy expressiveness — RESOLVED (`docs/deployments.md:105-114`).** Yes in
+   Privy's API: an Aggregation over a rolling window (1-72 hours, metric function
+   `sum`) expresses a rolling daily total. No through `@privy-io/node@0.34.0`: the
+   `PrivyClient` this repo uses exposes no `aggregations()` accessor at all
+   (`public-api/PrivyClient.d.mts`), and the generated resource behind the low-level
+   client is an empty class — `export declare class Aggregations extends APIResource
+   {}` (`resources/aggregations.d.mts:4`) — so there is no method to create or read
+   one. Only the PER-TRANSACTION cap moved into the enclave
+   (`PRIVY_AGENT_POLICY_ID`); `sumAutopaySpentTodayUsdc` stays authoritative for the
+   daily cap on both stacks, enforced off chain.
 2. **Pregeneration against a social handle** — the pregenerate recipe documents
    `email` and custom-JWT linked accounts only. If X/Discord usernames cannot be
    a linked account, the `pending_wallets` adoption branch

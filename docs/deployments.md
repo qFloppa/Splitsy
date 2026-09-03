@@ -1,7 +1,7 @@
 # Deployments
 
 One repo, two wallet stacks. `WALLET_PROVIDER` is the only switch, and `circle`
-is the default in `walletProviderName()` (`lib/wallet-provider.ts:42`) — the match
+is the default in `walletProviderName()` (`lib/wallet-provider.ts:52`) — the match
 is exact, so a typo, a capitalised value or an unset variable in a new
 environment all land on the Circle stack rather than the newer one.
 
@@ -39,11 +39,13 @@ default is `'funded'` and no row in it is on `'mandate'`.
 
 `CIRCLE_WEBHOOKS_ENABLED` is one of the Circle variables that must stay absent on
 Preview, and it is absent for a reason of its own rather than as tidiness. Unset,
-`app/api/debts/[id]/pay/route.ts:68` marks a debt paid on the spot, and on this
-stack the id it stores IS the chain hash (`lib/privy-wallet.ts:375`), so
+`app/api/debts/[id]/pay/route.ts:132` marks a debt paid on the spot, and on this
+stack the id it stores IS the chain hash (`lib/privy-wallet.ts:105`), so
 `paid_tx_hash` holds something an explorer resolves. Set it, and — with no Circle
-webhook coming to confirm a Privy transfer — every debt would sit in `settling`
-for ever.
+webhook coming to confirm a Privy transfer — nothing would report a debt paid at
+the moment it settles: the row would sit in `settling` until the debtor pressed Pay
+again, which is when that route re-reads the stored hash and finishes the job
+(`:42-69`). A self-heal on the next press is not a confirmation, so leave it unset.
 
 ---
 
@@ -102,7 +104,7 @@ of those.
 
 **The agent wallet's cap is enforced inside Privy's enclave, per transaction.**
 The policy in `PRIVY_AGENT_POLICY_ID` is attached to the signer at wallet
-**creation** (`lib/privy-wallet.ts:418`), so it applies from the agent's first
+**creation** (`lib/privy-wallet.ts:565`), so it applies from the agent's first
 signature and cannot be argued with by a bug in `decideAutopay`. It caps a
 **single transaction** only. A rolling daily total is expressible in Privy's API —
 an Aggregation over a rolling window, 1-72 hours, function `sum` — but
@@ -113,7 +115,7 @@ both stacks, enforced off chain.
 
 **`privy_wallets` exists only in `splitsy-test`.** The Circle stack never reads
 it: `lib/privy-wallet.ts` is the only importer of `lib/privy-wallets-repo.ts`, and
-it is lazy-imported by `backend()` (`lib/wallet-provider.ts:46`) only when the
+it is lazy-imported by `backend()` (`lib/wallet-provider.ts:65`) only when the
 provider is `privy`.
 
 ---

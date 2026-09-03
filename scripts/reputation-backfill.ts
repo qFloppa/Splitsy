@@ -17,6 +17,15 @@
 //   … scripts/reputation-backfill.ts 870086
 import { createPublicClient, encodeFunctionData, http } from "viem";
 import { arcTestnet } from "viem/chains";
+// CIRCLE-ONLY BY DESIGN, and deliberately NOT re-pointed at lib/wallet-provider.ts:
+// findWalletIdByAddress below calls api.circle.com with CIRCLE_API_KEY directly and
+// has no Privy analogue, so importing the seam here would produce a HALF-migrated
+// script — Privy wallets for the writes, Circle's REST API for the lookup that
+// decides who signs them. It fails closed on a Privy deployment anyway, which has no
+// Circle credentials: getOrCreateArcWallet returns null and the throw below stops it
+// before anything is sent. THE REAL HAZARD is a dev .env.local holding BOTH sets of
+// credentials, where this runs happily against the Circle-side agents while the app
+// it is repairing signs with Privy.
 import { executeContractOnArc, getOrCreateArcWallet } from "../lib/circle-dcw.ts";
 import { IDENTITY_REGISTRY, uploadMetadataToIPFS, type AgentType } from "../lib/erc8004.ts";
 import { createSupabaseServerClient } from "../lib/supabase.ts";

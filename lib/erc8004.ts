@@ -46,7 +46,7 @@ import {
   setFeedbackTx,
 } from "./reputation-repo.ts";
 import { scorePaymentTiming } from "./reputation-score.ts";
-import { executeContract, getOrCreateWallet } from "./wallet-provider.ts";
+import { executeContract, getOrCreateWallet, walletProviderLabel } from "./wallet-provider.ts";
 
 // Arc Testnet ERC-8004 registries (docs.arc.io); env-overridable for redeploys.
 export const IDENTITY_REGISTRY = (process.env.ERC8004_IDENTITY_REGISTRY ??
@@ -371,7 +371,7 @@ export async function uploadMetadataToIPFS(
 // It pays its own gas in USDC and must be faucet-funded once (see README).
 async function getValidatorWallet() {
   const wallet = await getOrCreateWallet("splitsy", "reputation-validator");
-  if (!wallet) throw new Error("Circle is not configured — no validator wallet");
+  if (!wallet) throw new Error(`${walletProviderLabel()} is not configured — no validator wallet`);
   return wallet;
 }
 
@@ -385,7 +385,7 @@ async function getValidatorWallet() {
 // (see README).
 async function getRegistrarWallet() {
   const wallet = await getOrCreateWallet("splitsy", "reputation-registrar");
-  if (!wallet) throw new Error("Circle is not configured — no registrar wallet");
+  if (!wallet) throw new Error(`${walletProviderLabel()} is not configured — no registrar wallet`);
   return wallet;
 }
 
@@ -427,7 +427,7 @@ export async function ensureServiceAgentIdentity(
   agentType: AgentType,
 ): Promise<{ address: string; agentId: string }> {
   const wallet = await getOrCreateWallet("splitsy", refId);
-  if (!wallet) throw new Error(`Circle is not configured — no ${refId} wallet`);
+  if (!wallet) throw new Error(`${walletProviderLabel()} is not configured — no ${refId} wallet`);
   const agentId = await ensureAgent(wallet.address, wallet.walletId, undefined, agentType);
   return { address: wallet.address, agentId };
 }

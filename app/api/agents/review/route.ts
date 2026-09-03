@@ -15,7 +15,7 @@
 // the same verdict shape, and the same fail-closed behaviour.
 import { reviewBill } from "@/lib/autopay-review";
 import type { BillPreimage } from "@/lib/bill-metadata";
-import { getOrCreateWallet } from "@/lib/wallet-provider";
+import { getOrCreateWallet, walletProviderLabel } from "@/lib/wallet-provider";
 import { PRICES } from "@/lib/x402/pricing";
 import { withGateway } from "@/lib/x402/seller";
 
@@ -66,7 +66,7 @@ function getAuditorAddress(): Promise<string | null> {
       // for the process's whole life: every later request would 500 in silence,
       // and repairing the credentials would not fix it because nothing would
       // re-ask Circle.
-      if (!wallet) throw new Error("Circle is not configured; no Auditor wallet to be paid at");
+      if (!wallet) throw new Error(`${walletProviderLabel()} is not configured; no Auditor wallet to be paid at`);
       return wallet.address;
     })
     .catch((err) => {

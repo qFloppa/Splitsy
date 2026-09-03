@@ -18,7 +18,7 @@ export const maxDuration = 300;
 // backend's default, because the two backends default differently and this route
 // is the one that budgeted for the longer wait. Circle already defaults to 60s
 // (lib/circle-dcw.ts:101), so naming it changes nothing on that stack; the Privy
-// backend defaults to 8s to survive Vercel's unraised budget elsewhere, and
+// backend defaults to 6s to survive Vercel's unraised budget elsewhere, and
 // inheriting that here would call a slow-but-successful leg indeterminate inside
 // a route that has 300s to spend — the mid-batch case the comment above names.
 const LEG_POLL_MS = 60_000;
