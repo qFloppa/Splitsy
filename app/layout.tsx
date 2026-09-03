@@ -120,15 +120,24 @@ export default async function RootLayout({
         {/* Which wallet stack this deployment runs, for a visitor who cannot tell
             two hostnames apart. Set in Vercel's Preview environment and unset in
             Production, where this renders nothing — so forgetting it can only
-            under-warn a preview visitor, never mislabel the live site.
-            docs/deployments.md carries what NEXT_PUBLIC_ inlining does to it.
+            under-warn a preview visitor, never mislabel the live site. What the
+            variable's scope does and does not protect: docs/deployments.md.
+
+            role="note", not "status": a live region announces CHANGES after it
+            registers, so content present at first paint is generally not read out
+            at all, and a client-side navigation can announce it spuriously. This
+            never changes after paint, so its whole job is done by being plain text
+            first in reading order. No data-tone either — every [data-tone] rule in
+            globals.css is scoped inside .lp-paper / .bill-poster / .pay-note /
+            .bill-verify, so on <body> the attribute would style nothing while
+            looking like it did.
 
             In normal flow rather than fixed: a fixed bar would have to outrank
             .lp-masthead (sticky, z-index 40) and would then cover it, and the
             settle deck's header, on every route. A row instead costs only the
             settle/iou tabs — whose shells are 100dvh — one short page scroll. */}
         {process.env.NEXT_PUBLIC_STACK_LABEL ? (
-          <div className="settle-label" role="status" data-tone="warn" style={{ textAlign: "center", padding: "0.4rem" }}>
+          <div className="settle-label" role="note" style={{ textAlign: "center", padding: "0.4rem" }}>
             {process.env.NEXT_PUBLIC_STACK_LABEL}
           </div>
         ) : null}

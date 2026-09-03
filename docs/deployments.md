@@ -64,9 +64,14 @@ chunk for `lib/supabase.ts` carries its Supabase URL as a literal and no longer
 mentions `NEXT_PUBLIC_SUPABASE_URL` at all. When it is **not** set, the reference
 survives verbatim — the root layout's SSR chunk still contains
 `process.env.NEXT_PUBLIC_STACK_LABEL ? … : null` and evaluates it per request,
-which it can because the layout renders dynamically. So: unset renders nothing
-either way, and a changed value wants a redeploy, because the inlined case cannot
-see a new one.
+which it can because the layout renders dynamically.
+
+Two consequences worth stating separately, because conflating them invents a
+safety property that does not exist. A **set** value is frozen into the build that
+saw it, so changing one needs a redeploy. An **unset** one leaves a live
+`process.env` read behind, so the age of a build is **not** what keeps a banner
+off — only the variable's absence from that environment is. "We never rebuilt
+Production" is not a defence against a mis-scoped label.
 
 ---
 

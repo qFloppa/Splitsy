@@ -1,6 +1,9 @@
 // Which wallet backend this deployment signs with. Two live implementations,
-// selected per deployment rather than per user: testnet.splitsy.xyz runs Circle
-// DCWs, splitsy.xyz runs Privy. See
+// selected per deployment rather than per user. WHICH HOST RUNS WHICH STACK IS
+// docs/deployments.md, deliberately not named here: hostnames move — handing
+// splitsy.xyz to the Privy stack is Task 8 and has not happened — and a comment
+// that names them goes stale silently, which is worse than one that names none,
+// because this is the first file someone opens to ask. Design:
 // docs/superpowers/specs/2026-09-01-privy-wallet-stack-design.md
 //
 // Backends are LAZY-IMPORTED so a request only ever loads the SDK it needs, and
