@@ -15,6 +15,7 @@
 // call shape below is copied from it.
 import { NotFoundError, PrivyClient, isEmbeddedWalletLinkedAccount, type User } from "@privy-io/node";
 import {
+  TransactionNotFoundError,
   TransactionReceiptNotFoundError,
   WaitForTransactionReceiptTimeoutError,
   createPublicClient,
@@ -24,6 +25,7 @@ import {
   getAbiItem,
   getAddress,
   http,
+  keccak256,
   numberToHex,
   parseTransaction,
   parseUnits,
@@ -34,6 +36,7 @@ import { getPrivyWallet, insertPrivyWallet } from "./privy-wallets-repo.ts";
 import {
   InsufficientFundsError,
   type ProviderWallet,
+  type TxFate,
   type TxResult,
   type WalletBackend,
   type WalletTx,
@@ -73,6 +76,33 @@ const publicClient = createPublicClient({ chain: arcTestnet, transport: http(ARC
 
 export function receiptToState(status: "success" | "reverted"): "COMPLETE" | "FAILED" {
   return status === "success" ? "COMPLETE" : "FAILED";
+}
+
+// A MINED RECEIPT IS NOT A SUCCESS. Every return path out of send() goes through
+// here, which is the point: the Circle backend THROWS on a failed execution
+// (lib/circle-dcw.ts:158-162) and its callers are written against that throw. Only
+// three of them read `state` at all — app/api/wallet/send, app/api/debts/[id]/pay
+// and lib/user-agent.ts:143, the last being the one that says so out loud. EIGHT
+// answered `{ok: true, txHash}` for a transaction that reverted, and
+// app/api/onchain-bills/[billId]/pay/route.ts also queued an ERC-8004
+// `paid_in_full` score, which resolveScoringContext (lib/erc8004.ts:635) commits on
+// chain reading the receipt for its block timestamp and never for its status.
+// Reachable with nothing exotic: Arc charges gas in USDC, so a wallet funded to
+// exactly its share pays the separate approve and then reverts on payDebt.
+//
+// UNTAGGED, exactly as Circle leaves a FAILED. A revert burned gas and moved no
+// USDC, so `broadcast` — "this may yet settle, count it as spent" — would be a lie:
+// app/api/agents/autopay/route.ts:645-651 names this case as the one that must not
+// charge the daily cap, and app/api/debts/[id]/pay/route.ts must let the user try
+// again rather than park the debt in `settling`.
+//
+// receiptToState is left exactly as it was and stays the mapper for a SUCCESS
+// (lib/privy-wallet.test.ts:14): the throw belongs to the send, not to the mapping.
+export function settledOrThrow(hash: `0x${string}`, status: "success" | "reverted"): TxResult {
+  if (status === "reverted") {
+    throw new Error(`Privy tx ${hash} reverted on chain — it burned gas and moved no USDC`);
+  }
+  return { id: hash, state: receiptToState(status), txHash: hash };
 }
 
 export type TransferLog = {
@@ -227,7 +257,20 @@ async function signAndBroadcast(
         throw new Error("Privy returned a signed transaction with no nonce — refusing to broadcast");
       }
 
-      return { hash: await publicClient.sendRawTransaction({ serializedTransaction }), from, nonce };
+      // THE BROADCAST IS THE ONLY CALL HERE WHOSE FAILURE IS AMBIGUOUS, so it is
+      // the only one that hands the caller something to probe with. Everything
+      // above it — the gas estimate, Privy's signature, the recovery check, the
+      // nonce parse — fails with no bytes on the wire, and letting one of those
+      // read as "this may have moved money" would park a payment as in-flight for
+      // a send that never left. keccak256 of the signed bytes IS the transaction
+      // hash, so naming it needs no answer from the node.
+      try {
+        return { hash: await publicClient.sendRawTransaction({ serializedTransaction }), from, nonce };
+      } catch (e) {
+        throw Object.assign(e as Error, {
+          sent: { hash: keccak256(serializedTransaction), from, nonce } satisfies Sent,
+        });
+      }
     } catch (e) {
       if (attempt >= SEND_ATTEMPTS || !isNonceCollision(e)) throw e;
     }
@@ -240,9 +283,10 @@ async function signAndBroadcast(
 // unrecoverable direction. lib/autopay.ts:250 turns an untagged throw into
 // `decision: "skip", amountUsdc: 0` — handing back a daily cap that was really
 // spent, so two 8 USDC bills both pay against a 10 USDC cap — and
-// app/api/debts/[id]/pay/route.ts:47-58 answers 502 and leaves the debt pending, so
-// the user presses Pay again and a bare transfer executes twice. So it demands
-// PROOF, never absence:
+// app/api/debts/[id]/pay/route.ts:114-117 answers 502 and leaves the debt pending, so
+// the user presses Pay again and a bare transfer executes twice. (Its TAGGED sibling
+// no longer does that: :98-113 parks the debt as `settling` instead. Which is exactly
+// why the untagged answer has to be earned.) So it demands PROOF, never absence:
 //
 //   mined         a receipt turned up after all. Beats every other signal — the
 //                 nonce being consumed by OUR OWN transaction must never read as
@@ -310,6 +354,87 @@ async function probeChain(sent: Sent, err: unknown): Promise<Outcome> {
   return receipt ? { verdict: "mined", receipt } : { verdict: "dropped", receipt: null };
 }
 
+// The same question probeChain asks, for a caller that was never inside a wait:
+// given a hash, did this mine, revert, or die?
+//
+// PURE, like verdictAfterWait, and on the same doctrine. A receipt is proof. A
+// consumed nonce with no receipt of ours is proof that the slot went to different
+// bytes, so this transaction can never mine. NOTHING ELSE IS PROOF OF ANYTHING, and
+// "unknown" is what that honestly reads as — not a failure. The receipt is read
+// AFTER the nonce (see readFate), which is what lets it beat it: a receipt never
+// disappears, so one that mined between the two reads reads as mined, never as dead.
+export function fateFromReads(receipt: "success" | "reverted" | null, nonceConsumed: boolean): TxFate {
+  if (receipt) return receipt;
+  return nonceConsumed ? "dropped" : "unknown";
+}
+
+// The reads behind that answer, on one budget, for the two callers holding a hash
+// and no receipt: app/api/debts/[id]/pay/route.ts re-reading the transfer it parked
+// in `settling` (through the seam, which is what keeps the circle stack out of
+// here), and send() below after a broadcast whose ANSWER was lost.
+//
+// NEVER THROWS. Both callers are deciding what to do about money, and an unreadable
+// chain is not evidence: every failure — an RPC error, reads that outrun PROBE_MS —
+// comes back "unknown", which is the answer that changes nothing.
+//
+// `known` is the (from, nonce) the caller signed, which only send() has. Without it
+// the nonce comes from the transaction itself: a node still holding it, mined or
+// pending, reports both fields, and a node that never heard of it leaves nothing to
+// argue from — which is "unknown", not "dead".
+//
+// Deliberately not probeChain rebuilt. That one knows its own wait's error and needs
+// the timeout distinction; this one has no wait. What they share is the rule above
+// and the second fresh read below.
+export async function fateOfTx(hash: `0x${string}`, known?: Sent): Promise<TxFate> {
+  return Promise.race([readFate(hash, known), rejectAfter(PROBE_MS)]).catch(() => "unknown" as const);
+}
+
+const receiptStatus = (hash: `0x${string}`) =>
+  publicClient.getTransactionReceipt({ hash }).then(
+    (receipt) => receipt.status,
+    (e) => {
+      if (e instanceof TransactionReceiptNotFoundError) return null;
+      throw e;
+    },
+  );
+
+// from + nonce out of the transaction itself. Not-found is an ANSWER rather than an
+// error — the node has no record of these bytes — but it proves nothing on its own,
+// since another node's pool may still hold them, so it leaves the fate unknown.
+const txClaim = (hash: `0x${string}`): Promise<Sent | null> =>
+  publicClient.getTransaction({ hash }).then(
+    (tx) => ({ hash, from: tx.from, nonce: tx.nonce }),
+    (e) => {
+      if (e instanceof TransactionNotFoundError) return null;
+      throw e;
+    },
+  );
+
+async function readFate(hash: `0x${string}`, known?: Sent): Promise<TxFate> {
+  const claim = known ?? (await txClaim(hash));
+  // NONCE FIRST, RECEIPT SECOND — probeChain's ordering, for probeChain's reason.
+  const nonceConsumed =
+    claim !== null &&
+    (await publicClient.getTransactionCount({ address: claim.from, blockTag: "latest" })) > claim.nonce;
+
+  const fate = fateFromReads(await receiptStatus(hash), nonceConsumed);
+  if (fate !== "dropped") return fate;
+  // "dropped" is the one answer that lets a caller pay again, so it gets ONE MORE,
+  // FRESH receipt read before anybody acts on it: a load-balanced endpoint can serve
+  // the nonce and the receipt from two different nodes, and a receipt turning up
+  // here wins — better a settlement counted twice than a debt paid twice.
+  return fateFromReads(await receiptStatus(hash), true);
+}
+
+// The tagged throw for "broadcast, and nothing proves what happened next". Read
+// through isBroadcast and broadcastTxHash (lib/wallet-provider.ts), which is how
+// app/api/debts/[id]/pay/route.ts parks the debt instead of offering a second Pay.
+const indeterminate = (hash: `0x${string}`, cause: unknown) =>
+  Object.assign(new Error(`Privy tx indeterminate — broadcast but unconfirmed: ${hash}`, { cause }), {
+    broadcast: true as const,
+    txHash: hash,
+  });
+
 // One contract write, waited to a receipt.
 //
 // A THROW AFTER THE BROADCAST IS INDETERMINATE, NOT "DIDN'T HAPPEN" — but on Arc a
@@ -318,6 +443,14 @@ async function probeChain(sent: Sent, err: unknown): Promise<Outcome> {
 // transactions Arc then DISCARDS: the loser of a same-nonce race and a gapped nonce
 // both come back accepted and then vanish. So a wait that ran out asks the chain
 // which of those happened, and probeChain decides what it means.
+//
+// THE BROADCAST ITSELF FAILING IS THE SAME PROBLEM ONE LAYER UP, and gets the same
+// treatment: eth_sendRawTransaction can take the bytes and lose the answer, so a
+// throw from there is probed (fateOfTx) rather than reported as a send that never
+// happened. Only the reads decide — nothing here reasons from the error's text.
+//
+// A MINED RECEIPT IS STILL NOT A SUCCESS: every return goes through settledOrThrow,
+// so a revert leaves here as a throw exactly as it does on the Circle backend.
 //
 // checkReplacement is OFF, against viem's default. With it on, once the wait has
 // resolved our hash — and Arc serves an unmined transaction by hash for ~1.2s, so it
@@ -357,10 +490,28 @@ async function send(
     // the broadcast. Same detection the Circle backend does at lib/circle-dcw.ts:75.
     const raw = e instanceof Error ? e.message : JSON.stringify(e);
     if (/insufficient|not enough|balance|exceeds/i.test(raw)) throw new InsufficientFundsError();
+
+    // A BROADCAST THAT DID NOT ANSWER IS NOT A BROADCAST THAT DID NOT HAPPEN. The
+    // bytes can be in the pool already — a lost response, a proxy 502, a rate
+    // limiter that fired after the node took them — and the throw below reads to
+    // every caller as "nothing moved", which is the mistake the verdict logic
+    // fixed one layer down. So the chain is asked, by the same helper, and only a
+    // PROVEN answer changes the story.
+    const attempted = (e as { sent?: Sent }).sent;
+    if (attempted) {
+      const fate = await fateOfTx(attempted.hash, attempted);
+      // The node had it all along: the receipt decides, exactly as on the ordinary
+      // path above.
+      if (fate === "success" || fate === "reverted") return settledOrThrow(attempted.hash, fate);
+      // "dropped" is not here on purpose — it proves the nonce went to different
+      // bytes, so these can never mine, and the plain failure below is the truth.
+      if (fate === "unknown") throw indeterminate(attempted.hash, e);
+    }
+
     // Matched on the full text above, reported without it: viem inlines the RPC URL,
     // and getUrl only strips basic-auth credentials, not a key in the path or query.
     // ARC_TESTNET_RPC is env-driven precisely so it can be a keyed endpoint, and
-    // app/api/debts/[id]/pay/route.ts:53-57 hands this message to the caller.
+    // app/api/debts/[id]/pay/route.ts:114-117 hands this message to the caller.
     throw new Error(`Privy send failed: ${raw.replace(/\nURL: \S+/g, "")}`);
   }
 
@@ -372,7 +523,7 @@ async function send(
       pollingInterval: 1_000,
       checkReplacement: false,
     });
-    return { id: hash, state: receiptToState(receipt.status), txHash: hash };
+    return settledOrThrow(hash, receipt.status);
   } catch (err) {
     // Probed only when the wait actually ran out: for any other error the answer is
     // fixed, and two more calls on an RPC that just failed would decide nothing. The
@@ -386,7 +537,7 @@ async function send(
         : INDETERMINATE;
 
     if (outcome.verdict === "mined" && outcome.receipt) {
-      return { id: hash, state: receiptToState(outcome.receipt.status), txHash: hash };
+      return settledOrThrow(hash, outcome.receipt.status);
     }
     if (outcome.verdict === "dropped") {
       throw new Error(
@@ -394,10 +545,7 @@ async function send(
         { cause: err },
       );
     }
-    throw Object.assign(new Error(`Privy tx indeterminate — broadcast but unconfirmed: ${hash}`, { cause: err }), {
-      broadcast: true as const,
-      txHash: hash,
-    });
+    throw indeterminate(hash, err);
   }
 }
 

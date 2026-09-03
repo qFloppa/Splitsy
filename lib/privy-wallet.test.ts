@@ -1,7 +1,15 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { WaitForTransactionReceiptTimeoutError } from "viem";
-import { isNonceCollision, logsToWalletTxs, receiptToState, verdictAfterWait } from "./privy-wallet.ts";
+import {
+  fateFromReads,
+  isNonceCollision,
+  logsToWalletTxs,
+  receiptToState,
+  settledOrThrow,
+  verdictAfterWait,
+} from "./privy-wallet.ts";
+import { isBroadcast } from "./wallet-provider.ts";
 
 const SELF = "0x1111111111111111111111111111111111111111";
 const OTHER = "0x2222222222222222222222222222222222222222";
@@ -14,6 +22,29 @@ const log = (from: string, to: string, value: bigint, block: bigint, hash: strin
 test("a reverted receipt is FAILED, so callers checking Circle's states still work", () => {
   assert.equal(receiptToState("success"), "COMPLETE");
   assert.equal(receiptToState("reverted"), "FAILED");
+});
+
+const MINED = `0x${"e".repeat(64)}` as const;
+
+// A MINED RECEIPT IS NOT A SUCCESS, and handing one back as `state: "FAILED"` is
+// only safe if every caller reads state. Three of them do; eight others answered
+// `{ok: true, txHash}` for a reverted transaction, one of those committing an
+// ERC-8004 paid_in_full score against it. Circle throws here
+// (lib/circle-dcw.ts:158-162) and this is what makes both backends throw alike.
+test("a reverted receipt throws rather than being handed back as a state", () => {
+  assert.deepEqual(settledOrThrow(MINED, "success"), { id: MINED, state: "COMPLETE", txHash: MINED });
+  assert.throws(
+    () => settledOrThrow(MINED, "reverted"),
+    (err: unknown) =>
+      err instanceof Error &&
+      err.message.includes(MINED) &&
+      /revert/i.test(err.message) &&
+      // UNTAGGED, exactly as Circle leaves a FAILED: a revert burned gas and moved
+      // no USDC, so tagging it would charge the day's autopay cap for money that
+      // never left (app/api/agents/autopay/route.ts:645-651) and would park a debt
+      // in `settling` when the honest answer is "try again".
+      !isBroadcast(err),
+  );
 });
 
 test("direction is read from our own address, not from the log order", () => {
@@ -97,4 +128,24 @@ test("anything but a timeout decides nothing — the wait never ran out", () => 
   ]) {
     assert.equal(verdictAfterWait(err, true, false), "indeterminate", `${err} must not decide dropped`);
   }
+});
+
+// The same question asked from OUTSIDE a wait, by the two callers that hold a hash
+// and no receipt: app/api/debts/[id]/pay/route.ts re-reading the transfer it parked
+// in `settling` minutes ago, and send() after a broadcast whose ANSWER was lost.
+// Same doctrine as verdictAfterWait — a receipt is proof, a consumed nonce with no
+// receipt of ours is proof, and everything else is "unknown", the answer that
+// invents neither a settlement nor a failure.
+test("a receipt decides; a consumed nonce with no receipt is the only other proof", () => {
+  assert.equal(fateFromReads("success", false), "success");
+  assert.equal(fateFromReads("reverted", false), "reverted");
+  // The receipt is read AFTER the nonce, so it beats it however that read came out.
+  assert.equal(fateFromReads("success", true), "success");
+  assert.equal(fateFromReads("reverted", true), "reverted");
+  // The slot went to different bytes, so ours can never mine.
+  assert.equal(fateFromReads(null, true), "dropped");
+  // Unmined at a nonce nobody has spent: a perfectly live transaction looks like
+  // this, and so does one the node never accepted. Neither is provable, so neither
+  // is claimed.
+  assert.equal(fateFromReads(null, false), "unknown");
 });

@@ -125,14 +125,17 @@ export async function markDebtPaid(id: string, txRef: string): Promise<void> {
   }
 }
 
-// Transfer accepted by Circle but not yet COMPLETE — the webhook flips it.
-// paid_tx_hash holds the Circle transaction id (not the on-chain hash) so the
-// webhook can find the debt by the tx id in the notification.
-export async function markDebtSettling(id: string, circleTxId: string): Promise<void> {
+// Transfer accepted but not yet confirmed. WHAT RESOLVES IT DIFFERS PER STACK, and
+// so does what this column holds. On the circle stack it is the Circle transaction
+// id (not the on-chain hash) so /api/webhooks/circle can find the debt by the id in
+// the notification. On the privy stack there is no webhook and the value IS the chain
+// hash, which is what lets app/api/debts/[id]/pay/route.ts re-read it on the next
+// press instead of leaving the row stuck — looksLikeTxHash tells the two apart.
+export async function markDebtSettling(id: string, txRef: string): Promise<void> {
   const client = requireClient();
   const { error } = await client
     .from("bill_debts")
-    .update({ status: "settling", paid_tx_hash: circleTxId, paid_at: null })
+    .update({ status: "settling", paid_tx_hash: txRef, paid_at: null })
     .eq("id", id);
   if (error) {
     throw new Error(`Failed to mark debt settling: ${error.message}`);
@@ -153,15 +156,17 @@ export async function confirmDebtPaidByTxId(circleTxId: string): Promise<void> {
   }
 }
 
-// Webhook: the transfer FAILED/DENIED/CANCELLED after we accepted it. Put the
-// debt back so the debtor can retry. Clears the tx ref so a stale notification
-// for the dead tx can't match again after a successful retry.
-export async function revertDebtByTxId(circleTxId: string): Promise<void> {
+// The transfer is dead: FAILED/DENIED/CANCELLED at Circle's webhook, or — on the
+// privy stack, where app/api/debts/[id]/pay/route.ts calls this itself — a receipt
+// that reverted or a nonce that went to other bytes. Put the debt back so the debtor
+// can retry. Clears the tx ref so a stale notification for the dead tx can't match
+// again after a successful retry.
+export async function revertDebtByTxId(txRef: string): Promise<void> {
   const client = requireClient();
   const { error } = await client
     .from("bill_debts")
     .update({ status: "pending", paid_tx_hash: null, paid_at: null })
-    .eq("paid_tx_hash", circleTxId)
+    .eq("paid_tx_hash", txRef)
     .neq("status", "paid"); // COMPLETE and FAILED are exclusive; never un-pay on a stray event
   if (error) {
     throw new Error(`Failed to revert debt: ${error.message}`);
