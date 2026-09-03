@@ -117,6 +117,21 @@ export default async function RootLayout({
         />
       </head>
       <body className="min-h-full flex flex-col">
+        {/* Which wallet stack this deployment runs, for a visitor who cannot tell
+            two hostnames apart. Set in Vercel's Preview environment and unset in
+            Production, where this renders nothing — so forgetting it can only
+            under-warn a preview visitor, never mislabel the live site.
+            docs/deployments.md carries what NEXT_PUBLIC_ inlining does to it.
+
+            In normal flow rather than fixed: a fixed bar would have to outrank
+            .lp-masthead (sticky, z-index 40) and would then cover it, and the
+            settle deck's header, on every route. A row instead costs only the
+            settle/iou tabs — whose shells are 100dvh — one short page scroll. */}
+        {process.env.NEXT_PUBLIC_STACK_LABEL ? (
+          <div className="settle-label" role="status" data-tone="warn" style={{ textAlign: "center", padding: "0.4rem" }}>
+            {process.env.NEXT_PUBLIC_STACK_LABEL}
+          </div>
+        ) : null}
         <HeroBackground />
         <WagmiProviders>{children}</WagmiProviders>
         <SiteFooter />
