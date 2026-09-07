@@ -163,10 +163,14 @@
   --pay-poster-fg: var(--paper-50);
   --pay-poster-dim: rgba(247, 243, 234, 0.6);
   --pay-poster-rule: rgba(247, 243, 234, 0.18);
-  /* Four points stronger than light's 22%. Dark's --accent-strong is a pale sky
-     (#8fd0ff, luminance ~0.59) where light's is a deep navy, so the same alpha
-     over the ink ground lands a visibly fainter hairline than the 18% paper rule
-     beside it — this is the correction that keeps the two reading as one weight. */
+  /* Four points over light's 22%, and it buys a slightly stronger rule rather
+     than a matched one. Composited over the ink ground, 22% blue lands at
+     1.65:1 — exactly the achromatic 18% paper rule beside it — and 26% at
+     1.86:1. The parity is what gets rejected here: dark's accent is a pale sky
+     (#8fd0ff) against a near-black ground, so a keyline that measures the same
+     as the neutral divider reads as one, and the colour is the whole point of
+     the mark. Light does not need the correction because its navy on cream sits
+     a step above its own 14% divider at 22% already. */
   --pay-poster-keyline: color-mix(in srgb, var(--accent-strong) 26%, transparent);
   --pay-poster-settled: #0d2a1f;
   --pay-poster-fill: var(--arc-cyan);
