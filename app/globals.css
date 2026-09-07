@@ -3891,6 +3891,8 @@ body:has(.app-shell[data-app-tab="iou"]) .site-footer {
    the control that moves money, so its rest state sits at the lowest mix that
    still clears 4.5:1 on --pay-poster-bg. Faded, never invisible. */
 .settle-action {
+  /* The two rules below are pinned to this box. */
+  position: relative;
   font-family: var(--font-clash), system-ui, sans-serif;
   font-weight: 300;
   font-size: clamp(2.2rem, 1rem + 3.2vw, 4.4rem);
@@ -3927,6 +3929,61 @@ body:has(.app-shell[data-app-tab="iou"]) .site-footer {
 
 .settle-action:disabled { opacity: 0.4; cursor: not-allowed; }
 
+/* ── The rule under the word ───────────────────────────────────────────────────
+   Borderless and display-sized is what makes this the page's one big word. It is
+   also what makes it read as a heading: at rest the only thing separating "scan
+   receipt ›" from the display type it sits under was a chevron, and on a poster
+   of ink-on-cream type there is no colour left to say the difference either.
+
+   So it takes the mark this file already uses for state — a rule under the token,
+   from the left, in currentColor (.iou-verb's focus hairline, .bill-toggle's ON
+   rule) — at the register a display word needs. Two rules on one baseline: a
+   hairline always drawn at the page's own divider weight, and a 2px rule in the
+   word's ink that sweeps across it as you arrive. They share their lower edge, so
+   the mark reads as inking and thickening in place rather than as a second line
+   growing under the first.
+
+   Against the tracking that tightens on the same easing, the word pulls together
+   while the rule runs out from under it — one gesture, two directions.
+
+   Hung 0.04em below the content box: Clash's deepest tail (the g) runs to 0.18em
+   under the baseline, which is about where a line-height:1 box ends, so a rule at
+   bottom:0 would grate against "Start splitting". Nothing is added to the layout
+   either way, and 0.04em is well inside the room the 0.6em focus ring already
+   needs — see the clip-path note above, which opens for exactly that reason. */
+.settle-action::before,
+.settle-action::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -0.04em;
+  height: 1px;
+  pointer-events: none;
+}
+
+.settle-action::before { background: var(--pay-poster-rule); }
+
+.settle-action::after {
+  height: 2px;
+  background: currentColor;
+  transform: scaleX(0);
+  transform-origin: left;
+  transition: transform var(--dur-2) var(--ease-out);
+}
+
+/* Same two exclusions the colour hover carries, for the same reason: the settled
+   variant is disabled by aria so it stays focusable, and it must not light up. */
+.settle-action:hover:not(:disabled, [aria-disabled="true"])::after,
+.settle-action:focus-visible:not([aria-disabled="true"])::after {
+  transform: scaleX(1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* The rule is the affordance, so it still inks — it just stops sweeping. */
+  .settle-action::after { transition: none; }
+}
+
 /* The dead control. Full opacity, not the 0.4 a merely-unavailable button gets:
    this one is not waiting for anything, it is the receipt. Default cursor
    because there is nothing here to refuse — "not-allowed" over a finished
@@ -3940,6 +3997,12 @@ body:has(.app-shell[data-app-tab="iou"]) .site-footer {
   color: var(--success);
   letter-spacing: 0.1em;
 }
+
+/* And the rules go with the cursor. There is nothing here to press, so a mark
+   whose whole job is to say "press this" would be the one thing on the receipt
+   that isn't true. */
+.settle-action[data-settled]::before,
+.settle-action[data-settled]::after { content: none; }
 
 .settle-tick {
   display: inline-flex;
@@ -3973,6 +4036,10 @@ body:has(.app-shell[data-app-tab="iou"]) .site-footer {
 
 @media (prefers-contrast: more) {
   .settle-action { color: var(--pay-poster-fg); }
+  /* The keylines come up with the type they belong to. Not to currentColor: full
+     ink is what .bill-toggle's ::after uses to say a setting is ON, and a dormant
+     rule that borrowed it would say so too. */
+  :is(.settle-action, .iou-provider)::before { background: var(--pay-poster-dim); }
 }
 
 .settle-triggers {
@@ -4644,6 +4711,8 @@ select.settle-trigger option {
    a picker that is always on screen would be a form control in a page that has
    worked to have none. Cycles rather than opens a menu: there are two answers. */
 .iou-provider {
+  /* The keyline below is pinned to this box. */
+  position: relative;
   font-family: var(--font-clash), system-ui, sans-serif;
   font-size: 0.72rem;
   font-weight: 500;
@@ -4651,18 +4720,71 @@ select.settle-trigger option {
   text-transform: uppercase;
   border: 0;
   background: none;
-  padding: 0.2rem 0;
+  /* 0.3rem at the foot is the keyline's room. It is the figure .bill-toggle
+     already reserved for its state rule, kept here so that every control on a
+     rail — toggle or not — draws its mark on one line. */
+  padding: 0.2rem 0 0.3rem;
   cursor: pointer;
-  color: var(--pay-poster-dim);
+  /* One step under full ink: the mix the poster already uses where type is
+     content rather than apparatus (.bill-payer-name, the foot's own action). A
+     label sits at --pay-poster-dim, and these two have to be tellable apart
+     across a rail — before either one is hovered. */
+  color: color-mix(in srgb, var(--pay-poster-fg) 82%, var(--pay-poster-bg));
   transition: color var(--dur-1) var(--ease-out);
 }
 
 .iou-provider:hover:not(:disabled), .iou-provider:focus-visible { color: var(--pay-poster-fg); }
 .iou-provider:focus-visible { outline: 1px solid currentColor; outline-offset: 0.3em; }
 
+/* ── The keyline ───────────────────────────────────────────────────────────────
+   What tells a control from a label. These two were the same declaration written
+   twice — .settle-label is this same face at this same 0.72rem, this same 500
+   weight and this same 0.18em tracking — so 71 controls and 172 labels spoke in
+   one voice, and the only thing that separated them was a cursor you had to
+   already be over to see.
+
+   The control keeps the rail's typography and takes a hairline that is always
+   drawn under it, at --pay-poster-rule: the weight every divider on this page is
+   drawn at, so a rail of these reads as ruled caps and not as a row of underlined
+   links. It brightens as you reach it, and goes to full ink under the finger.
+
+   Hover deliberately stops short of that full strength. .bill-toggle's ::after
+   lands on this same line at currentColor to say a setting is ON — and the view
+   rail's at 2px to say which document you are reading — so a hovered word that
+   went all the way would be indistinguishable from a switched-on one.
+
+   Absolutely positioned, which keeps it out of flow in the inline-flex variants
+   (.site-footer-out, .bill-verify-toggle, .bill-live-copy) where it would
+   otherwise land in the gap as a flex item. The bottom padding above is the only
+   room it takes. */
+.iou-provider::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 1px;
+  background: var(--pay-poster-rule);
+  transition: background-color var(--dur-1) var(--ease-out);
+  pointer-events: none;
+}
+
+.iou-provider:hover:not(:disabled)::before,
+.iou-provider:focus-visible::before {
+  background: color-mix(in srgb, var(--pay-poster-fg) 55%, var(--pay-poster-bg));
+}
+
+/* No box to depress, so the press is the rule going to ink — the one state in the
+   set that needs no easing, because a press is not a transition. */
+.iou-provider:active:not(:disabled)::before { background: currentColor; }
+
 /* One identity means the footnote is a label, not a control — it still says
-   which wallet signs, it just has nothing to switch to. */
+   which wallet signs, it just has nothing to switch to. So the keyline goes with
+   the pointer: a mark promising a press this button will never answer is worse
+   than no mark at all. (The other kind of disabled — a setting waiting on a due
+   date — is still a control, and takes its hairline back below.) */
 .iou-provider:disabled { cursor: default; }
+.iou-provider:disabled::before { content: none; }
 
 /* Connect column: wallet on top, social below, when no identity is active */
 .iou-connect-row {
@@ -5391,14 +5513,12 @@ select.settle-trigger option {
   gap: 0.55rem;
 }
 
-/* The toggles are .iou-provider (caps, borderless, cycles on click) plus a rule
-   that draws itself when the option is on. Nothing else changes — same size,
-   same position — so the rail never reflows as options are switched. */
-.bill-toggle {
-  position: relative;
-  padding-bottom: 0.3rem;
-}
-
+/* A toggle is .iou-provider — caps, borderless, keylined, cycles on click — and
+   the one thing it adds is a second rule on that keyline, in ink, that draws
+   itself when the option is on. Nothing else changes: same size, same position,
+   same 0.3rem of room the keyline already reserved, so the rail never reflows as
+   options are switched. The dormant hairline is inherited, which is why nothing
+   here declares `position` or padding any more. */
 .bill-toggle::after {
   content: "";
   position: absolute;
@@ -5426,8 +5546,12 @@ select.settle-trigger option {
 
 /* Unavailable, not invisible. .iou-provider's rest colour is already receded, so
    the 0.4 a disabled control usually takes would drop this under the contrast
-   floor — and a control nobody can read is one nobody can ask about. */
+   floor — and a control nobody can read is one nobody can ask about. Its keyline
+   comes back for the same reason: this setting is unavailable, not absent, and a
+   word that has quietly stopped looking like a control is one you stop looking
+   for when the due date finally makes it available. */
 .bill-toggle:disabled { opacity: 0.62; }
+.bill-toggle:disabled::before { content: ""; }
 
 /* Two tiers on one marks rail (dashboard masthead). Which of the two documents
    you are reading — analytics or net settlement — is not the same kind of
@@ -5631,6 +5755,11 @@ select.settle-trigger option {
   margin-bottom: 0.3rem;
   padding: 0;
 }
+
+/* And no keyline: the rule under a word says the word is the control, which is
+   the whole grammar of this rail. Under a glyph it says nothing — the glyph is
+   already a mark — and reads as a stray underline. */
+.app-icon::before { content: none; }
 
 /* Something is wrong with the connection, said at the rail's size. A warn tone,
    not a red box: the control is still the way to fix it, so it stays a word you
