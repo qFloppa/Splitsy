@@ -60,6 +60,20 @@
      takes it to ~8:1. Dark's ink ground never had the problem. */
   --pay-poster-dim: rgba(7, 20, 33, 0.75);
   --pay-poster-rule: rgba(7, 20, 33, 0.14);
+  /* --pay-poster-rule's interactive twin: the hairline a control draws under
+     itself, in the one colour on this page that means "you can press this".
+     --accent-strong rather than --accent, and only ever on the apparatus: the
+     brand blue at full strength is what the meters fill with, and a page whose
+     type went that colour would read as a page of links.
+
+     Mixed with `transparent`, not with a ground — the same reason this token's
+     achromatic sibling above is a flat rgba(). This rule is drawn on four
+     different grounds (the poster's, --background under .bill-poster and the
+     footer, the frosted masthead, the demo plate), and a mix against
+     --pay-poster-bg would bake in :root's copy of a token half those surfaces
+     override locally — see the footer's note on exactly that trap. Alpha
+     composites correctly on all four. */
+  --pay-poster-keyline: color-mix(in srgb, var(--accent-strong) 22%, transparent);
   --pay-poster-settled: #dceee3;
   /* arc-cyan is near-invisible on the light poster; blue carries it there. */
   --pay-poster-fill: var(--accent);
@@ -149,6 +163,11 @@
   --pay-poster-fg: var(--paper-50);
   --pay-poster-dim: rgba(247, 243, 234, 0.6);
   --pay-poster-rule: rgba(247, 243, 234, 0.18);
+  /* Four points stronger than light's 22%. Dark's --accent-strong is a pale sky
+     (#8fd0ff, luminance ~0.59) where light's is a deep navy, so the same alpha
+     over the ink ground lands a visibly fainter hairline than the 18% paper rule
+     beside it — this is the correction that keeps the two reading as one weight. */
+  --pay-poster-keyline: color-mix(in srgb, var(--accent-strong) 26%, transparent);
   --pay-poster-settled: #0d2a1f;
   --pay-poster-fill: var(--arc-cyan);
 
@@ -3914,14 +3933,22 @@ body:has(.app-shell[data-app-tab="iou"]) .site-footer {
 }
 
 /* aria-disabled, not disabled, on the settled variant — so it stays focusable —
-   which means these two have to opt out of it by hand. */
+   which means these two have to opt out of it by hand.
+
+   Reached, the word leaves the poster's ink for the one interactive colour on the
+   page. At rest it stays ink: a display word that was blue before you touched it
+   would put the loudest colour on the screen on a control you may never press,
+   and the sweep below already says where it is. --accent-strong is 7.6:1 on the
+   light ground and 11.4:1 on the dark one, so the lit state is the *more* legible
+   of the two, which is the only direction a hover is allowed to move. */
 .settle-action:hover:not(:disabled, [aria-disabled="true"]),
 .settle-action:focus-visible:not([aria-disabled="true"]) {
-  color: var(--pay-poster-fg);
+  color: var(--accent-strong);
   letter-spacing: 0.1em;
 }
 
-/* No border means nothing to indicate focus — this ring is not optional. */
+/* No border means nothing to indicate focus — this ring is not optional. It is
+   drawn in currentColor, so it arrives already carrying the colour above. */
 .settle-action:focus-visible {
   outline: 1px solid currentColor;
   outline-offset: 0.6em;
@@ -3938,10 +3965,15 @@ body:has(.app-shell[data-app-tab="iou"]) .site-footer {
    So it takes the mark this file already uses for state — a rule under the token,
    from the left, in currentColor (.iou-verb's focus hairline, .bill-toggle's ON
    rule) — at the register a display word needs. Two rules on one baseline: a
-   hairline always drawn at the page's own divider weight, and a 2px rule in the
-   word's ink that sweeps across it as you arrive. They share their lower edge, so
-   the mark reads as inking and thickening in place rather than as a second line
-   growing under the first.
+   coloured hairline always drawn under the word, and a 2px rule that sweeps
+   across it as you arrive. They share their lower edge, so the mark reads as
+   inking and thickening in place rather than as a second line growing under the
+   first.
+
+   The hairline is where the interactive colour lives at rest — the one thing on
+   an untouched poster that is not ink — and the sweep is currentColor, so it
+   arrives at full strength in the same blue the word has just turned. Colour on
+   the apparatus, ink on the type, which is how a two-colour press was ever set.
 
    Against the tracking that tightens on the same easing, the word pulls together
    while the rule runs out from under it — one gesture, two directions.
@@ -3962,7 +3994,8 @@ body:has(.app-shell[data-app-tab="iou"]) .site-footer {
   pointer-events: none;
 }
 
-.settle-action::before { background: var(--pay-poster-rule); }
+.settle-action::before { background: var(--pay-poster-keyline); }
+
 
 .settle-action::after {
   height: 2px;
@@ -4036,9 +4069,12 @@ body:has(.app-shell[data-app-tab="iou"]) .site-footer {
 
 @media (prefers-contrast: more) {
   .settle-action { color: var(--pay-poster-fg); }
-  /* The keylines come up with the type they belong to. Not to currentColor: full
-     ink is what .bill-toggle's ::after uses to say a setting is ON, and a dormant
-     rule that borrowed it would say so too. */
+  /* The dormant keylines come up to ink, and give up their colour to do it. The
+     blue at 22% is a hairline first and a colour second, which is the wrong way
+     round for a reader who asked for contrast; and it cannot simply go to full
+     --accent-strong, because full blue on this line is how .bill-toggle's ::after
+     says a setting is ON. Achromatic here, coloured when switched on: the two
+     states end up further apart under this query, not closer. */
   :is(.settle-action, .iou-provider)::before { background: var(--pay-poster-dim); }
 }
 
@@ -4511,7 +4547,11 @@ select.settle-trigger option {
   color: color-mix(in srgb, var(--pay-poster-fg) 58%, var(--pay-poster-bg));
 }
 
-.iou-verb:hover, .iou-verb:focus-visible { color: var(--pay-poster-fg); }
+/* The composer's verb is pressed like anything else on the page, so it lights like
+   anything else on the page — and its focus rule below is currentColor, so the
+   hairline arrives in the same blue the word has just turned. */
+.iou-verb:hover, .iou-verb:focus-visible { color: var(--accent-strong); }
+
 
 /* Borderless means there is nothing to show focus on. Not optional — but a box
    is the wrong mark here: an outline around a word set at 7rem draws a rectangle
@@ -4733,7 +4773,9 @@ select.settle-trigger option {
   transition: color var(--dur-1) var(--ease-out);
 }
 
-.iou-provider:hover:not(:disabled), .iou-provider:focus-visible { color: var(--pay-poster-fg); }
+/* Reached, the word leaves the rail's ink for the page's one interactive colour —
+   the same move the display action makes, at the rail's size. */
+.iou-provider:hover:not(:disabled), .iou-provider:focus-visible { color: var(--accent-strong); }
 .iou-provider:focus-visible { outline: 1px solid currentColor; outline-offset: 0.3em; }
 
 /* ── The keyline ───────────────────────────────────────────────────────────────
@@ -4744,9 +4786,11 @@ select.settle-trigger option {
    already be over to see.
 
    The control keeps the rail's typography and takes a hairline that is always
-   drawn under it, at --pay-poster-rule: the weight every divider on this page is
-   drawn at, so a rail of these reads as ruled caps and not as a row of underlined
-   links. It brightens as you reach it, and goes to full ink under the finger.
+   drawn under it, in --pay-poster-keyline: the interactive blue at the weight
+   every divider on this page is drawn at. That is the whole of the colour an
+   untouched rail carries — enough that a control is a control at a glance, quiet
+   enough that a rail of them reads as ruled caps and not as a row of links. It
+   strengthens as you reach it, and goes to full colour under the finger.
 
    Hover deliberately stops short of that full strength. .bill-toggle's ::after
    lands on this same line at currentColor to say a setting is ON — and the view
@@ -4764,19 +4808,21 @@ select.settle-trigger option {
   right: 0;
   bottom: 0;
   height: 1px;
-  background: var(--pay-poster-rule);
+  background: var(--pay-poster-keyline);
   transition: background-color var(--dur-1) var(--ease-out);
   pointer-events: none;
 }
 
 .iou-provider:hover:not(:disabled)::before,
 .iou-provider:focus-visible::before {
-  background: color-mix(in srgb, var(--pay-poster-fg) 55%, var(--pay-poster-bg));
+  background: color-mix(in srgb, var(--accent-strong) 55%, transparent);
 }
 
-/* No box to depress, so the press is the rule going to ink — the one state in the
-   set that needs no easing, because a press is not a transition. */
-.iou-provider:active:not(:disabled)::before { background: currentColor; }
+/* No box to depress, so the press is the rule going to full colour — the one
+   state in the set that needs no easing, because a press is not a transition.
+   Named, not currentColor: a control activated from the keyboard is :active
+   without ever being :hover, and would otherwise press in the rest ink. */
+.iou-provider:active:not(:disabled)::before { background: var(--accent-strong); }
 
 /* One identity means the footnote is a label, not a control — it still says
    which wallet signs, it just has nothing to switch to. So the keyline goes with
@@ -5535,10 +5581,11 @@ select.settle-trigger option {
 /* On, whichever way the control expresses it: a setting that is switched on says
    aria-pressed, the one of a pair you are currently reading says aria-current, and
    a trigger holding its menu open says data-state (Radix's, on the sign-in menu in
-   the header). Same state, same mark — the word goes to ink and the rule under it
-   draws itself. */
+   the header). Same state, same mark — the word goes to the interactive colour and
+   the rule under it draws itself in that colour, at full strength, which is the
+   one place on the rail the blue is allowed to be undiluted. */
 .bill-toggle:is([aria-pressed="true"], [aria-current="true"], [data-state="open"]) {
-  color: var(--pay-poster-fg);
+  color: var(--accent-strong);
 }
 .bill-toggle:is([aria-pressed="true"], [aria-current="true"], [data-state="open"])::after {
   transform: scaleX(1);
@@ -5767,6 +5814,19 @@ select.settle-trigger option {
 .app-warn {
   color: var(--warning-text);
 }
+
+/* And it keeps the tone when you reach for it. .iou-provider's hover is a class
+   plus two pseudo-classes, so it outranks the line above on specificity alone and
+   used to turn the one warning on the rail into an ordinary lit control — first
+   into ink, and now it would be into the interactive blue, which is worse: the
+   colour that means "this is fine, press it" landing on the word that means it
+   isn't. Matched selector weight, so the tone survives the pointer; the keyline
+   comes with it, because a mark in the page's blue under a word in warning amber
+   is two things at once. */
+.app-warn:hover:not(:disabled), .app-warn:focus-visible { color: var(--warning-text); }
+.app-warn::before { background: color-mix(in srgb, var(--warning-text) 34%, transparent); }
+.app-warn:hover:not(:disabled)::before,
+.app-warn:focus-visible::before { background: color-mix(in srgb, var(--warning-text) 62%, transparent); }
 
 /* How many bills are waiting on you. The old chip was a filled red pill with a
    pulsing ring — the one boxed thing left in a header that had stopped drawing
