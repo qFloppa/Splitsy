@@ -617,6 +617,63 @@ const LOG_CHUNK = 20_000n;
 const LOOKBACK_BLOCKS = 200_000n;
 const TRANSFER = getAbiItem({ abi: erc20Abi, name: "Transfer" });
 
+// ── User key export ────────────────────────────────────────────────────────────
+// Design: docs/superpowers/specs/2026-09-08-privy-key-export-design.md
+//
+// These are NOT part of the WalletBackend seam. The seam has four methods and a
+// Circle implementation, and a fifth would need a throwing stub over there for a
+// capability Circle DCW does not have at all — its keys cannot be exported. The
+// route checks walletProviderName() and imports this module directly instead.
+
+// Who Privy says owns this wallet. The privy_wallets.export_owner_key column is a
+// cache of the user's public key; THIS is the authority, and it is what the status
+// route asks when the cache is empty — a wallet Privy says we no longer own, with
+// no key recorded, is a half-finished setup rather than a fresh wallet.
+export async function getWalletOwnerId(walletId: string): Promise<string | null> {
+  return (await privy().wallets().get(walletId)).owner_id;
+}
+
+// Hand ownership to the user's P-256 key. Signed by OUR quorum because at this
+// point we are still the owner — this is the one and only call in the system that
+// can make this transition, and it is not reversible: afterwards our quorum is
+// only an additional signer, which can spend but can never export or take
+// ownership back (measured; see the spec's spike table).
+//
+// Spending is UNAFFECTED. additional_signers is untouched by this call, and the
+// probe in scripts/privy-export-probe.ts asserts the server still signs afterwards.
+export async function transferExportOwnership(walletId: string, publicKeyBase64: string): Promise<string | null> {
+  const updated = await privy()
+    .wallets()
+    .update(walletId, { owner: { public_key: publicKeyBase64 }, authorization_context: authorizationContext() });
+  return updated.owner_id;
+}
+
+// Relay, not reader. The recipient_public_key belongs to the USER'S TAB and the
+// signature was produced there over a payload containing it, so we can neither
+// substitute a recipient key we could decrypt (the signature would not verify) nor
+// open what comes back.
+//
+// DELIBERATELY the raw generated _export, not wallets().exportPrivateKey() or
+// .exportSeedPhrase() or .export(). Those three generate the HPKE recipient
+// keypair ON THIS SERVER and return the private key in plaintext
+// (public-api/services/wallets.js:94-121) — the exact outcome this design exists
+// to prevent. They are also the ones you will find first when grepping for
+// "export". Do not use them.
+export async function exportWalletCiphertext(
+  walletId: string,
+  recipientPublicKey: string,
+  authorizationSignature: string,
+): Promise<{ ciphertext: string; encapsulated_key: string }> {
+  const response = await privy().wallets()._export(walletId, {
+    encryption_type: "HPKE",
+    recipient_public_key: recipientPublicKey,
+    "privy-authorization-signature": authorizationSignature,
+  });
+  // Only these two fields, explicitly. Whatever else the response carries has no
+  // business reaching a browser.
+  return { ciphertext: response.ciphertext, encapsulated_key: response.encapsulated_key };
+}
+
 export const backend: WalletBackend = {
   // Our own table is the idempotency, not a Privy query. Every caller already
   // guards on a row of its own (lib/oauth-callback.ts:91, lib/wallet-resolve.ts:58,
