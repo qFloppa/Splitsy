@@ -1,13 +1,18 @@
 // One-off proof that the export design works end to end against live Privy.
-// Throwaway wallet, testnet, no user data. Run once; keep it committed so the
-// next person can re-run it after an SDK bump.
+// Throwaway wallet, testnet, no user data. Keep it committed so the next person
+// can re-run it after an SDK bump.
+//
+// EVERY RUN MINTS A NEW, PERMANENTLY ORPHANED WALLET. Ownership is transferred to
+// a key derived from the throwaway password below, which nobody keeps — the wallet
+// cannot be recovered afterwards. Harmless (it is never funded), but do not run
+// this casually: each run leaves another orphan in the app's wallet list.
 //
 // NEVER PRINTS KEY MATERIAL. Verdicts and byte lengths only — the exported key
 // is checked by deriving its address and comparing, which proves it is right
 // without showing it.
 //
 //   npm run privy:export-probe
-import { PrivyClient } from "@privy-io/node";
+import { AuthenticationError, PrivyClient } from "@privy-io/node";
 import { privateKeyToAddress } from "viem/accounts";
 import {
   canonicalPayload,
@@ -69,14 +74,16 @@ const PROBE_PASSWORD = "probe-password-not-a-real-credential";
 const secretKey = await deriveOwnerSecretKey(PROBE_PASSWORD, wallet.address);
 const publicKey = await ownerPublicKeySpki(secretKey);
 const updated = await privy.wallets().update(wallet.id, { owner: { public_key: publicKey }, authorization_context });
-ok("ownership moved off our quorum", updated.owner_id !== quorum, String(updated.owner_id));
+// `typeof` first, not a bare `!==`: an SDK response that dropped owner_id entirely
+// would make `undefined !== quorum` true and pass a transfer that never happened.
+ok("ownership moved off our quorum", typeof updated.owner_id === "string" && updated.owner_id !== quorum, String(updated.owner_id));
 ok(
   "our quorum is STILL an additional signer after the transfer",
   (updated.additional_signers ?? []).some((s) => s.signer_id === quorum),
 );
 
 // 4. Our authorization signature must now be REQUIRED — the server's must fail.
-let serverExportRefused = false;
+let caught: unknown = null;
 try {
   const rejected = await createExportRecipient();
   await privy.wallets()._export(wallet.id, {
@@ -87,10 +94,23 @@ try {
       await deriveOwnerSecretKey("a-different-password", wallet.address),
     ),
   });
-} catch {
-  serverExportRefused = true;
+} catch (error) {
+  caught = error;
 }
-ok("export signed by the WRONG key is refused", serverExportRefused);
+// A REAL 401 from Privy, not merely "something threw" — a bare catch would report
+// PASS for a local TypeError after an SDK bump, which is exactly when this script
+// gets re-run. AuthenticationError is declared APIError<401, Headers>, so the
+// instanceof IS the status check (core/error.d.ts; APIError sets `this.status`).
+// APIConnectionError carries status `undefined` and correctly fails this: a
+// network blip must never read as proof that ownership transferred.
+const refused = caught instanceof AuthenticationError;
+ok(
+  "export signed by the WRONG key is refused",
+  refused,
+  // Class name only, never the error's message. An error escaping this block can
+  // carry key material in its text — the same disclosure class guarded at step 5.
+  refused ? "HTTP 401 AuthenticationError" : `NOT a refusal — ${(caught as Error)?.constructor?.name ?? "nothing thrown"}`,
+);
 
 // 5. The real thing: browser-shaped signature, browser-held recipient key.
 const recipient = await createExportRecipient();
