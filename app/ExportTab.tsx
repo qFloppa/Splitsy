@@ -122,12 +122,10 @@ export default function ExportTab({ address }: { address: string }) {
   async function enable() {
     if (!status) return;
     setMessage(null);
-    const { MIN_PASSWORD_LENGTH } = await import("@/lib/export-crypto");
-    if (password.length < MIN_PASSWORD_LENGTH) {
-      return setMessage(`Use at least ${MIN_PASSWORD_LENGTH} characters.`);
-    }
-    if (password !== confirm) return setMessage("The passwords don't match — try again.");
-
+    // BEFORE the dynamic import, not after the validation: that import fetches the
+    // crypto chunk over the network on first use, and the button is disabled on
+    // `busy` alone — a double-click inside that window would issue two PUTs.
+    // The validation moves inside the try so the `finally` below always clears it.
     setBusy(true);
     // Which side of the PUT a failure landed on. After the PUT the password is
     // recorded and cannot be enabled again, so the same thrown message means two
@@ -135,6 +133,11 @@ export default function ExportTab({ address }: { address: string }) {
     let recorded = false;
     try {
       const crypto = await import("@/lib/export-crypto");
+      if (password.length < crypto.MIN_PASSWORD_LENGTH) {
+        return setMessage(`Use at least ${crypto.MIN_PASSWORD_LENGTH} characters.`);
+      }
+      if (password !== confirm) return setMessage("The passwords don't match — try again.");
+
       const secretKey = await crypto.deriveOwnerSecretKey(password, status.address);
       const publicKey = await crypto.ownerPublicKeySpki(secretKey);
 
@@ -144,6 +147,14 @@ export default function ExportTab({ address }: { address: string }) {
         body: JSON.stringify({ publicKey }),
       });
       const data = await res.json();
+      // The same 403 runExport handles, and for the same reason: the unlock cookie
+      // is 5 minutes and this screen is four paragraphs of custody copy plus a
+      // password typed twice. Without this the user reads the bare word "locked"
+      // with no PIN field in sight.
+      if (res.status === 403) {
+        setLocked(true);
+        throw new Error("Wallet locked — enter your PIN.");
+      }
       if (!res.ok) throw new Error(data.error ?? "Could not enable export.");
       recorded = true;
 
@@ -258,7 +269,7 @@ export default function ExportTab({ address }: { address: string }) {
     return (
       <div>
         {verified ? (
-          <p className="wallet-note" data-tone="ok">
+          <p className="wallet-note" data-tone="ok" role="status">
             <Check size={11} /> verified — this password exports this wallet. <b>Privy</b> will only
             ever release this key to it.
           </p>
@@ -298,7 +309,7 @@ export default function ExportTab({ address }: { address: string }) {
       <p className="wallet-note">
         {restoring
           ? "Export is already enabled for this wallet, but we lost our record of it. Re-enter the password you set to restore it."
-          : "Until you set an export password, Splitsy is also authorised to move your assets on your behalf. After you set one, only your password can release this wallet's private key — and there is no recovery. Choose something you will not forget."}
+          : "Until you set an export password, Splitsy can export this wallet's private key itself, and is authorised to move your assets on your behalf. After you set one, only your password can release this wallet's private key — and there is no recovery. Choose something you will not forget."}
       </p>
       <div className="wallet-line">
         <input

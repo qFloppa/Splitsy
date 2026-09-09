@@ -8038,12 +8038,13 @@ mark.doc-mark {
 
 .wallet-note[data-tone="warn"] { color: var(--warning-text); }
 
-/* A 64-character private key in a 352px column. .wallet-proof already sets the
-   mono face for an address, which is 42 characters and fits; this one has to
-   wrap, and selects whole so a copy cannot take half a key. */
+/* A 64-character private key in a 352px column. .wallet-proof already wraps it
+   (overflow-wrap: anywhere) and sets the mono face; what it does not do is let a
+   copy take the whole key in one gesture, or print it at full contrast — it dims
+   an address you glance at, and this is the one string a user may transcribe. */
 .wallet-export-key {
-  word-break: break-all;
   user-select: all;
+  color: var(--pay-poster-fg);
 }
 
 /* The verified tick after enabling. .wallet-note only carries a "warn" tone
