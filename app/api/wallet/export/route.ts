@@ -24,13 +24,21 @@ export const dynamic = "force-dynamic";
 const NO_STORE = { "Cache-Control": "no-store" } as const;
 const json = (body: unknown, status = 200) => Response.json(body, { status, headers: NO_STORE });
 
-// Base64 that decodes to a 91-byte P-256 SPKI. Validated at the boundary rather
-// than passed through: an unchecked value here becomes a wallet owner nobody can
-// reproduce, which is unrecoverable by construction.
+// Base64 that decodes to a 91-byte P-256 SPKI: SEQUENCE tag, 89-byte body, then a
+// 27-byte DER prefix and the 64-byte point. Validated at the boundary rather than
+// passed through: an unchecked value here becomes a wallet owner nobody can
+// reproduce, which is unrecoverable by construction. The STRUCTURAL check earns its
+// keep on the needs_restore branch of PUT, which records a key without a Privy call
+// to reject a bad one — there, length alone is the only other thing standing
+// between a typo and an unopenable wallet.
+//
+// Length is checked BEFORE the regex in both validators: the scan is linear, but
+// there is no reason to run it across a multi-megabyte body field first.
 function isSpkiBase64(value: unknown): value is string {
-  if (typeof value !== "string" || !/^[A-Za-z0-9+/]+={0,2}$/.test(value) || value.length > 256) return false;
+  if (typeof value !== "string" || value.length > 256 || !/^[A-Za-z0-9+/]+={0,2}$/.test(value)) return false;
   try {
-    return Buffer.from(value, "base64").length === 91;
+    const bytes = Buffer.from(value, "base64");
+    return bytes.length === 91 && bytes[0] === 0x30 && bytes[1] === 0x59;
   } catch {
     return false;
   }
@@ -39,7 +47,7 @@ function isSpkiBase64(value: unknown): value is string {
 // A DER ECDSA P-256 signature: SEQUENCE tag, and in the length band DER allows for
 // two 32-byte integers with optional leading zero bytes.
 function isDerSignatureBase64(value: unknown): value is string {
-  if (typeof value !== "string" || !/^[A-Za-z0-9+/]+={0,2}$/.test(value) || value.length > 256) return false;
+  if (typeof value !== "string" || value.length > 256 || !/^[A-Za-z0-9+/]+={0,2}$/.test(value)) return false;
   try {
     const bytes = Buffer.from(value, "base64");
     return bytes.length >= 64 && bytes.length <= 80 && bytes[0] === 0x30;
@@ -50,10 +58,12 @@ function isDerSignatureBase64(value: unknown): value is string {
 
 type Gate =
   | { error: Response }
-  | { userId: string; walletId: string; address: string; namespace: string; key: string; exportOwnerKey: string | null };
+  | { walletId: string; address: string; namespace: string; key: string; exportOwnerKey: string | null };
 
-// Session, stack, wallet, and the PIN unlock — in that order, because each one
-// makes the next question meaningful. Identical unlock treatment to
+// Stack, session, wallet, and the PIN unlock — in that order, because each one
+// makes the next question meaningful. The stack comes FIRST deliberately: on the
+// Circle stack the route does not exist as a capability, and that is true whether
+// or not anyone is signed in. Identical unlock treatment to
 // app/api/wallet/send/route.ts: export is strictly more dangerous than a transfer,
 // so it gets at least the same gate.
 async function gate(): Promise<Gate> {
@@ -81,7 +91,6 @@ async function gate(): Promise<Gate> {
   if (!row) return { error: json({ error: "Your wallet isn't provisioned yet." }, 409) };
 
   return {
-    userId: user.id,
     walletId: user.circle_wallet_id,
     address: user.wallet_address,
     namespace: row.namespace,
@@ -99,11 +108,24 @@ async function gate(): Promise<Gate> {
 // we no longer own, with no key recorded, is a setup whose column write failed,
 // and telling that apart from a fresh wallet is the difference between a restore
 // prompt and a dead end.
+//
+// FAILS CLOSED, AND MUST STAY THAT WAY. "needs_restore" is a NEGATIVE result, so
+// every unknown collapses into it unless the inputs are checked first — an unset or
+// whitespace-padded PRIVY_KEY_QUORUM_ID, or a null owner from Privy, would all read
+// as "ownership already moved". That is not a cosmetic misreport: PUT skips
+// transferExportOwnership on that branch, records the key anyway, and tells the user
+// only they can export while we are still the sole owner — the exact lie about
+// custody the transfer-first ordering below exists to prevent. It is also
+// self-sealing, because the recorded key then short-circuits this function to
+// "enabled" forever and the 409 blocks every retry. Both throws land in the callers'
+// catches as a 502. Do not simplify this back to a one-line comparison.
 async function resolveState(walletId: string, exportOwnerKey: string | null) {
   if (exportOwnerKey) return "enabled" as const;
-  return (await getWalletOwnerId(walletId)) === process.env.PRIVY_KEY_QUORUM_ID
-    ? ("not_enabled" as const)
-    : ("needs_restore" as const);
+  const quorum = process.env.PRIVY_KEY_QUORUM_ID;
+  if (!quorum) throw new Error("PRIVY_KEY_QUORUM_ID is not set");
+  const owner = await getWalletOwnerId(walletId);
+  if (!owner) throw new Error("Privy returned no owner for this wallet");
+  return owner === quorum ? ("not_enabled" as const) : ("needs_restore" as const);
 }
 
 export async function GET() {
@@ -111,7 +133,10 @@ export async function GET() {
   if ("error" in g) return g.error;
 
   const appId = process.env.PRIVY_APP_ID;
-  if (!appId) return json({ error: "Privy is not configured." }, 500);
+  // 502, not 500: the documented contract for this route is 400/401/403/404/409/502,
+  // and a missing upstream credential is the same class of failure as Privy refusing
+  // the call — the client cannot tell them apart and does not need to.
+  if (!appId) return json({ error: "Privy is not configured." }, 502);
 
   try {
     return json({
