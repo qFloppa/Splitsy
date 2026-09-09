@@ -24,6 +24,7 @@ test("the canonical payload is byte-identical to the SDK's", () => {
 test("an empty body serialises as an empty string, as the SDK does", () => {
   const input = { version: 1 as const, method: "POST", url: "https://x/y", body: {}, headers: { "privy-app-id": "a" } };
   assert.deepEqual(canonicalPayload(input), formatRequestForAuthorizationSignature(structuredClone(input) as never));
+  assert.deepEqual(input.body, {});
 });
 
 // WebCrypto's ECDSA sign returns raw r||s; Privy wants DER. Getting this wrong
@@ -52,4 +53,59 @@ test("a signature the SDK produced verifies under our verifier", async () => {
 test("base64 round-trips without Buffer", () => {
   const bytes = new Uint8Array([0, 1, 127, 128, 255, 254]);
   assert.deepEqual(bytesFromBase64(base64FromBytes(bytes)), bytes);
+});
+
+import { deriveOwnerSecretKey, exportSalt, ownerPublicKeySpki, validScalar } from "./export-crypto.ts";
+
+const ADDRESS = "0xa264A3818F20f878380B5Af9154080605de9a704";
+
+// The salt is lowercased so the derivation cannot be broken by the casing bug in
+// setUserWallet (lib/users-repo.ts:45), which stores Privy's checksummed address
+// verbatim while every other writer lowercases.
+test("the salt is case-insensitive in the address", () => {
+  assert.equal(exportSalt(ADDRESS), exportSalt(ADDRESS.toLowerCase()));
+  assert.equal(exportSalt(ADDRESS), `splitsy-export:${ADDRESS.toLowerCase()}`);
+});
+
+// PBKDF2 output is uniform over 2^256, so a value outside the P-256 scalar range
+// is a ~2^-32 event that will never be seen in practice and must still be TOTAL
+// and DETERMINISTIC — re-hash, never randomise, or the same password stops
+// producing the same wallet owner.
+test("an out-of-range scalar is re-hashed deterministically, never randomised", () => {
+  const zero = new Uint8Array(32);
+  const first = validScalar(zero);
+  assert.notDeepEqual(first, zero, "zero is not a valid P-256 secret key");
+  assert.deepEqual(validScalar(zero), first, "the repair must be deterministic");
+
+  const order = new Uint8Array(32);
+  const n = p256.CURVE.n;
+  for (let i = 0; i < 32; i++) order[31 - i] = Number((n >> BigInt(8 * i)) & 0xffn);
+  assert.notDeepEqual(validScalar(order), order, "the curve order itself is out of range");
+});
+
+test("a valid scalar is returned untouched", () => {
+  const key = p256.utils.randomPrivateKey();
+  assert.deepEqual(validScalar(key), key);
+});
+
+test("derivation is deterministic, and the salt separates wallets", async () => {
+  const a = await deriveOwnerSecretKey("correct horse battery staple", ADDRESS);
+  const b = await deriveOwnerSecretKey("correct horse battery staple", ADDRESS);
+  const c = await deriveOwnerSecretKey("correct horse battery staple", "0x0000000000000000000000000000000000000001");
+  assert.equal(a.length, 32);
+  assert.deepEqual(a, b);
+  assert.notDeepEqual(a, c);
+});
+
+// Privy rejects a raw uncompressed point with "Must be a base64-encoded,
+// SPKI-formatted ECDH or ECDSA public key" — and the SDK's own documented example
+// for recipient_public_key IS a raw point. This asserts the format Privy wants.
+test("the owner public key is base64 SPKI that WebCrypto will re-import", async () => {
+  const secretKey = p256.utils.randomPrivateKey();
+  const spki = await ownerPublicKeySpki(secretKey);
+  const bytes = bytesFromBase64(spki);
+  assert.equal(bytes.length, 91, "a P-256 SPKI is 91 bytes");
+  assert.deepEqual(bytes.slice(-65), p256.getPublicKey(secretKey, false));
+  const imported = await crypto.subtle.importKey("spki", bytes, { name: "ECDSA", namedCurve: "P-256" }, true, ["verify"]);
+  assert.equal(imported.type, "public");
 });

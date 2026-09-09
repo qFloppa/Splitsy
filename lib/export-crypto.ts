@@ -30,7 +30,11 @@ export function base64FromBytes(bytes: Uint8Array): string {
   return btoa(binary);
 }
 
-export function bytesFromBase64(b64: string): Uint8Array {
+// The ArrayBuffer parameter is not decoration: since TS 5.7 a bare `Uint8Array`
+// is `Uint8Array<ArrayBufferLike>`, which WebCrypto's `BufferSource` rejects.
+// This function always allocates a fresh ArrayBuffer, so the narrower type is
+// simply the truth — and it is what lets callers hand the bytes to crypto.subtle.
+export function bytesFromBase64(b64: string): Uint8Array<ArrayBuffer> {
   const binary = atob(b64);
   const out = new Uint8Array(binary.length);
   for (let i = 0; i < binary.length; i++) out[i] = binary.charCodeAt(i);
@@ -53,9 +57,9 @@ export function exportRequestInput(walletId: string, appId: string, recipientPub
 }
 
 // A byte-for-byte reimplementation of the SDK's
-// formatRequestForAuthorizationSignature (lib/authorization.mjs:14-26). Copied
-// rather than imported because the SDK module graph is server-only; the empty-body
-// special case is copied verbatim because Privy's verifier has the same one.
+// formatRequestForAuthorizationSignature. Copied rather than imported because the
+// SDK module graph is server-only; the empty-body special case is copied verbatim
+// because Privy's verifier has the same one.
 //
 // Deliberately NOT mutating the caller's object, which the SDK does. The
 // canonical output is identical either way, and the test compares against a
@@ -78,4 +82,61 @@ export function canonicalPayload(input: AuthorizationInput): Uint8Array {
 // toBytes('der') — same output, different method name, wrong package path.
 export function signAuthorization(payload: Uint8Array, secretKey: Uint8Array): string {
   return base64FromBytes(p256.sign(sha256(payload), secretKey).toDERRawBytes());
+}
+
+// OWASP-current for PBKDF2-SHA256. Roughly a second in a browser, which is the
+// point: this is the only thing standing between a stolen app secret plus a
+// stolen owner public key and an offline crack of the user's password.
+export const PBKDF2_ITERATIONS = 600_000;
+export const MIN_PASSWORD_LENGTH = 12;
+
+// Lowercased deliberately. setUserWallet (lib/users-repo.ts:45) stores Privy's
+// CHECKSUMMED address while setUserAgentWallet lowercases, so the address a
+// browser is handed can arrive either way — and a salt that changed with the
+// casing would silently derive a different owner key and lock the user out.
+export function exportSalt(walletAddress: string): string {
+  return `splitsy-export:${walletAddress.toLowerCase()}`;
+}
+
+// A P-256 secret key must lie in [1, n-1]. PBKDF2 gives a uniform 32 bytes, so
+// landing outside that is a ~2^-32 event — but "astronomically unlikely" is not
+// "impossible", and the failure mode is a user whose password derives nothing.
+// Re-hashing keeps the repair DETERMINISTIC: randomising here would mean the same
+// password produced a different wallet owner on every attempt.
+export function validScalar(bytes: Uint8Array): Uint8Array {
+  let candidate = bytes;
+  for (let attempt = 0; attempt < 8; attempt++) {
+    if (p256.utils.isValidPrivateKey(candidate)) return candidate;
+    candidate = sha256(candidate);
+  }
+  throw new Error("Could not derive a valid P-256 scalar from this password");
+}
+
+// The user's export credential. NEVER LEAVES THE BROWSER — only the public half
+// is sent to us, and only so we can transfer wallet ownership to it once.
+export async function deriveOwnerSecretKey(password: string, walletAddress: string): Promise<Uint8Array> {
+  const encoder = new TextEncoder();
+  const material = await crypto.subtle.importKey("raw", encoder.encode(password), "PBKDF2", false, ["deriveBits"]);
+  const bits = await crypto.subtle.deriveBits(
+    {
+      name: "PBKDF2",
+      salt: encoder.encode(exportSalt(walletAddress)),
+      iterations: PBKDF2_ITERATIONS,
+      hash: "SHA-256",
+    },
+    material,
+    256,
+  );
+  return validScalar(new Uint8Array(bits));
+}
+
+// Base64 SPKI/DER, which is the ONE format Privy's `owner.public_key` accepts.
+// Built by round-tripping the raw point through WebCrypto rather than prepending
+// a hard-coded 26-byte DER header — same bytes, and no magic constant to get wrong.
+export async function ownerPublicKeySpki(secretKey: Uint8Array): Promise<string> {
+  // Copied into a view WebCrypto's types accept: noble returns the wider
+  // `Uint8Array<ArrayBufferLike>` (see bytesFromBase64). 65 bytes, once.
+  const point = new Uint8Array(p256.getPublicKey(secretKey, false));
+  const key = await crypto.subtle.importKey("raw", point, { name: "ECDSA", namedCurve: "P-256" }, true, ["verify"]);
+  return base64FromBytes(new Uint8Array(await crypto.subtle.exportKey("spki", key)));
 }
