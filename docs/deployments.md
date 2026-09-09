@@ -122,6 +122,25 @@ provider is `privy`.
 
 ## Before the first sign-in on Preview
 
+**The three Supabase variables must be SCOPED to Preview and point at
+`hdyioojrozodmutpldsu`.** A variable set for All Environments is inherited by
+Preview, so leaving `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`
+and `SUPABASE_SERVICE_ROLE_KEY` unscoped points this stack at the live project —
+what "Never point the two at one database" below forbids — and nothing in the
+code detects it. Check the values, not their presence.
+
+Neither half of that failure announces itself. `lib/oauth-callback.ts:91`
+provisions only when `wallet_address` is null, so a live user signing in here is
+shown the **Circle** wallet their row already holds and no Privy wallet is ever
+minted; and `privy_wallets` exists only where Task 6 Step 1's schema files were
+run, so on any other project `getPrivyWallet` throws
+(`lib/privy-wallets-repo.ts:25`) into the best-effort catch at `:103` and the
+login completes with no wallet at all. One is silent, the other is a log line
+nobody is reading.
+
+`NEXT_PUBLIC_SUPABASE_URL` is inlined at build time (see "The banner" above), so
+correcting it needs a **redeploy**, not just a saved variable.
+
 **`PRIVY_AGENT_POLICY_ID` must be set in Preview before any user signs in.** The
 policy attaches at wallet creation and nowhere else; the adopt path reads an
 existing wallet's signers only to confirm our key quorum can sign, never to see
