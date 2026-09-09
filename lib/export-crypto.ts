@@ -7,9 +7,12 @@
 // A console.log added for debugging is a key disclosure.
 //
 // Design: docs/superpowers/specs/2026-09-08-privy-key-export-design.md
+import { Chacha20Poly1305 } from "@hpke/chacha20poly1305";
+import { CipherSuite, DhkemP256HkdfSha256, HkdfSha256 } from "@hpke/core";
 import { p256 } from "@noble/curves/p256";
 import { sha256 } from "@noble/hashes/sha2";
 import canonicalize from "canonicalize";
+import { privateKeyToAddress } from "viem/accounts";
 
 export const PRIVY_API_BASE = "https://api.privy.io";
 
@@ -139,4 +142,58 @@ export async function ownerPublicKeySpki(secretKey: Uint8Array): Promise<string>
   const point = new Uint8Array(p256.getPublicKey(secretKey, false));
   const key = await crypto.subtle.importKey("raw", point, { name: "ECDSA", namedCurve: "P-256" }, true, ["verify"]);
   return base64FromBytes(new Uint8Array(await crypto.subtle.exportKey("spki", key)));
+}
+
+// Privy's export suite, read off the SDK's own setupHPKERecipient
+// (node_modules/@privy-io/node/lib/cryptography.mjs:76-95). Copied rather than
+// imported: that module is @internal, is not re-exported from the package root,
+// and pulls in the server-only SDK graph. Fifteen lines is cheaper than a deep
+// import that breaks on the next SDK bump.
+function exportSuite(): CipherSuite {
+  return new CipherSuite({
+    kem: new DhkemP256HkdfSha256(),
+    kdf: new HkdfSha256(),
+    aead: new Chacha20Poly1305(),
+  });
+}
+
+export type ExportRecipient = {
+  publicKeySpkiBase64: string;
+  open: (encapsulatedKeyBase64: string, ciphertextBase64: string) => Promise<string>;
+};
+
+// The ephemeral keypair that makes the server a relay rather than a reader. Its
+// private half exists only in this tab, for the life of one export, and is
+// captured in the closure below — never returned, never serialisable, never sent.
+// A NEW ONE PER EXPORT: reusing it would let a captured ciphertext be opened later.
+export async function createExportRecipient(): Promise<ExportRecipient> {
+  const suite = exportSuite();
+  const keypair = await suite.kem.generateKeyPair();
+  const spki = await crypto.subtle.exportKey("spki", keypair.publicKey as CryptoKey);
+  return {
+    publicKeySpkiBase64: base64FromBytes(new Uint8Array(spki)),
+    open: async (encapsulatedKeyBase64, ciphertextBase64) => {
+      const recipient = await suite.createRecipientContext({
+        recipientKey: keypair.privateKey,
+        enc: bytesFromBase64(encapsulatedKeyBase64),
+      });
+      const plaintext = await recipient.open(bytesFromBase64(ciphertextBase64));
+      return new TextDecoder().decode(new Uint8Array(plaintext));
+    },
+  };
+}
+
+// THE GUARD. A decrypted key we cannot prove belongs to this wallet is not shown,
+// not copied, not logged — a suite mismatch or a wrong-wallet export would
+// otherwise hand the user 64 plausible hex characters that control nothing, or
+// worse, something else. Returns a boolean rather than throwing because every
+// caller is deciding whether to render, not whether to continue.
+export function verifyExportedKey(privateKeyHex: string, walletAddress: string): boolean {
+  const hex = privateKeyHex.startsWith("0x") ? privateKeyHex : `0x${privateKeyHex}`;
+  if (!/^0x[0-9a-fA-F]{64}$/.test(hex)) return false;
+  try {
+    return privateKeyToAddress(hex as `0x${string}`).toLowerCase() === walletAddress.toLowerCase();
+  } catch {
+    return false;
+  }
 }

@@ -1,14 +1,23 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { Chacha20Poly1305 } from "@hpke/chacha20poly1305";
+import { CipherSuite, DhkemP256HkdfSha256, HkdfSha256 } from "@hpke/core";
 import { formatRequestForAuthorizationSignature, generateAuthorizationSignature, generateP256KeyPair } from "@privy-io/node";
 import { p256 } from "@noble/curves/p256";
 import { sha256 } from "@noble/hashes/sha2";
+import { generatePrivateKey, privateKeyToAddress } from "viem/accounts";
 import {
   base64FromBytes,
   bytesFromBase64,
   canonicalPayload,
+  createExportRecipient,
+  deriveOwnerSecretKey,
   exportRequestInput,
+  exportSalt,
+  ownerPublicKeySpki,
   signAuthorization,
+  validScalar,
+  verifyExportedKey,
 } from "./export-crypto.ts";
 
 // The one thing we reimplement from the SDK. Privy rebuilds these bytes on its
@@ -54,8 +63,6 @@ test("base64 round-trips without Buffer", () => {
   const bytes = new Uint8Array([0, 1, 127, 128, 255, 254]);
   assert.deepEqual(bytesFromBase64(base64FromBytes(bytes)), bytes);
 });
-
-import { deriveOwnerSecretKey, exportSalt, ownerPublicKeySpki, validScalar } from "./export-crypto.ts";
 
 const ADDRESS = "0xa264A3818F20f878380B5Af9154080605de9a704";
 
@@ -108,4 +115,59 @@ test("the owner public key is base64 SPKI that WebCrypto will re-import", async 
   assert.deepEqual(bytes.slice(-65), p256.getPublicKey(secretKey, false));
   const imported = await crypto.subtle.importKey("spki", bytes, { name: "ECDSA", namedCurve: "P-256" }, true, ["verify"]);
   assert.equal(imported.type, "public");
+});
+
+// Proves our copied suite matches Privy's. A mismatch here fails as an opaque
+// "decryption failed" against live infrastructure, so it is settled offline.
+// The plaintext is a fixed non-secret string, never a real key.
+test("HPKE decrypt round-trips against a sender built on the same suite", async () => {
+  const recipient = await createExportRecipient();
+  const suite = new CipherSuite({
+    kem: new DhkemP256HkdfSha256(),
+    kdf: new HkdfSha256(),
+    aead: new Chacha20Poly1305(),
+  });
+  // importKey, NOT suite.kem.deserializePublicKey: the latter wants a raw 65-byte
+  // uncompressed point and throws DeserializeError on our 91-byte SPKI. Feeding
+  // the sender the exact artifact we send Privy, unmodified, also proves that
+  // SPKI is well-formed — slicing the DER header off would hide a malformed one.
+  const recipientPublicKey = await crypto.subtle.importKey(
+    "spki",
+    bytesFromBase64(recipient.publicKeySpkiBase64),
+    { name: "ECDH", namedCurve: "P-256" },
+    true,
+    [],
+  );
+  const sender = await suite.createSenderContext({ recipientPublicKey });
+  const plaintext = "not-a-key-just-a-fixture";
+  const ciphertext = await sender.seal(new TextEncoder().encode(plaintext));
+
+  const opened = await recipient.open(
+    base64FromBytes(new Uint8Array(sender.enc)),
+    base64FromBytes(new Uint8Array(ciphertext)),
+  );
+  assert.equal(opened, plaintext);
+});
+
+test("each recipient is ephemeral — two calls produce different public keys", async () => {
+  const a = await createExportRecipient();
+  const b = await createExportRecipient();
+  assert.notEqual(a.publicKeySpkiBase64, b.publicKeySpkiBase64);
+});
+
+// The guard that keeps an unprovable key off the screen. A decrypted key that
+// does not derive to this wallet's address is a hard failure, never a display.
+test("the exported key is accepted only for its own address", () => {
+  const key = generatePrivateKey();
+  const address = privateKeyToAddress(key);
+  assert.ok(verifyExportedKey(key, address));
+  assert.ok(verifyExportedKey(key.slice(2), address), "a key with no 0x prefix is still this key");
+  assert.ok(verifyExportedKey(key, address.toLowerCase()), "the comparison is case-insensitive");
+  assert.equal(verifyExportedKey(key, "0x0000000000000000000000000000000000000001"), false);
+});
+
+test("malformed key material is rejected rather than thrown at the caller", () => {
+  assert.equal(verifyExportedKey("", "0x0000000000000000000000000000000000000001"), false);
+  assert.equal(verifyExportedKey("not-hex", "0x0000000000000000000000000000000000000001"), false);
+  assert.equal(verifyExportedKey("0xdeadbeef", "0x0000000000000000000000000000000000000001"), false);
 });
