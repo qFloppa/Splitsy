@@ -13,7 +13,7 @@
 // caip2 at all — the chain id rides inside the transaction — so it sits outside
 // that check. scripts/privy-setup.ts proved the path on chain and every Privy
 // call shape below is copied from it.
-import { NotFoundError, PrivyClient, isEmbeddedWalletLinkedAccount, type User } from "@privy-io/node";
+import { PrivyClient } from "@privy-io/node";
 import {
   TransactionNotFoundError,
   TransactionReceiptNotFoundError,
@@ -549,61 +549,43 @@ async function send(
   }
 }
 
-// Every wallet is created with the key quorum as an additional signer; that is
-// what lets the server transact later with no user present. A function, not a
-// const, so a missing quorum id fails the call that needed it rather than the
-// import — this module is loaded lazily by the seam and must not throw on load.
+// Every wallet is created with the key quorum as BOTH owner and additional signer.
+//
+// OWNER is what makes export possible at all, and it is the one thing that cannot
+// be added later: an additional signer can spend but can never export or take
+// ownership, and taking ownership is itself owner-gated (measured — see the spike
+// table in the design doc). Every wallet minted before this change is therefore
+// permanently non-exportable, which is why scripts/privy-remint.ts exists.
+//
+// ADDITIONAL SIGNER is what keeps the server transacting after the user takes
+// ownership of export. A first spike run without it lost signing on transfer,
+// because signing had been riding on ownership. With both set explicitly,
+// spending and ownership are independent — the finding the whole design rests on.
+//
+// A function, not a const, so a missing quorum id fails the call that needed it
+// rather than the import — this module is loaded lazily by the seam and must not
+// throw on load.
 //
 // The namespace is a parameter because the AGENT wallet gets one thing no other
-// wallet does: the enclave policy. Keyed here rather than at one call site
-// because both creation paths in getOrCreateWallet mint wallets — an identity
-// that outlived a failed wallet creation gets its wallet from
-// pregenerateWallets — and a policy on only one of them would be a coin flip.
-//
-// Only at creation. An agent wallet minted before PRIVY_AGENT_POLICY_ID was set
-// carries no policy and cannot be given one from here; on a fresh deployment
-// there are none, which is why this carries no backfill.
-const walletSpec = (namespace: string) => [
-  {
-    chain_type: "ethereum" as const,
-    additional_signers: [
-      {
-        signer_id: quorumId(),
-        // The agent is the one wallet a server spends from with no user in
-        // the loop, so it is the one that gets an enclave-enforced ceiling.
-        // Pay wallets are only ever spent on a request the user made.
-        ...(namespace === "agent" && process.env.PRIVY_AGENT_POLICY_ID
-          ? { override_policy_ids: [process.env.PRIVY_AGENT_POLICY_ID] }
-          : {}),
-      },
-    ],
-  },
-];
-
-// A linked account can be an external wallet, or an embedded Solana, Bitcoin or
-// curve-signing one. This picks the Privy-held ETHEREUM wallet, the only kind the
-// send path can use.
-const ethereumWallet = (u: User) =>
-  u.linked_accounts.filter(isEmbeddedWalletLinkedAccount).find((a) => a.chain_type === "ethereum");
-
-// Whether OUR key quorum can sign for this wallet. The linked-account record cannot
-// answer that — it carries id, address, delegated and user_can_sign and nothing about
-// quorums (resources/users/users.d.ts, LinkedAccountEthereumEmbeddedWallet) — so the
-// wallet object is fetched and its signers read. Confirmed against a wallet this code
-// created: the quorum arrives in `additional_signers`, while `owner_id` is a different
-// quorum Privy assigns, so both are accepted.
-//
-// Asked ONLY about a wallet that predates this call. Anything we create ourselves is
-// created with walletSpec(), so it carries the quorum by construction, and asking
-// would put a read-after-write on the signup path — if a fresh wallet's signers are
-// not immediately readable, every first-time signup on this stack would throw instead
-// of returning a wallet. An adopted wallet is the real hazard: a foreign quorum looks
-// perfectly fine until the first signature answers 401, possibly after funding.
-async function serverCanSign(walletId: string): Promise<boolean> {
-  const quorum = quorumId();
-  const wallet = await privy().wallets().get(walletId);
-  return wallet.owner_id === quorum || (wallet.additional_signers ?? []).some((s) => s.signer_id === quorum);
-}
+// wallet does: the enclave policy. Only at creation. An agent wallet minted before
+// PRIVY_AGENT_POLICY_ID was set carries no policy and cannot be given one from
+// here, which is why this carries no backfill.
+const walletSpec = (namespace: string, idempotencyKey: string) => ({
+  chain_type: "ethereum" as const,
+  owner_id: quorumId(),
+  additional_signers: [
+    {
+      signer_id: quorumId(),
+      // The agent is the one wallet a server spends from with no user in the
+      // loop, so it is the one that gets an enclave-enforced ceiling. Pay wallets
+      // are only ever spent on a request the user made.
+      ...(namespace === "agent" && process.env.PRIVY_AGENT_POLICY_ID
+        ? { override_policy_ids: [process.env.PRIVY_AGENT_POLICY_ID] }
+        : {}),
+    },
+  ],
+  idempotency_key: idempotencyKey,
+});
 
 // Arc's public RPC refuses an eth_getLogs range wider than ~25k blocks (-32012
 // "requested range too large") and caps one response at 20k logs, so a wallet's
@@ -676,74 +658,38 @@ export async function exportWalletCiphertext(
 
 export const backend: WalletBackend = {
   // Our own table is the idempotency, not a Privy query. Every caller already
-  // guards on a row of its own (lib/oauth-callback.ts:91, lib/wallet-resolve.ts:58,
-  // lib/user-agent.ts:34); this is the net under that, and it needs no lookup
-  // endpoint we would have to trust.
+  // guards on a row of its own (lib/oauth-callback.ts:90, lib/wallet-resolve.ts,
+  // lib/user-agent.ts); this is the net under that.
   async getOrCreateWallet(namespace: string, key: string): Promise<ProviderWallet | null> {
     const existing = await getPrivyWallet(namespace, key);
     if (existing) return { address: existing.address, walletId: existing.wallet_id };
 
-    // create() is not idempotent, so the LOOKUP comes first: a key whose row
-    // never landed must adopt the wallet Privy already holds rather than mint a
-    // second one and orphan whatever the first was funded with. A miss THROWS
-    // NotFoundError, and the catch is scoped to exactly that class so a 401 or a
-    // dropped connection can never masquerade as "no such user".
-    const custom_user_id = `${namespace}:${key}`;
-    let user: User;
-    // Whether the wallet we end up with predates this call, which is the only case
-    // serverCanSign is asked about. A lookup hit means it might; anything we create
-    // below carries our quorum by construction.
-    let adopted = true;
-    try {
-      user = await privy().users().getByCustomAuthID({ custom_user_id });
-    } catch (caught) {
-      if (!(caught instanceof NotFoundError)) throw caught;
-      adopted = false;
-      user = await privy()
-        .users()
-        .create({ linked_accounts: [{ type: "custom_auth", custom_user_id }], wallets: walletSpec(namespace) });
-    }
+    // create() is not idempotent on its own, and the IDEMPOTENCY KEY is what
+    // replaces the users().getByCustomAuthID lookup this used to do: a retry —
+    // one whose row insert failed, say — gets the SAME wallet back for 24 hours
+    // rather than minting a second one and orphaning whatever the first was
+    // funded with. Beyond that window our own row is the guard it always was, and
+    // a wallet whose row never landed was never returned to a caller, so it was
+    // never displayed and never funded.
+    const wallet = await privy().wallets().create(walletSpec(namespace, `splitsy:${namespace}:${key}`));
 
-    // The identity can outlive a call whose wallet creation failed (a bad quorum
-    // id, say). Without this, that key is a dead end no retry gets past.
-    let wallet = ethereumWallet(user);
-    if (!wallet) {
-      adopted = false;
-      wallet = ethereumWallet(await privy().users().pregenerateWallets(user.id, { wallets: walletSpec(namespace) }));
-    }
-    if (!wallet) throw new Error("Privy returned no Ethereum wallet");
     // Without a wallet id the server cannot sign, so stop here rather than after
     // somebody has funded an address that can never spend.
     if (!wallet.id) {
       throw new Error(
-        `Privy wallet ${wallet.address} has no server wallet id, so the server cannot sign for it — check ` +
+        `Privy wallet ${wallet.address} has no wallet id, so the server cannot sign for it — check ` +
           "PRIVY_KEY_QUORUM_ID, and that this PRIVY_APP_ID owns the wallet.",
       );
     }
-    // And a non-null id is not the same as a wallet WE can sign for — an adopted
-    // wallet may carry someone else's quorum, which fails as a Privy 401 at the first
-    // signature rather than here. Checked before the row lands, so a key that resolves
-    // is a key that can spend.
-    if (adopted && !(await serverCanSign(wallet.id))) {
-      throw new Error(
-        `Privy wallet ${wallet.address} is not signable by PRIVY_KEY_QUORUM_ID — it carries a different ` +
-          "key quorum, so the server could create it but never transact with it.",
-      );
-    }
 
-    await insertPrivyWallet({
-      namespace,
-      key,
-      privy_user_id: user.id,
-      wallet_id: wallet.id,
-      address: wallet.address,
-    });
-    // Re-read rather than returning what WE got from Privy. Two concurrent first-time
-    // resolutions of one key both miss the row and both create, and ignoreDuplicates
-    // makes the loser's write a silent no-op — so the loser would otherwise hand its
-    // own wallet to lib/oauth-callback.ts:94 to persist and display while the table
-    // holds the winner's, and money sent to it would be invisible to every later
-    // lookup. Whoever the row says won, both callers return.
+    await insertPrivyWallet({ namespace, key, wallet_id: wallet.id, address: wallet.address });
+    // Re-read rather than returning what WE got from Privy. Two concurrent
+    // first-time resolutions of one key both miss the row and both create, and
+    // ignoreDuplicates makes the loser's write a silent no-op — so the loser would
+    // otherwise hand its own wallet to lib/oauth-callback.ts:100 to persist and
+    // display while the table holds the winner's, and money sent to it would be
+    // invisible to every later lookup. The idempotency key makes them the same
+    // wallet inside the 24-hour window; outside it, this is still the tiebreak.
     const row = await getPrivyWallet(namespace, key);
     return row
       ? { address: row.address, walletId: row.wallet_id }
