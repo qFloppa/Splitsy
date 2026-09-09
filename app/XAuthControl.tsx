@@ -10,7 +10,7 @@ import type { AccountProvider } from "@/lib/types";
 import ExportTab from "./ExportTab";
 import { ProviderIcon } from "./ProviderTag";
 
-type Me = { id: string; provider?: AccountProvider | null; handle: string; name: string | null; avatarUrl: string | null; walletAddress: string | null };
+type Me = { id: string; provider?: AccountProvider | null; handle: string; name: string | null; avatarUrl: string | null; walletAddress: string | null; custodian?: "Circle" | "Privy" };
 type Tab = "info" | "send" | "receive" | "history" | "export";
 
 const TABS: { id: Tab; label: string }[] = [
@@ -332,6 +332,26 @@ export default function XAuthControl() {
                               </button>
                             </div>
                             <p className="wallet-proof">{me.walletAddress}</p>
+                            {me.custodian === "Privy" ? (
+                              <p className="wallet-note">
+                                <b>Held by Privy.</b> Your assets are held by Privy, the custodian.
+                                Splitsy is the app that operates this wallet on your behalf. Privy is
+                                a SOC&nbsp;2–audited custody provider, independently reviewed by
+                                Cure53, Zellic and Doyensec, with a public bug bounty and keys that
+                                are encrypted and segmented so no single party holds a whole key.{" "}
+                                <a
+                                  href="https://privy.io/security"
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="wallet-handle"
+                                >
+                                  privy.io/security
+                                </a>
+                                . Until you set an export password, Splitsy is <b>also</b> authorised
+                                to move your assets on your behalf — set one in the{" "}
+                                <b>export</b> tab.
+                              </p>
+                            ) : null}
                             <a
                               href="https://faucet.circle.com"
                               target="_blank"
