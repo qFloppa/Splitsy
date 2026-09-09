@@ -3,9 +3,10 @@ import { createSupabaseServerClient } from "./supabase.ts";
 export type PrivyWalletRow = {
   namespace: string;
   key: string;
-  privy_user_id: string;
+  privy_user_id?: string | null;
   wallet_id: string;
   address: string;
+  export_owner_key?: string | null;
 };
 
 function requireClient() {
@@ -18,7 +19,7 @@ export async function getPrivyWallet(namespace: string, key: string): Promise<Pr
   const client = requireClient();
   const { data, error } = await client
     .from("privy_wallets")
-    .select("namespace, key, privy_user_id, wallet_id, address")
+    .select("namespace, key, privy_user_id, wallet_id, address, export_owner_key")
     .eq("namespace", namespace)
     .eq("key", key)
     .maybeSingle();
@@ -37,4 +38,34 @@ export async function insertPrivyWallet(row: PrivyWalletRow): Promise<void> {
     .from("privy_wallets")
     .upsert(row, { onConflict: "namespace,key", ignoreDuplicates: true });
   if (error) throw new Error(`Failed to save privy_wallets: ${error.message}`);
+}
+
+// The route holds a wallet id (users.circle_wallet_id, which on this stack holds
+// the PRIVY wallet id) and needs the row it belongs to. Deliberately keyed on
+// wallet_id rather than address: address casing is inconsistent across writers —
+// setUserWallet stores Privy's checksummed form, setUserAgentWallet lowercases —
+// and a lookup that can miss on casing would read as "no wallet" and 404 a user
+// out of their own export.
+export async function getPrivyWalletByWalletId(walletId: string): Promise<PrivyWalletRow | null> {
+  const client = requireClient();
+  const { data, error } = await client
+    .from("privy_wallets")
+    .select("namespace, key, privy_user_id, wallet_id, address, export_owner_key")
+    .eq("wallet_id", walletId)
+    .maybeSingle();
+  if (error) throw new Error(`Failed to read privy_wallets: ${error.message}`);
+  return (data as PrivyWalletRow) ?? null;
+}
+
+// Records the public half of the user's export credential AFTER Privy has accepted
+// the ownership transfer. Never before: a false "enabled" would tell a user only
+// they can export while we still can, and under-claiming is the safe direction.
+export async function setExportOwnerKey(namespace: string, key: string, publicKey: string): Promise<void> {
+  const client = requireClient();
+  const { error } = await client
+    .from("privy_wallets")
+    .update({ export_owner_key: publicKey })
+    .eq("namespace", namespace)
+    .eq("key", key);
+  if (error) throw new Error(`Failed to record the export owner key: ${error.message}`);
 }

@@ -23,3 +23,19 @@ create index if not exists idx_privy_wallets_address on privy_wallets (lower(add
 -- this project: no policies, and the service role bypasses RLS. wallet_id is
 -- what the server signs with, so the published anon key must never read it.
 alter table privy_wallets enable row level security;
+
+-- Export ownership (2026-09-08). Additive; safe to re-run.
+--
+-- export_owner_key is a CACHE, NEVER AN AUTHORITY. Privy decides who may export;
+-- this column only lets the browser reject a wrong password before making a
+-- request, and lets the UI say which side of the line a wallet is on. Null means
+-- "Splitsy still administers this wallet"; non-null means ownership has
+-- transferred and only that key can export. A wrong value here is annoying — the
+-- local pre-check fails until the user re-enters the right password — and never
+-- dangerous, because Privy is the real gate.
+alter table privy_wallets add column if not exists export_owner_key text;
+
+-- Wallets are created via wallets().create() now, which has no Privy user at all,
+-- so nothing writes this any more. Kept rather than dropped so the migration is
+-- additive and the existing rows stay readable.
+alter table privy_wallets alter column privy_user_id drop not null;
