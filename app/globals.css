@@ -8038,6 +8038,18 @@ mark.doc-mark {
 
 .wallet-note[data-tone="warn"] { color: var(--warning-text); }
 
+/* A 64-character private key in a 352px column. .wallet-proof already sets the
+   mono face for an address, which is 42 characters and fits; this one has to
+   wrap, and selects whole so a copy cannot take half a key. */
+.wallet-export-key {
+  word-break: break-all;
+  user-select: all;
+}
+
+/* The verified tick after enabling. .wallet-note only carries a "warn" tone
+   today; .wallet-figure's "ok" is the colour this borrows. */
+.wallet-note[data-tone="ok"] { color: var(--success); }
+
 /* The verb, at panel scale. Everything else about it — the receded rest colour
    that still clears 4.5:1, the tracking, the borderlessness — is .settle-action's
    and is not restated; only the size, which that class takes from `vw`. */

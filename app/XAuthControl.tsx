@@ -7,16 +7,18 @@ import { waitForCircleTxUrl } from "@/lib/arc-explorer";
 import { readArcUsdcBalance, billUnitsToUsdc } from "@/lib/bill-split-contracts";
 import { providerDisplay } from "@/lib/provider-display";
 import type { AccountProvider } from "@/lib/types";
+import ExportTab from "./ExportTab";
 import { ProviderIcon } from "./ProviderTag";
 
 type Me = { id: string; provider?: AccountProvider | null; handle: string; name: string | null; avatarUrl: string | null; walletAddress: string | null };
-type Tab = "info" | "send" | "receive" | "history";
+type Tab = "info" | "send" | "receive" | "history" | "export";
 
 const TABS: { id: Tab; label: string }[] = [
   { id: "info", label: "wallet" },
   { id: "send", label: "send" },
   { id: "receive", label: "receive" },
   { id: "history", label: "history" },
+  { id: "export", label: "export" },
 ];
 
 // "USDC" is a word here, not the seeklogo PNG this panel used to inline eight
@@ -348,6 +350,8 @@ export default function XAuthControl() {
                       <SendTab balance={balance} onSent={refreshBalanceAfterSend} />
                     ) : tab === "receive" ? (
                       <ReceiveTab address={me.walletAddress} copied={copied} onCopy={copyAddress} />
+                    ) : tab === "export" && me.walletAddress ? (
+                      <ExportTab address={me.walletAddress} />
                     ) : (
                       <HistoryTab />
                     )}
