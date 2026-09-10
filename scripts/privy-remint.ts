@@ -46,7 +46,11 @@ const DELETABLE_NAMESPACES = [...PAY_NAMESPACES, "spike"];
 const GAS_RESERVE_USDC = 0.05;
 // The temporary key the replacement is minted under. No real login produces a key
 // ending in this: x/discord keys are numeric ids, wallet keys are hex addresses,
-// and email keys end in a domain.
+// and email keys are addresses that had to receive an OTP. Note EMAIL_RE
+// (lib/email-otp.ts:10) would ACCEPT `user@example.com-export-remint` — hyphens
+// are legal in a final label — so it is delivery, not the regex, that rules it
+// out: that domain cannot resolve, so the code is never received and the row is
+// never created. Google's path only ever supplies a verified address.
 const SCRATCH_SUFFIX = "-export-remint";
 
 const supabase = createSupabaseServerClient();
