@@ -16,6 +16,7 @@
     "privy:setup": "node --experimental-strip-types --env-file=.env.local scripts/privy-setup.ts",
     "privy:policy": "node --experimental-strip-types --env-file=.env.local scripts/privy-policy.ts",
     "privy:export-probe": "node --experimental-strip-types --env-file=.env.local scripts/privy-export-probe.ts",
+    "privy:remint": "node --experimental-strip-types --env-file=.env.local scripts/privy-remint.ts",
     "test:contracts": "hardhat test",
     "audit:contracts": "slither . --config-file slither.config.json",
     "test:scout": "node --test --experimental-strip-types lib/scout/decide.test.ts lib/scout/scan.test.ts lib/x402/spend.test.ts lib/image-size.test.ts",

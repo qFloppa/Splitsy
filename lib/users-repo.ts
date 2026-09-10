@@ -46,7 +46,11 @@ export async function setUserWallet(id: string, walletAddress: string, circleWal
   const client = requireClient();
   const { error } = await client
     .from("users")
-    .update({ wallet_address: walletAddress, circle_wallet_id: circleWalletId })
+    // LOWERCASED, matching setUserAgentWallet (:72) and the lookup in
+    // getUsersByWallets (:133). Privy hands back a CHECKSUMMED address and this
+    // used to store it verbatim, so a Privy pay wallet never resolved to a handle
+    // and the comment at :127 claiming every wallet_address is lowercase was false.
+    .update({ wallet_address: walletAddress.toLowerCase(), circle_wallet_id: circleWalletId })
     .eq("id", id);
   if (error) {
     throw new Error(`Failed to set wallet: ${error.message}`);
