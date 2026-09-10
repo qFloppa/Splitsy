@@ -1,8 +1,59 @@
 import { walletProviderName } from "@/lib/wallet-provider";
 import { getPrivyWallet } from "@/lib/privy-wallets-repo";
+import { createSupabaseServerClient } from "@/lib/supabase";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+
+// The newest wallet, checked against the properties that can ONLY be set at
+// creation. owner_id is the THIRD of these — after PRIVY_AGENT_POLICY_ID
+// (docs/deployments.md:125-138) — and the pattern is always the same: nothing
+// detects the omission, no backfill repairs it, so a wallet minted wrong is wrong
+// forever and only a re-mint fixes it. Documentation did not catch the second one.
+//
+// Reports booleans and ids, never keys, matching the rest of this route. Never
+// throws: a probe that can take the route down is worse than one that says it
+// could not look.
+async function walletCreationProperties() {
+  const client = createSupabaseServerClient();
+  if (!client) return { checked: false, reason: "supabase not configured" };
+
+  const { data, error } = await client
+    .from("privy_wallets")
+    .select("namespace, wallet_id")
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error || !data) return { checked: false, reason: error?.message ?? "no wallets yet" };
+
+  try {
+    const { PrivyClient } = await import("@privy-io/node");
+    const privy = new PrivyClient({
+      appId: process.env.PRIVY_APP_ID ?? "",
+      appSecret: process.env.PRIVY_APP_SECRET ?? "",
+    });
+    const wallet = await privy.wallets().get(data.wallet_id);
+    const quorum = process.env.PRIVY_KEY_QUORUM_ID;
+    return {
+      checked: true,
+      walletId: data.wallet_id,
+      namespace: data.namespace,
+      // Owned by SOMEONE. A wallet whose ownership the user has taken for export
+      // is correct, not broken, so this asserts only that an owner was set at all —
+      // which is the thing creation can silently stop doing.
+      ownerSet: wallet.owner_id !== null,
+      // And owned by US, which is what a freshly minted wallet must look like
+      // before anyone enables export on it.
+      ownedByQuorum: wallet.owner_id === quorum,
+      // Without this the server cannot sign at all once ownership moves.
+      quorumIsAdditionalSigner: (wallet.additional_signers ?? []).some((s) => s.signer_id === quorum),
+      // Only the agent namespace carries the enclave cap; null means "not applicable".
+      agentPolicyExpected: data.namespace === "agent" ? Boolean(process.env.PRIVY_AGENT_POLICY_ID) : null,
+    };
+  } catch (caught) {
+    return { checked: false, reason: caught instanceof Error ? caught.message : "privy unreachable" };
+  }
+}
 
 // WHICH STACK THIS DEPLOYMENT ACTUALLY RESOLVED — the one question no amount of
 // reading the dashboard settles. docs/deployments.md describes the arrangement
@@ -24,7 +75,15 @@ export const dynamic = "force-dynamic";
 // credential is reported as a bare boolean. And the whole route is gated on
 // NEXT_PUBLIC_STACK_LABEL, which Production leaves unset (see "The banner"), so
 // merging this to main leaves it inert on the live site rather than adding an
-// endpoint that describes it.
+// endpoint that describes it. That gate is the ONLY thing keeping this off the
+// live site — the directory name is not a second layer of protection.
+//
+// It lived at app/api/_stack/ until this commit, where it answered nothing at
+// all: Next excludes underscore-prefixed folders from routing entirely (docs
+// 01-app/04-glossary.md:149), so the route was absent from routes-manifest.json
+// and every request fell through to the not-found page. An endpoint whose whole
+// job is to assert that a deployment is what it claims spent its life
+// unreachable, silently, which is the exact failure mode described above.
 export async function GET() {
   if (!process.env.NEXT_PUBLIC_STACK_LABEL) return new Response("Not found", { status: 404 });
 
@@ -46,6 +105,7 @@ export async function GET() {
     walletProvider: walletProviderName(),
     supabaseProject,
     privyWalletsTable,
+    walletCreation: await walletCreationProperties(),
     env: {
       WALLET_PROVIDER: process.env.WALLET_PROVIDER ?? null,
       SUPABASE_SERVICE_ROLE_KEY: Boolean(process.env.SUPABASE_SERVICE_ROLE_KEY),
