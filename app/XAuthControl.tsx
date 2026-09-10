@@ -335,20 +335,22 @@ export default function XAuthControl() {
                             {me.custodian === "Privy" ? (
                               <p className="wallet-note">
                                 <b>Held by Privy.</b> Your assets are held by Privy, the custodian.
-                                Splitsy is the app that operates this wallet on your behalf. Privy is
-                                a SOC&nbsp;2–audited custody provider, independently reviewed by
-                                Cure53, Zellic and Doyensec, with a public bug bounty and keys that
-                                are encrypted and segmented so no single party holds a whole key.{" "}
+                                Splitsy is the app that operates this wallet and can move assets on
+                                your behalf. Privy is a SOC&nbsp;2–audited custody provider,
+                                independently reviewed by Cure53, Zellic and Doyensec, with a public
+                                bug bounty and keys that are encrypted and segmented so no single
+                                party holds a whole key.{" "}
                                 <a
                                   href="https://privy.io/security"
                                   target="_blank"
                                   rel="noreferrer"
                                   className="wallet-handle"
+                                  aria-label="Privy security page (opens in a new tab)"
                                 >
                                   privy.io/security
                                 </a>
-                                . Until you set an export password, Splitsy is <b>also</b> authorised
-                                to move your assets on your behalf — set one in the{" "}
+                                . Until you set an export password, Splitsy can <b>also</b> export
+                                this wallet&rsquo;s private key itself — set one in the{" "}
                                 <b>export</b> tab.
                               </p>
                             ) : null}
