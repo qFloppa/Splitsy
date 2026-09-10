@@ -8,6 +8,7 @@ import {
   receiptToState,
   settledOrThrow,
   verdictAfterWait,
+  walletSpec,
 } from "./privy-wallet.ts";
 import { isBroadcast } from "./wallet-provider.ts";
 
@@ -148,4 +149,73 @@ test("a receipt decides; a consumed nonce with no receipt is the only other proo
   // this, and so does one the node never accepted. Neither is provable, so neither
   // is claimed.
   assert.equal(fateFromReads(null, false), "unknown");
+});
+
+// ── walletSpec ────────────────────────────────────────────────────────────────
+// Creation-only properties get a test because creation is the only chance to set
+// them. A wallet minted without owner_id is owned by a quorum Privy picked and
+// nobody holds, which makes it permanently non-exportable — and scripts/privy-
+// setup.ts shipped exactly that bug, silently, for the whole branch.
+// setEnv, not Object.assign: assigning `undefined` onto process.env stores the
+// STRING "undefined", which is truthy and would make an "unset" test silently
+// assert nothing. Deleting is the only way to actually unset one.
+const setEnv = (env: Record<string, string | undefined>) => {
+  for (const [k, v] of Object.entries(env)) {
+    if (v === undefined) delete process.env[k];
+    else process.env[k] = v;
+  }
+};
+
+const withEnv = <T,>(env: Record<string, string | undefined>, fn: () => T): T => {
+  const saved = Object.fromEntries(Object.keys(env).map((k) => [k, process.env[k]]));
+  setEnv(env);
+  try {
+    return fn();
+  } finally {
+    setEnv(saved);
+  }
+};
+
+test("every wallet is minted owned by the quorum AND signed by it", () => {
+  const spec = withEnv({ PRIVY_KEY_QUORUM_ID: "q-1", PRIVY_AGENT_POLICY_ID: undefined }, () =>
+    walletSpec("pay:x", "idem-1"),
+  );
+  // Owner is what makes the wallet exportable; the additional signer is what
+  // keeps the server able to spend AFTER ownership moves to the user's key. The
+  // whole export design rests on those being two different things.
+  assert.equal(spec.owner_id, "q-1");
+  assert.deepEqual(spec.additional_signers, [{ signer_id: "q-1" }]);
+  assert.equal(spec.chain_type, "ethereum");
+  assert.equal(spec.idempotency_key, "idem-1");
+});
+
+test("only the agent wallet carries the enclave policy", () => {
+  const env = { PRIVY_KEY_QUORUM_ID: "q-1", PRIVY_AGENT_POLICY_ID: "pol-9" };
+  const agent = withEnv(env, () => walletSpec("agent", "i"));
+  assert.deepEqual(agent.additional_signers, [{ signer_id: "q-1", override_policy_ids: ["pol-9"] }]);
+  // A pay wallet is only ever spent on a request the user made, so it gets no cap.
+  const pay = withEnv(env, () => walletSpec("pay:twitter", "i"));
+  assert.deepEqual(pay.additional_signers, [{ signer_id: "q-1" }]);
+});
+
+test("an unset quorum fails the mint instead of minting an unowned wallet", () => {
+  // The failure mode this refuses: a wallet created with no owner is one Privy
+  // assigns itself, and that is unrecoverable rather than merely broken.
+  assert.throws(
+    () => withEnv({ PRIVY_KEY_QUORUM_ID: undefined }, () => walletSpec("pay:x", "i")),
+    /PRIVY_KEY_QUORUM_ID is not set/,
+  );
+  // Whitespace is not an id. Untrimmed, this padded value would mint wallets
+  // whose owner never matches the quorum we compare against later.
+  assert.throws(
+    () => withEnv({ PRIVY_KEY_QUORUM_ID: "   " }, () => walletSpec("pay:x", "i")),
+    /PRIVY_KEY_QUORUM_ID is not set/,
+  );
+});
+
+test("the quorum id is trimmed, so a padded env var still matches Privy's owner", () => {
+  const spec = withEnv({ PRIVY_KEY_QUORUM_ID: " q-1\n", PRIVY_AGENT_POLICY_ID: undefined }, () =>
+    walletSpec("pay:x", "i"),
+  );
+  assert.equal(spec.owner_id, "q-1");
 });

@@ -54,8 +54,11 @@ function privy(): PrivyClient {
 
 // The signer attached to every wallet at creation. Without it the server cannot
 // transact at all, so an unset value is a hard error rather than a degraded mode.
+// Trimmed to match resolveState (app/api/wallet/export/route.ts), which compares
+// this id against the owner Privy reports — a padded value here would mint
+// wallets whose ownership never matches and read as "someone else owns this".
 function quorumId(): string {
-  const id = process.env.PRIVY_KEY_QUORUM_ID;
+  const id = process.env.PRIVY_KEY_QUORUM_ID?.trim();
   if (!id) throw new Error("PRIVY_KEY_QUORUM_ID is not set — the server cannot sign");
   return id;
 }
@@ -570,7 +573,11 @@ async function send(
 // wallet does: the enclave policy. Only at creation. An agent wallet minted before
 // PRIVY_AGENT_POLICY_ID was set carries no policy and cannot be given one from
 // here, which is why this carries no backfill.
-const walletSpec = (namespace: string, idempotencyKey: string) => ({
+// EXPORTED FOR THE TEST, not for callers — creation is the only place this can
+// be got right. owner_id and the enclave policy are both creation-only, so a
+// wallet minted with either one wrong is wrong forever and no backfill exists.
+// That is why a pure shape function has a test at all.
+export const walletSpec = (namespace: string, idempotencyKey: string) => ({
   chain_type: "ethereum" as const,
   owner_id: quorumId(),
   additional_signers: [

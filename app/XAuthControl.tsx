@@ -13,12 +13,15 @@ import { ProviderIcon } from "./ProviderTag";
 type Me = { id: string; provider?: AccountProvider | null; handle: string; name: string | null; avatarUrl: string | null; walletAddress: string | null; custodian?: "Circle" | "Privy" };
 type Tab = "info" | "send" | "receive" | "history" | "export";
 
+// `export` is NOT in this list. It is appended per-render below, only on the
+// Privy stack: a Circle wallet's key cannot be exported, so the route answers
+// 404 and the tab's whole content would be the words "Export is not available
+// on this wallet stack." A tab that can only say that should not be a tab.
 const TABS: { id: Tab; label: string }[] = [
   { id: "info", label: "wallet" },
   { id: "send", label: "send" },
   { id: "receive", label: "receive" },
   { id: "history", label: "history" },
-  { id: "export", label: "export" },
 ];
 
 // "USDC" is a word here, not the seeklogo PNG this panel used to inline eight
@@ -303,7 +306,7 @@ export default function XAuthControl() {
                   </div>
 
                   <div className="wallet-tabs">
-                    {TABS.map((t) => (
+                    {(me.custodian === "Privy" ? [...TABS, { id: "export" as Tab, label: "export" }] : TABS).map((t) => (
                       <button
                         key={t.id}
                         type="button"
@@ -345,7 +348,7 @@ export default function XAuthControl() {
                                   target="_blank"
                                   rel="noreferrer"
                                   className="wallet-handle"
-                                  aria-label="Privy security page (opens in a new tab)"
+                                  aria-label="privy.io/security (opens in a new tab)"
                                 >
                                   privy.io/security
                                 </a>

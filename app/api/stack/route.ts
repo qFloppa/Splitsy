@@ -33,7 +33,10 @@ async function walletCreationProperties() {
       appSecret: process.env.PRIVY_APP_SECRET ?? "",
     });
     const wallet = await privy.wallets().get(data.wallet_id);
-    const quorum = process.env.PRIVY_KEY_QUORUM_ID;
+    // Trimmed, matching quorumId() (lib/privy-wallet.ts) and resolveState
+    // (app/api/wallet/export/route.ts). A padded value would make this probe
+    // report a correctly-minted wallet as owned by someone else.
+    const quorum = process.env.PRIVY_KEY_QUORUM_ID?.trim();
     return {
       checked: true,
       walletId: data.wallet_id,
@@ -45,7 +48,11 @@ async function walletCreationProperties() {
       // And owned by US, which is what a freshly minted wallet must look like
       // before anyone enables export on it.
       ownedByQuorum: wallet.owner_id === quorum,
-      // Without this the server cannot sign at all once ownership moves.
+      // Without this the server cannot sign at all once ownership moves. The
+      // `?? []` is type-dead — the SDK types the field as always present — and
+      // KEPT anyway: this is a diagnostic whose whole job is to answer "what is
+      // actually true in this deployment", and it must report a malformed
+      // response as `false` rather than throw its own probe into the catch below.
       quorumIsAdditionalSigner: (wallet.additional_signers ?? []).some((s) => s.signer_id === quorum),
       // Only the agent namespace carries the enclave cap; null means "not applicable".
       agentPolicyExpected: data.namespace === "agent" ? Boolean(process.env.PRIVY_AGENT_POLICY_ID) : null,

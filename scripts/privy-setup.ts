@@ -66,7 +66,7 @@ import { ARC_TESTNET_RPC, ARC_TESTNET_USDC } from "../lib/x402/constants.ts";
 
 const appId = process.env.PRIVY_APP_ID ?? "";
 const appSecret = process.env.PRIVY_APP_SECRET ?? "";
-const quorumId = process.env.PRIVY_KEY_QUORUM_ID ?? "";
+const quorumId = process.env.PRIVY_KEY_QUORUM_ID?.trim() ?? "";
 if (!appId || !appSecret || !quorumId) {
   throw new Error("Set PRIVY_APP_ID, PRIVY_APP_SECRET and PRIVY_KEY_QUORUM_ID in .env.local");
 }
@@ -100,9 +100,15 @@ const recipient = recipientArg === undefined ? undefined : getAddress(recipientA
 // funding the first run's address received, and a fresh wallet would orphan it.
 const TEST_KEY = "spike:arc-testnet-proof";
 
-// The key quorum rides along as an additional signer. That is what lets the
-// server transact later with no user present.
-const WALLET_SPEC = [{ chain_type: "ethereum" as const, additional_signers: [{ signer_id: quorumId }] }];
+// The key quorum is BOTH the owner and an additional signer, matching walletSpec
+// in lib/privy-wallet.ts. The additional signer is what lets the server transact
+// later with no user present; owner_id is what makes the wallet EXPORTABLE, and
+// it can only be set at creation. Omitting it — as this did — let Privy assign a
+// quorum of its own, and a wallet owned by a quorum nobody holds the key to can
+// never be exported and cannot be repaired after the fact.
+const WALLET_SPEC = [
+  { chain_type: "ethereum" as const, owner_id: quorumId, additional_signers: [{ signer_id: quorumId }] },
+];
 
 // An account can be an external wallet, or a Solana embedded one; this picks the
 // Privy-held Ethereum wallet, which is the only kind the send path can use.

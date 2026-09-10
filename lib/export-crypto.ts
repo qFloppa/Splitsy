@@ -93,10 +93,12 @@ export function signAuthorization(payload: Uint8Array, secretKey: Uint8Array): s
 export const PBKDF2_ITERATIONS = 600_000;
 export const MIN_PASSWORD_LENGTH = 12;
 
-// Lowercased deliberately. setUserWallet (lib/users-repo.ts:45) stores Privy's
-// CHECKSUMMED address while setUserAgentWallet lowercases, so the address a
-// browser is handed can arrive either way — and a salt that changed with the
-// casing would silently derive a different owner key and lock the user out.
+// Lowercased deliberately, and this is LOAD-BEARING even though the writer that
+// motivated it was fixed on this branch. setUserWallet (lib/users-repo.ts:45)
+// now lowercases, but rows written BEFORE that fix still hold Privy's
+// CHECKSUMMED address, so the address a browser is handed can still arrive
+// either way — and a salt that changed with the casing would silently derive a
+// different owner key and lock the user out of their own wallet.
 export function exportSalt(walletAddress: string): string {
   return `splitsy-export:${walletAddress.toLowerCase()}`;
 }

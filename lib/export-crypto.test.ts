@@ -66,9 +66,9 @@ test("base64 round-trips without Buffer", () => {
 
 const ADDRESS = "0xa264A3818F20f878380B5Af9154080605de9a704";
 
-// The salt is lowercased so the derivation cannot be broken by the casing bug in
-// setUserWallet (lib/users-repo.ts:45), which stores Privy's checksummed address
-// verbatim while every other writer lowercases.
+// The salt is lowercased so the derivation cannot be broken by address casing.
+// setUserWallet (lib/users-repo.ts:45) lowercases as of this branch, but rows
+// written before that fix still hold Privy's checksummed address verbatim.
 test("the salt is case-insensitive in the address", () => {
   assert.equal(exportSalt(ADDRESS), exportSalt(ADDRESS.toLowerCase()));
   assert.equal(exportSalt(ADDRESS), `splitsy-export:${ADDRESS.toLowerCase()}`);

@@ -58,8 +58,8 @@ if (!supabase) throw new Error("Supabase is not configured");
 // Demanded here, not read inline: the skip guard below compares Privy's owner_id
 // against this, and an unset value would match nothing and silently re-mint a
 // wallet that is already done. Same fail-closed reasoning as
-// app/api/wallet/export/route.ts:124.
-const quorum = process.env.PRIVY_KEY_QUORUM_ID;
+// app/api/wallet/export/route.ts:141.
+const quorum = process.env.PRIVY_KEY_QUORUM_ID?.trim();
 if (!quorum) throw new Error("PRIVY_KEY_QUORUM_ID is not set");
 const publicClient = createPublicClient({ chain: arcTestnet, transport: http(ARC_TESTNET_RPC) });
 
@@ -95,9 +95,10 @@ const liveWalletIds = new Set(users.map((u) => u.circle_wallet_id));
 // scratch row pointing at a LIVE id, invisible to a liveness test, and no re-run
 // of this script could ever see it again. It is not harmless: two rows sharing a
 // wallet_id make getPrivyWalletByWalletId's .maybeSingle() error PGRST116, and
-// lib/privy-wallets-repo.ts:56 turns that into a throw from gate(), which
-// app/api/wallet/export/route.ts:132 calls OUTSIDE its try. That user's export
-// route is dead until someone repairs the table by hand. The value guard still
+// lib/privy-wallets-repo.ts:56 turns that into a throw from gate(). gate() now
+// catches it and answers 502 rather than crashing the route, so the user gets a
+// retryable error instead of a broken page — but their export stays broken until
+// someone repairs the table by hand, which is why the row still surfaces here. The value guard still
 // has the last word on the delete itself; this only puts the row back in front of
 // the operator.
 const orphans = rows.filter(

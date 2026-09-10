@@ -266,7 +266,7 @@ wallet's state, and it is the honest answer to the §1 caveat.
 **The bug class this belongs to.** `owner_id` is the third property that attaches
 only at wallet creation and cannot be backfilled — after `PRIVY_AGENT_POLICY_ID`
 (`docs/deployments.md:125-138`) and now export ownership. What catches a fourth
-is a startup assertion rather than more documentation: `/api/_stack` already
+is a startup assertion rather than more documentation: `/api/stack` already
 probes reachability, and it gains a check that the newest `privy_wallets` row's
 wallet reports `owner_id === PRIVY_KEY_QUORUM_ID` and carries the expected
 signer and policy.

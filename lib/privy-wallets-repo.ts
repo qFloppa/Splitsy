@@ -42,10 +42,10 @@ export async function insertPrivyWallet(row: PrivyWalletRow): Promise<void> {
 
 // The route holds a wallet id (users.circle_wallet_id, which on this stack holds
 // the PRIVY wallet id) and needs the row it belongs to. Deliberately keyed on
-// wallet_id rather than address: address casing is inconsistent across writers —
-// setUserWallet stores Privy's checksummed form, setUserAgentWallet lowercases —
-// and a lookup that can miss on casing would read as "no wallet" and 404 a user
-// out of their own export.
+// wallet_id rather than address: address casing was inconsistent across writers
+// until setUserWallet was fixed on this branch, and rows written before that
+// still hold the checksummed form — a lookup that can miss on casing would read
+// as "no wallet" and 404 a user out of their own export.
 export async function getPrivyWalletByWalletId(walletId: string): Promise<PrivyWalletRow | null> {
   const client = requireClient();
   const { data, error } = await client

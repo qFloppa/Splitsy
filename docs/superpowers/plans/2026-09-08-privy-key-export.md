@@ -40,7 +40,7 @@
 | `app/api/wallet/export/route.ts` (create) | GET status, PUT enable/restore, POST export relay. Session + unlock-cookie gated, `no-store`. |
 | `app/ExportTab.tsx` (create) | Client component. The whole browser-side ceremony: enable, verify, export, reveal, discard. |
 | `app/XAuthControl.tsx` (modify) | Fifth tab entry + switch branch; custody disclosure under the address. |
-| `app/api/_stack/route.ts` (modify) | Creation-property assertion for the newest wallet. |
+| `app/api/stack/route.ts` (modify) | Creation-property assertion for the newest wallet. |
 | `scripts/privy-export-probe.ts` (create) | One-off live proof of the whole Privy round-trip. |
 | `scripts/privy-remint.ts` (create) | One-off: mint the exportable pay wallet, sweep, repoint the rows, delete dead probe rows. |
 
@@ -2154,23 +2154,23 @@ git commit -m "fix(privy): re-mint the pay wallet as exportable, and lowercase t
 ### Task 13: Catch the next creation-only property
 
 **Files:**
-- Modify: `app/api/_stack/route.ts`
+- Modify: `app/api/stack/route.ts`
 
 **Interfaces:**
 - Consumes: `getWalletOwnerId` (Task 7), `createSupabaseServerClient`.
-- Produces: an extra field on the existing `/api/_stack` response.
+- Produces: an extra field on the existing `/api/stack` response.
 
 **Why:** `owner_id` is the **third** property that attaches only at wallet creation and cannot be backfilled — after `PRIVY_AGENT_POLICY_ID` (`docs/deployments.md:125-138`) and now export ownership. Nothing detects the failure and no migration repairs it. Documentation did not catch the second one; an assertion might catch the fourth.
 
 - [ ] **Step 1: Read the existing route**
 
-Run: `cat app/api/_stack/route.ts`
+Run: `cat app/api/stack/route.ts`
 
 Note the shape it already has: gated on `NEXT_PUBLIC_STACK_LABEL` so it is inert on Production, **names never values**, every credential reported as a bare boolean, and the `privy_wallets` reachability probe that reports a caught error rather than throwing. The new check follows all four rules.
 
 - [ ] **Step 2: Add the assertion**
 
-Add the import at the top of `app/api/_stack/route.ts`:
+Add the import at the top of `app/api/stack/route.ts`:
 
 ```ts
 import { createSupabaseServerClient } from "@/lib/supabase";
@@ -2240,7 +2240,7 @@ Then add one key to the object `GET` already returns, immediately after `privyWa
 
 Run: `npx tsc --noEmit`, then with the dev server running and `NEXT_PUBLIC_STACK_LABEL` set in `.env.local`:
 ```bash
-curl -s localhost:3000/api/_stack | python3 -m json.tool | grep -A8 walletCreation
+curl -s localhost:3000/api/stack | python3 -m json.tool | grep -A8 walletCreation
 ```
 Expected: `"checked": true`, `"ownerSet": true`, `"ownedByQuorum": true`, `"quorumIsAdditionalSigner": true`.
 
@@ -2249,7 +2249,7 @@ If `NEXT_PUBLIC_STACK_LABEL` is unset the route 404s by design — set it locall
 - [ ] **Step 4: Commit**
 
 ```bash
-git add app/api/_stack/route.ts
+git add app/api/stack/route.ts
 git commit -m "feat(privy): assert the properties that can only be set at wallet creation"
 ```
 
