@@ -44,6 +44,10 @@ const DELETABLE_NAMESPACES = [...PAY_NAMESPACES, "spike"];
 // Arc charges gas in USDC, so a wallet cannot send its entire balance — the
 // transfer itself has to be paid for. Left behind as dust in an abandoned wallet.
 const GAS_RESERVE_USDC = 0.05;
+// The temporary key the replacement is minted under. No real login produces a key
+// ending in this: x/discord keys are numeric ids, wallet keys are hex addresses,
+// and email keys end in a domain.
+const SCRATCH_SUFFIX = "-export-remint";
 
 const supabase = createSupabaseServerClient();
 if (!supabase) throw new Error("Supabase is not configured");
@@ -81,7 +85,21 @@ const { data: users, error: usersError } = await supabase
 if (usersError) throw new Error(usersError.message);
 
 const liveWalletIds = new Set(users.map((u) => u.circle_wallet_id));
-const orphans = rows.filter((r) => !liveWalletIds.has(r.wallet_id) && DELETABLE_NAMESPACES.includes(r.namespace));
+// A scratch row is ALWAYS a candidate, live wallet id or not. Liveness is read
+// from users.circle_wallet_id, which the pay loop overwrites with the new wallet
+// id — so a crash between that write and the scratch delete below leaves the
+// scratch row pointing at a LIVE id, invisible to a liveness test, and no re-run
+// of this script could ever see it again. It is not harmless: two rows sharing a
+// wallet_id make getPrivyWalletByWalletId's .maybeSingle() error PGRST116, and
+// lib/privy-wallets-repo.ts:56 turns that into a throw from gate(), which
+// app/api/wallet/export/route.ts:132 calls OUTSIDE its try. That user's export
+// route is dead until someone repairs the table by hand. The value guard still
+// has the last word on the delete itself; this only puts the row back in front of
+// the operator.
+const orphans = rows.filter(
+  (r) =>
+    (!liveWalletIds.has(r.wallet_id) || r.key.endsWith(SCRATCH_SUFFIX)) && DELETABLE_NAMESPACES.includes(r.namespace),
+);
 console.log(`orphan rows to delete: ${orphans.length}`);
 for (const row of orphans) {
   // Its OWN read, for display only — the operator reads this list to decide
@@ -142,7 +160,7 @@ for (const user of payUsers) {
   // Mint the replacement FIRST — the sweep needs somewhere to go. A distinct key
   // so getOrCreateWallet does not return the old row; the real row is repointed
   // below and this scratch row is removed.
-  const mintKey = `${row.key}-export-remint`;
+  const mintKey = `${row.key}${SCRATCH_SUFFIX}`;
   const fresh = await backend.getOrCreateWallet(row.namespace, mintKey);
   if (!fresh) throw new Error(`Could not mint a replacement for ${row.namespace}:${row.key}`);
   console.log(`    new wallet ${fresh.walletId} ${fresh.address}`);
@@ -178,7 +196,10 @@ for (const user of payUsers) {
   // on (namespace, key) and on users.id, and neither reads privy_wallets — and
   // sitting between the two repoints it put its own throw inside the window that
   // leaves the two tables disagreeing. Checked like every other write here: a
-  // silent failure leaves two rows sharing one wallet_id.
+  // silent failure leaves two rows sharing one wallet_id, which is not cosmetic —
+  // it breaks that user's export route outright (see the orphan filter above).
+  // Crashing here is survivable BECAUSE the filter catches scratch keys on their
+  // own; without that clause this write would be the last chance to see the row.
   const scratched = await supabase.from("privy_wallets").delete().eq("namespace", row.namespace).eq("key", mintKey);
   if (scratched.error) throw new Error(scratched.error.message);
   consumed.add(`${row.namespace}:${mintKey}`);
