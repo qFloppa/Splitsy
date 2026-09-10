@@ -67,36 +67,48 @@ type Gate =
 // app/api/wallet/send/route.ts: export is strictly more dangerous than a transfer,
 // so it gets at least the same gate.
 async function gate(): Promise<Gate> {
-  if (walletProviderName() !== "privy") {
-    // Not 403: on the Circle stack this capability does not exist at all. A DCW
-    // key cannot be exported, so there is nothing here to be forbidden from.
-    return { error: json({ error: "Export is not available on this wallet stack." }, 404) };
-  }
-  const user = await getSessionUser();
-  if (!user) return { error: json({ error: "Not signed in" }, 401) };
-  if (!user.circle_wallet_id || !user.wallet_address) {
-    return { error: json({ error: "Your wallet isn't provisioned yet." }, 409) };
-  }
+  try {
+    if (walletProviderName() !== "privy") {
+      // Not 403: on the Circle stack this capability does not exist at all. A DCW
+      // key cannot be exported, so there is nothing here to be forbidden from.
+      return { error: json({ error: "Export is not available on this wallet stack." }, 404) };
+    }
+    const user = await getSessionUser();
+    if (!user) return { error: json({ error: "Not signed in" }, 401) };
+    if (!user.circle_wallet_id || !user.wallet_address) {
+      return { error: json({ error: "Your wallet isn't provisioned yet." }, 409) };
+    }
 
-  const secret = process.env.SESSION_SECRET ?? "";
-  const unlockToken = (await cookies()).get(WALLET_UNLOCK_COOKIE)?.value ?? "";
-  if (verifyWalletUnlock(unlockToken, secret, Date.now()) !== user.id) {
-    return { error: json({ error: "locked" }, 403) };
+    const secret = process.env.SESSION_SECRET ?? "";
+    const unlockToken = (await cookies()).get(WALLET_UNLOCK_COOKIE)?.value ?? "";
+    if (verifyWalletUnlock(unlockToken, secret, Date.now()) !== user.id) {
+      return { error: json({ error: "locked" }, 403) };
+    }
+
+    // users.circle_wallet_id holds the PRIVY wallet id on this stack — the column
+    // name is legacy from the Circle era (lib/users-repo.ts:45 writes wallet.walletId
+    // into it) and is not renamed here.
+    const row = await getPrivyWalletByWalletId(user.circle_wallet_id);
+    if (!row) return { error: json({ error: "Your wallet isn't provisioned yet." }, 409) };
+
+    return {
+      walletId: user.circle_wallet_id,
+      address: user.wallet_address,
+      namespace: row.namespace,
+      key: row.key,
+      exportOwnerKey: row.export_owner_key ?? null,
+    };
+  } catch {
+    // CAUGHT HERE, ONCE, FOR ALL THREE HANDLERS. Everything above can throw —
+    // Supabase unconfigured, the network down, or .maybeSingle() hitting the
+    // duplicate wallet_id rows nothing constrains against — and every handler
+    // calls this BEFORE opening its own try. Uncaught, those escaped as a
+    // framework 500 HTML page, breaking the documented JSON contract below and
+    // reaching the browser as a bare "Network error". Deliberately says nothing
+    // about which: the client cannot act on the difference, and the message is
+    // the one place a DB error string could reach a user.
+    return { error: json({ error: "Could not read your wallet. Please try again." }, 502) };
   }
-
-  // users.circle_wallet_id holds the PRIVY wallet id on this stack — the column
-  // name is legacy from the Circle era (lib/users-repo.ts:45 writes wallet.walletId
-  // into it) and is not renamed here.
-  const row = await getPrivyWalletByWalletId(user.circle_wallet_id);
-  if (!row) return { error: json({ error: "Your wallet isn't provisioned yet." }, 409) };
-
-  return {
-    walletId: user.circle_wallet_id,
-    address: user.wallet_address,
-    namespace: row.namespace,
-    key: row.key,
-    exportOwnerKey: row.export_owner_key ?? null,
-  };
 }
 
 // Which side of the ownership line this wallet is on.
@@ -121,7 +133,11 @@ async function gate(): Promise<Gate> {
 // catches as a 502. Do not simplify this back to a one-line comparison.
 async function resolveState(walletId: string, exportOwnerKey: string | null) {
   if (exportOwnerKey) return "enabled" as const;
-  const quorum = process.env.PRIVY_KEY_QUORUM_ID;
+  // TRIMMED, because the comment above promises it is. A padded value is not
+  // falsy, so it would survive the check below and then lose every comparison
+  // against Privy's owner id — landing on needs_restore, which is exactly the
+  // custody lie this function is written to refuse.
+  const quorum = process.env.PRIVY_KEY_QUORUM_ID?.trim();
   if (!quorum) throw new Error("PRIVY_KEY_QUORUM_ID is not set");
   const owner = await getWalletOwnerId(walletId);
   if (!owner) throw new Error("Privy returned no owner for this wallet");

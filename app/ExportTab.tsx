@@ -45,12 +45,12 @@ export default function ExportTab({ address }: { address: string }) {
   useEffect(() => {
     // The rule reads `load` as a synchronous setState because it calls one
     // somewhere; every one of them is behind the `await fetch` on its first line,
-    // so nothing is set during this render. Same reason XAuthControl.tsx:175 has.
+    // so nothing is set during this render. Same reason XAuthControl.tsx:180 has.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     load().catch(() => setLoadError("Network error — please try again."));
   }, []);
 
-  // Same inline unlock SendTab does (app/XAuthControl.tsx:557-567) — export is
+  // Same inline unlock SendTab does (app/XAuthControl.tsx:583-594) — export is
   // gated on the same 5-minute cookie, so sending the user to another tab to get
   // it would be a detour the panel does not make anywhere else.
   async function unlock() {
@@ -121,6 +121,7 @@ export default function ExportTab({ address }: { address: string }) {
 
   async function enable() {
     if (!status) return;
+    const restoring = status.state === "needs_restore";
     setMessage(null);
     // BEFORE the dynamic import, not after the validation: that import fetches the
     // crypto chunk over the network on first use, and the button is disabled on
@@ -140,6 +141,18 @@ export default function ExportTab({ address }: { address: string }) {
 
       const secretKey = await crypto.deriveOwnerSecretKey(password, status.address);
       const publicKey = await crypto.ownerPublicKeySpki(secretKey);
+
+      // RESTORE PROVES BEFORE IT RECORDS; ENABLE TRANSFERS BEFORE IT PROVES. The
+      // orders are opposite because the risks are. On the enable path the PUT is
+      // what moves ownership, so it has to come first. On the restore path the PUT
+      // moves nothing — it only writes the cache — and writing it first is what
+      // used to strand people: a mistyped password, or a wallet whose ownership
+      // never moved at all, recorded a key that made resolveState answer "enabled"
+      // forever while the 409 blocked every retry. Proving first means a failed
+      // restore writes NOTHING and the user can simply try again.
+      if (restoring) {
+        await runExport(status, password, false);
+      }
 
       const res = await fetch("/api/wallet/export", {
         method: "PUT",
@@ -166,21 +179,26 @@ export default function ExportTab({ address }: { address: string }) {
       // typed credential: a password mistyped identically in both fields transfers
       // ownership to a key nobody can reproduce, and the wallet is non-exportable
       // forever with no signal. Revealing is a separate, deliberate click.
-      await runExport(next, password, false);
+      //
+      // Skipped when restoring — the proof already ran above, and running it twice
+      // is a second export round-trip for an answer we have.
+      if (!restoring) await runExport(next, password, false);
       setVerified(true);
       setPassword("");
       setConfirm("");
       setMessage(null);
     } catch (err) {
       const detail = err instanceof Error ? err.message : "Could not enable export.";
-      // The proof failed AFTER the record was written: say so plainly. No tick, no
-      // claim that export works — the honest reading is that we recorded the
-      // password and could not prove it exports this wallet, and the one action
-      // left is to try a reveal, which is the screen this drops onto.
+      // Three outcomes, three readings. A restore that failed its proof recorded
+      // NOTHING, so say that plainly and name the other reason it can fail: a
+      // wallet minted before export existed is owned by a quorum no password
+      // reproduces, and no password will ever restore it.
       setMessage(
         recorded
           ? `Your password was recorded, but we could not verify that it exports this wallet: ${detail} Do not rely on it until a reveal succeeds.`
-          : detail,
+          : restoring
+            ? `${detail} Nothing was recorded, so you can try again. If this wallet was created before export was available, no password can restore it.`
+            : detail,
       );
     } finally {
       setBusy(false);
@@ -308,8 +326,8 @@ export default function ExportTab({ address }: { address: string }) {
       </p>
       <p className="wallet-note">
         {restoring
-          ? "Export is already enabled for this wallet, but we lost our record of it. Re-enter the password you set to restore it."
-          : "Until you set an export password, Splitsy can export this wallet's private key itself, and is authorised to move your assets on your behalf. After you set one, only your password can release this wallet's private key — and there is no recovery. Choose something you will not forget."}
+          ? "This wallet is owned by a key Splitsy does not hold. Usually that means an export password was set here and we lost our record of it — re-enter it to restore the record. If you never set one, this wallet was created before export was available and cannot be exported; no password will change that."
+          : "Until you set an export password, Splitsy can export this wallet's private key itself, and is authorised to move your assets on your behalf. Setting one ends the first of those, not the second: only your password can release this wallet's private key — with no recovery — while Splitsy goes on spending from this wallet on your behalf, which is what keeps sending and paying working. Choose something you will not forget."}
       </p>
       <div className="wallet-line">
         <input
