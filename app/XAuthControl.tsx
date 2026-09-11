@@ -7,7 +7,7 @@ import { waitForCircleTxUrl } from "@/lib/arc-explorer";
 import { readArcUsdcBalance, billUnitsToUsdc } from "@/lib/bill-split-contracts";
 import { providerDisplay } from "@/lib/provider-display";
 import type { AccountProvider } from "@/lib/types";
-import ExportTab from "./ExportTab";
+import ExportTab, { WalletMore } from "./ExportTab";
 import { ProviderIcon } from "./ProviderTag";
 import { signedSend, type SignedSendResult } from "./signed-send";
 
@@ -370,27 +370,39 @@ export default function XAuthControl() {
                             </div>
                             <p className="wallet-proof">{me.walletAddress}</p>
                             {me.custodian === "Privy" ? (
-                              <p className="wallet-note">
-                                <b>Held by Privy.</b> Your assets are held by Privy, the custodian.
-                                Splitsy is the app that operates this wallet and can move assets on
-                                your behalf. Privy is a SOC&nbsp;2–audited custody provider,
-                                independently reviewed by Cure53, Zellic and Doyensec, with a public
-                                bug bounty and keys that are encrypted and segmented so no single
-                                party holds a whole key.{" "}
-                                <a
-                                  href="https://privy.io/security"
-                                  target="_blank"
-                                  rel="noreferrer"
-                                  className="wallet-handle"
-                                  aria-label="privy.io/security (opens in a new tab)"
-                                >
-                                  privy.io/security
-                                </a>
-                                . Until you set an export password, Splitsy can <b>also</b> export
-                                this wallet&rsquo;s private key itself — set one in the{" "}
-                                <b>export</b> tab, and the sends you make from here are signed by
-                                you rather than by Splitsy.
-                              </p>
+                              <>
+                                {/* SAYS ONLY WHAT THIS TAB CAN KNOW. It used to
+                                    assert "Splitsy can also export this wallet's
+                                    private key itself — set an export password",
+                                    which is now false for most wallets: one minted
+                                    by /api/wallet/provision is born owned by its
+                                    user, and Splitsy is neither its owner nor a
+                                    signer. The claim is state-dependent and this
+                                    tab holds no claim state, so it stops making it
+                                    — the export tab has the row and already says
+                                    the true version of it, in both directions. */}
+                                <p className="wallet-note">
+                                  <b>Held by Privy</b>, the custodian. Who can move this money —
+                                  you, Splitsy, or both — is in the <b>export</b> tab.
+                                </p>
+                                <WalletMore label="about Privy">
+                                  <p className="wallet-note">
+                                    A SOC&nbsp;2–audited custody provider, independently reviewed by
+                                    Cure53, Zellic and Doyensec, with a public bug bounty and keys
+                                    that are encrypted and segmented so no single party holds a whole
+                                    key.{" "}
+                                    <a
+                                      href="https://privy.io/security"
+                                      target="_blank"
+                                      rel="noreferrer"
+                                      className="wallet-handle"
+                                      aria-label="privy.io/security (opens in a new tab)"
+                                    >
+                                      privy.io/security
+                                    </a>
+                                  </p>
+                                </WalletMore>
+                              </>
                             ) : null}
                             <a
                               href="https://faucet.circle.com"
@@ -588,9 +600,11 @@ function WalletSetupGate({ me, onDone }: { me: Me; onDone: (address: string) => 
     <div className="wallet-band">
       <Label>set up your wallet</Label>
       <p className="wallet-note">
-        Your wallet is created here, in this browser, owned by a key only you hold.{" "}
-        <b>Splitsy never holds it</b> — not now, not later. That is also the catch: if you lose both of
-        the unlocks below, nobody can recover this wallet, including us.
+        Created here, in this browser, owned by a key only you hold.{" "}
+        <b>Splitsy never holds it</b> — not now, not later.
+      </p>
+      <p className="wallet-note" data-tone="warn">
+        The catch: lose your unlocks and nobody can recover this wallet, including us.
       </p>
 
       {canPasskey === true ? (
@@ -602,9 +616,8 @@ function WalletSetupGate({ me, onDone }: { me: Me; onDone: (address: string) => 
 
       <p className="wallet-note">
         {usePasskey && canPasskey === true
-          ? "Your recovery password, for a lost or replaced device."
-          : "Your wallet password. It is the only thing that can sign or export this wallet, so it cannot be reset."}{" "}
-        Enter it twice to confirm.
+          ? "Your recovery password, for a lost or replaced device. Twice, to confirm."
+          : "Your wallet password — the only thing that can sign or export this wallet. Twice, to confirm."}
       </p>
       <div className="wallet-line" data-pin>
         <input
@@ -639,8 +652,8 @@ function WalletSetupGate({ me, onDone }: { me: Me; onDone: (address: string) => 
       </button>
       {busy ? (
         <p className="wallet-note" role="status">
-          Making your key, then minting the wallet under it. This takes a few seconds and two steps —
-          don&apos;t close this panel.
+          Making your key, then minting the wallet under it. Two steps, a few seconds — don&apos;t
+          close this panel.
         </p>
       ) : null}
       {message ? (

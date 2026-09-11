@@ -1,7 +1,29 @@
 "use client";
 
 import { Check, Loader2 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
+
+// Long copy, one tap away instead of inline.
+//
+// THE PANEL IS A 352px FLOATING COLUMN. Custody copy has to be exact, which makes
+// it long, and four exact paragraphs in that column push the button a user came
+// for off the bottom — the explanation ends up costing them the action. So the
+// sentence that changes a DECISION stays visible and the reasoning behind it moves
+// in here.
+//
+// A real <details>, not a hover tooltip: hover does not exist on a phone, and this
+// is text someone may need to read twice before doing something irreversible. It
+// is also how the ceremony disclosure on the bills page already works
+// (.job-trail), so open/closed state, keyboard and screen-reader behaviour are the
+// browser's rather than ours to get wrong.
+export function WalletMore({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <details className="wallet-more">
+      <summary>{label}</summary>
+      {children}
+    </details>
+  );
+}
 
 // The browser half of wallet key export. EVERY SECRET IN THIS FILE STAYS IN THIS
 // FILE: the password, the P-256 key derived from it, the ephemeral HPKE private
@@ -407,11 +429,15 @@ export default function ExportTab({ address, handle }: { address: string; handle
       <div>
         <p className="settle-label">your private key</p>
         <p className="wallet-proof wallet-export-key">{revealed}</p>
-        <p className="wallet-note">
-          This is the key <b>Privy</b> has been holding for you. Splitsy never sees it. Import it into
-          any Ethereum wallet to control {address} directly — and anyone who has it controls this
-          wallet.
+        <p className="wallet-note" data-tone="warn">
+          Anyone who has this controls {address}. Splitsy never sees it.
         </p>
+        <WalletMore label="what to do with it">
+          <p className="wallet-note">
+            This is the key <b>Privy</b> has been holding for you. Import it into any Ethereum wallet
+            to control this address directly.
+          </p>
+        </WalletMore>
         <button type="button" onClick={() => setRevealed(null)} className="settle-action">
           done ›
         </button>
@@ -439,15 +465,21 @@ export default function ExportTab({ address, handle }: { address: string; handle
         {/* TWO DIFFERENT PROMISES, never the same words. Claimed means Splitsy
             holds no key at all; enabled-but-unclaimed means it still spends. */}
         {status.claimed ? (
-          <p className="wallet-note">
-            Your assets are held by <b>Privy</b>, the custodian, and <b>only your export password</b>{" "}
-            can move or release them. Splitsy holds no key to this wallet — it cannot spend from it,
-            cannot export it, and cannot reset your password. Sends you make here are signed by you.
-          </p>
+          <>
+            <p className="wallet-note">
+              This wallet is <b>yours</b>. Splitsy holds no key to it.
+            </p>
+            <WalletMore label="what that means">
+              <p className="wallet-note">
+                Your assets are held by <b>Privy</b>, the custodian, and only your export password
+                can move or release them. Splitsy cannot spend from this wallet, cannot export it,
+                and cannot reset your password. Sends you make here are signed by you.
+              </p>
+            </WalletMore>
+          </>
         ) : (
           <p className="wallet-note">
-            Your assets are held by <b>Privy</b>, the custodian. Only your export password can
-            authorise releasing this wallet&apos;s private key — Splitsy cannot, and cannot reset it.
+            Only your export password can release this key — Splitsy cannot, and cannot reset it.
           </p>
         )}
         <div className="wallet-line">
@@ -472,18 +504,24 @@ export default function ExportTab({ address, handle }: { address: string; handle
           <>
             <p className="settle-label">take sole ownership</p>
             <p className="wallet-note">
-              Splitsy can still <b>spend</b> from this wallet, even though only you can export it.
-              Taking sole ownership removes Splitsy&apos;s signer for good: after that nothing on the
-              server can move your money, and every payment you make is signed by you.
+              Removes Splitsy&apos;s signer for good. After that nothing on the server can move your
+              money, and every payment is signed by you.
             </p>
             <p className="wallet-note" data-tone="warn">
-              This cannot be undone by anyone, including Splitsy and Privy. If you lose your
-              password, the wallet and everything in it is gone permanently — there is no reset and
-              no recovery.
+              Cannot be undone by anyone, including Splitsy and Privy. Lose your password and the
+              wallet is gone permanently — no reset, no recovery.
             </p>
-            <p className="wallet-note">
-              Enter your export password in both fields to prove you still hold it.
-            </p>
+            <WalletMore label="why Splitsy can still spend">
+              <p className="wallet-note">
+                Ownership of this wallet moved to you under the older design, which left Splitsy as
+                an additional signer — so it can still <b>spend</b> from it, even though only you can
+                export it. This is what removes that signer.
+              </p>
+            </WalletMore>
+            {/* The claim reuses the password field from the reveal section above,
+                so it has to say so: without this the button is disabled and
+                nothing on screen explains which field is still empty. */}
+            <p className="wallet-note">Enter your export password above, then again here.</p>
             <div className="wallet-line">
               <input
                 value={confirm}
@@ -534,18 +572,23 @@ export default function ExportTab({ address, handle }: { address: string; handle
         {restoring ? "restore your export record" : claimFirst ? "make this wallet yours" : "enable export"}
       </p>
       <p className="wallet-note">
-        Your assets are held by <b>Privy</b>, the custodian. Splitsy is the app that operates this
-        wallet on your behalf.
-      </p>
-      <p className="wallet-note">
         {restoring
-          ? "This wallet is owned by a key Splitsy does not hold. Usually that means an export password was set here and we lost our record of it — re-enter it to restore the record. If you never set one, this wallet was created before export was available and cannot be exported; no password will change that."
+          ? "This wallet is owned by a key Splitsy does not hold."
           : claimFirst
-            ? passkeyClaim
-              ? "Right now Splitsy administers this wallet: it can move your assets on your behalf and can export the private key itself. Taking ownership ends both, permanently. You will unlock with your passkey — your device's fingerprint or face check — and the password below is your way back in if you lose that device. Either one works on its own. Splitsy keeps no key, and every payment you make is signed by you rather than by us."
-              : "Right now Splitsy administers this wallet: it can move your assets on your behalf and can export the private key itself. Setting a password here ends both, permanently. Afterwards only your password can move or release this money — Splitsy keeps no key, and every payment you make is signed by you rather than by us."
-            : "Until you set an export password, Splitsy can export this wallet's private key itself, and is authorised to move your assets on your behalf. Setting one ends the first of those, not the second: only your password can release this wallet's private key — with no recovery — and sends you make in the wallet panel are signed by you, so Splitsy cannot move your money at will. Splitsy keeps signing for what runs without you: autopay, and pay-link claims. Choose something you will not forget."}
+            ? "Right now Splitsy can move your assets and export this key itself. This ends both, for good."
+            : "Only your password will be able to release this wallet's private key."}
       </p>
+      <WalletMore label={restoring ? "what to enter" : "what changes"}>
+        <p className="wallet-note">
+          {restoring
+            ? "Usually this means an export password was set here and we lost our record of it — re-enter it to restore the record. If you never set one, this wallet was created before export was available and cannot be exported; no password will change that."
+            : claimFirst
+              ? passkeyClaim
+                ? "Your assets stay with Privy, the custodian. You will unlock with your passkey — your device's fingerprint or face check — and the password below is your way back in if you lose that device. Either one works on its own. Splitsy keeps no key, and every payment you make is signed by you rather than by us."
+                : "Your assets stay with Privy, the custodian. Afterwards only your password can move or release this money — Splitsy keeps no key, and every payment you make is signed by you rather than by us."
+              : "Your assets stay with Privy, the custodian. Splitsy can export this wallet's private key itself until you set a password, and is authorised to move your assets on your behalf. Setting one ends the first of those, not the second: only your password can release the key — with no recovery — and sends you make in the wallet panel are signed by you. Splitsy keeps signing for what runs without you: autopay, and pay-link claims."}
+        </p>
+      </WalletMore>
       {/* THE RECOVERY GAP, stated where the decision is made rather than as a
           clause in a paragraph. After a claim nobody can help: not Splitsy, not
           Privy. With two keys the sentence CHANGES MEANING — losing one is
@@ -553,10 +596,10 @@ export default function ExportTab({ address, handle }: { address: string; handle
           two-key user would be a false warning that teaches them to ignore it. */}
       {claimFirst ? (
         <p className="wallet-note" data-tone="warn">
-          This cannot be undone by anyone, including Splitsy and Privy.{" "}
+          Cannot be undone by anyone, including Splitsy and Privy.{" "}
           {passkeyClaim
-            ? "If you lose BOTH your passkey and this password, the wallet and everything in it is gone permanently — there is no reset and no recovery. Keep the password somewhere you will still have it after losing your phone."
-            : "If you lose this password, the wallet and everything in it is gone permanently — there is no reset and no recovery."}
+            ? "Lose BOTH your passkey and this password and the wallet is gone permanently. Keep the password somewhere you will still have it after losing your phone."
+            : "Lose this password and the wallet is gone permanently — no reset, no recovery."}
         </p>
       ) : null}
       {/* The choice, offered only where the platform can honour it. `canPasskey`
@@ -620,16 +663,23 @@ export default function ExportTab({ address, handle }: { address: string; handle
         ›
       </button>
       {warn}
-      <p className="wallet-note">
-        Your <b>pay wallet</b> is exportable. Your <b>agent wallet</b> is not yet — if you have topped
-        it up, that USDC cannot be exported today.
-        {claimFirst ? " Your agent wallet stays administered by Splitsy, which is what lets autopay run while you are away." : null}
-      </p>
-      <p className="wallet-note">
-        Splitsy serves this page&apos;s code, so a compromised Splitsy could capture your password as
-        you type it. Setting an export password protects you against a later breach, not against us
-        at the moment you use this feature.
-      </p>
+      {/* Both of these are honest disclosures rather than decisions made here, so
+          they fold away: nothing above depends on having read them, and inline
+          they were the two paragraphs that pushed the button off the panel. */}
+      <WalletMore label="what this does not cover">
+        <p className="wallet-note">
+          Your <b>pay wallet</b> is exportable. Your <b>agent wallet</b> is not yet — if you have
+          topped it up, that USDC cannot be exported today.
+          {claimFirst
+            ? " Your agent wallet stays administered by Splitsy, which is what lets autopay run while you are away."
+            : null}
+        </p>
+        <p className="wallet-note">
+          Splitsy serves this page&apos;s code, so a compromised Splitsy could capture your password
+          as you type it. Setting one protects you against a later breach, not against us at the
+          moment you use this feature.
+        </p>
+      </WalletMore>
     </div>
   );
 }

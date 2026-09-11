@@ -8051,6 +8051,37 @@ mark.doc-mark {
    today; .wallet-figure's "ok" is the colour this borrows. */
 .wallet-note[data-tone="ok"] { color: var(--success); }
 
+/* Long custody copy, folded away. See app/ExportTab.tsx:WalletMore for why it is
+   a <details> and not a tooltip. Styled as a dotted-underlined line rather than a
+   chip: it sits between paragraphs of .wallet-note and should read as one of
+   them that happens to open, not as a control competing with .settle-action.
+
+   list-style AND the webkit pseudo, for the same reason .job-trail-summary needs
+   both — the engines drop the default triangle differently, and one alone leaves
+   a stray marker. */
+.wallet-more { margin-top: 0.5rem; }
+
+.wallet-more > summary {
+  cursor: pointer;
+  list-style: none;
+  font-size: 0.82rem;
+  line-height: 1.55;
+  color: var(--pay-poster-fg);
+  text-decoration: underline dotted;
+  text-underline-offset: 3px;
+}
+
+.wallet-more > summary::-webkit-details-marker { display: none; }
+
+.wallet-more > summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* The first paragraph inside carries .wallet-note's own top margin, so the
+   summary needs none of its own when open. */
+.wallet-more[open] > summary { margin-bottom: 0; }
+
 /* The verb, at panel scale. Everything else about it — the receded rest colour
    that still clears 4.5:1, the tracking, the borderlessness — is .settle-action's
    and is not restated; only the size, which that class takes from `vw`. */
