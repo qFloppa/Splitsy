@@ -874,40 +874,6 @@ export async function exportWalletCiphertext(
   return { ciphertext: response.ciphertext, encapsulated_key: response.encapsulated_key };
 }
 
-// THE BINDING CHECK for a relayed, user-authorized transaction.
-//
-// A relayed transaction was authorized by the USER'S OWN key, so they are entitled
-// to sign whatever they like — nothing here is a security boundary against the
-// person paying. What it protects is the RECORD. The route reports what happened,
-// and later routes (app/api/debts/[id]/pay, the onchain-bills paths) write ledger
-// rows off that report; relaying a transaction that does not match the {to, amount}
-// we were asked about would leave the ledger describing a payment neither the user
-// nor we ever made.
-//
-// Lives here rather than in the route for two reasons: it re-encodes the calldata,
-// and transferCalldata is defined in this module — one definition, not two that can
-// drift — and a route importing next/headers cannot be imported by a test, which is
-// exactly backwards for the one check whose absence would be silent.
-//
-// No wallet id parameter: the wallet is named by the session, and the route passes
-// that id straight to _rpc. There is nothing here for a caller to get wrong.
-export function relayGuard(
-  to: string,
-  amount: number,
-  transaction: unknown,
-  signature: unknown,
-): { transaction: PreparedTransaction; signature: string } | { error: string } {
-  if (typeof signature !== "string" || !signature) return { error: "Expected an authorization signature." };
-  if (typeof transaction !== "object" || transaction === null) return { error: "Expected a transaction." };
-  const tx = transaction as Record<string, unknown>;
-  if (tx.to !== ARC_TESTNET_USDC) return { error: "That transaction is not a USDC transfer." };
-  if (tx.chain_id !== arcTestnet.id) return { error: "That transaction is not for this chain." };
-  if (tx.data !== transferCalldata(to, amount.toFixed(6))) {
-    return { error: "That transaction does not match this transfer." };
-  }
-  return { transaction: tx, signature };
-}
-
 // The USDC transfer calldata, encoded in ONE place. transferUsdc below uses it for
 // the quorum-signed path and prepareUserSignedTransfer for the user-signed one, so
 // the bytes the browser authorizes are the bytes the server would have sent.
@@ -933,6 +899,20 @@ export async function prepareUserSignedTransfer(
     ARC_TESTNET_USDC,
     transferCalldata(to, amountUsdc),
   );
+}
+
+// The general form: any contract call, prepared for the user to sign.
+//
+// prepareUserSignedTransfer above is this with the calldata already chosen. Kept
+// separate because a bare USDC transfer is the one shape with a helper on the
+// WalletBackend seam, and collapsing them would make every caller build calldata
+// for the common case.
+export async function prepareUserSignedCall(
+  walletId: string,
+  to: `0x${string}`,
+  data: `0x${string}`,
+): Promise<Prepared> {
+  return prepareTransfer(getAddress((await privy().wallets().get(walletId)).address), to, data);
 }
 
 export const backend: WalletBackend = {

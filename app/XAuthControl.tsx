@@ -9,6 +9,7 @@ import { providerDisplay } from "@/lib/provider-display";
 import type { AccountProvider } from "@/lib/types";
 import ExportTab from "./ExportTab";
 import { ProviderIcon } from "./ProviderTag";
+import { signedSend, type SignedSendResult } from "./signed-send";
 
 type Me = { id: string; provider?: AccountProvider | null; handle: string; name: string | null; avatarUrl: string | null; walletAddress: string | null; custodian?: "Circle" | "Privy" };
 type Tab = "info" | "send" | "receive" | "history" | "export";
@@ -666,31 +667,35 @@ function SendTab({ balance, onSent, walletAddress }: { balance: string | null; o
       // Holding the owner key is what makes this a USER-signed send. Without it —
       // no export password set, or the Circle stack, or the derivation skipped —
       // this falls through to the server-signed path, unchanged.
-      const data =
+      //
+      // signedSend is the shared prepare/sign/relay round trip (app/signed-send.ts),
+      // the same one the debt and bill panels use. It reads the key from the session
+      // module rather than taking it as an argument, so nothing here holds it.
+      const outcome =
         ownerKey && exportStatus
-          ? await sendSignedByOwner(ownerKey)
+          ? await signedSend("/api/wallet/send", exportStatus.address, { to, amount: Number(amount) })
           : await sendSignedBySplitsy();
 
-      if (data.res.status === 403) {
+      if (outcome.ok === false && outcome.locked) {
         setUnlocked(false);
         setPhase("form");
         setMessage("Wallet locked — enter your PIN.");
         return;
       }
-      if (!data.res.ok) {
-        setMessage(data.data.error ?? "Send failed.");
+      if (!outcome.ok) {
+        setMessage(outcome.error === "unlock_owner_key" ? "Enter your export password to sign this send." : outcome.error);
         setPhase("error");
         return;
       }
-      setSignedBy(data.data.signedBy === "you" ? "you" : "splitsy");
+      setSignedBy(outcome.data.signedBy === "you" ? "you" : "splitsy");
       setPhase("done");
       setTo("");
       setAmount("");
       onSent();
       // The on-chain hash lands a few seconds after Circle accepts the tx; poll
       // the history endpoint to surface an explorer link once it's available.
-      if (data.data.txId) {
-        const url = await waitForCircleTxUrl(data.data.txId);
+      if (typeof outcome.data.txId === "string") {
+        const url = await waitForCircleTxUrl(outcome.data.txId);
         if (url) setSentTxUrl(url);
       }
     } catch {
@@ -700,43 +705,18 @@ function SendTab({ balance, onSent, walletAddress }: { balance: string | null; o
   }
 
   // The unchanged path: ask the server to sign and send with its own quorum. Every
-  // user without an export password takes this one.
-  async function sendSignedBySplitsy() {
+  // user whose wallet is still custodial takes this one. Shaped like signedSend's
+  // result so the handling above is one branch rather than two.
+  async function sendSignedBySplitsy(): Promise<SignedSendResult> {
     const res = await fetch("/api/wallet/send", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ to, amount: Number(amount) }),
     });
-    return { res, data: await res.json() };
-  }
-
-  // Prepare (server reads the nonce and the gas) → sign (this tab, with the owner
-  // key) → relay (server broadcasts and waits). Two round trips because the RPC may
-  // be a keyed endpoint that must not reach a browser.
-  async function sendSignedByOwner(key: Uint8Array) {
-    const prepared = await fetch("/api/wallet/send", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ to, amount: Number(amount), prepare: true }),
-    });
-    const plan = await prepared.json();
-    if (!prepared.ok) return { res: prepared, data: plan };
-
-    const crypto = await import("@/lib/export-crypto");
-    // The bytes signed must be the bytes the SDK puts on the wire — see
-    // lib/export-crypto.ts:rpcRequestInput. canonicalPayload is the same function
-    // the export path uses, for the same reason.
-    const signature = crypto.signAuthorization(
-      crypto.canonicalPayload(crypto.rpcRequestInput(plan.walletId, plan.appId, plan.transaction)),
-      key,
-    );
-
-    const relayed = await fetch("/api/wallet/send", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ to, amount: Number(amount), transaction: plan.transaction, signature }),
-    });
-    return { res: relayed, data: await relayed.json() };
+    const body = await res.json().catch(() => ({}));
+    return res.ok
+      ? { ok: true, data: body }
+      : { ok: false, error: body.error ?? "Send failed.", status: res.status, locked: res.status === 403 };
   }
 
   if (!unlocked) {

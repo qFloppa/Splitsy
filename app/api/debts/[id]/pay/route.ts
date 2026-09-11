@@ -1,6 +1,7 @@
 import { cookies } from "next/headers";
 import { getSessionUser } from "@/lib/session";
 import { getDebtForSettlement, markDebtPaid, markDebtSettling, revertDebtByTxId } from "@/lib/bills-repo";
+import { prepareForUser, relayForUser, userMustSign } from "@/lib/user-signed";
 import {
   broadcastTxHash,
   isBroadcast,
@@ -10,11 +11,21 @@ import {
   InsufficientFundsError,
 } from "@/lib/wallet-provider";
 import { verifyWalletUnlock, WALLET_UNLOCK_COOKIE } from "@/lib/session-core";
+import { encodeFunctionData, erc20Abi, getAddress, parseUnits } from "viem";
+import { ARC_TESTNET_USDC } from "@/lib/x402/constants";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-export async function POST(_request: Request, { params }: { params: Promise<{ id: string }> }) {
+// Pay a debt from the debtor's own wallet.
+//
+// TWO SIGNERS, ONE SET OF GUARDS. A custodial wallet is signed by the server, as
+// it always was. A CLAIMED wallet has no server key at all, so the payment becomes
+// prepare → the browser signs → relay, and this route is entered twice for one
+// payment. Everything above the send runs on BOTH passes — the debt must still be
+// unpaid, still this user's, still not in flight when the relay arrives — because
+// minutes can pass between the two and the second visit is the one that spends.
+export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
   const user = await getSessionUser();
   if (!user) {
     return Response.json({ error: "Not signed in" }, { status: 401 });
@@ -78,7 +89,51 @@ export async function POST(_request: Request, { params }: { params: Promise<{ id
 
   let tx: { id: string; state: string };
   try {
-    tx = await transferUsdc(user.circle_wallet_id, creatorWallet, debt.amount_usdc);
+    // WHO SIGNS. A claimed wallet has no server key — Privy refuses us outright —
+    // so the payment runs as prepare/sign/relay with the user's own key. The debt
+    // guards above have already run on this pass either way, which is what makes
+    // it safe for the relay to be a second entry into this handler.
+    if (await userMustSign(user.circle_wallet_id)) {
+      const body = (await request.json().catch(() => null)) as
+        | { prepare?: unknown; ticket?: unknown; signature?: unknown }
+        | null;
+
+      // The amount is re-read from the debt row on BOTH passes and never taken
+      // from the client, exactly as it was when the server signed. The ticket then
+      // binds these bytes, so the relay cannot be handed a different transfer.
+      const data = encodeFunctionData({
+        abi: erc20Abi,
+        functionName: "transfer",
+        args: [getAddress(creatorWallet), parseUnits(String(debt.amount_usdc), 6)],
+      });
+
+      if (body?.prepare === true) {
+        return Response.json(
+          await prepareForUser({
+            walletId: user.circle_wallet_id,
+            userId: user.id,
+            to: ARC_TESTNET_USDC,
+            data,
+            // The debt id, so a ticket prepared for one debt cannot be relayed
+            // while another is marked paid. This is the binding that a shared
+            // relay helper cannot infer for itself.
+            context: `debt:${id}`,
+          }),
+        );
+      }
+
+      const relayed = await relayForUser({
+        ticket: body?.ticket,
+        signature: body?.signature,
+        userId: user.id,
+        walletId: user.circle_wallet_id,
+        context: `debt:${id}`,
+      });
+      if ("error" in relayed) return Response.json({ error: relayed.error }, { status: relayed.status });
+      tx = relayed.tx;
+    } else {
+      tx = await transferUsdc(user.circle_wallet_id, creatorWallet, debt.amount_usdc);
+    }
   } catch (err) {
     if (err instanceof InsufficientFundsError) {
       return Response.json({ error: "insufficient_funds" }, { status: 402 });

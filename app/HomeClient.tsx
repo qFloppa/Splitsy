@@ -33,6 +33,7 @@ import DashboardPanel from "./DashboardPanel";
 import IouClient from "./IouClient";
 import AgentEconomyPanel from "./AgentEconomyPanel";
 import { gatewayReceiptUrl } from "./JobTrail";
+import { ownerKeyNeeded, signedSend, type SignedSendResult } from "./signed-send";
 import SettlementAgentsPanel, { AGENT_STEPS, type AgentTabState } from "./SettlementAgentsPanel";
 import { HistoryCard, PaidBillStamp } from "./HistoryCard";
 import { PosterCell, PosterFact, PosterHero, PosterValue, SectionHead, legendOf, type Step } from "./SpecCard";
@@ -1417,13 +1418,29 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
         delete next[key];
         return next;
       });
-      const res = await fetch(`/api/debts/${debt.id}/pay`, { method: "POST" });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
+      // A CLAIMED wallet signs its own payment: the server has no key for it, so
+      // this becomes prepare → sign here → relay. signedSend is that round trip;
+      // an unclaimed wallet takes the plain POST it always did. Both reduce to the
+      // same {ok, error} shape so the handling below is one branch, not two.
+      const claimed = me?.walletAddress ? await ownerKeyNeeded() : { needed: false, address: null, hasKey: false };
+      const outcome =
+        claimed.needed && claimed.address
+          ? await signedSend(`/api/debts/${debt.id}/pay`, claimed.address)
+          : await (async (): Promise<SignedSendResult> => {
+              const res = await fetch(`/api/debts/${debt.id}/pay`, { method: "POST" });
+              const body = await res.json().catch(() => ({}));
+              return res.ok
+                ? { ok: true, data: body }
+                : { ok: false, error: body.error ?? "Payment failed.", status: res.status };
+            })();
+
+      if (!outcome.ok) {
         const message =
-          data.error === "insufficient_funds"
+          outcome.error === "insufficient_funds"
             ? "Your wallet needs more test USDC to cover this."
-            : (data.error ?? "Payment failed.");
+            : outcome.error === "unlock_owner_key"
+              ? "This wallet is yours — open the wallet panel and enter your export password to sign payments."
+              : outcome.error;
         setBillState("error");
         failFlow(message);
         setDebtMessages((current) => ({ ...current, [key]: { tone: "error", message } }));

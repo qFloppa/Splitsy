@@ -1,14 +1,10 @@
 import { cookies } from "next/headers";
-import { relayGuard } from "@/lib/privy-wallet";
 import { getSessionUser } from "@/lib/session";
 import { verifyWalletUnlock, WALLET_UNLOCK_COOKIE } from "@/lib/session-core";
-import {
-  InsufficientFundsError,
-  prepareUserSignedTransfer,
-  sendUserSignedTransfer,
-  transferUsdc,
-  walletProviderName,
-} from "@/lib/wallet-provider";
+import { prepareForUser, relayForUser, userMustSign } from "@/lib/user-signed";
+import { InsufficientFundsError, transferUsdc, walletProviderName } from "@/lib/wallet-provider";
+import { ARC_TESTNET_USDC } from "@/lib/x402/constants";
+import { encodeFunctionData, erc20Abi, getAddress, parseUnits } from "viem";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -20,16 +16,21 @@ export const dynamic = "force-dynamic";
 // THREE BODY SHAPES, one gate. The gate runs first and once — session, provisioned,
 // PIN unlock — and what differs afterwards is who signs:
 //
-//   {to, amount}                        the server signs with its own quorum. This
-//                                       is the path every user without an export
-//                                       password takes, and it is unchanged.
-//   {to, amount, prepare: true}         returns the UNSIGNED transaction, for a
-//                                       browser that holds an owner key.
-//   {to, amount, transaction, signature}relays a transaction the USER authorized.
+//   {to, amount}                    the server signs with its own quorum. The path
+//                                   every user whose wallet is still custodial takes.
+//   {to, amount, prepare: true}     returns the unsigned transaction AND a ticket.
+//   {to, amount, ticket, signature} relays the bytes the TICKET carries.
 //
 // The two-round-trip shape is forced, not chosen: the nonce and the gas are chain
 // reads against an endpoint that may be keyed (ARC_TESTNET_RPC is env-driven for
 // exactly that reason), so they cannot happen in a browser.
+//
+// THE TICKET REPLACED A RE-DERIVATION. This route used to verify a relayed
+// transaction by re-encoding the calldata from {to, amount} and comparing. That was
+// correct here and did not generalise — every other route would have needed its own
+// version, and none of them checked the nonce or the gas at all. lib/tx-ticket.ts
+// signs the prepared transaction instead, so the relay uses ITS OWN bytes and has
+// nothing to compare. See that file for why this is the stronger check.
 export async function POST(request: Request) {
   const user = await getSessionUser();
   if (!user) {
@@ -49,7 +50,7 @@ export async function POST(request: Request) {
     to?: unknown;
     amount?: unknown;
     prepare?: unknown;
-    transaction?: unknown;
+    ticket?: unknown;
     signature?: unknown;
   } | null;
   const to = String(body?.to ?? "").trim();
@@ -66,35 +67,54 @@ export async function POST(request: Request) {
   // exportable, so no Circle user can hold an owner key to sign with. 404 rather
   // than 403, matching how the export route answers the same question
   // (app/api/wallet/export/route.ts:71-75): the capability does not exist here.
-  const wantsUserSignature = body?.prepare === true || body?.transaction !== undefined;
+  const wantsUserSignature = body?.prepare === true || body?.ticket !== undefined;
   if (wantsUserSignature && walletProviderName() !== "privy") {
     return Response.json({ error: "Export is not available on this wallet stack." }, { status: 404 });
   }
 
+  // The amount is re-encoded here on BOTH passes and never taken from a client
+  // transaction — the ticket then binds these exact bytes.
+  const data = encodeFunctionData({
+    abi: erc20Abi,
+    functionName: "transfer",
+    args: [getAddress(to), parseUnits(amount.toFixed(6), 6)],
+  });
+  // A bare transfer has no row to bind to, so the context IS the payment: this
+  // recipient, this amount. A ticket prepared to send 1 USDC to A cannot be
+  // relayed as a request to send 1 USDC to B — the transaction would not match.
+  const context = `send:${to.toLowerCase()}:${amount.toFixed(6)}`;
+
   if (body?.prepare === true) {
     try {
-      const prepared = await prepareUserSignedTransfer(user.circle_wallet_id, to, amount.toFixed(6));
-      return Response.json({
-        transaction: prepared.transaction,
-        walletId: user.circle_wallet_id,
-        // Not a secret: it is in every Privy request the browser's signature covers,
-        // and the browser cannot build that signature without it.
-        appId: process.env.PRIVY_APP_ID,
-      });
+      return Response.json(
+        await prepareForUser({ walletId: user.circle_wallet_id, userId: user.id, to: ARC_TESTNET_USDC, data, context }),
+      );
     } catch (err) {
       return Response.json({ error: err instanceof Error ? err.message : "Could not prepare the transfer" }, { status: 502 });
     }
   }
 
-  if (body?.transaction !== undefined) {
-    const relaying = relayGuard(to, amount, body.transaction, body.signature);
-    if ("error" in relaying) return Response.json({ error: relaying.error }, { status: 400 });
-    try {
-      const tx = await sendUserSignedTransfer(user.circle_wallet_id, relaying.transaction, relaying.signature);
-      return done(tx, "you");
-    } catch (err) {
-      return failed(err);
-    }
+  if (body?.ticket !== undefined) {
+    const relayed = await relayForUser({
+      ticket: body.ticket,
+      signature: body.signature,
+      userId: user.id,
+      walletId: user.circle_wallet_id,
+      context,
+    }).catch((err) => err as Error);
+    if (relayed instanceof Error) return failed(relayed);
+    if ("error" in relayed) return Response.json({ error: relayed.error }, { status: relayed.status });
+    return done(relayed.tx, "you");
+  }
+
+  // A CLAIMED wallet cannot take this path — the server has no key and Privy would
+  // refuse. Told plainly rather than left to surface as a 502 from the attempt,
+  // because the remedy is the user signing, not a retry.
+  if (await userMustSign(user.circle_wallet_id)) {
+    return Response.json(
+      { error: "This wallet is yours — enter your export password to sign this send." },
+      { status: 409 },
+    );
   }
 
   try {
@@ -104,11 +124,6 @@ export async function POST(request: Request) {
     return failed(err);
   }
 }
-
-// THE BINDING CHECK lives in lib/privy-wallet.ts beside the calldata it re-encodes
-// (relayGuard there, with the reasoning). Moved out of this file because a route
-// that imports next/headers cannot be imported by a test — and this is the one check
-// here whose absence would be silent, so it is the one that most needs one.
 
 // Which signer produced the transaction, reported to the user. False precision
 // either way — claiming a user signature for a quorum-signed send would make the
