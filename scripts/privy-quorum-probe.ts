@@ -199,11 +199,85 @@ must("the server CANNOT sign", !afterSign.signed, afterSign.signed ? `IT SIGNED 
 const afterExport = await serverExport(wallet.id);
 must("the server CANNOT export", !afterExport.exported, afterExport.exported ? "IT EXPORTED" : describe(afterExport.error));
 
+// 8. THE NEVER-CUSTODIAL MINT. Everything above started from a wallet WE OWNED and
+// moved it away, which leaves a window — however brief — in which Splitsy could
+// have exported the key. This asks the harder question: will Privy mint a wallet
+// we could never sign for in the first place?
+//
+// THE QUIET RISK IS THE READ, not the write. lib/privy-wallet.ts resolves `from`
+// with wallets().get() on EVERY send (prepareTransfer, sendUserSigned,
+// getOrCreateWallet's re-read). If reads turn out to be owner-gated, minting this
+// way breaks the send path for every wallet and the design needs rethinking rather
+// than patching — so it is checked here, before anything is built on it.
+console.log("\n── the never-custodial mint ──────────────────────────────────────");
+const bornKey = await deriveOwnerSecretKey("born-owned-by-the-user", "0xborn");
+const bornQuorum = await privy.keyQuorums().create({
+  authorization_threshold: 1,
+  display_name: `probe born ${Date.now()}`,
+  public_keys: [await ownerPublicKeySpki(bornKey)],
+});
+
+let born: { id: string; address: string } | null = null;
+let mintError: unknown = null;
+try {
+  const created = await privy.wallets().create({
+    chain_type: "ethereum",
+    // Owned by a quorum whose key we do not hold, and NO additional_signers —
+    // so there has never been a moment when this wallet was ours.
+    owner_id: bornQuorum.id,
+    idempotency_key: `born-probe:${Date.now()}`,
+  });
+  born = { id: created.id!, address: created.address };
+} catch (error) {
+  mintError = error;
+}
+
+must(
+  "a wallet mints owned by a quorum we hold no key to",
+  born !== null,
+  born ? `${born.id} ${born.address}` : describe(mintError),
+);
+
+if (born) {
+  // The read the whole send path depends on.
+  let read: string | null = null;
+  try {
+    read = (await privy.wallets().get(born.id)).address;
+  } catch (error) {
+    read = null;
+    console.log(`  (read failed: ${describe(error)})`);
+  }
+  must("we can still READ its address with only the app secret", read === born.address, read ?? "unreadable");
+
+  // Ours from the first call, not after a handover.
+  const bornServerSign = await serverSign(born.id);
+  must(
+    "the server has NEVER been able to sign it",
+    !bornServerSign.signed,
+    bornServerSign.signed ? `IT SIGNED — ${bornServerSign.signed.length} chars` : describe(bornServerSign.error),
+  );
+  const bornServerExport = await serverExport(born.id);
+  must(
+    "the server has NEVER been able to export it",
+    !bornServerExport.exported,
+    bornServerExport.exported ? "IT EXPORTED" : describe(bornServerExport.error),
+  );
+
+  // And the owner can use it immediately — a wallet nobody can sign for is not a
+  // non-custodial wallet, it is a brick.
+  const bornByOwner = await signWith(born.id, bornKey);
+  must(
+    "its owner can sign from the first moment",
+    Boolean(bornByOwner.signed?.startsWith("0x02")),
+    bornByOwner.signed ? `${bornByOwner.signed.length} chars` : describe(bornByOwner.error),
+  );
+}
+
 console.log(
   controlsFailed
     ? "\nCONTROLS FAILED — the findings above are void."
     : guaranteeBroken
-      ? "\nBROKEN — a two-key quorum does not behave as the recovery design needs. Do not promise recovery."
-      : "\nHOLDS — passkey and password can both own one wallet, either signs alone, and Splitsy holds neither.",
+      ? "\nBROKEN — do not build on this. Either recovery or the never-custodial mint does not hold."
+      : "\nHOLDS — a wallet can be born owned by the user, readable by us, signable only by them.",
 );
 process.exitCode = controlsFailed || guaranteeBroken ? 1 : 0;
