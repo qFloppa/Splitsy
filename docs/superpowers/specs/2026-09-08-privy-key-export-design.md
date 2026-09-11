@@ -352,9 +352,25 @@ next to the custody line, not instead of it.
    holding for you; Splitsy never sees it* — not "here is your key" alone.
 5. **Rewording the §1 sentence.** Instead of "until you set an export credential,
    Splitsy administers this wallet," the panel copy becomes: *"Your assets are
-   held by Privy. Until you set an export password, Splitsy is also authorised to
-   move them on your behalf. After you set an export password, only your password
-   can move them — and there is no recovery.*"
+   held by Privy. Until you set an export password, Splitsy can export this
+   wallet's private key itself, and is authorised to move your assets on your
+   behalf. Setting one ends the first of those, not the second: only your password
+   can release this wallet's private key — with no recovery — while Splitsy goes
+   on spending from this wallet on your behalf, which is what keeps sending and
+   paying working.*"
+
+   **Corrected 2026-09-11, after sign-off.** This item originally ended *"After
+   you set an export password, only your password can move them — and there is no
+   recovery"*, which contradicts §3 and `transferExportOwnership`
+   (`lib/privy-wallet.ts:633`): the transfer passes only `{owner,
+   authorization_context}`, `additional_signers` is untouched, and the spike
+   measured `spend AFTER transfer` as **OK**. Setting an export password ends
+   Splitsy's ability to **export the key**, not its ability to **move the
+   assets** — and the second has to continue, because it is what sends and pays.
+   Tasks 10 and 11 shipped the correct scoping and deliberately diverged from this
+   item; the wording above is now what they shipped. Amended rather than left
+   standing because the false sentence was copyable, and was in fact copied: it
+   reached `ExportTab.tsx` and the panel before being caught.
 
 ### What this does not change
 

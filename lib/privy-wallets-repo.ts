@@ -46,6 +46,19 @@ export async function insertPrivyWallet(row: PrivyWalletRow): Promise<void> {
 // until setUserWallet was fixed on this branch, and rows written before that
 // still hold the checksummed form — a lookup that can miss on casing would read
 // as "no wallet" and 404 a user out of their own export.
+//
+// WALLET_ID CARRIES NO UNIQUE INDEX, AND MUST NOT. Ruled 2026-09-11, after the
+// question was parked twice. .maybeSingle() raises PGRST116 on two rows sharing
+// one wallet_id, which reads as the constraint's absence being a bug — it is not.
+// scripts/privy-remint.ts holds exactly that state ON PURPOSE: the scratch row it
+// mints through and the real row it repoints both carry the new wallet id between
+// the update at :194 and the delete at :216, and that ordering is chosen so a
+// crash never strands swept funds in a wallet no row references. A unique index
+// turns that deliberate window into a guaranteed failure of the repoint, which is
+// the one write in the script that must not fail. The duplicate is already
+// handled at both ends instead: gate() catches the throw and answers a retryable
+// 502 (app/api/wallet/export/route.ts:102-110), and the script's orphan filter
+// matches scratch keys by suffix, so re-running it clears a crashed run's leftover.
 export async function getPrivyWalletByWalletId(walletId: string): Promise<PrivyWalletRow | null> {
   const client = requireClient();
   const { data, error } = await client

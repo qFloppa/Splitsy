@@ -150,6 +150,44 @@ bounded only by `decideAutopay`, which is our own code — and nothing surfaces 
 The id is produced by `npm run privy:policy -- <per-transaction cap in USDC>`,
 which prints it; each run creates a new policy and edits nothing.
 
+**Rotating `PRIVY_KEY_QUORUM_ID` is a per-wallet migration, not a variable
+change — and for any wallet with export enabled it is impossible.** Nothing in
+the code detects a rotation, and it breaks two things independently:
+
+- **Signing, for every existing wallet.** The quorum is written into
+  `additional_signers` at creation (`lib/privy-wallet.ts:583`), so a new quorum is
+  not a signer on any wallet already minted. The break lands the moment
+  `PRIVY_AUTHORIZATION_PRIVATE_KEY` moves to the new quorum's key — that key
+  authorizes nothing on an existing wallet, and every send, pay-link claim and
+  autopay run fails at `signTransaction`. This is the larger half and has nothing
+  to do with export.
+- **Export state.** `resolveState` (`app/api/wallet/export/route.ts:169`) compares
+  Privy's `owner_id` against the environment value, so a rotated value makes
+  every not-yet-enabled wallet read as `needs_restore`. Nothing false is
+  recorded — restore proves an export before it writes the key (`76b912a`) — but
+  each user is offered a restore they can never complete.
+
+What is repairable splits on who owns the wallet. While **we** are still the
+owner, `wallets().update()` accepts `additional_signers` and `policy_ids`
+(`node_modules/@privy-io/node/resources/wallets/wallets.d.ts:4869`), so a
+re-signer pass is at least expressible — one call per wallet, **unmeasured, and
+worth a throwaway probe before anyone plans a rotation around it.** Once a user
+has taken ownership (`privy_wallets.export_owner_key` non-null) that door is
+shut: `update()` is owner-gated, and the spike measured exactly this as a 401
+when our quorum was only an additional signer (design doc §"Spike results"). Those
+wallets are pinned to the retired quorum **permanently**.
+
+So: **keep a retired quorum's authorization key for as long as any wallet
+references it.** Deleting it ends server-side spending for every wallet whose
+owner is now a user, with no recovery. No allowlist of previously-held quorum ids
+is built — it would paper over the export half and do nothing for the signing
+half, which is the one that takes the product down.
+
+The same SDK fact puts a question mark on "uncapped **forever**" above: if
+`additional_signers` is genuinely updatable for a wallet we own, an agent wallet
+minted before `PRIVY_AGENT_POLICY_ID` was set may be fixable after all. Also
+unmeasured. Both claims need one probe wallet, not a design.
+
 **Set the cap above the largest per-bill cap a user can save.** The enclave
 refuses at step 4 of the six-step settlement ceremony, *after* the job fee is
 escrowed at step 3, so a cap set too low burns 0.01 USDC plus gas on every bill

@@ -1731,7 +1731,7 @@ export default function ExportTab({ address }: { address: string }) {
       <p className="wallet-note">
         {restoring
           ? "Export is already enabled for this wallet, but we lost our record of it. Re-enter the password you set to restore it."
-          : "Until you set an export password, Splitsy is also authorised to move your assets on your behalf. After you set one, only your password can release this wallet's private key — and there is no recovery. Choose something you will not forget."}
+          : "Until you set an export password, Splitsy can export this wallet's private key itself, and is authorised to move your assets on your behalf. Setting one ends the first of those, not the second: only your password can release this wallet's private key — with no recovery — while Splitsy goes on spending from this wallet on your behalf, which is what keeps sending and paying working. Choose something you will not forget."}
       </p>
       <div className="wallet-line">
         <input
@@ -1903,8 +1903,8 @@ In the info tab, immediately after the `<p className="wallet-proof">{me.walletAd
                                 >
                                   privy.io/security
                                 </a>
-                                . Until you set an export password, Splitsy is <b>also</b> authorised
-                                to move your assets on your behalf — set one in the{" "}
+                                . Until you set an export password, Splitsy can <b>also</b> export
+                                this wallet&rsquo;s private key itself — set one in the{" "}
                                 <b>export</b> tab.
                               </p>
                             ) : null}
@@ -2323,6 +2323,6 @@ git commit -m "chore(export): verified build and manual pass on Preview"
 
 - **Agent wallet export.** Spec section 1 defers it. The UI says so out loud rather than implying otherwise.
 - **Existing Circle DCW users.** A DCW key cannot be exported at all; covering them means new addresses plus a fund migration, which is Task 8 of the wallet-stack design.
-- **Recovering `scripts/privy-setup.ts` / `scripts/privy-policy.ts`**, absent from HEAD but referenced by `package.json` and `docs/deployments.md:131`. Recover with `git show a269e5b:scripts/privy-setup.ts` and `git show 85d24a5:scripts/privy-policy.ts`. Not a blocker here: Task 12 re-mints only the pay wallet, which carries no agent policy.
+- ~~**Recovering `scripts/privy-setup.ts` / `scripts/privy-policy.ts`**, absent from HEAD but referenced by `package.json` and `docs/deployments.md:131`. Recover with `git show a269e5b:scripts/privy-setup.ts` and `git show 85d24a5:scripts/privy-policy.ts`.~~ **STRUCK 2026-09-11 — this was false, and acting on it is destructive.** Both files are present at HEAD and always were (`scripts/privy-setup.ts`, `scripts/privy-policy.ts`). Running either `git show` would overwrite a live file with an older revision — and for `privy-setup.ts` it would specifically revert `5ee4981`, which added the missing `owner_id` to `WALLET_SPEC`. That field is creation-only with no backfill, so the reverted script would silently mint permanently non-exportable wallets again, which is the exact defect that commit exists to fix. Do not run these commands. Task 12 re-mints only the pay wallet, which carries no agent policy.
 - **RLS on `x402_payments`** in production project `hvckneltkugnvtwfrzlb` (596 rows readable and writable by the anon key). Flagged in the spec, out of scope here, and worth raising separately.
 - **`privy-request-expiry`.** The SDK only signs it when present, and the recipient key already binds each signature to one tab. Add it if Privy ever makes expiry mandatory.

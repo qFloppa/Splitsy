@@ -145,11 +145,19 @@ for (const user of payUsers) {
   // scratch wallet, sweep again, and null export_owner_key. Both reads run in dry
   // run too: they are reads, and the preview has to say what --commit will do.
   //
-  // KNOWN AMBIGUITY, PARKED FOR THE HUMAN, DO NOT BUILD MACHINERY FOR IT: a
+  // KNOWN AMBIGUITY, RULED 2026-09-11, STILL DO NOT BUILD MACHINERY FOR IT: a
   // foreign owner_id with a null export_owner_key is either a legacy wallet minted
   // before ownership existed (re-mint is correct) or one whose ownership the user
   // took while our record was lost (re-mint is destructive). The server cannot
-  // tell them apart. Re-minting is the right default.
+  // tell them apart, and never will — see the ruling at
+  // app/api/wallet/export/route.ts:resolveState for why no signal separates them.
+  // Re-minting stays the right default, and the cost of being wrong is bounded:
+  // the sweep below moves the funds to the replacement, so the user loses an
+  // export ownership they can simply establish again on the new wallet, not money.
+  // The unbuilt cheap check, if this ever runs against a population that might
+  // hold state (a): keyQuorums.get(owner) returns the owner quorum's
+  // authorization_keys, and a key there that the user can prove is theirs is the
+  // one signal that would refuse this re-mint.
   const owner = await getWalletOwnerId(row.wallet_id);
   if (owner === quorum) {
     console.log("    SKIPPED — Privy says our key quorum owns this wallet, so it was already minted exportable");

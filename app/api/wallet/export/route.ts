@@ -131,6 +131,31 @@ async function gate(): Promise<Gate> {
 // self-sealing, because the recorded key then short-circuits this function to
 // "enabled" forever and the 409 blocks every retry. Both throws land in the callers'
 // catches as a 502. Do not simplify this back to a one-line comparison.
+//
+// "needs_restore" CONFLATES TWO STATES AND ALWAYS WILL — ruled 2026-09-11, after
+// the question was parked through the whole plan. A foreign owner_id with no key
+// recorded is either (a) ownership moved to the user and our column write failed,
+// or (b) we never owned it, so Privy's own quorum does. The server cannot tell
+// them apart and no reachable signal does it: Task 5 measured that a post-transfer
+// owner_id is "a NEW quorum id", indistinguishable from a Privy-assigned one, and
+// our quorum is an additional_signer in BOTH states, so the signer list does not
+// separate them either.
+//
+// It stopped mattering when the restore path started PROVING BEFORE IT RECORDS
+// (76b912a, app/ExportTab.tsx). Nothing acts on the guess now: in (a) the right
+// password produces a real export and the key is recorded; in (b) no password can,
+// so the proof fails, nothing is written, and the attempt is retryable. What is
+// left is an honest dead end for a population that walletSpec's owner_id, the
+// privy-setup.ts fix (5ee4981) and Task 12's re-mint have emptied — not a custody
+// claim. The distinction is made by the only party who can make it: the user,
+// holding the password.
+//
+// If that population is ever non-empty again, the fix is a cheaper REPAIR and not
+// a better guess: keyQuorums.get(owner_id) returns the quorum's authorization_keys
+// (node_modules/@privy-io/node/resources/key-quorums.d.ts:74-84), which in state
+// (a) is the user's own P-256 key — so the lost column value can be read back from
+// Privy with no user action at all. Unbuilt deliberately: it is one API call on a
+// path nobody currently reaches.
 async function resolveState(walletId: string, exportOwnerKey: string | null) {
   if (exportOwnerKey) return "enabled" as const;
   // TRIMMED, because the comment above promises it is. A padded value is not
