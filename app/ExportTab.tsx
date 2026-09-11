@@ -327,7 +327,7 @@ export default function ExportTab({ address }: { address: string }) {
       <p className="wallet-note">
         {restoring
           ? "This wallet is owned by a key Splitsy does not hold. Usually that means an export password was set here and we lost our record of it — re-enter it to restore the record. If you never set one, this wallet was created before export was available and cannot be exported; no password will change that."
-          : "Until you set an export password, Splitsy can export this wallet's private key itself, and is authorised to move your assets on your behalf. Setting one ends the first of those, not the second: only your password can release this wallet's private key — with no recovery — while Splitsy goes on spending from this wallet on your behalf, which is what keeps sending and paying working. Choose something you will not forget."}
+          : "Until you set an export password, Splitsy can export this wallet's private key itself, and is authorised to move your assets on your behalf. Setting one ends the first of those, not the second: only your password can release this wallet's private key — with no recovery — and sends you make in the wallet panel are signed by you, so Splitsy cannot move your money at will. Splitsy keeps signing for what runs without you: autopay, and pay-link claims. Choose something you will not forget."}
       </p>
       <div className="wallet-line">
         <input

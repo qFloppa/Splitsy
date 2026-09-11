@@ -13,6 +13,19 @@ import { ProviderIcon } from "./ProviderTag";
 type Me = { id: string; provider?: AccountProvider | null; handle: string; name: string | null; avatarUrl: string | null; walletAddress: string | null; custodian?: "Circle" | "Privy" };
 type Tab = "info" | "send" | "receive" | "history" | "export";
 
+// What GET /api/wallet/export answers, read here for a second purpose: the SEND
+// tab needs the wallet id, the app id and the recorded owner key to build and sign
+// an authorization payload. Deliberately the same shape app/ExportTab.tsx declares,
+// because it is the same route — only `state === "enabled"` matters to this file,
+// and anything else leaves sending exactly as it was.
+type ExportStatus = {
+  state: "not_enabled" | "enabled" | "needs_restore";
+  walletId: string;
+  appId: string;
+  address: string;
+  exportOwnerKey: string | null;
+};
+
 // `export` is NOT in this list. It is appended per-render below, only on the
 // Privy stack: a Circle wallet's key cannot be exported, so the route answers
 // 404 and the tab's whole content would be the words "Export is not available
@@ -354,7 +367,8 @@ export default function XAuthControl() {
                                 </a>
                                 . Until you set an export password, Splitsy can <b>also</b> export
                                 this wallet&rsquo;s private key itself — set one in the{" "}
-                                <b>export</b> tab.
+                                <b>export</b> tab, and the sends you make from here are signed by
+                                you rather than by Splitsy.
                               </p>
                             ) : null}
                             <a
@@ -372,7 +386,7 @@ export default function XAuthControl() {
                         )}
                       </>
                     ) : tab === "send" ? (
-                      <SendTab balance={balance} onSent={refreshBalanceAfterSend} />
+                      <SendTab balance={balance} onSent={refreshBalanceAfterSend} walletAddress={me.walletAddress} />
                     ) : tab === "receive" ? (
                       <ReceiveTab address={me.walletAddress} copied={copied} onCopy={copyAddress} />
                     ) : tab === "export" && me.walletAddress ? (
@@ -562,7 +576,7 @@ function ReceiveTab({ address, copied, onCopy }: { address: string | null; copie
 
 type SendPhase = "form" | "sending" | "done" | "error";
 
-function SendTab({ balance, onSent }: { balance: string | null; onSent: () => void }) {
+function SendTab({ balance, onSent, walletAddress }: { balance: string | null; onSent: () => void; walletAddress: string | null }) {
   const [unlocked, setUnlocked] = useState(false);
   const [to, setTo] = useState("");
   const [amount, setAmount] = useState("");
@@ -570,6 +584,13 @@ function SendTab({ balance, onSent }: { balance: string | null; onSent: () => vo
   const [phase, setPhase] = useState<SendPhase>("form");
   const [message, setMessage] = useState<string | null>(null);
   const [sentTxUrl, setSentTxUrl] = useState<string | null>(null);
+  const [signedBy, setSignedBy] = useState<"you" | "splitsy" | null>(null);
+  // Non-null only when this wallet has export enabled AND the owner key is not yet
+  // held for this session — the password is derived once and then the field is
+  // hidden. See app/session-owner-key.ts for why the key is not React state.
+  const [exportStatus, setExportStatus] = useState<ExportStatus | null>(null);
+  const [ownerPassword, setOwnerPassword] = useState("");
+  const [ownerKey, setOwnerKey] = useState<Uint8Array | null>(null);
 
   // A PIN always exists by the time this tab renders (the panel gates on it), so
   // we only need the current unlock state — sending still requires unlocking.
@@ -579,6 +600,25 @@ function SendTab({ balance, onSent }: { balance: string | null; onSent: () => vo
       .then((d: { unlocked: boolean }) => setUnlocked(d.unlocked))
       .catch(() => {});
   }, []);
+
+  // Whether this user can sign for themselves. A 404 is the Circle stack (the route
+  // does not exist as a capability there) and any other failure leaves the send
+  // working the old way, so this never surfaces an error — it only decides whether
+  // to offer the stronger path.
+  useEffect(() => {
+    if (!walletAddress) return;
+    fetch("/api/wallet/export")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d: ExportStatus | null) => {
+        if (d?.state !== "enabled") return;
+        setExportStatus(d);
+        // Already derived earlier this session: skip the prompt entirely. Read from
+        // the module, not from state, because a tab switch unmounts this component
+        // and remounts it with fresh state.
+        void import("./session-owner-key").then((m) => setOwnerKey(m.ownerKeyFor(d.address)));
+      })
+      .catch(() => {});
+  }, [walletAddress]);
 
   async function unlock() {
     setMessage(null);
@@ -593,41 +633,110 @@ function SendTab({ balance, onSent }: { balance: string | null; onSent: () => vo
     setUnlocked(true);
   }
 
+  // Derive the owner key from the export password, once per session. The ~1s PBKDF2
+  // is the price of the key never being held longer than the tab; it is paid here
+  // rather than per send, which is the trade recorded in app/session-owner-key.ts.
+  async function deriveOwnerKey() {
+    if (!exportStatus) return;
+    setMessage(null);
+    try {
+      const crypto = await import("@/lib/export-crypto");
+      const key = await crypto.deriveOwnerSecretKey(ownerPassword, exportStatus.address);
+      const publicKey = await crypto.ownerPublicKeySpki(key);
+      // The local pre-check, same one ExportTab runs: a mistyped password fails
+      // HERE, with no request made. Possible only because the PUBLIC half of the
+      // credential is recorded server-side.
+      if (exportStatus.exportOwnerKey && exportStatus.exportOwnerKey !== publicKey) {
+        setMessage("That password doesn't match this wallet's export credential.");
+        return;
+      }
+      const session = await import("./session-owner-key");
+      session.rememberOwnerKey(exportStatus.address, key);
+      setOwnerKey(key);
+      setOwnerPassword("");
+    } catch {
+      setMessage("Could not derive your key from that password. Please try again.");
+    }
+  }
+
   async function send() {
     setPhase("sending");
     setMessage(null);
     try {
-      const res = await fetch("/api/wallet/send", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ to, amount: Number(amount) }),
-      });
-      const data = await res.json();
-      if (res.status === 403) {
+      // Holding the owner key is what makes this a USER-signed send. Without it —
+      // no export password set, or the Circle stack, or the derivation skipped —
+      // this falls through to the server-signed path, unchanged.
+      const data =
+        ownerKey && exportStatus
+          ? await sendSignedByOwner(ownerKey)
+          : await sendSignedBySplitsy();
+
+      if (data.res.status === 403) {
         setUnlocked(false);
         setPhase("form");
         setMessage("Wallet locked — enter your PIN.");
         return;
       }
-      if (!res.ok) {
-        setMessage(data.error ?? "Send failed.");
+      if (!data.res.ok) {
+        setMessage(data.data.error ?? "Send failed.");
         setPhase("error");
         return;
       }
+      setSignedBy(data.data.signedBy === "you" ? "you" : "splitsy");
       setPhase("done");
       setTo("");
       setAmount("");
       onSent();
       // The on-chain hash lands a few seconds after Circle accepts the tx; poll
       // the history endpoint to surface an explorer link once it's available.
-      if (data.txId) {
-        const url = await waitForCircleTxUrl(data.txId);
+      if (data.data.txId) {
+        const url = await waitForCircleTxUrl(data.data.txId);
         if (url) setSentTxUrl(url);
       }
     } catch {
       setMessage("Network error — please try again.");
       setPhase("error");
     }
+  }
+
+  // The unchanged path: ask the server to sign and send with its own quorum. Every
+  // user without an export password takes this one.
+  async function sendSignedBySplitsy() {
+    const res = await fetch("/api/wallet/send", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ to, amount: Number(amount) }),
+    });
+    return { res, data: await res.json() };
+  }
+
+  // Prepare (server reads the nonce and the gas) → sign (this tab, with the owner
+  // key) → relay (server broadcasts and waits). Two round trips because the RPC may
+  // be a keyed endpoint that must not reach a browser.
+  async function sendSignedByOwner(key: Uint8Array) {
+    const prepared = await fetch("/api/wallet/send", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ to, amount: Number(amount), prepare: true }),
+    });
+    const plan = await prepared.json();
+    if (!prepared.ok) return { res: prepared, data: plan };
+
+    const crypto = await import("@/lib/export-crypto");
+    // The bytes signed must be the bytes the SDK puts on the wire — see
+    // lib/export-crypto.ts:rpcRequestInput. canonicalPayload is the same function
+    // the export path uses, for the same reason.
+    const signature = crypto.signAuthorization(
+      crypto.canonicalPayload(crypto.rpcRequestInput(plan.walletId, plan.appId, plan.transaction)),
+      key,
+    );
+
+    const relayed = await fetch("/api/wallet/send", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ to, amount: Number(amount), transaction: plan.transaction, signature }),
+    });
+    return { res: relayed, data: await relayed.json() };
   }
 
   if (!unlocked) {
@@ -668,6 +777,16 @@ function SendTab({ balance, onSent }: { balance: string | null; onSent: () => vo
             <Check strokeWidth={3} />
           </span>
         </p>
+        {/* WHICH SIGNER, out loud. A user who set an export password did so to stop
+            Splitsy moving their money, and a silent fallback to the server-signed
+            path would leave that unverifiable by the person it is for. */}
+        {signedBy ? (
+          <p className="wallet-note">
+            {signedBy === "you"
+              ? "Signed by your export password — Splitsy did not authorise this transfer."
+              : "Signed by Splitsy. Set an export password to sign your own sends."}
+          </p>
+        ) : null}
         {sentTxUrl ? (
           <a href={sentTxUrl} target="_blank" rel="noreferrer" className="settle-trigger wallet-out">
             view transaction
@@ -691,6 +810,14 @@ function SendTab({ balance, onSent }: { balance: string | null; onSent: () => vo
       </div>
     );
   }
+
+  // A send from a wallet whose export password is set must NOT silently fall back to
+  // the server-signed path — the panel now tells the user their sends are signed by
+  // them, and a fallback would make that claim false in exactly the case the user
+  // cares about. So while the key is missing, sending waits for the password. A user
+  // who does not want to enter it can still send from any other client; what they
+  // cannot do is have Splitsy quietly sign on their behalf after they opted out.
+  const needsOwnerKey = Boolean(exportStatus && !ownerKey);
 
   return (
     <div>
@@ -716,8 +843,38 @@ function SendTab({ balance, onSent }: { balance: string | null; onSent: () => vo
         />
         <Unit />
       </div>
-      <button type="button" onClick={send} disabled={phase === "sending" || !to || !amount} className="settle-action">
-        {phase === "sending" ? "…" : "send"} ›
+      {/* The one-time prompt that buys user-signed sends. Shown only when this
+          wallet has export enabled and the key is not already held for the session
+          — so it appears once, not per send. */}
+      {exportStatus && !ownerKey ? (
+        <>
+          <p className="wallet-note">
+            This wallet has an export password, so you can sign this send yourself instead of
+            asking Splitsy to. Enter it once — it stays for this tab only.
+          </p>
+          <div className="wallet-line">
+            <input
+              value={ownerPassword}
+              onChange={(e) => setOwnerPassword(e.target.value)}
+              type="password"
+              autoComplete="off"
+              aria-label="Export password"
+              placeholder="export password"
+              onKeyDown={(e) => e.key === "Enter" && ownerPassword && !phase.startsWith("sending") && deriveOwnerKey()}
+            />
+          </div>
+          <button
+            type="button"
+            onClick={deriveOwnerKey}
+            disabled={!ownerPassword}
+            className="settle-action"
+          >
+            sign my sends ›
+          </button>
+        </>
+      ) : null}
+      <button type="button" onClick={send} disabled={phase === "sending" || !to || !amount || needsOwnerKey} className="settle-action">
+        {phase === "sending" ? "…" : ownerKey ? "sign & send" : "send"} ›
       </button>
       {message ? (
         <p className="wallet-note" data-tone="warn" role="status">

@@ -86,6 +86,29 @@ export async function listTransactions(walletId: string, address: string) {
   return (await backend()).listTransactions(walletId, address);
 }
 
+// ── User-signed sends ─────────────────────────────────────────────────────────
+// NOT part of WalletBackend, for the same reason the export helpers are not
+// (lib/privy-wallet.ts:609-615): Circle DCW has no counterpart to offer. A Circle
+// key cannot be exported and its owner cannot authorize a transaction, so a seam
+// method would need a throwing stub over there. The route checks
+// walletProviderName() and awaits this, which loads the Privy backend only.
+//
+// The work lives in lib/privy-wallet.ts beside the quorum-signed transferUsdc, so
+// the calldata is built in ONE place. Deliberately not built here: this module is
+// the dependency-free one that unit tests import without either SDK, and reaching
+// for viem and the Arc addresses would spend that property for nothing.
+export async function prepareUserSignedTransfer(walletId: string, to: string, amountUsdc: string) {
+  return (await import("./privy-wallet.ts")).prepareUserSignedTransfer(walletId, to, amountUsdc);
+}
+
+export async function sendUserSignedTransfer(
+  walletId: string,
+  transaction: Record<string, unknown>,
+  authorizationSignature: string,
+) {
+  return (await import("./privy-wallet.ts")).sendUserSigned(walletId, transaction, authorizationSignature);
+}
+
 // What the chain can PROVE about one transaction, for a caller holding a hash and
 // no receipt. "unknown" is not a failure mode, it is the honest answer when the
 // chain has nothing to say — see fateFromReads in lib/privy-wallet.ts.

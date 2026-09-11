@@ -59,6 +59,37 @@ export function exportRequestInput(walletId: string, appId: string, recipientPub
   };
 }
 
+// The sibling of the above, for SPENDING rather than exporting. Same rule, same
+// reason: these bytes must match what the SDK puts on the wire or the signature
+// covers a different request and Privy answers 401 with no clue why.
+//
+// WHY THIS EXISTS AT ALL: ownership grants more than export. An owner key can
+// authorize eth_signTransaction — measured in scripts/privy-owner-sign-probe.ts,
+// with a wrong key refused 401 on the same endpoint to prove the header is really
+// the gate. So a user who has set an export password can sign their own payments,
+// and Splitsy's additional-signer spend is left for what nobody is present for.
+//
+// `transaction` IS OPAQUE HERE ON PURPOSE. The server builds it — the nonce and the
+// gas are chain reads, and ARC_TESTNET_RPC may be a keyed endpoint that must not
+// reach a browser — and it is relayed back verbatim. Typing it as anything richer
+// would invite this side to reshape a field, and a single re-serialised number is a
+// different canonical payload and therefore a 401. The browser's job is to sign
+// these bytes, not to understand them.
+export function rpcRequestInput(
+  walletId: string,
+  appId: string,
+  transaction: Record<string, unknown>,
+): AuthorizationInput {
+  return {
+    version: 1,
+    method: "POST",
+    url: `${PRIVY_API_BASE}/v1/wallets/${walletId}/rpc`,
+    // _rpc sends the params object minus the header keys, so this is the whole body.
+    body: { method: "eth_signTransaction", params: { transaction } },
+    headers: { "privy-app-id": appId },
+  };
+}
+
 // A byte-for-byte reimplementation of the SDK's
 // formatRequestForAuthorizationSignature. Copied rather than imported because the
 // SDK module graph is server-only; the empty-body special case is copied verbatim

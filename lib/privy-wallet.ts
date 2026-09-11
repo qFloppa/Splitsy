@@ -206,77 +206,99 @@ async function signAndBroadcast(
 ): Promise<{ hash: `0x${string}`; from: `0x${string}`; nonce: number }> {
   const authorization_context = authorizationContext();
   // Privy signs by wallet id, but reading a nonce and estimating gas need the
-  // address, and the seam hands down only the id.
+  // address, and the seam hands down only the id. Hoisted out of the loop below:
+  // the address cannot change between attempts, and every retry was re-asking.
   const from = getAddress((await privy().wallets().get(walletId)).address);
 
   for (let attempt = 1; ; attempt++) {
     try {
-      // Privy fills in NOTHING — it has no Arc RPC and signs exactly what it is
-      // handed — so the nonce, the gas limit and the EIP-1559 fees are all read
-      // here, and prepareTransactionRequest is viem's one call for all three.
-      const tx = await publicClient.prepareTransactionRequest({ account: from, to, data, type: "eip1559" });
+      const { transaction } = await prepareTransfer(from, to, data);
       const { signed_transaction } = await privy()
         .wallets()
         .ethereum()
         .signTransaction(walletId, {
-          params: {
-            transaction: {
-              to,
-              data,
-              nonce: numberToHex(tx.nonce),
-              chain_id: arcTestnet.id,
-              type: 2,
-              gas_limit: numberToHex(tx.gas),
-              max_fee_per_gas: numberToHex(tx.maxFeePerGas),
-              max_priority_fee_per_gas: numberToHex(tx.maxPriorityFeePerGas),
-            },
-          },
+          params: { transaction: transaction as never },
           authorization_context,
         });
-
-      // Recover the signer from the RLP Privy handed back and refuse to broadcast
-      // unless it is this wallet. A signature over the wrong payload, or one
-      // carrying the wrong recovery parity, resolves to a DIFFERENT address —
-      // which either burns gas on a revert or spends from an account we did not
-      // mean to touch. The prefix check is what makes the cast below honest
-      // rather than assumed: we asked for a type-2 transaction, so confirm it is.
-      if (!signed_transaction.startsWith("0x02")) {
-        throw new Error(`Expected an EIP-1559 (type 2) signed transaction, got ${signed_transaction.slice(0, 4)}`);
-      }
-      const serializedTransaction = signed_transaction as `0x02${string}`;
-      const signer = await recoverTransactionAddress({ serializedTransaction });
-      if (signer !== from) {
-        throw new Error(`Signature recovers to ${signer}, not ${from} — refusing to broadcast`);
-      }
-
-      // The nonce is read back OUT OF THE SIGNED BYTES, not carried over from the
-      // request. The recovery check above cannot notice a substituted nonce — it
-      // proves only who signed — and the dropped verdict in send() is an argument
-      // about which nonce this transaction occupies, so it has to be the nonce the
-      // chain will see. Costs no RPC call. An unparseable nonce fails here, before
-      // the broadcast, rather than turning into a proof about the wrong slot.
-      const nonce = parseTransaction(serializedTransaction).nonce;
-      if (nonce === undefined) {
-        throw new Error("Privy returned a signed transaction with no nonce — refusing to broadcast");
-      }
-
-      // THE BROADCAST IS THE ONLY CALL HERE WHOSE FAILURE IS AMBIGUOUS, so it is
-      // the only one that hands the caller something to probe with. Everything
-      // above it — the gas estimate, Privy's signature, the recovery check, the
-      // nonce parse — fails with no bytes on the wire, and letting one of those
-      // read as "this may have moved money" would park a payment as in-flight for
-      // a send that never left. keccak256 of the signed bytes IS the transaction
-      // hash, so naming it needs no answer from the node.
-      try {
-        return { hash: await publicClient.sendRawTransaction({ serializedTransaction }), from, nonce };
-      } catch (e) {
-        throw Object.assign(e as Error, {
-          sent: { hash: keccak256(serializedTransaction), from, nonce } satisfies Sent,
-        });
-      }
+      return await broadcastSigned(signed_transaction, from);
     } catch (e) {
       if (attempt >= SEND_ATTEMPTS || !isNonceCollision(e)) throw e;
     }
+  }
+}
+
+// Nonce, gas limit and EIP-1559 fees — everything Privy fills in NOTHING of,
+// because it has no Arc RPC and signs exactly what it is handed. One call, because
+// prepareTransactionRequest is viem's ask for all three at once.
+//
+// SEPARATE FROM THE SIGNING because the user-signed path needs these bytes WITHOUT
+// any Privy signature: the server prepares, the browser authorizes, and the server
+// relays. It is also the half that must be re-run on a nonce collision — the retry
+// is self-correcting precisely because this reads the chain again rather than
+// resubmitting bytes.
+async function prepareTransfer(from: `0x${string}`, to: `0x${string}`, data: `0x${string}`): Promise<Prepared> {
+  const tx = await publicClient.prepareTransactionRequest({ account: from, to, data, type: "eip1559" });
+  return {
+    from,
+    transaction: {
+      to,
+      data,
+      nonce: numberToHex(tx.nonce),
+      chain_id: arcTestnet.id,
+      type: 2,
+      gas_limit: numberToHex(tx.gas),
+      max_fee_per_gas: numberToHex(tx.maxFeePerGas),
+      max_priority_fee_per_gas: numberToHex(tx.maxPriorityFeePerGas),
+    },
+  };
+}
+
+// RLP in, hash on the wire out — everything between the signature and the receipt
+// wait, for BOTH signers. Shared rather than duplicated because the three checks
+// below are the only thing standing between a signature and money moving, and a
+// second copy is a second place for one of them to go missing.
+//
+// THE RECOVERY CHECK IS WHAT MAKES THE RELAY SAFE. On the user-signed path these
+// bytes were produced by Privy on a request the USER authorized, and the server
+// cannot verify that authorization itself — it has no owner key. What it CAN do is
+// refuse to broadcast anything that does not recover to this wallet, which is what
+// stops a substituted or mis-signed payload from spending.
+async function broadcastSigned(signed_transaction: string, from: `0x${string}`): Promise<Sent> {
+  // The prefix check is what makes the cast below honest rather than assumed: we
+  // asked for a type-2 transaction, so confirm it is one before viem parses it.
+  if (!signed_transaction.startsWith("0x02")) {
+    throw new Error(`Expected an EIP-1559 (type 2) signed transaction, got ${signed_transaction.slice(0, 4)}`);
+  }
+  const serializedTransaction = signed_transaction as `0x02${string}`;
+  const signer = await recoverTransactionAddress({ serializedTransaction });
+  if (signer !== from) {
+    throw new Error(`Signature recovers to ${signer}, not ${from} — refusing to broadcast`);
+  }
+
+  // The nonce is read back OUT OF THE SIGNED BYTES, not carried over from the
+  // request. The recovery check above cannot notice a substituted nonce — it
+  // proves only who signed — and the dropped verdict in send() is an argument
+  // about which nonce this transaction occupies, so it has to be the nonce the
+  // chain will see. Costs no RPC call. An unparseable nonce fails here, before
+  // the broadcast, rather than turning into a proof about the wrong slot.
+  const nonce = parseTransaction(serializedTransaction).nonce;
+  if (nonce === undefined) {
+    throw new Error("Privy returned a signed transaction with no nonce — refusing to broadcast");
+  }
+
+  // THE BROADCAST IS THE ONLY CALL HERE WHOSE FAILURE IS AMBIGUOUS, so it is
+  // the only one that hands the caller something to probe with. Everything
+  // above it — the gas estimate, Privy's signature, the recovery check, the
+  // nonce parse — fails with no bytes on the wire, and letting one of those
+  // read as "this may have moved money" would park a payment as in-flight for
+  // a send that never left. keccak256 of the signed bytes IS the transaction
+  // hash, so naming it needs no answer from the node.
+  try {
+    return { hash: await publicClient.sendRawTransaction({ serializedTransaction }), from, nonce };
+  } catch (e) {
+    throw Object.assign(e as Error, {
+      sent: { hash: keccak256(serializedTransaction), from, nonce } satisfies Sent,
+    });
   }
 }
 
@@ -314,6 +336,11 @@ export function verdictAfterWait(
 }
 
 type Sent = { hash: `0x${string}`; from: `0x${string}`; nonce: number };
+
+// The unsigned transaction Privy will sign, in the shape its `transaction` param
+// takes. Opaque to the browser by design — see lib/export-crypto.ts:rpcRequestInput.
+export type PreparedTransaction = Record<string, unknown>;
+export type Prepared = { transaction: PreparedTransaction; from: `0x${string}` };
 type Receipt = Awaited<ReturnType<typeof publicClient.getTransactionReceipt>>;
 type Outcome = { verdict: "mined" | "dropped" | "indeterminate"; receipt: Receipt | null };
 const INDETERMINATE: Outcome = { verdict: "indeterminate", receipt: null };
@@ -488,36 +515,134 @@ async function send(
   try {
     sent = await signAndBroadcast(walletId, to, data);
   } catch (e) {
-    // Arc charges gas in USDC, so "not enough USDC" covers the amount and the gas
-    // both, and the shortfall surfaces from the gas estimate as readily as from
-    // the broadcast. Same detection the Circle backend does at lib/circle-dcw.ts:75.
-    const raw = e instanceof Error ? e.message : JSON.stringify(e);
-    if (/insufficient|not enough|balance|exceeds/i.test(raw)) throw new InsufficientFundsError();
+    return orThrow(await classifySendFailure(e));
+  }
+  return awaitSettlement(sent, pollMs);
+}
 
-    // A BROADCAST THAT DID NOT ANSWER IS NOT A BROADCAST THAT DID NOT HAPPEN. The
-    // bytes can be in the pool already — a lost response, a proxy 502, a rate
-    // limiter that fired after the node took them — and the throw below reads to
-    // every caller as "nothing moved", which is the mistake the verdict logic
-    // fixed one layer down. So the chain is asked, by the same helper, and only a
-    // PROVEN answer changes the story.
-    const attempted = (e as { sent?: Sent }).sent;
-    if (attempted) {
-      const fate = await fateOfTx(attempted.hash, attempted);
-      // The node had it all along: the receipt decides, exactly as on the ordinary
-      // path above.
-      if (fate === "success" || fate === "reverted") return settledOrThrow(attempted.hash, fate);
-      // "dropped" is not here on purpose — it proves the nonce went to different
-      // bytes, so these can never mine, and the plain failure below is the truth.
-      if (fate === "unknown") throw indeterminate(attempted.hash, e);
+// Sign with the OWNER'S key instead of ours, then relay their bytes.
+//
+// The signature was produced in the user's tab over a payload we built, and the
+// server cannot verify that authorization for itself — it holds no owner key. What
+// it CAN do is refuse to broadcast anything that does not recover to this wallet
+// (broadcastSigned), which is the check that keeps a relay from becoming a blank
+// cheque. Everything after the relay is the same money-safety machinery the
+// quorum-signed path uses, deliberately not a second copy of it.
+//
+// NO NONCE-COLLISION RETRY HERE, unlike signAndBroadcast. Retrying means signing
+// again, which on this path is another browser round trip — and the concurrent
+// same-wallet sends that motivated the loop are server-side, where the user is not
+// present to be asked. A collision surfaces as a retryable error instead.
+// ponytail: if a user ever races themselves across two tabs, the loop belongs in
+// the browser, around the prepare/sign/relay cycle, not in here.
+export async function sendUserSigned(
+  walletId: string,
+  transaction: PreparedTransaction,
+  authorizationSignature: string,
+  pollMs = 6_000,
+): Promise<TxResult> {
+  const from = getAddress((await privy().wallets().get(walletId)).address);
+
+  let response: { data?: { signed_transaction?: string } };
+  try {
+    response = (await privy().wallets()._rpc(walletId, {
+      method: "eth_signTransaction",
+      params: { transaction },
+      // The RAW header rather than authorization_context, and that is not a style
+      // choice: the SDK's signTransaction() input type replaces this header with
+      // `authorization_context`, which takes PRIVATE KEYS. A browser must never hand
+      // its key over, so the generated _rpc is the only door that fits — the same
+      // reason the export path calls _export rather than exportPrivateKey().
+      "privy-authorization-signature": authorizationSignature,
+    } as never)) as { data?: { signed_transaction?: string } };
+  } catch (e) {
+    // No fate-probing here, unlike the quorum path's catch. The bytes on this route
+    // are signed by Privy only AFTER the user's authorization verifies, so a failure
+    // this early means nothing was signed and nothing reached the chain — which is
+    // indistinguishable from what the user sees either way, so it does not need the
+    // narrower story. Insufficient funds still has to be told apart: it is a 402.
+    if (/insufficient|not enough|balance|exceeds/i.test(e instanceof Error ? e.message : String(e))) {
+      throw new InsufficientFundsError();
     }
-
-    // Matched on the full text above, reported without it: viem inlines the RPC URL,
-    // and getUrl only strips basic-auth credentials, not a key in the path or query.
-    // ARC_TESTNET_RPC is env-driven precisely so it can be a keyed endpoint, and
-    // app/api/debts/[id]/pay/route.ts:114-117 hands this message to the caller.
-    throw new Error(`Privy send failed: ${raw.replace(/\nURL: \S+/g, "")}`);
+    throw e;
   }
 
+  const signed = response.data?.signed_transaction;
+  // An SDK change that renames this field would otherwise read as "the relay
+  // succeeded", and the next thing broadcastSigned does is throw on `undefined`.
+  // Named here so the failure says what actually broke.
+  if (typeof signed !== "string") {
+    throw new Error("Privy returned no signed transaction for an authorized user signature");
+  }
+
+  try {
+    return awaitSettlement(await broadcastSigned(signed, from), pollMs);
+  } catch (e) {
+    // A relay that reached the node and lost its answer is the same problem as on
+    // the quorum path, and gets the same treatment: only a PROVEN fate changes the
+    // story, so a broadcast that may have landed is never reported as one that did
+    // not. Insufficient funds is checked first — it arrives from the gas estimate
+    // and would otherwise be swallowed by the indeterminate branch below.
+    return orThrow(await classifySendFailure(e));
+  }
+}
+
+// What a throw out of the signing or broadcast half MEANS, for both paths.
+//
+// Returns rather than throws, because one of the three answers is not an error at
+// all: a broadcast that was lost in transit but turns out to have MINED resolves
+// to a TxResult, and a helper that could only throw would have to report that as
+// a failure — the exact mistake this classification exists to prevent. Callers
+// narrow on `tx` and must not proceed otherwise.
+//
+// `error` is the failure to rethrow. A caller that ever returns it instead will
+// look like a successful send, which is why the two call sites both read the same
+// three lines and why SendFailure is a union rather than `TxResult | Error`.
+type SendFailure = { tx: TxResult; error?: never } | { tx?: never; error: unknown };
+
+async function classifySendFailure(e: unknown): Promise<SendFailure> {
+  // Arc charges gas in USDC, so "not enough USDC" covers the amount and the gas
+  // both, and the shortfall surfaces from the gas estimate as readily as from
+  // the broadcast. Same detection the Circle backend does at lib/circle-dcw.ts:75.
+  const raw = e instanceof Error ? e.message : JSON.stringify(e);
+  if (/insufficient|not enough|balance|exceeds/i.test(raw)) return { error: new InsufficientFundsError() };
+
+  // A BROADCAST THAT DID NOT ANSWER IS NOT A BROADCAST THAT DID NOT HAPPEN. The
+  // bytes can be in the pool already — a lost response, a proxy 502, a rate
+  // limiter that fired after the node took them — and the throw below reads to
+  // every caller as "nothing moved", which is the mistake the verdict logic
+  // fixed one layer down. So the chain is asked, by the same helper, and only a
+  // PROVEN answer changes the story.
+  const attempted = (e as { sent?: Sent }).sent;
+  if (attempted) {
+    const fate = await fateOfTx(attempted.hash, attempted);
+    // The node had it all along: the receipt decides, exactly as on the ordinary
+    // path above.
+    if (fate === "success" || fate === "reverted") return { tx: settledOrThrow(attempted.hash, fate) };
+    // "dropped" is not here on purpose — it proves the nonce went to different
+    // bytes, so these can never mine, and the plain failure below is the truth.
+    if (fate === "unknown") return { error: indeterminate(attempted.hash, e) };
+  }
+
+  // Matched on the full text above, reported without it: viem inlines the RPC URL,
+  // and getUrl only strips basic-auth credentials, not a key in the path or query.
+  // ARC_TESTNET_RPC is env-driven precisely so it can be a keyed endpoint, and
+  // app/api/debts/[id]/pay/route.ts:114-117 hands this message to the caller.
+  return { error: new Error(`Privy send failed: ${raw.replace(/\nURL: \S+/g, "")}`) };
+}
+
+// The three lines both catches run. Throws in every case but a proven settlement,
+// which is the one answer that is not a failure.
+function orThrow(classified: SendFailure): TxResult {
+  if (classified.tx) return classified.tx;
+  throw classified.error;
+}
+
+// Wait for the receipt, and decide what a wait that produced none is allowed to
+// say. Extracted from send() unchanged, so both signers reach one copy of the
+// verdict reasoning — the `dropped`/`indeterminate` distinction is what stops a
+// failed send from handing back a daily cap that was really spent.
+async function awaitSettlement(sent: Sent, pollMs: number): Promise<TxResult> {
   const { hash } = sent;
   try {
     const receipt = await publicClient.waitForTransactionReceipt({
@@ -663,6 +788,67 @@ export async function exportWalletCiphertext(
   return { ciphertext: response.ciphertext, encapsulated_key: response.encapsulated_key };
 }
 
+// THE BINDING CHECK for a relayed, user-authorized transaction.
+//
+// A relayed transaction was authorized by the USER'S OWN key, so they are entitled
+// to sign whatever they like — nothing here is a security boundary against the
+// person paying. What it protects is the RECORD. The route reports what happened,
+// and later routes (app/api/debts/[id]/pay, the onchain-bills paths) write ledger
+// rows off that report; relaying a transaction that does not match the {to, amount}
+// we were asked about would leave the ledger describing a payment neither the user
+// nor we ever made.
+//
+// Lives here rather than in the route for two reasons: it re-encodes the calldata,
+// and transferCalldata is defined in this module — one definition, not two that can
+// drift — and a route importing next/headers cannot be imported by a test, which is
+// exactly backwards for the one check whose absence would be silent.
+//
+// No wallet id parameter: the wallet is named by the session, and the route passes
+// that id straight to _rpc. There is nothing here for a caller to get wrong.
+export function relayGuard(
+  to: string,
+  amount: number,
+  transaction: unknown,
+  signature: unknown,
+): { transaction: PreparedTransaction; signature: string } | { error: string } {
+  if (typeof signature !== "string" || !signature) return { error: "Expected an authorization signature." };
+  if (typeof transaction !== "object" || transaction === null) return { error: "Expected a transaction." };
+  const tx = transaction as Record<string, unknown>;
+  if (tx.to !== ARC_TESTNET_USDC) return { error: "That transaction is not a USDC transfer." };
+  if (tx.chain_id !== arcTestnet.id) return { error: "That transaction is not for this chain." };
+  if (tx.data !== transferCalldata(to, amount.toFixed(6))) {
+    return { error: "That transaction does not match this transfer." };
+  }
+  return { transaction: tx, signature };
+}
+
+// The USDC transfer calldata, encoded in ONE place. transferUsdc below uses it for
+// the quorum-signed path and prepareUserSignedTransfer for the user-signed one, so
+// the bytes the browser authorizes are the bytes the server would have sent.
+const transferCalldata = (to: string, amountUsdc: string) =>
+  encodeFunctionData({
+    abi: erc20Abi,
+    functionName: "transfer",
+    // Supabase returns numeric as a JS number, so stringify before parsing.
+    args: [getAddress(to), parseUnits(String(amountUsdc), 6)],
+  });
+
+// The unsigned transaction a USER will authorize. Server-side because the nonce and
+// the gas are chain reads, and ARC_TESTNET_RPC is env-driven precisely so it can be
+// a keyed endpoint that never reaches a browser. The returned object is relayed back
+// verbatim, so it is untouched between here and the signature.
+export async function prepareUserSignedTransfer(
+  walletId: string,
+  to: string,
+  amountUsdc: string,
+): Promise<Prepared> {
+  return prepareTransfer(
+    getAddress((await privy().wallets().get(walletId)).address),
+    ARC_TESTNET_USDC,
+    transferCalldata(to, amountUsdc),
+  );
+}
+
 export const backend: WalletBackend = {
   // Our own table is the idempotency, not a Privy query. Every caller already
   // guards on a row of its own (lib/oauth-callback.ts:90, lib/wallet-resolve.ts,
@@ -704,16 +890,7 @@ export const backend: WalletBackend = {
   },
 
   transferUsdc(walletId, to, amountUsdc) {
-    return send(
-      walletId,
-      ARC_TESTNET_USDC,
-      encodeFunctionData({
-        abi: erc20Abi,
-        functionName: "transfer",
-        // Supabase returns numeric as a JS number, so stringify before parsing.
-        args: [getAddress(to), parseUnits(String(amountUsdc), 6)],
-      }),
-    );
+    return send(walletId, ARC_TESTNET_USDC, transferCalldata(to, amountUsdc));
   },
 
   executeContract: send,

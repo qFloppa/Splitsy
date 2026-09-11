@@ -15,6 +15,7 @@ import {
   exportRequestInput,
   exportSalt,
   ownerPublicKeySpki,
+  rpcRequestInput,
   signAuthorization,
   validScalar,
   verifyExportedKey,
@@ -57,6 +58,49 @@ test("a signature the SDK produced verifies under our verifier", async () => {
   const point = bytesFromBase64(keypair.publicKey).slice(-65);
   assert.equal(point[0], 0x04, "an uncompressed EC point starts with 0x04");
   assert.ok(p256.verify(bytesFromBase64(signature), sha256(payload), point));
+});
+
+// The user-signed spend path. Same risk as the export payload above, same check,
+// and the failure mode is identical and opaque: Privy rebuilds these bytes and
+// verifies the signature over them, so any drift is a 401 that says nothing about
+// why. The transaction is passed through verbatim, which is why this compares the
+// WHOLE canonical payload rather than just the envelope.
+const SIGN_TX = {
+  to: "0x09BCd0d3C7A0c0f7E5C0a1DdcCe8B3D6e0eB6df1",
+  data: "0xa9059cbb0000000000000000000000000000000000000000000000000000000000000001",
+  nonce: "0x0",
+  chain_id: 5042002,
+  type: 2,
+  gas_limit: "0x5208",
+  max_fee_per_gas: "0x3b9aca00",
+  max_priority_fee_per_gas: "0x3b9aca00",
+};
+
+test("the rpc payload is byte-identical to the SDK's", () => {
+  const input = rpcRequestInput("wal_123", "app_456", SIGN_TX);
+  assert.deepEqual(canonicalPayload(input), formatRequestForAuthorizationSignature(structuredClone(input) as never));
+});
+
+// The two payloads must not be interchangeable: a signature over the export request
+// replayed against the rpc endpoint (or vice versa) has to be a different payload,
+// or one authorization would cover the other.
+test("the rpc payload is not the export payload", () => {
+  const rpc = canonicalPayload(rpcRequestInput("wal_123", "app_456", SIGN_TX));
+  const exp = canonicalPayload(exportRequestInput("wal_123", "app_456", "c3Bpa2k="));
+  assert.notDeepEqual(rpc, exp);
+});
+
+// The transaction reaches the signed bytes intact. A helper that reshaped a field —
+// re-serialising the nonce, dropping chain_id — would still produce a well-formed
+// request that Privy rejects, so this asserts the values survive rather than that
+// the object is merely non-empty.
+test("every transaction field reaches the canonical payload", () => {
+  const payload = new TextDecoder().decode(canonicalPayload(rpcRequestInput("wal_123", "app_456", SIGN_TX)));
+  assert.match(payload, /eth_signTransaction/);
+  for (const [field, value] of Object.entries(SIGN_TX)) {
+    const rendered = typeof value === "string" ? value : String(value);
+    assert.ok(payload.includes(rendered), `${field} (${rendered}) is missing from the signed payload`);
+  }
 });
 
 test("base64 round-trips without Buffer", () => {

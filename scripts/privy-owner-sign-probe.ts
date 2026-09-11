@@ -37,13 +37,21 @@ import {
   signAuthorization,
 } from "../lib/export-crypto.ts";
 
-const appId = process.env.PRIVY_APP_ID!;
-const appSecret = process.env.PRIVY_APP_SECRET!;
-const quorum = process.env.PRIVY_KEY_QUORUM_ID?.trim()!;
-const authKey = process.env.PRIVY_AUTHORIZATION_PRIVATE_KEY!;
-for (const [name, value] of Object.entries({ PRIVY_APP_ID: appId, PRIVY_APP_SECRET: appSecret, PRIVY_KEY_QUORUM_ID: quorum, PRIVY_AUTHORIZATION_PRIVATE_KEY: authKey })) {
+// Read once, checked once, and narrowed by the check rather than by a cast. The
+// export probe's loop is the same guard; this shape exists because `quorum` is
+// compared against a value from Privy further down and a cast there would hide the
+// one thing this file needs to be sure of.
+const required = (name: string, value: string | undefined): string => {
   if (!value) throw new Error(`${name} is not set`);
-}
+  return value;
+};
+const appId = required("PRIVY_APP_ID", process.env.PRIVY_APP_ID);
+const appSecret = required("PRIVY_APP_SECRET", process.env.PRIVY_APP_SECRET);
+// Trimmed, to match resolveState (app/api/wallet/export/route.ts), which compares
+// this id against the owner Privy reports — a padded value here would report a
+// mismatch that is really a typo in the environment.
+const quorum = required("PRIVY_KEY_QUORUM_ID", process.env.PRIVY_KEY_QUORUM_ID?.trim());
+const authKey = required("PRIVY_AUTHORIZATION_PRIVATE_KEY", process.env.PRIVY_AUTHORIZATION_PRIVATE_KEY);
 
 const privy = new PrivyClient({ appId, appSecret });
 const authorization_context = { authorization_private_keys: [authKey] };
