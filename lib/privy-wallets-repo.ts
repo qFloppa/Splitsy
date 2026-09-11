@@ -7,7 +7,19 @@ export type PrivyWalletRow = {
   wallet_id: string;
   address: string;
   export_owner_key?: string | null;
+  // Non-null ONLY when the user took sole ownership: their key owns the wallet AND
+  // our additional_signer was revoked in the same call. Null with a non-null
+  // export_owner_key is the OLD shape — ownership moved, we kept spending — so the
+  // two must never be conflated. See schema-privy-wallets.sql.
+  claimed_at?: string | null;
 };
+
+// Whether Splitsy can still sign for this wallet. The one place that question is
+// answered, because getting it wrong in either direction is expensive: reading a
+// claimed wallet as custodial sends the server to Privy for a 401 it could have
+// predicted, and reading a custodial one as claimed tells a user we hold no key
+// when we do.
+export const isCustodial = (row: Pick<PrivyWalletRow, "claimed_at">): boolean => !row.claimed_at;
 
 function requireClient() {
   const client = createSupabaseServerClient();
@@ -19,7 +31,7 @@ export async function getPrivyWallet(namespace: string, key: string): Promise<Pr
   const client = requireClient();
   const { data, error } = await client
     .from("privy_wallets")
-    .select("namespace, key, privy_user_id, wallet_id, address, export_owner_key")
+    .select("namespace, key, privy_user_id, wallet_id, address, export_owner_key, claimed_at")
     .eq("namespace", namespace)
     .eq("key", key)
     .maybeSingle();
@@ -63,7 +75,7 @@ export async function getPrivyWalletByWalletId(walletId: string): Promise<PrivyW
   const client = requireClient();
   const { data, error } = await client
     .from("privy_wallets")
-    .select("namespace, key, privy_user_id, wallet_id, address, export_owner_key")
+    .select("namespace, key, privy_user_id, wallet_id, address, export_owner_key, claimed_at")
     .eq("wallet_id", walletId)
     .maybeSingle();
   if (error) throw new Error(`Failed to read privy_wallets: ${error.message}`);
@@ -81,4 +93,25 @@ export async function setExportOwnerKey(namespace: string, key: string, publicKe
     .eq("namespace", namespace)
     .eq("key", key);
   if (error) throw new Error(`Failed to record the export owner key: ${error.message}`);
+}
+
+// Records a COMPLETED claim: the user owns the wallet and our signer is gone.
+//
+// Written only after Privy has confirmed both halves and an export has actually
+// been proven against the new key — same prove-before-record rule the restore path
+// learned the hard way (76b912a). The row is what every other route reads to decide
+// whether the server may sign, so a premature write here would make the server skip
+// a signature it could still make, or attempt one it cannot.
+//
+// claimed_at and export_owner_key are set TOGETHER. A row carrying one without the
+// other is the ambiguous state this column was added to eliminate, so there is no
+// code path that writes just one.
+export async function setClaimed(namespace: string, key: string, publicKey: string): Promise<void> {
+  const client = requireClient();
+  const { error } = await client
+    .from("privy_wallets")
+    .update({ export_owner_key: publicKey, claimed_at: new Date().toISOString() })
+    .eq("namespace", namespace)
+    .eq("key", key);
+  if (error) throw new Error(`Failed to record the wallet claim: ${error.message}`);
 }

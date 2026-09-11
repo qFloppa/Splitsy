@@ -1,13 +1,10 @@
-import { cookies } from "next/headers";
 import {
   exportWalletCiphertext,
   getWalletOwnerId,
   transferExportOwnership,
 } from "@/lib/privy-wallet";
-import { getPrivyWalletByWalletId, setExportOwnerKey } from "@/lib/privy-wallets-repo";
-import { getSessionUser } from "@/lib/session";
-import { verifyWalletUnlock, WALLET_UNLOCK_COOKIE } from "@/lib/session-core";
-import { walletProviderName } from "@/lib/wallet-provider";
+import { setExportOwnerKey } from "@/lib/privy-wallets-repo";
+import { json, claimEnabled, walletGate } from "@/lib/wallet-gate";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -18,11 +15,9 @@ export const dynamic = "force-dynamic";
 //
 // Design: docs/superpowers/specs/2026-09-08-privy-key-export-design.md
 //
-// no-store on every response. None of this is cacheable, and a shared cache
-// holding an export response would hand ciphertext to the next reader — which is
-// useless to them, but there is no reason to find out.
-const NO_STORE = { "Cache-Control": "no-store" } as const;
-const json = (body: unknown, status = 200) => Response.json(body, { status, headers: NO_STORE });
+// The gate, the no-store header and the JSON helper live in lib/wallet-gate.ts,
+// shared with app/api/wallet/claim — these are the checks that decide whether a
+// caller may act on someone's wallet, and one copy is the point.
 
 // Base64 that decodes to a 91-byte P-256 SPKI: SEQUENCE tag, 89-byte body, then a
 // 27-byte DER prefix and the 64-byte point. Validated at the boundary rather than
@@ -53,61 +48,6 @@ function isDerSignatureBase64(value: unknown): value is string {
     return bytes.length >= 64 && bytes.length <= 80 && bytes[0] === 0x30;
   } catch {
     return false;
-  }
-}
-
-type Gate =
-  | { error: Response }
-  | { walletId: string; address: string; namespace: string; key: string; exportOwnerKey: string | null };
-
-// Stack, session, wallet, and the PIN unlock — in that order, because each one
-// makes the next question meaningful. The stack comes FIRST deliberately: on the
-// Circle stack the route does not exist as a capability, and that is true whether
-// or not anyone is signed in. Identical unlock treatment to
-// app/api/wallet/send/route.ts: export is strictly more dangerous than a transfer,
-// so it gets at least the same gate.
-async function gate(): Promise<Gate> {
-  try {
-    if (walletProviderName() !== "privy") {
-      // Not 403: on the Circle stack this capability does not exist at all. A DCW
-      // key cannot be exported, so there is nothing here to be forbidden from.
-      return { error: json({ error: "Export is not available on this wallet stack." }, 404) };
-    }
-    const user = await getSessionUser();
-    if (!user) return { error: json({ error: "Not signed in" }, 401) };
-    if (!user.circle_wallet_id || !user.wallet_address) {
-      return { error: json({ error: "Your wallet isn't provisioned yet." }, 409) };
-    }
-
-    const secret = process.env.SESSION_SECRET ?? "";
-    const unlockToken = (await cookies()).get(WALLET_UNLOCK_COOKIE)?.value ?? "";
-    if (verifyWalletUnlock(unlockToken, secret, Date.now()) !== user.id) {
-      return { error: json({ error: "locked" }, 403) };
-    }
-
-    // users.circle_wallet_id holds the PRIVY wallet id on this stack — the column
-    // name is legacy from the Circle era (lib/users-repo.ts:45 writes wallet.walletId
-    // into it) and is not renamed here.
-    const row = await getPrivyWalletByWalletId(user.circle_wallet_id);
-    if (!row) return { error: json({ error: "Your wallet isn't provisioned yet." }, 409) };
-
-    return {
-      walletId: user.circle_wallet_id,
-      address: user.wallet_address,
-      namespace: row.namespace,
-      key: row.key,
-      exportOwnerKey: row.export_owner_key ?? null,
-    };
-  } catch {
-    // CAUGHT HERE, ONCE, FOR ALL THREE HANDLERS. Everything above can throw —
-    // Supabase unconfigured, the network down, or .maybeSingle() hitting the
-    // duplicate wallet_id rows nothing constrains against — and every handler
-    // calls this BEFORE opening its own try. Uncaught, those escaped as a
-    // framework 500 HTML page, breaking the documented JSON contract below and
-    // reaching the browser as a bare "Network error". Deliberately says nothing
-    // about which: the client cannot act on the difference, and the message is
-    // the one place a DB error string could reach a user.
-    return { error: json({ error: "Could not read your wallet. Please try again." }, 502) };
   }
 }
 
@@ -170,7 +110,7 @@ async function resolveState(walletId: string, exportOwnerKey: string | null) {
 }
 
 export async function GET() {
-  const g = await gate();
+  const g = await walletGate();
   if ("error" in g) return g.error;
 
   const appId = process.env.PRIVY_APP_ID;
@@ -188,6 +128,13 @@ export async function GET() {
       appId,
       address: g.address,
       exportOwnerKey: g.exportOwnerKey,
+      // CLAIMED is a stronger statement than `state: "enabled"` and the UI must be
+      // able to tell them apart: enabled means the user can export while Splitsy
+      // can still spend; claimed means Splitsy holds no key at all. Served from the
+      // same request because the wallet panel needs both to say anything true.
+      claimed: Boolean(g.claimedAt),
+      claimedAt: g.claimedAt,
+      canClaim: claimEnabled() && !g.claimedAt,
     });
   } catch (err) {
     return json({ error: err instanceof Error ? err.message : "Could not read wallet ownership." }, 502);
@@ -198,7 +145,7 @@ export async function GET() {
 // taken from the client: a client that could claim "needs_restore" could record an
 // owner key for a wallet whose ownership never moved.
 export async function PUT(request: Request) {
-  const g = await gate();
+  const g = await walletGate();
   if ("error" in g) return g.error;
 
   const body = (await request.json().catch(() => null)) as { publicKey?: unknown } | null;
@@ -235,7 +182,7 @@ export async function PUT(request: Request) {
 }
 
 export async function POST(request: Request) {
-  const g = await gate();
+  const g = await walletGate();
   if ("error" in g) return g.error;
 
   const body = (await request.json().catch(() => null)) as

@@ -19,6 +19,13 @@ type Status = {
   appId: string;
   address: string;
   exportOwnerKey: string | null;
+  // CLAIMED IS STRONGER THAN `state: "enabled"`. Enabled means the user can export
+  // and Splitsy can still spend. Claimed means Splitsy holds no key at all — not
+  // owner, not signer — so nothing on the server can move this money. The two must
+  // never be shown with the same words.
+  claimed?: boolean;
+  claimedAt?: string | null;
+  canClaim?: boolean;
 };
 
 export default function ExportTab({ address }: { address: string }) {
@@ -32,6 +39,10 @@ export default function ExportTab({ address }: { address: string }) {
   const [message, setMessage] = useState<string | null>(null);
   const [verified, setVerified] = useState(false);
   const [revealed, setRevealed] = useState<string | null>(null);
+  // The irreversible-action checkbox. Deliberately NOT defaulted true and not
+  // remembered: a claim cannot be undone by us, by Privy, or by the user, so it
+  // should cost one explicit gesture every time the form is opened.
+  const [confirmClaim, setConfirmClaim] = useState(false);
 
   async function load() {
     const res = await fetch("/api/wallet/export");
@@ -219,6 +230,61 @@ export default function ExportTab({ address }: { address: string }) {
     }
   }
 
+  // Take sole ownership. After this Splitsy holds no key to the wallet: it cannot
+  // move the money and cannot export the key, and there is no way back for anyone.
+  //
+  // THE PROOF IS BUILT HERE AND SENT WITH THE REQUEST. The server needs to verify
+  // that the key it is about to make sole owner actually works, and it cannot do
+  // that on its own — only this tab holds the private half. So the recipient key
+  // and the signature go WITH the claim, and the route runs the export before it
+  // records anything. Sending them in a second round trip would leave a window in
+  // which the wallet is handed over and nothing is recorded.
+  async function claim() {
+    if (!status) return;
+    setMessage(null);
+    setBusy(true);
+    try {
+      const crypto = await import("@/lib/export-crypto");
+      if (password.length < crypto.MIN_PASSWORD_LENGTH) {
+        return setMessage(`Use at least ${crypto.MIN_PASSWORD_LENGTH} characters.`);
+      }
+      if (password !== confirm) return setMessage("The passwords don't match — try again.");
+
+      const secretKey = await crypto.deriveOwnerSecretKey(password, status.address);
+      const publicKey = await crypto.ownerPublicKeySpki(secretKey);
+
+      // The same proof material runExport builds, made here because the server
+      // needs it in the claim request itself.
+      const recipient = await crypto.createExportRecipient();
+      const signature = crypto.signAuthorization(
+        crypto.canonicalPayload(crypto.exportRequestInput(status.walletId, status.appId, recipient.publicKeySpkiBase64)),
+        secretKey,
+      );
+
+      const res = await fetch("/api/wallet/claim", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ publicKey, recipientPublicKey: recipient.publicKeySpkiBase64, signature }),
+      });
+      const data = await res.json();
+      if (res.status === 403) {
+        setLocked(true);
+        throw new Error("Wallet locked — enter your PIN.");
+      }
+      if (!res.ok) throw new Error(data.error ?? "Could not complete the handover.");
+
+      setStatus({ ...status, state: "enabled", exportOwnerKey: publicKey, claimed: true, canClaim: false });
+      setVerified(true);
+      setPassword("");
+      setConfirm("");
+      setConfirmClaim(false);
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "Could not complete the handover.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   const warn = message ? (
     <p className="wallet-note" data-tone="warn" role="status">
       {message}
@@ -288,15 +354,32 @@ export default function ExportTab({ address }: { address: string }) {
       <div>
         {verified ? (
           <p className="wallet-note" data-tone="ok" role="status">
-            <Check size={11} /> verified — this password exports this wallet. <b>Privy</b> will only
-            ever release this key to it.
+            <Check size={11} />{" "}
+            {status.claimed
+              ? "this wallet is yours. Splitsy holds no key to it."
+              : "verified — this password exports this wallet. "}
+            {status.claimed ? null : (
+              <>
+                <b>Privy</b> will only ever release this key to it.
+              </>
+            )}
           </p>
         ) : null}
-        <p className="settle-label">export your key</p>
-        <p className="wallet-note">
-          Your assets are held by <b>Privy</b>, the custodian. Only your export password can
-          authorise releasing this wallet&apos;s private key — Splitsy cannot, and cannot reset it.
-        </p>
+        <p className="settle-label">{status.claimed ? "your wallet" : "export your key"}</p>
+        {/* TWO DIFFERENT PROMISES, never the same words. Claimed means Splitsy
+            holds no key at all; enabled-but-unclaimed means it still spends. */}
+        {status.claimed ? (
+          <p className="wallet-note">
+            Your assets are held by <b>Privy</b>, the custodian, and <b>only your export password</b>{" "}
+            can move or release them. Splitsy holds no key to this wallet — it cannot spend from it,
+            cannot export it, and cannot reset your password. Sends you make here are signed by you.
+          </p>
+        ) : (
+          <p className="wallet-note">
+            Your assets are held by <b>Privy</b>, the custodian. Only your export password can
+            authorise releasing this wallet&apos;s private key — Splitsy cannot, and cannot reset it.
+          </p>
+        )}
         <div className="wallet-line">
           <input
             value={password}
@@ -312,14 +395,70 @@ export default function ExportTab({ address }: { address: string }) {
           {busy ? "…" : "reveal private key"} ›
         </button>
         {warn}
+        {/* The upgrade path for a wallet that was exported under the old design:
+            ownership moved, but our signer is still there. canClaim is false once
+            claimed, and false entirely while the feature is off. */}
+        {status.canClaim ? (
+          <>
+            <p className="settle-label">take sole ownership</p>
+            <p className="wallet-note">
+              Splitsy can still <b>spend</b> from this wallet, even though only you can export it.
+              Taking sole ownership removes Splitsy&apos;s signer for good: after that nothing on the
+              server can move your money, and every payment you make is signed by you.
+            </p>
+            <p className="wallet-note" data-tone="warn">
+              This cannot be undone by anyone, including Splitsy and Privy. If you lose your
+              password, the wallet and everything in it is gone permanently — there is no reset and
+              no recovery.
+            </p>
+            <p className="wallet-note">
+              Enter your export password in both fields to prove you still hold it.
+            </p>
+            <div className="wallet-line">
+              <input
+                value={confirm}
+                onChange={(e) => setConfirm(e.target.value)}
+                type="password"
+                autoComplete="off"
+                aria-label="Confirm export password"
+                placeholder="confirm password"
+              />
+            </div>
+            <label className="wallet-note">
+              <input
+                type="checkbox"
+                checked={confirmClaim}
+                onChange={(e) => setConfirmClaim(e.target.checked)}
+              />{" "}
+              I understand that losing my password means losing this wallet forever.
+            </label>
+            <button
+              type="button"
+              onClick={claim}
+              disabled={busy || !confirmClaim || !password || password !== confirm}
+              className="settle-action"
+            >
+              {busy ? "…" : "take sole ownership"} ›
+            </button>
+          </>
+        ) : null}
       </div>
     );
   }
 
   const restoring = status.state === "needs_restore";
+  // A fresh wallet with claiming available skips the intermediate step entirely:
+  // there is no reason to offer "export only, Splitsy keeps spending" as the
+  // headline when "this wallet becomes yours" is available in the same gesture and
+  // costs the same password. Restoring is excluded — that path repairs a lost
+  // record for a wallet whose ownership already moved, and the claim route refuses
+  // a wallet we do not own, so offering it there would be a button that 409s.
+  const claimFirst = Boolean(status.canClaim) && !restoring;
   return (
     <div>
-      <p className="settle-label">{restoring ? "restore your export record" : "enable export"}</p>
+      <p className="settle-label">
+        {restoring ? "restore your export record" : claimFirst ? "make this wallet yours" : "enable export"}
+      </p>
       <p className="wallet-note">
         Your assets are held by <b>Privy</b>, the custodian. Splitsy is the app that operates this
         wallet on your behalf.
@@ -327,8 +466,19 @@ export default function ExportTab({ address }: { address: string }) {
       <p className="wallet-note">
         {restoring
           ? "This wallet is owned by a key Splitsy does not hold. Usually that means an export password was set here and we lost our record of it — re-enter it to restore the record. If you never set one, this wallet was created before export was available and cannot be exported; no password will change that."
-          : "Until you set an export password, Splitsy can export this wallet's private key itself, and is authorised to move your assets on your behalf. Setting one ends the first of those, not the second: only your password can release this wallet's private key — with no recovery — and sends you make in the wallet panel are signed by you, so Splitsy cannot move your money at will. Splitsy keeps signing for what runs without you: autopay, and pay-link claims. Choose something you will not forget."}
+          : claimFirst
+            ? "Right now Splitsy administers this wallet: it can move your assets on your behalf and can export the private key itself. Setting a password here ends both, permanently. Afterwards only your password can move or release this money — Splitsy keeps no key, and every payment you make is signed by you rather than by us."
+            : "Until you set an export password, Splitsy can export this wallet's private key itself, and is authorised to move your assets on your behalf. Setting one ends the first of those, not the second: only your password can release this wallet's private key — with no recovery — and sends you make in the wallet panel are signed by you, so Splitsy cannot move your money at will. Splitsy keeps signing for what runs without you: autopay, and pay-link claims. Choose something you will not forget."}
       </p>
+      {/* THE RECOVERY GAP, stated where the decision is made rather than as a
+          clause in a paragraph. After a claim nobody can help: not Splitsy, not
+          Privy. It is the one consequence a user cannot discover by trying. */}
+      {claimFirst ? (
+        <p className="wallet-note" data-tone="warn">
+          This cannot be undone by anyone, including Splitsy and Privy. If you lose this password,
+          the wallet and everything in it is gone permanently — there is no reset and no recovery.
+        </p>
+      ) : null}
       <div className="wallet-line">
         <input
           value={password}
@@ -349,13 +499,25 @@ export default function ExportTab({ address }: { address: string }) {
           placeholder="confirm password"
         />
       </div>
-      <button type="button" onClick={enable} disabled={busy} className="settle-action">
-        {busy ? "…" : restoring ? "restore" : "enable export"} ›
+      {claimFirst ? (
+        <label className="wallet-note">
+          <input type="checkbox" checked={confirmClaim} onChange={(e) => setConfirmClaim(e.target.checked)} />{" "}
+          I understand that losing my password means losing this wallet forever.
+        </label>
+      ) : null}
+      <button
+        type="button"
+        onClick={claimFirst ? claim : enable}
+        disabled={busy || (claimFirst && !confirmClaim)}
+        className="settle-action"
+      >
+        {busy ? "…" : restoring ? "restore" : claimFirst ? "make this wallet mine" : "enable export"} ›
       </button>
       {warn}
       <p className="wallet-note">
         Your <b>pay wallet</b> is exportable. Your <b>agent wallet</b> is not yet — if you have topped
         it up, that USDC cannot be exported today.
+        {claimFirst ? " Your agent wallet stays administered by Splitsy, which is what lets autopay run while you are away." : null}
       </p>
       <p className="wallet-note">
         Splitsy serves this page&apos;s code, so a compromised Splitsy could capture your password as

@@ -13,7 +13,7 @@
 // caip2 at all — the chain id rides inside the transaction — so it sits outside
 // that check. scripts/privy-setup.ts proved the path on chain and every Privy
 // call shape below is copied from it.
-import { PrivyClient } from "@privy-io/node";
+import { AuthenticationError, PrivyClient } from "@privy-io/node";
 import {
   TransactionNotFoundError,
   TransactionReceiptNotFoundError,
@@ -35,6 +35,7 @@ import { arcTestnet } from "viem/chains";
 import { getPrivyWallet, insertPrivyWallet } from "./privy-wallets-repo.ts";
 import {
   InsufficientFundsError,
+  NotOurWalletError,
   type ProviderWallet,
   type TxFate,
   type TxResult,
@@ -607,6 +608,22 @@ async function classifySendFailure(e: unknown): Promise<SendFailure> {
   const raw = e instanceof Error ? e.message : JSON.stringify(e);
   if (/insufficient|not enough|balance|exceeds/i.test(raw)) return { error: new InsufficientFundsError() };
 
+  // A CLAIMED WALLET REFUSING OUR SIGNATURE IS NOT A FAULT — it is the guarantee
+  // working. Privy answers 401 because we revoked our own signer, and without this
+  // the caller reports "Privy send failed: …401…", which reads as an outage and
+  // sends someone hunting a credential bug that does not exist.
+  //
+  // Matched on the error rather than looked up in the row on purpose: every send
+  // path reaches here, so one check covers all of them with no extra query, and it
+  // stays correct for a wallet claimed a moment ago in another tab. It FAILS
+  // CLOSED either way — the send already did not happen — so this only changes
+  // what the failure says, never whether money moved.
+  if (e instanceof AuthenticationError || /\b401\b|No valid authorization keys/i.test(raw)) {
+    return {
+      error: new NotOurWalletError(),
+    };
+  }
+
   // A BROADCAST THAT DID NOT ANSWER IS NOT A BROADCAST THAT DID NOT HAPPEN. The
   // bytes can be in the pool already — a lost response, a proxy 502, a rate
   // limiter that fired after the node took them — and the throw below reads to
@@ -760,6 +777,75 @@ export async function transferExportOwnership(walletId: string, publicKeyBase64:
     .wallets()
     .update(walletId, { owner: { public_key: publicKeyBase64 }, authorization_context: authorizationContext() });
   return updated.owner_id;
+}
+
+// THE CLAIM. Hand the wallet to the user's key and revoke our own signer, in ONE
+// call, so that afterwards Splitsy holds no key to it at all.
+//
+// This is strictly stronger than transferExportOwnership above, and it is what
+// makes the wallet non-custodial rather than merely user-exportable. That function
+// moves ownership and leaves `additional_signers` alone on purpose — which is why
+// the server can still spend after an export. Here both move together.
+//
+// ONE REQUEST, NOT TWO, and the atomicity is the entire point. Split apart, a
+// failure between them lands on one of two bad states: the wallet is the user's but
+// we can still spend it (a custody lie), or our signer is gone before ownership
+// moved and NOBODY can sign — an unrecoverable brick, because taking ownership is
+// itself owner-gated. Privy accepts `owner` and `additional_signers` in the same
+// update (resources/wallets/wallets.d.ts:4869), so neither state is reachable.
+//
+// IRREVERSIBLE, and more so than anything else in this file. Afterwards our quorum
+// is not an owner and not a signer, so there is no call we can make against this
+// wallet that Privy will honour — measured in scripts/privy-claim-probe.ts: 401 on
+// signTransaction, 401 on export, 0 signers remaining. A user who loses their
+// password loses the wallet, and no support path exists or can exist.
+//
+// Returns what Privy reports back so the caller can verify rather than assume. The
+// caller MUST check both fields: an SDK that silently dropped additional_signers
+// from the request would return a wallet that still lists our quorum, and recording
+// that as a claim is the custody lie in its most damaging form.
+// WHETHER A CLAIM ACTUALLY LANDED, read from what Privy reported back.
+//
+// Pure, and separate from the call, because this is the judgement that must not be
+// wrong: "claimed" is recorded in our own table and every other route trusts it to
+// decide whether the server may sign. Two ways to be wrong, and they are not
+// symmetric — reporting a failed claim as a success tells the user Splitsy holds no
+// key while it still does, which is the custody lie in its most damaging form.
+// Reporting a successful claim as a failure is merely confusing.
+//
+// So this demands positive evidence of BOTH halves: no signers left at all, and an
+// owner that is neither absent nor our quorum. An SDK or API change that silently
+// ignored `additional_signers: []` would answer 200 with our quorum still listed,
+// and that must read as a failure rather than as a claim.
+// EXPORTED FOR THE TEST, like walletSpec: the wrong answer here is unrecoverable
+// and invisible, which is exactly what earns a pure function a test.
+export function claimLanded(
+  result: { ownerId: string | null; remainingSigners: number; quorumStillSigns: boolean },
+  quorum: string,
+): { ok: true } | { ok: false; reason: string } {
+  if (result.quorumStillSigns) return { ok: false, reason: "Splitsy still holds a signer on this wallet." };
+  if (result.remainingSigners > 0) return { ok: false, reason: "A signer other than you remains on this wallet." };
+  if (!result.ownerId) return { ok: false, reason: "Privy reported no owner after the handover." };
+  if (result.ownerId === quorum) return { ok: false, reason: "Ownership did not move off Splitsy's key quorum." };
+  return { ok: true };
+}
+
+export async function claimOwnership(
+  walletId: string,
+  publicKeyBase64: string,
+): Promise<{ ownerId: string | null; remainingSigners: number; quorumStillSigns: boolean }> {
+  const quorum = quorumId();
+  const updated = await privy().wallets().update(walletId, {
+    owner: { public_key: publicKeyBase64 },
+    additional_signers: [],
+    authorization_context: authorizationContext(),
+  });
+  const signers = updated.additional_signers ?? [];
+  return {
+    ownerId: updated.owner_id,
+    remainingSigners: signers.length,
+    quorumStillSigns: signers.some((s) => s.signer_id === quorum),
+  };
 }
 
 // Relay, not reader. The recipient_public_key belongs to the USER'S TAB and the

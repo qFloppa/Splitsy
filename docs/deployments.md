@@ -18,6 +18,7 @@ this repo asserts it is in place.
 |---|---|---|
 | Branch | `main` | `privy-wallet-stack` |
 | `WALLET_PROVIDER` | unset → `circle` | `privy` |
+| `WALLET_CLAIM_ENABLED` | unset → off | unset → off (opt in per deploy) |
 | Wallets | Circle DCW, SCA | Privy embedded, EOA |
 | Network | Arc Testnet (5042002) | Arc Testnet (5042002) |
 | Database | `mhm233's Project` | `splitsy-test` (`hdyioojrozodmutpldsu`) |
@@ -140,6 +141,26 @@ nobody is reading.
 
 `NEXT_PUBLIC_SUPABASE_URL` is inlined at build time (see "The banner" above), so
 correcting it needs a **redeploy**, not just a saved variable.
+
+**`WALLET_CLAIM_ENABLED=true` hands pay wallets to their users, and it cannot be
+taken back.** A claim moves ownership to the user's password-derived key and
+revokes our `additional_signer` in one `wallets().update()`, after which Privy
+answers 401 to anything Splitsy sends — measured in
+`scripts/privy-claim-probe.ts`: 401 on `signTransaction`, 401 on `_export`, 0
+signers left. There is no recovery path for anyone, including Privy, and a user
+who forgets the password loses the wallet.
+
+**Off by default, and it must stay off until the routes are migrated.** A claimed
+wallet can send from the wallet panel (`app/api/wallet/send` signs in the browser)
+and little else: `debts/[id]/pay`, the `onchain-bills/*` paths, `recurring/*` and
+`treasury/settle` all still ask the server to sign and now get a refusal they
+cannot recover from. They fail cleanly — `NotOurWalletError`, nothing moves — but
+they fail. Turning this on before that work lands gives users a wallet that does
+less than the one they started with, permanently.
+
+The agent wallet is deliberately unaffected: it keeps our quorum as owner and
+signer, which is what lets autopay run while the user is away, and it is the one
+wallet this feature does not touch.
 
 **`PRIVY_AGENT_POLICY_ID` must be set in Preview before any user signs in.** The
 policy attaches at wallet creation and nowhere else; the adopt path reads an

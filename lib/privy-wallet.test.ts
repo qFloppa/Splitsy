@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { WaitForTransactionReceiptTimeoutError } from "viem";
 import {
+  claimLanded,
   fateFromReads,
   isNonceCollision,
   logsToWalletTxs,
@@ -10,6 +11,7 @@ import {
   verdictAfterWait,
   walletSpec,
 } from "./privy-wallet.ts";
+import { isCustodial } from "./privy-wallets-repo.ts";
 import { isBroadcast } from "./wallet-provider.ts";
 
 const SELF = "0x1111111111111111111111111111111111111111";
@@ -218,4 +220,55 @@ test("the quorum id is trimmed, so a padded env var still matches Privy's owner"
     walletSpec("pay:x", "i"),
   );
   assert.equal(spec.owner_id, "q-1");
+});
+
+// ── The claim ──────────────────────────────────────────────────────────────────
+// claimLanded decides whether Splitsy still holds a key to a wallet, and that
+// verdict is written into privy_wallets.claimed_at, which every other route trusts.
+// A false "landed" tells a user we hold nothing while we can still spend their
+// money — so these cases are about refusing to be optimistic.
+const QUORUM = "kq_ours";
+
+test("a claim lands only when no signer remains AND ownership moved", () => {
+  assert.deepEqual(
+    claimLanded({ ownerId: "kq_theirs", remainingSigners: 0, quorumStillSigns: false }, QUORUM),
+    { ok: true },
+  );
+});
+
+// The failure Privy would produce if it ignored `additional_signers: []`: a 200
+// response, ownership moved, and our quorum still able to spend. It must not read
+// as a claim.
+test("our quorum still signing is NOT a claim, however the rest looks", () => {
+  const verdict = claimLanded({ ownerId: "kq_theirs", remainingSigners: 1, quorumStillSigns: true }, QUORUM);
+  assert.equal(verdict.ok, false);
+});
+
+// Any other signer is also disqualifying. We do not know whose it is, and a wallet
+// with a third-party signer is not one we can promise is solely the user's.
+test("a signer that is not ours is still a signer", () => {
+  const verdict = claimLanded({ ownerId: "kq_theirs", remainingSigners: 1, quorumStillSigns: false }, QUORUM);
+  assert.equal(verdict.ok, false);
+});
+
+// Ownership that never moved means the update did not do what was asked, and the
+// wallet is still entirely ours.
+test("ownership still on our quorum is not a claim", () => {
+  const verdict = claimLanded({ ownerId: QUORUM, remainingSigners: 0, quorumStillSigns: false }, QUORUM);
+  assert.equal(verdict.ok, false);
+});
+
+// A dropped owner_id would make `ownerId !== quorum` true and sail through a naive
+// check — while describing a wallet with no owner at all, which nobody can sign for.
+test("a missing owner fails rather than passing on a bare inequality", () => {
+  const verdict = claimLanded({ ownerId: null, remainingSigners: 0, quorumStillSigns: false }, QUORUM);
+  assert.equal(verdict.ok, false);
+});
+
+// isCustodial is the read side of the same fact, and the ambiguity it exists to
+// kill: a row with an export key but no claim is the OLD shape, where ownership
+// moved and our signer stayed. Splitsy can still sign for that wallet.
+test("an exported-but-unclaimed wallet is still custodial", () => {
+  assert.equal(isCustodial({ claimed_at: null }), true);
+  assert.equal(isCustodial({ claimed_at: "2026-09-11T00:00:00Z" }), false);
 });

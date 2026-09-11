@@ -157,6 +157,25 @@ export class InsufficientFundsError extends Error {
   }
 }
 
+// The server tried to sign for a wallet it no longer holds a key to.
+//
+// NOT AN OUTAGE, and that is the whole reason this has a name. A claimed wallet
+// (privy_wallets.claimed_at set) has the user as sole owner and no additional
+// signer, so Privy answers 401 to anything we send — by design, and it is the
+// guarantee the user was given. Reported as a distinct error so a route can tell
+// the user "this is yours now, sign it yourself" instead of surfacing a 502 that
+// reads like Privy is down.
+//
+// Nothing moved when this is thrown: the refusal happens before any bytes are
+// signed, let alone broadcast. It is safe for every caller to treat as a clean
+// failure, which is why it carries no transaction reference.
+export class NotOurWalletError extends Error {
+  constructor() {
+    super("not_our_wallet");
+    this.name = "NotOurWalletError";
+  }
+}
+
 // Whether a throw happened AFTER the backend accepted the transaction, so the
 // caller must assume it may still mine. Absence means never-broadcast, which is
 // the safe default — the only answer that never invents a settlement.
