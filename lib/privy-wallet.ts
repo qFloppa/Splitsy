@@ -822,21 +822,82 @@ export async function transferExportOwnership(walletId: string, publicKeyBase64:
 export function claimLanded(
   result: { ownerId: string | null; remainingSigners: number; quorumStillSigns: boolean },
   quorum: string,
+  expectedOwnerId?: string,
 ): { ok: true } | { ok: false; reason: string } {
   if (result.quorumStillSigns) return { ok: false, reason: "Splitsy still holds a signer on this wallet." };
   if (result.remainingSigners > 0) return { ok: false, reason: "A signer other than you remains on this wallet." };
   if (!result.ownerId) return { ok: false, reason: "Privy reported no owner after the handover." };
   if (result.ownerId === quorum) return { ok: false, reason: "Ownership did not move off Splitsy's key quorum." };
+  // When the caller created the owner quorum it knows exactly which id should come
+  // back, so "not ours" is a weaker check than it needs to accept. An owner that is
+  // neither ours nor the one we just made is a wallet handed to a third party, and
+  // recording that as a successful claim would be the worst possible wrong answer.
+  if (expectedOwnerId && result.ownerId !== expectedOwnerId) {
+    return { ok: false, reason: "Ownership moved to a key quorum other than the one created for you." };
+  }
   return { ok: true };
 }
 
-export async function claimOwnership(
+// The quorum that will own a claimed wallet.
+//
+// THRESHOLD 1 WITH TWO KEYS IS THE RECOVERY STORY, and it is measured rather than
+// assumed — scripts/privy-quorum-probe.ts: each member produces a valid signature
+// on its own, a key outside the quorum gets 401, and our own quorum gets 401 on
+// both sign and export afterwards. A user unlocks with their passkey day to day
+// and falls back to the recovery password if the device is lost; neither key can be
+// held by us, because we never see either one.
+//
+// One key is allowed and is what a browser without PRF gets. That wallet has no
+// recovery path, which is a fact the UI has to state rather than a case to hide.
+//
+// NOT REUSABLE ACROSS WALLETS. Each claim creates its own quorum: the keys are
+// derived per wallet address (exportSalt), so two wallets never share a member, and
+// a shared quorum would make one lost password a loss of several wallets.
+export async function createOwnerQuorum(publicKeysBase64: string[], walletId: string): Promise<string> {
+  if (publicKeysBase64.length === 0) throw new Error("A wallet cannot be claimed with no owner key");
+  const created = await privy().keyQuorums().create({
+    authorization_threshold: 1,
+    display_name: `splitsy wallet ${walletId}`,
+    public_keys: publicKeysBase64,
+  });
+  if (!created.id) throw new Error("Privy created an owner quorum with no id");
+  // Verified rather than assumed: a threshold Privy did not honour would mean both
+  // keys are required, and the user would discover that only when their recovery
+  // password failed — at which point the wallet is already theirs and unfixable.
+  if (created.authorization_threshold !== 1) {
+    throw new Error(`Expected an owner quorum with threshold 1, got ${created.authorization_threshold}`);
+  }
+  if ((created.authorization_keys ?? []).length !== publicKeysBase64.length) {
+    throw new Error(
+      `Expected ${publicKeysBase64.length} owner key(s) on the quorum, got ${(created.authorization_keys ?? []).length}`,
+    );
+  }
+  return created.id;
+}
+
+// Hand the wallet to an owner QUORUM and revoke our own signer, in ONE call.
+//
+// `ownerId` rather than a bare public key, which is what lets two keys own one
+// wallet — a quorum of one is still a quorum, so this covers the password-only
+// case too and there is exactly one way to claim.
+//
+// ONE REQUEST, NOT TWO, and the atomicity is the entire point. Split apart, a
+// failure between them lands on one of two bad states: the wallet is the user's but
+// we can still spend it (a custody lie), or our signer is gone before ownership
+// moved and NOBODY can sign — an unrecoverable brick, because taking ownership is
+// itself owner-gated. Privy accepts `owner_id` and `additional_signers` in the same
+// update, so neither state is reachable.
+//
+// IRREVERSIBLE. Afterwards our quorum is neither owner nor signer, so there is no
+// call we can make against this wallet that Privy will honour — measured in
+// scripts/privy-claim-probe.ts and again in scripts/privy-quorum-probe.ts.
+export async function claimOwnershipByQuorum(
   walletId: string,
-  publicKeyBase64: string,
+  ownerQuorumId: string,
 ): Promise<{ ownerId: string | null; remainingSigners: number; quorumStillSigns: boolean }> {
   const quorum = quorumId();
   const updated = await privy().wallets().update(walletId, {
-    owner: { public_key: publicKeyBase64 },
+    owner_id: ownerQuorumId,
     additional_signers: [],
     authorization_context: authorizationContext(),
   });

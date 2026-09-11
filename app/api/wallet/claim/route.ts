@@ -1,4 +1,10 @@
-import { claimLanded, claimOwnership, exportWalletCiphertext, getWalletOwnerId } from "@/lib/privy-wallet";
+import {
+  claimLanded,
+  claimOwnershipByQuorum,
+  createOwnerQuorum,
+  exportWalletCiphertext,
+  getWalletOwnerId,
+} from "@/lib/privy-wallet";
 import { setClaimed } from "@/lib/privy-wallets-repo";
 import { claimEnabled, json, walletGate } from "@/lib/wallet-gate";
 
@@ -61,13 +67,26 @@ export async function POST(request: Request) {
   }
 
   const body = (await request.json().catch(() => null)) as {
+    // The key the user will actually unlock with day to day. From the passkey's
+    // PRF output where the browser supports it, otherwise the password.
     publicKey?: unknown;
+    // The recovery key, present only when the primary is a passkey. Both become
+    // members of one quorum at threshold 1, so either signs alone.
+    recoveryPublicKey?: unknown;
+    ownerKind?: unknown;
+    passkeyCredentialId?: unknown;
     recipientPublicKey?: unknown;
     signature?: unknown;
   } | null;
 
   if (!isSpkiBase64(body?.publicKey)) {
     return json({ error: "Expected a base64 SPKI P-256 public key." }, 400);
+  }
+  // Optional, and validated with the same check when present: an unchecked value
+  // here becomes a co-owner of the wallet, which is exactly as unrecoverable as a
+  // bad primary key.
+  if (body?.recoveryPublicKey !== undefined && !isSpkiBase64(body.recoveryPublicKey)) {
+    return json({ error: "Expected a base64 SPKI P-256 recovery key." }, 400);
   }
   // The proof material, built in the tab: a fresh HPKE recipient key and a
   // signature over the export request, both made with the key about to become the
@@ -76,6 +95,18 @@ export async function POST(request: Request) {
     return json({ error: "Expected the export proof: a recipient key and a signature." }, 400);
   }
   const { publicKey, recipientPublicKey, signature } = body;
+  const recoveryPublicKey = typeof body.recoveryPublicKey === "string" ? body.recoveryPublicKey : null;
+
+  // Two DIFFERENT keys, or one. The same key twice would look like a recovery
+  // story and provide none — a single point of failure recorded as two.
+  if (recoveryPublicKey && recoveryPublicKey === publicKey) {
+    return json({ error: "Your recovery key must differ from your passkey." }, 400);
+  }
+  const ownerKind = recoveryPublicKey ? "passkey+password" : "password";
+  const passkeyCredentialId =
+    typeof body.passkeyCredentialId === "string" && body.passkeyCredentialId.length <= 512
+      ? body.passkeyCredentialId
+      : null;
 
   try {
     // WE MUST STILL OWN IT. A wallet already owned by someone else cannot be
@@ -98,15 +129,23 @@ export async function POST(request: Request) {
       );
     }
 
+    // THE OWNER QUORUM. Both keys at threshold 1, so either signs alone — measured
+    // in scripts/privy-quorum-probe.ts. Created BEFORE the handover so a failure
+    // here leaves the wallet exactly as it was, still ours, still working.
+    const ownerQuorumId = await createOwnerQuorum(
+      recoveryPublicKey ? [publicKey, recoveryPublicKey] : [publicKey],
+      g.walletId,
+    );
+
     // THE CLAIM. One call: ownership moves and our signer is revoked together.
-    const result = await claimOwnership(g.walletId, publicKey);
+    const result = await claimOwnershipByQuorum(g.walletId, ownerQuorumId);
 
     // VERIFY WHAT PRIVY ACTUALLY DID, rather than trusting the call returned 200.
     // An SDK or API change that dropped additional_signers from the request would
     // answer perfectly well and leave our quorum able to spend — and recording that
     // as a claim would tell the user we hold no key while we do. This is the single
     // most damaging wrong answer this route can give, so it is checked, not assumed.
-    const landed = claimLanded(result, quorum);
+    const landed = claimLanded(result, quorum, ownerQuorumId);
     if (!landed.ok) {
       return json({ error: `The handover did not complete: ${landed.reason} Nothing was recorded.` }, 502);
     }
@@ -118,11 +157,14 @@ export async function POST(request: Request) {
     // non-custodial in fact and recorded as such, while the user cannot open it.
     //
     // The proof runs with the user's own signature over their own recipient key, so
-    // a success here means the exact credential they hold controls the wallet.
+    // a success here means the exact credential they hold controls the wallet. It
+    // is signed by the PRIMARY key — the passkey where there is one — because that
+    // is the one they will reach for daily; the recovery key's turn comes when they
+    // need it, and its membership in the quorum was verified at creation.
     await exportWalletCiphertext(g.walletId, recipientPublicKey, signature);
 
-    await setClaimed(g.namespace, g.key, publicKey);
-    return json({ ok: true, claimed: true });
+    await setClaimed(g.namespace, g.key, publicKey, { ownerKind, passkeyCredentialId });
+    return json({ ok: true, claimed: true, ownerKind });
   } catch (err) {
     // A FAILURE HERE IS NOT A FAILURE TO CLAIM. The update may well have gone
     // through — it is the proof or the row write that threw — and the wallet is

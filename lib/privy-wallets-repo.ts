@@ -7,6 +7,13 @@ export type PrivyWalletRow = {
   wallet_id: string;
   address: string;
   export_owner_key?: string | null;
+  // How the owner key is held, once claimed: 'password' (one key, no recovery) or
+  // 'passkey+password' (a quorum at threshold 1, either key signs alone). Null
+  // until a claim lands. The two are different PROMISES and must not be conflated.
+  owner_kind?: string | null;
+  // A WebAuthn handle, not a secret: useless without the authenticator. Lets the
+  // browser name the right passkey when resident-key discovery misses.
+  passkey_credential_id?: string | null;
   // Non-null ONLY when the user took sole ownership: their key owns the wallet AND
   // our additional_signer was revoked in the same call. Null with a non-null
   // export_owner_key is the OLD shape — ownership moved, we kept spending — so the
@@ -31,7 +38,7 @@ export async function getPrivyWallet(namespace: string, key: string): Promise<Pr
   const client = requireClient();
   const { data, error } = await client
     .from("privy_wallets")
-    .select("namespace, key, privy_user_id, wallet_id, address, export_owner_key, claimed_at")
+    .select("namespace, key, privy_user_id, wallet_id, address, export_owner_key, claimed_at, owner_kind, passkey_credential_id")
     .eq("namespace", namespace)
     .eq("key", key)
     .maybeSingle();
@@ -75,7 +82,7 @@ export async function getPrivyWalletByWalletId(walletId: string): Promise<PrivyW
   const client = requireClient();
   const { data, error } = await client
     .from("privy_wallets")
-    .select("namespace, key, privy_user_id, wallet_id, address, export_owner_key, claimed_at")
+    .select("namespace, key, privy_user_id, wallet_id, address, export_owner_key, claimed_at, owner_kind, passkey_credential_id")
     .eq("wallet_id", walletId)
     .maybeSingle();
   if (error) throw new Error(`Failed to read privy_wallets: ${error.message}`);
@@ -106,11 +113,21 @@ export async function setExportOwnerKey(namespace: string, key: string, publicKe
 // claimed_at and export_owner_key are set TOGETHER. A row carrying one without the
 // other is the ambiguous state this column was added to eliminate, so there is no
 // code path that writes just one.
-export async function setClaimed(namespace: string, key: string, publicKey: string): Promise<void> {
+export async function setClaimed(
+  namespace: string,
+  key: string,
+  publicKey: string,
+  owner: { ownerKind: string; passkeyCredentialId: string | null },
+): Promise<void> {
   const client = requireClient();
   const { error } = await client
     .from("privy_wallets")
-    .update({ export_owner_key: publicKey, claimed_at: new Date().toISOString() })
+    .update({
+      export_owner_key: publicKey,
+      claimed_at: new Date().toISOString(),
+      owner_kind: owner.ownerKind,
+      passkey_credential_id: owner.passkeyCredentialId,
+    })
     .eq("namespace", namespace)
     .eq("key", key);
   if (error) throw new Error(`Failed to record the wallet claim: ${error.message}`);

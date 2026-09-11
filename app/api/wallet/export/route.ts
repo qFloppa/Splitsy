@@ -135,6 +135,12 @@ export async function GET() {
       claimed: Boolean(g.claimedAt),
       claimedAt: g.claimedAt,
       canClaim: claimEnabled() && !g.claimedAt,
+      // HOW the wallet is unlocked, so the send tab offers the passkey rather than
+      // demanding a password the user may not have typed since claiming. Neither
+      // is a secret: ownerKind is a shape, and a credential id is useless without
+      // the authenticator holding the key.
+      ownerKind: g.ownerKind,
+      passkeyCredentialId: g.passkeyCredentialId,
     });
   } catch (err) {
     return json({ error: err instanceof Error ? err.message : "Could not read wallet ownership." }, 502);

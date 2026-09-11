@@ -148,6 +148,28 @@ export function validScalar(bytes: Uint8Array): Uint8Array {
   throw new Error("Could not derive a valid P-256 scalar from this password");
 }
 
+// The SAME owner key, derived from what a PASSKEY released instead of from a typed
+// password. lib/passkey-owner.ts gets 32 stable bytes out of the authenticator's
+// PRF extension; this turns them into the P-256 scalar everything downstream
+// already expects, so there is one derivation path and one signing path regardless
+// of how the wallet is unlocked.
+//
+// HASHED, NOT USED RAW, for two reasons. The PRF output is the authenticator's
+// secret for this (credential, salt) pair and may be reused by other extensions or
+// future callers, so it should not also BE the wallet's private key. And sha256
+// gives validScalar a uniformly distributed 32 bytes, which is the input its
+// re-hash loop assumes.
+//
+// No PBKDF2 here, deliberately. Stretching exists to make a guessable password
+// expensive to attack offline; PRF output is 32 bytes of authenticator entropy
+// with nothing to guess, so iterating would cost a second and buy nothing.
+export function ownerSecretFromPrf(prfOutput: Uint8Array): Uint8Array {
+  if (prfOutput.length < 32) {
+    throw new Error(`Expected at least 32 bytes from the passkey, got ${prfOutput.length}`);
+  }
+  return validScalar(sha256(prfOutput));
+}
+
 // The user's export credential. NEVER LEAVES THE BROWSER — only the public half
 // is sent to us, and only so we can transfer wallet ownership to it once.
 export async function deriveOwnerSecretKey(password: string, walletAddress: string): Promise<Uint8Array> {

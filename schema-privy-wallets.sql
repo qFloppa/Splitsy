@@ -61,3 +61,22 @@ comment on column privy_wallets.claimed_at is
   'When the user took sole ownership: owner moved to their key AND our signer was revoked. '
   'Null means Splitsy can still sign for this wallet, even if export_owner_key is set '
   '(pre-claim exports moved ownership but left our additional_signer in place).';
+
+-- HOW the owner key is held, for a claimed wallet (2026-09-11).
+--
+--   'password'          one password-derived P-256 key owns the wallet. Forgetting
+--                       the password loses it permanently.
+--   'passkey+password'  a key QUORUM at threshold 1 holds both, and EITHER signs
+--                       alone (measured in scripts/privy-quorum-probe.ts), so a
+--                       lost device is survivable via the recovery password.
+--
+-- Null for wallets that were never claimed. The column exists because the two are
+-- different PROMISES to the user, and the UI must not describe one as the other.
+alter table privy_wallets add column if not exists owner_kind text;
+
+-- The WebAuthn credential id, base64url. NOT A SECRET — it is a handle, useless
+-- without the authenticator holding the key — so it is stored plainly. Kept so the
+-- browser can pass an allowlist to navigator.credentials.get() when resident-key
+-- discovery misses, which is the difference between "sign in with your passkey"
+-- and "no passkey found on this device".
+alter table privy_wallets add column if not exists passkey_credential_id text;

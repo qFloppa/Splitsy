@@ -47,6 +47,11 @@ export type WalletGate =
       // Null means Splitsy can still sign for this wallet. Carried through the gate
       // because both routes need it and neither should re-read the row to get it.
       claimedAt: string | null;
+      // How a claimed wallet is unlocked, and the passkey handle if there is one.
+      // Neither is a secret; both ride along so the status route needs no second
+      // read of the same row.
+      ownerKind: string | null;
+      passkeyCredentialId: string | null;
     };
 
 export async function walletGate(): Promise<WalletGate> {
@@ -81,6 +86,8 @@ export async function walletGate(): Promise<WalletGate> {
       key: row.key,
       exportOwnerKey: row.export_owner_key ?? null,
       claimedAt: row.claimed_at ?? null,
+      ownerKind: row.owner_kind ?? null,
+      passkeyCredentialId: row.passkey_credential_id ?? null,
     };
   } catch {
     // CAUGHT HERE, ONCE, FOR EVERY HANDLER. Everything above can throw — Supabase

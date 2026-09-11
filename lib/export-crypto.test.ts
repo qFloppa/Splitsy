@@ -15,6 +15,7 @@ import {
   exportRequestInput,
   exportSalt,
   ownerPublicKeySpki,
+  ownerSecretFromPrf,
   rpcRequestInput,
   signAuthorization,
   validScalar,
@@ -214,4 +215,48 @@ test("malformed key material is rejected rather than thrown at the caller", () =
   assert.equal(verifyExportedKey("", "0x0000000000000000000000000000000000000001"), false);
   assert.equal(verifyExportedKey("not-hex", "0x0000000000000000000000000000000000000001"), false);
   assert.equal(verifyExportedKey("0xdeadbeef", "0x0000000000000000000000000000000000000001"), false);
+});
+
+// ── The passkey seam ───────────────────────────────────────────────────────────
+// A passkey cannot be Privy's owner key: WebAuthn signs over bytes the
+// authenticator chooses, so its signature can never verify against Privy's digest.
+// What it CAN do is release a stable secret (PRF), and that secret derives a key
+// which signs normally. These cover the one function that bridges the two.
+
+test("the same PRF output always derives the same owner key", async () => {
+  const prf = new Uint8Array(32).fill(7);
+  const a = ownerSecretFromPrf(prf);
+  const b = ownerSecretFromPrf(new Uint8Array(prf));
+  assert.deepEqual(a, b);
+  // Determinism is the whole property: a passkey that derived a different key on
+  // each unlock would lock the user out of the wallet it just opened.
+  assert.deepEqual(await ownerPublicKeySpki(a), await ownerPublicKeySpki(b));
+});
+
+test("different PRF outputs derive different owner keys", () => {
+  const a = ownerSecretFromPrf(new Uint8Array(32).fill(1));
+  const b = ownerSecretFromPrf(new Uint8Array(32).fill(2));
+  assert.notDeepEqual(a, b);
+});
+
+// Hashed rather than used raw, so the authenticator's own secret for this
+// (credential, salt) pair is never itself the wallet's private key.
+test("the PRF output is not used as the private key directly", () => {
+  const prf = new Uint8Array(32).fill(9);
+  assert.notDeepEqual(ownerSecretFromPrf(prf), prf);
+});
+
+// Short input is a broken authenticator or a truncated buffer. Deriving from it
+// would produce a valid-looking key with far less entropy than it appears to have,
+// and that key would then own a wallet — so it fails loudly instead.
+test("a short PRF output is refused rather than stretched", () => {
+  assert.throws(() => ownerSecretFromPrf(new Uint8Array(16)), /at least 32 bytes/);
+});
+
+test("a PRF-derived key produces a usable P-256 public key", async () => {
+  const spki = await ownerPublicKeySpki(ownerSecretFromPrf(new Uint8Array(32).fill(3)));
+  const bytes = bytesFromBase64(spki);
+  // The exact shape the claim route validates and Privy accepts.
+  assert.equal(bytes.length, 91);
+  assert.equal(bytes[0], 0x30);
 });

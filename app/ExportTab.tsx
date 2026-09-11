@@ -26,9 +26,14 @@ type Status = {
   claimed?: boolean;
   claimedAt?: string | null;
   canClaim?: boolean;
+  ownerKind?: string | null;
+  passkeyCredentialId?: string | null;
 };
 
-export default function ExportTab({ address }: { address: string }) {
+// `handle` is shown by the OS passkey manager as the account this credential
+// unlocks, so it wants to be the thing a user recognises — their Splitsy handle —
+// rather than an address they have never read.
+export default function ExportTab({ address, handle }: { address: string; handle?: string | null }) {
   const [status, setStatus] = useState<Status | null>(null);
   const [locked, setLocked] = useState(false);
   const [pin, setPin] = useState("");
@@ -43,6 +48,20 @@ export default function ExportTab({ address }: { address: string }) {
   // remembered: a claim cannot be undone by us, by Privy, or by the user, so it
   // should cost one explicit gesture every time the form is opened.
   const [confirmClaim, setConfirmClaim] = useState(false);
+  // Whether this browser can derive a key from a passkey (the PRF extension).
+  // Null while unknown — the claim form waits rather than offering the wrong one.
+  const [canPasskey, setCanPasskey] = useState<boolean | null>(null);
+  // The user's choice, defaulting to the passkey wherever it is available. They
+  // can decline: a password-only wallet is a legitimate outcome, just one with no
+  // recovery path, and the copy says so.
+  const [usePasskey, setUsePasskey] = useState(true);
+
+  useEffect(() => {
+    import("@/lib/passkey-owner")
+      .then((m) => m.prfSupported())
+      .then(setCanPasskey)
+      .catch(() => setCanPasskey(false));
+  }, []);
 
   async function load() {
     const res = await fetch("/api/wallet/export");
@@ -233,10 +252,16 @@ export default function ExportTab({ address }: { address: string }) {
   // Take sole ownership. After this Splitsy holds no key to the wallet: it cannot
   // move the money and cannot export the key, and there is no way back for anyone.
   //
+  // TWO KEYS WHERE THE BROWSER ALLOWS IT. The passkey is what the user unlocks
+  // with day to day — a biometric, nothing typed, and the secret never enters JS
+  // as something Splitsy's own code could read. The password is the recovery path
+  // for a lost device. Both become members of ONE key quorum at threshold 1, so
+  // either signs alone (measured: scripts/privy-quorum-probe.ts).
+  //
   // THE PROOF IS BUILT HERE AND SENT WITH THE REQUEST. The server needs to verify
-  // that the key it is about to make sole owner actually works, and it cannot do
-  // that on its own — only this tab holds the private half. So the recipient key
-  // and the signature go WITH the claim, and the route runs the export before it
+  // that the key it is about to make owner actually works, and it cannot do that
+  // on its own — only this tab holds the private half. So the recipient key and
+  // the signature go WITH the claim, and the route runs the export before it
   // records anything. Sending them in a second round trip would leave a window in
   // which the wallet is handed over and nothing is recorded.
   async function claim() {
@@ -250,21 +275,45 @@ export default function ExportTab({ address }: { address: string }) {
       }
       if (password !== confirm) return setMessage("The passwords don't match — try again.");
 
-      const secretKey = await crypto.deriveOwnerSecretKey(password, status.address);
-      const publicKey = await crypto.ownerPublicKeySpki(secretKey);
+      // The password key. Always made: it is the sole owner on a browser without
+      // PRF, and the recovery member everywhere else.
+      const passwordKey = await crypto.deriveOwnerSecretKey(password, status.address);
+      const passwordPublicKey = await crypto.ownerPublicKeySpki(passwordKey);
 
-      // The same proof material runExport builds, made here because the server
-      // needs it in the claim request itself.
+      // The passkey, where the platform supports it. A failure here is NOT fatal:
+      // the claim falls back to password-only rather than stranding the user, and
+      // the copy below tells them which they got.
+      let primaryKey = passwordKey;
+      let primaryPublicKey = passwordPublicKey;
+      let recoveryPublicKey: string | null = null;
+      let credentialId: string | null = null;
+
+      if (usePasskey) {
+        const passkey = await import("@/lib/passkey-owner");
+        const registered = await passkey.registerPasskey(status.address, handle ?? status.address);
+        primaryKey = crypto.ownerSecretFromPrf(registered.secret);
+        primaryPublicKey = await crypto.ownerPublicKeySpki(primaryKey);
+        recoveryPublicKey = passwordPublicKey;
+        credentialId = registered.credentialId;
+      }
+
+      // Proven with the PRIMARY key — the one they will reach for daily.
       const recipient = await crypto.createExportRecipient();
       const signature = crypto.signAuthorization(
         crypto.canonicalPayload(crypto.exportRequestInput(status.walletId, status.appId, recipient.publicKeySpkiBase64)),
-        secretKey,
+        primaryKey,
       );
 
       const res = await fetch("/api/wallet/claim", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ publicKey, recipientPublicKey: recipient.publicKeySpkiBase64, signature }),
+        body: JSON.stringify({
+          publicKey: primaryPublicKey,
+          recoveryPublicKey,
+          passkeyCredentialId: credentialId,
+          recipientPublicKey: recipient.publicKeySpkiBase64,
+          signature,
+        }),
       });
       const data = await res.json();
       if (res.status === 403) {
@@ -273,7 +322,18 @@ export default function ExportTab({ address }: { address: string }) {
       }
       if (!res.ok) throw new Error(data.error ?? "Could not complete the handover.");
 
-      setStatus({ ...status, state: "enabled", exportOwnerKey: publicKey, claimed: true, canClaim: false });
+      // Cached so the first payment after claiming needs no second prompt.
+      const session = await import("./session-owner-key");
+      session.rememberOwnerKey(status.address, primaryKey);
+
+      setStatus({
+        ...status,
+        state: "enabled",
+        exportOwnerKey: primaryPublicKey,
+        claimed: true,
+        canClaim: false,
+        ownerKind: data.ownerKind ?? null,
+      });
       setVerified(true);
       setPassword("");
       setConfirm("");
@@ -454,6 +514,10 @@ export default function ExportTab({ address }: { address: string }) {
   // record for a wallet whose ownership already moved, and the claim route refuses
   // a wallet we do not own, so offering it there would be a button that 409s.
   const claimFirst = Boolean(status.canClaim) && !restoring;
+  // Whether THIS claim will create a passkey: the platform can do it and the user
+  // has not declined. Drives every piece of copy below, because a two-key wallet
+  // and a one-key wallet make different promises about recovery.
+  const passkeyClaim = claimFirst && canPasskey === true && usePasskey;
   return (
     <div>
       <p className="settle-label">
@@ -467,16 +531,37 @@ export default function ExportTab({ address }: { address: string }) {
         {restoring
           ? "This wallet is owned by a key Splitsy does not hold. Usually that means an export password was set here and we lost our record of it — re-enter it to restore the record. If you never set one, this wallet was created before export was available and cannot be exported; no password will change that."
           : claimFirst
-            ? "Right now Splitsy administers this wallet: it can move your assets on your behalf and can export the private key itself. Setting a password here ends both, permanently. Afterwards only your password can move or release this money — Splitsy keeps no key, and every payment you make is signed by you rather than by us."
+            ? passkeyClaim
+              ? "Right now Splitsy administers this wallet: it can move your assets on your behalf and can export the private key itself. Taking ownership ends both, permanently. You will unlock with your passkey — your device's fingerprint or face check — and the password below is your way back in if you lose that device. Either one works on its own. Splitsy keeps no key, and every payment you make is signed by you rather than by us."
+              : "Right now Splitsy administers this wallet: it can move your assets on your behalf and can export the private key itself. Setting a password here ends both, permanently. Afterwards only your password can move or release this money — Splitsy keeps no key, and every payment you make is signed by you rather than by us."
             : "Until you set an export password, Splitsy can export this wallet's private key itself, and is authorised to move your assets on your behalf. Setting one ends the first of those, not the second: only your password can release this wallet's private key — with no recovery — and sends you make in the wallet panel are signed by you, so Splitsy cannot move your money at will. Splitsy keeps signing for what runs without you: autopay, and pay-link claims. Choose something you will not forget."}
       </p>
       {/* THE RECOVERY GAP, stated where the decision is made rather than as a
           clause in a paragraph. After a claim nobody can help: not Splitsy, not
-          Privy. It is the one consequence a user cannot discover by trying. */}
+          Privy. With two keys the sentence CHANGES MEANING — losing one is
+          survivable, losing both is not — and saying the single-key version to a
+          two-key user would be a false warning that teaches them to ignore it. */}
       {claimFirst ? (
         <p className="wallet-note" data-tone="warn">
-          This cannot be undone by anyone, including Splitsy and Privy. If you lose this password,
-          the wallet and everything in it is gone permanently — there is no reset and no recovery.
+          This cannot be undone by anyone, including Splitsy and Privy.{" "}
+          {passkeyClaim
+            ? "If you lose BOTH your passkey and this password, the wallet and everything in it is gone permanently — there is no reset and no recovery. Keep the password somewhere you will still have it after losing your phone."
+            : "If you lose this password, the wallet and everything in it is gone permanently — there is no reset and no recovery."}
+        </p>
+      ) : null}
+      {/* The choice, offered only where the platform can honour it. `canPasskey`
+          is null until the check resolves, and the option is hidden rather than
+          shown-then-withdrawn. */}
+      {claimFirst && canPasskey ? (
+        <label className="wallet-note">
+          <input type="checkbox" checked={usePasskey} onChange={(e) => setUsePasskey(e.target.checked)} />{" "}
+          Unlock with a <b>passkey</b> on this device, and keep the password below for recovery.
+        </label>
+      ) : null}
+      {claimFirst && canPasskey === false ? (
+        <p className="wallet-note">
+          This browser cannot store a passkey for signing, so your password is the only key. Chrome,
+          Edge and Safari 18+ can — you can move to one of those later, from the same wallet.
         </p>
       ) : null}
       <div className="wallet-line">
@@ -485,8 +570,8 @@ export default function ExportTab({ address }: { address: string }) {
           onChange={(e) => setPassword(e.target.value)}
           type="password"
           autoComplete="off"
-          aria-label="Export password"
-          placeholder="export password"
+          aria-label={passkeyClaim ? "Recovery password" : "Export password"}
+          placeholder={passkeyClaim ? "recovery password" : "export password"}
         />
       </div>
       <div className="wallet-line">
@@ -495,14 +580,16 @@ export default function ExportTab({ address }: { address: string }) {
           onChange={(e) => setConfirm(e.target.value)}
           type="password"
           autoComplete="off"
-          aria-label="Confirm export password"
+          aria-label={passkeyClaim ? "Confirm recovery password" : "Confirm export password"}
           placeholder="confirm password"
         />
       </div>
       {claimFirst ? (
         <label className="wallet-note">
           <input type="checkbox" checked={confirmClaim} onChange={(e) => setConfirmClaim(e.target.checked)} />{" "}
-          I understand that losing my password means losing this wallet forever.
+          {passkeyClaim
+            ? "I understand that losing both my passkey and my password means losing this wallet forever."
+            : "I understand that losing my password means losing this wallet forever."}
         </label>
       ) : null}
       <button
@@ -511,7 +598,16 @@ export default function ExportTab({ address }: { address: string }) {
         disabled={busy || (claimFirst && !confirmClaim)}
         className="settle-action"
       >
-        {busy ? "…" : restoring ? "restore" : claimFirst ? "make this wallet mine" : "enable export"} ›
+        {busy
+          ? "…"
+          : restoring
+            ? "restore"
+            : claimFirst
+              ? passkeyClaim
+                ? "create passkey & take ownership"
+                : "make this wallet mine"
+              : "enable export"}{" "}
+        ›
       </button>
       {warn}
       <p className="wallet-note">

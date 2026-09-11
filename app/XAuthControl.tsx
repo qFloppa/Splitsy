@@ -25,6 +25,12 @@ type ExportStatus = {
   appId: string;
   address: string;
   exportOwnerKey: string | null;
+  claimed?: boolean;
+  // 'passkey+password' means the daily unlock is a biometric and the password is
+  // only the recovery path — so the send tab must offer the passkey first rather
+  // than asking for a password the user may never have typed since claiming.
+  ownerKind?: string | null;
+  passkeyCredentialId?: string | null;
 };
 
 // `export` is NOT in this list. It is appended per-render below, only on the
@@ -391,7 +397,7 @@ export default function XAuthControl() {
                     ) : tab === "receive" ? (
                       <ReceiveTab address={me.walletAddress} copied={copied} onCopy={copyAddress} />
                     ) : tab === "export" && me.walletAddress ? (
-                      <ExportTab address={me.walletAddress} />
+                      <ExportTab address={me.walletAddress} handle={me.handle} />
                     ) : (
                       <HistoryTab />
                     )}
@@ -592,6 +598,7 @@ function SendTab({ balance, onSent, walletAddress }: { balance: string | null; o
   const [exportStatus, setExportStatus] = useState<ExportStatus | null>(null);
   const [ownerPassword, setOwnerPassword] = useState("");
   const [ownerKey, setOwnerKey] = useState<Uint8Array | null>(null);
+  const [unlockingPasskey, setUnlockingPasskey] = useState(false);
 
   // A PIN always exists by the time this tab renders (the panel gates on it), so
   // we only need the current unlock state — sending still requires unlocking.
@@ -634,6 +641,42 @@ function SendTab({ balance, onSent, walletAddress }: { balance: string | null; o
     setUnlocked(true);
   }
 
+  // Unlock with the PASSKEY. One biometric per tab, then sends are signed without
+  // any further prompt — the key is cached exactly as the password-derived one is.
+  //
+  // FALLS BACK RATHER THAN FAILING. A passkey can be unavailable for reasons that
+  // are nobody's fault: a different device, a browser without PRF, a user who
+  // dismisses the prompt. The recovery password still signs — that is the whole
+  // point of the two-key quorum — so the error names it instead of dead-ending.
+  async function unlockWithPasskey() {
+    if (!exportStatus) return;
+    setMessage(null);
+    setUnlockingPasskey(true);
+    try {
+      const [passkey, crypto, session] = await Promise.all([
+        import("@/lib/passkey-owner"),
+        import("@/lib/export-crypto"),
+        import("./session-owner-key"),
+      ]);
+      const secret = await passkey.passkeyOwnerSecret(exportStatus.address, exportStatus.passkeyCredentialId);
+      const key = crypto.ownerSecretFromPrf(secret);
+      // The same local pre-check the password path runs: if this key is not the
+      // recorded owner, fail HERE rather than at a 401 from Privy.
+      if (exportStatus.exportOwnerKey && (await crypto.ownerPublicKeySpki(key)) !== exportStatus.exportOwnerKey) {
+        setMessage("That passkey doesn't match this wallet. Use your recovery password below.");
+        return;
+      }
+      session.rememberOwnerKey(exportStatus.address, key);
+      setOwnerKey(key);
+    } catch (err) {
+      setMessage(
+        `${err instanceof Error ? err.message : "Could not use your passkey."} You can use your recovery password instead.`,
+      );
+    } finally {
+      setUnlockingPasskey(false);
+    }
+  }
+
   // Derive the owner key from the export password, once per session. The ~1s PBKDF2
   // is the price of the key never being held longer than the tab; it is paid here
   // rather than per send, which is the trade recorded in app/session-owner-key.ts.
@@ -647,7 +690,16 @@ function SendTab({ balance, onSent, walletAddress }: { balance: string | null; o
       // The local pre-check, same one ExportTab runs: a mistyped password fails
       // HERE, with no request made. Possible only because the PUBLIC half of the
       // credential is recorded server-side.
-      if (exportStatus.exportOwnerKey && exportStatus.exportOwnerKey !== publicKey) {
+      //
+      // SKIPPED for a passkey wallet: exportOwnerKey records the PASSKEY's public
+      // half, so a correct recovery password would not match it and would be
+      // rejected here — which is exactly when the user needs it to work. Privy is
+      // the real gate either way, and it accepts either quorum member.
+      if (
+        exportStatus.ownerKind !== "passkey+password" &&
+        exportStatus.exportOwnerKey &&
+        exportStatus.exportOwnerKey !== publicKey
+      ) {
         setMessage("That password doesn't match this wallet's export credential.");
         return;
       }
@@ -828,18 +880,36 @@ function SendTab({ balance, onSent, walletAddress }: { balance: string | null; o
           — so it appears once, not per send. */}
       {exportStatus && !ownerKey ? (
         <>
-          <p className="wallet-note">
-            This wallet has an export password, so you can sign this send yourself instead of
-            asking Splitsy to. Enter it once — it stays for this tab only.
-          </p>
+          {exportStatus.ownerKind === "passkey+password" ? (
+            <>
+              <p className="wallet-note">
+                This wallet is yours — unlock it with your <b>passkey</b> to sign this send. Once per
+                tab, then sends go through without asking again.
+              </p>
+              <button
+                type="button"
+                onClick={unlockWithPasskey}
+                disabled={unlockingPasskey}
+                className="settle-action"
+              >
+                {unlockingPasskey ? "…" : "unlock with passkey"} ›
+              </button>
+              <p className="wallet-note">Lost the device that holds it? Use your recovery password.</p>
+            </>
+          ) : (
+            <p className="wallet-note">
+              This wallet has an export password, so you can sign this send yourself instead of
+              asking Splitsy to. Enter it once — it stays for this tab only.
+            </p>
+          )}
           <div className="wallet-line">
             <input
               value={ownerPassword}
               onChange={(e) => setOwnerPassword(e.target.value)}
               type="password"
               autoComplete="off"
-              aria-label="Export password"
-              placeholder="export password"
+              aria-label={exportStatus.ownerKind === "passkey+password" ? "Recovery password" : "Export password"}
+              placeholder={exportStatus.ownerKind === "passkey+password" ? "recovery password" : "export password"}
               onKeyDown={(e) => e.key === "Enter" && ownerPassword && !phase.startsWith("sending") && deriveOwnerKey()}
             />
           </div>

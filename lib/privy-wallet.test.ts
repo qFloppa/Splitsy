@@ -272,3 +272,20 @@ test("an exported-but-unclaimed wallet is still custodial", () => {
   assert.equal(isCustodial({ claimed_at: null }), true);
   assert.equal(isCustodial({ claimed_at: "2026-09-11T00:00:00Z" }), false);
 });
+
+// The quorum claim tightens claimLanded: when the caller MADE the owner quorum it
+// knows which id should come back, so "not ours" is weaker than it can afford.
+test("an owner that is neither ours nor the quorum we made is not a claim", () => {
+  const result = { ownerId: "kq_someone_else", remainingSigners: 0, quorumStillSigns: false };
+  // Without the expectation it passes — it is not our quorum, which is all the
+  // older check could ask.
+  assert.equal(claimLanded(result, QUORUM).ok, true);
+  // With it, a wallet handed to a third party is caught.
+  const verdict = claimLanded(result, QUORUM, "kq_the_one_we_created");
+  assert.equal(verdict.ok, false);
+});
+
+test("the quorum we created is accepted", () => {
+  const result = { ownerId: "kq_the_one_we_created", remainingSigners: 0, quorumStillSigns: false };
+  assert.deepEqual(claimLanded(result, QUORUM, "kq_the_one_we_created"), { ok: true });
+});
