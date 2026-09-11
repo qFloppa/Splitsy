@@ -141,6 +141,13 @@ export async function GET() {
       // the authenticator holding the key.
       ownerKind: g.ownerKind,
       passkeyCredentialId: g.passkeyCredentialId,
+      // The salt to derive the owner key with, and NOT a convenience: the browser
+      // cannot work it out, because a provisioned wallet's keys were salted before
+      // its address existed. Deriving under the wrong salt yields a valid-looking
+      // key that simply is not the owner — a 401 from Privy with nothing in the
+      // message to explain it. Not a secret either: a salt is public by design, and
+      // this one is either the wallet's own address or the account id behind it.
+      ownerSalt: g.ownerSalt,
     });
   } catch (err) {
     return json({ error: err instanceof Error ? err.message : "Could not read wallet ownership." }, 502);

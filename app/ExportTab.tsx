@@ -28,6 +28,10 @@ type Status = {
   canClaim?: boolean;
   ownerKind?: string | null;
   passkeyCredentialId?: string | null;
+  // The salt to derive the owner key with. SERVER-SUPPLIED and not derivable here:
+  // a wallet provisioned under the user's own keys was salted before it had an
+  // address. See lib/export-crypto.ts:accountSalt.
+  ownerSalt: string;
 };
 
 // `handle` is shown by the OS passkey manager as the account this credential
@@ -101,7 +105,7 @@ export default function ExportTab({ address, handle }: { address: string; handle
   // returns.
   async function runExport(current: Status, pwd: string, reveal: boolean) {
     const crypto = await import("@/lib/export-crypto");
-    const secretKey = await crypto.deriveOwnerSecretKey(pwd, current.address);
+    const secretKey = await crypto.deriveOwnerSecretKey(pwd, current.ownerSalt);
     const publicKey = await crypto.ownerPublicKeySpki(secretKey);
 
     // The local pre-check. A wrong password fails HERE, with no request made and
@@ -169,7 +173,7 @@ export default function ExportTab({ address, handle }: { address: string; handle
       }
       if (password !== confirm) return setMessage("The passwords don't match — try again.");
 
-      const secretKey = await crypto.deriveOwnerSecretKey(password, status.address);
+      const secretKey = await crypto.deriveOwnerSecretKey(password, status.ownerSalt);
       const publicKey = await crypto.ownerPublicKeySpki(secretKey);
 
       // RESTORE PROVES BEFORE IT RECORDS; ENABLE TRANSFERS BEFORE IT PROVES. The
@@ -277,7 +281,11 @@ export default function ExportTab({ address, handle }: { address: string; handle
 
       // The password key. Always made: it is the sole owner on a browser without
       // PRF, and the recovery member everywhere else.
-      const passwordKey = await crypto.deriveOwnerSecretKey(password, status.address);
+      //
+      // SALTED WITH status.ownerSalt, which for a wallet being claimed is its own
+      // address — the same salt the unlock path will be handed back, which is the
+      // only reason the key can be re-derived tomorrow.
+      const passwordKey = await crypto.deriveOwnerSecretKey(password, status.ownerSalt);
       const passwordPublicKey = await crypto.ownerPublicKeySpki(passwordKey);
 
       // The passkey, where the platform supports it. A failure here is NOT fatal:
@@ -290,7 +298,7 @@ export default function ExportTab({ address, handle }: { address: string; handle
 
       if (usePasskey) {
         const passkey = await import("@/lib/passkey-owner");
-        const registered = await passkey.registerPasskey(status.address, handle ?? status.address);
+        const registered = await passkey.registerPasskey(status.ownerSalt, handle ?? status.address);
         primaryKey = crypto.ownerSecretFromPrf(registered.secret);
         primaryPublicKey = await crypto.ownerPublicKeySpki(primaryKey);
         recoveryPublicKey = passwordPublicKey;
@@ -322,9 +330,11 @@ export default function ExportTab({ address, handle }: { address: string; handle
       }
       if (!res.ok) throw new Error(data.error ?? "Could not complete the handover.");
 
-      // Cached so the first payment after claiming needs no second prompt.
+      // Cached so the first payment after claiming needs no second prompt, and the
+      // claim-status memo dropped so that payment knows to sign here.
       const session = await import("./session-owner-key");
       session.rememberOwnerKey(status.address, primaryKey);
+      (await import("./signed-send")).forgetClaimStatus();
 
       setStatus({
         ...status,

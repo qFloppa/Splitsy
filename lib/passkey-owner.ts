@@ -21,7 +21,6 @@
 // The secret is never stored. It is re-derived per session from the authenticator
 // and cached in memory exactly like the password-derived one
 // (app/session-owner-key.ts), so a Face ID prompt is once per tab, not per payment.
-import { exportSalt } from "@/lib/export-crypto";
 
 // The relying party is the ORIGIN, enforced by the browser. A passkey registered
 // on splitsy.xyz cannot be used by any other site, which is what makes the
@@ -50,8 +49,14 @@ const fromBase64Url = (value: string): Uint8Array<ArrayBuffer> => {
 // derivation salts with: one wallet, one secret, whichever way it is unlocked.
 // Domain-prefixed by exportSalt, so the bytes a passkey releases for this wallet
 // are useless anywhere else.
-const prfSalt = (address: string): Uint8Array<ArrayBuffer> => {
-  const encoded = new TextEncoder().encode(exportSalt(address));
+//
+// TAKES A SALT STRING, not an address, because a wallet minted under the user's
+// own keys has no address until those keys exist — see accountSalt in
+// lib/export-crypto.ts for why that circularity is real and how it is broken.
+// Callers pass exportSalt(address) for an existing wallet and accountSalt(...)
+// for one being created.
+const prfSalt = (salt: string): Uint8Array<ArrayBuffer> => {
+  const encoded = new TextEncoder().encode(salt);
   const out = new Uint8Array(new ArrayBuffer(encoded.length));
   out.set(encoded);
   return out;
@@ -92,18 +97,22 @@ export async function prfSupported(): Promise<boolean> {
 // secret from the create() response works on some devices and silently yields
 // nothing on others. Doing the assertion here means the caller always has real
 // bytes or a real error, never an empty success.
-export async function registerPasskey(address: string, userHandle: string): Promise<PasskeyRegistration> {
+export async function registerPasskey(salt: string, userHandle: string): Promise<PasskeyRegistration> {
   const challenge = crypto.getRandomValues(new Uint8Array(32));
   const created = (await navigator.credentials.create({
     publicKey: {
       challenge,
       rp: { name: RP_NAME },
       user: {
-        // The wallet address IS the account handle here. A passkey manager shows
-        // this to the user, so it has to name what it unlocks.
-        id: new TextEncoder().encode(address.toLowerCase()),
-        name: userHandle || address,
-        displayName: userHandle || `Splitsy wallet ${address.slice(0, 8)}`,
+        // The SALT is the credential's user id — stable for the life of the wallet,
+        // and the one value that is known both when the wallet is created and on
+        // every later device. The address would have been the obvious choice and
+        // cannot be used: at provisioning time it does not exist yet.
+        id: new TextEncoder().encode(salt),
+        // What a passkey manager SHOWS. It has to name what it unlocks, so it is
+        // the user's handle rather than an address or a salt they have never read.
+        name: userHandle,
+        displayName: `Splitsy — ${userHandle}`,
       },
       // ES256 only. The whole design rests on P-256, and offering RS256 would let
       // an authenticator pick a curve the rest of this cannot use.
@@ -131,7 +140,7 @@ export async function registerPasskey(address: string, userHandle: string): Prom
 
   const credentialId = toBase64Url(new Uint8Array(created.rawId));
   // The assertion that actually yields the bytes.
-  const secret = await passkeyOwnerSecret(address, credentialId);
+  const secret = await passkeyOwnerSecret(salt, credentialId);
   return { credentialId, secret };
 }
 
@@ -141,7 +150,7 @@ export async function registerPasskey(address: string, userHandle: string): Prom
 // THROWS RATHER THAN RETURNING EMPTY. A caller that got zero bytes and carried on
 // would derive a key from nothing and hand it to Privy as a wallet owner, which is
 // unrecoverable by construction.
-export async function passkeyOwnerSecret(address: string, credentialId?: string | null): Promise<Uint8Array> {
+export async function passkeyOwnerSecret(salt: string, credentialId?: string | null): Promise<Uint8Array> {
   const assertion = (await navigator.credentials.get({
     publicKey: {
       challenge: crypto.getRandomValues(new Uint8Array(32)),
@@ -150,7 +159,7 @@ export async function passkeyOwnerSecret(address: string, credentialId?: string 
       // prompt name the right passkey instead of offering every one on the device.
       ...(credentialId ? { allowCredentials: [{ type: "public-key" as const, id: fromBase64Url(credentialId) }] } : {}),
       userVerification: "required",
-      extensions: { prf: { eval: { first: prfSalt(address) } } } as AuthenticationExtensionsClientInputs,
+      extensions: { prf: { eval: { first: prfSalt(salt) } } } as AuthenticationExtensionsClientInputs,
       timeout: 120_000,
     },
   })) as PublicKeyCredential | null;

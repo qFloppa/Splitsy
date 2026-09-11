@@ -80,3 +80,26 @@ alter table privy_wallets add column if not exists owner_kind text;
 -- discovery misses, which is the difference between "sign in with your passkey"
 -- and "no passkey found on this device".
 alter table privy_wallets add column if not exists passkey_credential_id text;
+
+-- The salt the owner key was DERIVED WITH (2026-09-11). Additive; safe to re-run.
+--
+-- Not a preference and not a cache: PBKDF2 and the passkey's PRF both take a salt,
+-- and the same password under two different salts is two different keys. So the
+-- salt has to be reproducible for as long as the key owns the wallet, or the wallet
+-- becomes one that NOBODY can sign — not the user, and by design not us either.
+--
+-- NULL MEANS `splitsy-export:<lowercased address>` (lib/export-crypto.ts:exportSalt),
+-- which is what every key created before this column existed used. Left null by the
+-- claim path on purpose: that wallet already has an address, so the address is
+-- still the natural salt and writing it out would only be a second place for it to
+-- disagree with itself.
+--
+-- Non-null is written by POST /api/wallet/provision, which cannot use the address:
+-- a wallet minted under the user's own keys has no address until those keys exist.
+-- It records accountSalt(provider, provider_user_id) instead.
+alter table privy_wallets add column if not exists owner_salt text;
+
+comment on column privy_wallets.owner_salt is
+  'The salt owner keys for this wallet are derived with. Null means the legacy '
+  'address salt (splitsy-export:<address>); non-null is set at provision time, when '
+  'no address exists yet. Losing this value loses the wallet.';

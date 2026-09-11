@@ -10,6 +10,7 @@
 // anyone is signed in; then identity, then provisioning, then the unlock. Each
 // makes the next question meaningful.
 import { cookies } from "next/headers";
+import { exportSalt } from "@/lib/export-crypto";
 import { getPrivyWalletByWalletId } from "@/lib/privy-wallets-repo";
 import { getSessionUser } from "@/lib/session";
 import { verifyWalletUnlock, WALLET_UNLOCK_COOKIE } from "@/lib/session-core";
@@ -52,6 +53,11 @@ export type WalletGate =
       // read of the same row.
       ownerKind: string | null;
       passkeyCredentialId: string | null;
+      // The salt every owner key for this wallet is derived with, resolved HERE so
+      // no caller has to know that a null column means the address. The browser
+      // cannot derive it — a provisioned wallet's salt predates its address — and
+      // deriving the wrong one produces a key that is silently not the owner.
+      ownerSalt: string;
     };
 
 export async function walletGate(): Promise<WalletGate> {
@@ -88,6 +94,10 @@ export async function walletGate(): Promise<WalletGate> {
       claimedAt: row.claimed_at ?? null,
       ownerKind: row.owner_kind ?? null,
       passkeyCredentialId: row.passkey_credential_id ?? null,
+      // The row's address, not the session's: they have historically disagreed on
+      // casing, and exportSalt lowercases — but the salt must be built from the
+      // same string for the life of the wallet, so it comes from one source.
+      ownerSalt: row.owner_salt ?? exportSalt(row.address),
     };
   } catch {
     // CAUGHT HERE, ONCE, FOR EVERY HANDLER. Everything above can throw — Supabase

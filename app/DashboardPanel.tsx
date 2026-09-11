@@ -52,6 +52,7 @@ import {
 import { providerDisplay } from "@/lib/provider-display";
 import type { IdentityProvider } from "@/lib/types";
 import { ProviderIcon } from "./ProviderTag";
+import { payErrorMessage, walletPost } from "./signed-send";
 import { PosterFact, PosterHero, SectionHead, legendOf, revealMotion, sectionMotion, type Step } from "./SpecCard";
 
 type RangeKey = "7d" | "30d" | "90d" | "all";
@@ -1333,24 +1334,19 @@ function TreasurySection({
           setNote("Unlock your wallet (the wallet button in the bottom-right corner), then tap Settle again.");
           return;
         }
-        const res = await fetch("/api/treasury/settle", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify(selection),
-        });
-        const data = await res.json().catch(() => ({}));
-        if (!res.ok) {
+        const outcome = await walletPost("/api/treasury/settle", selection as unknown as Record<string, unknown>);
+        if (!outcome.ok) {
+          const funds = outcome.data ?? {};
           setNote(
-            data.error === "insufficient_funds"
-              ? data.neededUsdc
-                ? `Not enough USDC: this needs ${usd(data.neededUsdc)} but your wallet has ${usd(data.availableUsdc)} available (collections included). Top up on Arc Testnet.`
-                : "Your wallet needs more test USDC."
-              : (data.error ?? "Settlement failed."),
+            outcome.error === "insufficient_funds" && funds.neededUsdc
+              ? `Not enough USDC: this needs ${usd(funds.neededUsdc as number)} but your wallet has ${usd(funds.availableUsdc as number)} available (collections included). Top up on Arc Testnet.`
+              : payErrorMessage(outcome.error),
           );
           return;
         }
-        const paidCount = data.paid?.length ?? 0;
-        const claimedCount = data.claimed?.length ?? 0;
+        const data = outcome.data;
+        const paidCount = (data.paid as unknown[] | undefined)?.length ?? 0;
+        const claimedCount = (data.claimed as unknown[] | undefined)?.length ?? 0;
         const parts = [
           paidCount ? `paid ${plural(paidCount, "bill")}` : "",
           claimedCount ? `collected ${plural(claimedCount, "bill")}` : "",

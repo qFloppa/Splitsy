@@ -764,6 +764,18 @@ export async function getWalletOwnerId(walletId: string): Promise<string | null>
   return (await privy().wallets().get(walletId)).owner_id;
 }
 
+// The address of a wallet we may hold no key to. Its sibling above is the reason
+// this is safe to rely on: a read needs only the app secret, so the provisioning
+// route can learn the address of a wallet the user alone can sign — measured in
+// scripts/privy-quorum-probe.ts, and the whole send path already depends on it.
+//
+// ASKED OF PRIVY RATHER THAN TAKEN FROM THE CLIENT. The browser has just been told
+// this wallet id and could echo any address back with it; what gets written to the
+// row is money's destination, so it comes from the party that assigned it.
+export async function getWalletAddress(walletId: string): Promise<string> {
+  return getAddress((await privy().wallets().get(walletId)).address);
+}
+
 // Hand ownership to the user's P-256 key. Signed by OUR quorum because at this
 // point we are still the owner — this is the one and only call in the system that
 // can make this transition, and it is not reversible: afterwards our quorum is
@@ -974,6 +986,77 @@ export async function prepareUserSignedCall(
   data: `0x${string}`,
 ): Promise<Prepared> {
   return prepareTransfer(getAddress((await privy().wallets().get(walletId)).address), to, data);
+}
+
+// Mint a wallet that is the USER'S FROM THE FIRST BLOCK.
+//
+// `owner_id` is a quorum built from keys only the user's browser has ever held,
+// and there are NO additional_signers — so unlike every other wallet this module
+// creates, there has never been a moment when Splitsy could sign or export it.
+// Measured in scripts/privy-quorum-probe.ts: 401 on both from the first call, the
+// owner signs immediately, and wallets().get() still returns the address with only
+// the app secret (which the whole send path depends on).
+//
+// SEPARATE FROM getOrCreateWallet, which mints the custodial shape for agent and
+// service wallets. Those need a server signer — autopay runs with nobody present —
+// and collapsing the two would put one flag between "the user owns this" and "we
+// do". They are different wallets for different reasons.
+//
+// NO IDEMPOTENCY TABLE CHECK HERE. The caller owns that: this is invoked once, by
+// the provisioning route, after it has established the user has no wallet. The
+// idempotency key still guards a double-submit inside Privy's 24-hour window.
+export async function mintUserOwnedWallet(
+  ownerQuorumId: string,
+  idempotencyKey: string,
+): Promise<ProviderWallet> {
+  const wallet = await privy().wallets().create({
+    chain_type: "ethereum",
+    owner_id: ownerQuorumId,
+    idempotency_key: idempotencyKey,
+  });
+  if (!wallet.id) {
+    throw new Error(`Privy minted ${wallet.address} with no wallet id — it cannot be used`);
+  }
+  // Verified rather than assumed. A response that quietly carried an
+  // additional_signers list would be a wallet we CAN sign for, recorded as one we
+  // cannot — the custody lie, at the one moment it would never be looked for again.
+  const signers = wallet.additional_signers ?? [];
+  if (signers.length > 0) {
+    throw new Error(`Privy minted this wallet with ${signers.length} additional signer(s); expected none`);
+  }
+  if (wallet.owner_id !== ownerQuorumId) {
+    throw new Error("Privy minted this wallet under a different owner than the one requested");
+  }
+  return { address: wallet.address, walletId: wallet.id };
+}
+
+// What a sweep should move, in USDC.
+//
+// Arc charges gas in USDC, so a sweep of the FULL balance always reverts — there
+// is nothing left to pay for the transfer itself. The reserve is what stays
+// behind. Pure and exported because the arithmetic has two ways to be wrong that
+// a type checker will not catch: a negative amount, and a dust-sized transfer
+// that costs more gas than it moves.
+//
+// Returns 0 for anything at or below the reserve, which the caller reads as
+// "nothing to sweep" rather than as a transfer of zero.
+export const GAS_RESERVE_USDC = 0.05;
+export function sweepAmountUsdc(balanceUsdc: number, reserve = GAS_RESERVE_USDC): number {
+  if (!Number.isFinite(balanceUsdc) || balanceUsdc <= reserve) return 0;
+  // Truncated to USDC's 6 decimals: parseUnits would throw on more, and rounding
+  // UP could ask for a micro-USDC more than the wallet holds.
+  return Math.floor((balanceUsdc - reserve) * 1e6) / 1e6;
+}
+
+// The USDC balance of an address, as a number of USDC.
+export async function usdcBalanceOf(address: string): Promise<number> {
+  const micros = await publicClient.readContract({
+    address: ARC_TESTNET_USDC,
+    abi: erc20Abi,
+    functionName: "balanceOf",
+    args: [getAddress(address)],
+  });
+  return Number(formatUnits(micros, 6));
 }
 
 export const backend: WalletBackend = {

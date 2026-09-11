@@ -2,12 +2,14 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { WaitForTransactionReceiptTimeoutError } from "viem";
 import {
+  GAS_RESERVE_USDC,
   claimLanded,
   fateFromReads,
   isNonceCollision,
   logsToWalletTxs,
   receiptToState,
   settledOrThrow,
+  sweepAmountUsdc,
   verdictAfterWait,
   walletSpec,
 } from "./privy-wallet.ts";
@@ -288,4 +290,34 @@ test("an owner that is neither ours nor the quorum we made is not a claim", () =
 test("the quorum we created is accepted", () => {
   const result = { ownerId: "kq_the_one_we_created", remainingSigners: 0, quorumStillSigns: false };
   assert.deepEqual(claimLanded(result, QUORUM, "kq_the_one_we_created"), { ok: true });
+});
+
+// ── The sweep ──────────────────────────────────────────────────────────────────
+// Arc charges gas in USDC, so sweeping the FULL balance always reverts: nothing
+// is left to pay for the transfer. These are the two ways the arithmetic can be
+// wrong in a way no type checker sees — a negative amount, and a dust transfer
+// that costs more gas than it moves.
+test("a balance at or below the gas reserve sweeps nothing, and never a negative", () => {
+  // Exactly the reserve: the boundary, and the one most likely to be written as <.
+  assert.equal(sweepAmountUsdc(GAS_RESERVE_USDC), 0);
+  assert.equal(sweepAmountUsdc(GAS_RESERVE_USDC - 0.000001), 0);
+  assert.equal(sweepAmountUsdc(0), 0);
+  // A negative balance cannot happen on chain, but a subtraction that produced
+  // one would be handed to parseUnits as a transfer amount.
+  assert.equal(sweepAmountUsdc(-5), 0);
+  // Non-finite, because usdcBalanceOf goes through Number() on a formatted string.
+  assert.equal(sweepAmountUsdc(Number.NaN), 0);
+  assert.equal(sweepAmountUsdc(Number.POSITIVE_INFINITY), 0);
+});
+
+test("a balance above the reserve sweeps the rest, truncated to USDC's 6 decimals", () => {
+  assert.equal(sweepAmountUsdc(1), 0.95);
+  assert.equal(sweepAmountUsdc(10.5), 10.45);
+  // Truncated DOWN, never rounded up: asking for one micro-USDC more than the
+  // wallet holds reverts, and parseUnits throws on more than 6 decimals.
+  assert.equal(sweepAmountUsdc(0.0500005), 0);
+  assert.equal(sweepAmountUsdc(0.051234567), 0.001234);
+  // The reserve is a parameter so a caller can prove the boundary moves with it.
+  assert.equal(sweepAmountUsdc(1, 0.25), 0.75);
+  assert.equal(sweepAmountUsdc(0.25, 0.25), 0);
 });

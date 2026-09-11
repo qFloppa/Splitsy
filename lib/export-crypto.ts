@@ -134,6 +134,30 @@ export function exportSalt(walletAddress: string): string {
   return `splitsy-export:${walletAddress.toLowerCase()}`;
 }
 
+// The salt for a wallet THAT DOES NOT EXIST YET.
+//
+// exportSalt keys on the address, which is the natural per-wallet value — but a
+// wallet minted under the user's own keys has no address until after those keys
+// exist, so the address cannot be the salt for the key that creates it. That is a
+// real circularity, not an ordering detail.
+//
+// The account identity breaks it: it is stable, unique per wallet (one pay wallet
+// per account), and known before the wallet is minted. Same domain prefix shape as
+// exportSalt so the two can never collide, and lowercased for the same reason —
+// a salt that changed with casing would derive a different key and lock the user
+// out of the wallet they just made.
+//
+// The DERIVED KEY is what carries forward, not the salt: after provisioning, the
+// wallet is owned by that key and unlocking re-derives with this same salt. So a
+// provisioned wallet keeps using this one forever, and exportSalt stays the salt
+// for wallets minted the old way. WHICH ONE A WALLET USED IS RECORDED
+// (privy_wallets.owner_salt, null meaning the old address salt) and handed back by
+// /api/wallet/export — guessing would eventually guess wrong, and the cost of
+// being wrong is a wallet no key can open.
+export function accountSalt(provider: string, providerUserId: string): string {
+  return `splitsy-owner:${provider.toLowerCase()}:${providerUserId.toLowerCase()}`;
+}
+
 // A P-256 secret key must lie in [1, n-1]. PBKDF2 gives a uniform 32 bytes, so
 // landing outside that is a ~2^-32 event — but "astronomically unlikely" is not
 // "impossible", and the failure mode is a user whose password derives nothing.
@@ -172,13 +196,26 @@ export function ownerSecretFromPrf(prfOutput: Uint8Array): Uint8Array {
 
 // The user's export credential. NEVER LEAVES THE BROWSER — only the public half
 // is sent to us, and only so we can transfer wallet ownership to it once.
-export async function deriveOwnerSecretKey(password: string, walletAddress: string): Promise<Uint8Array> {
+//
+// TAKES THE SALT, NOT THE ADDRESS, for the same reason passkeyOwnerSecret does
+// (lib/passkey-owner.ts): a wallet minted under the user's own keys has no address
+// until those keys exist. Callers pass exportSalt(address) for a wallet that
+// already exists and accountSalt(...) for one being created — and both
+// derivations now take the same argument meaning the same thing, so the salt a
+// key was made with is decided in ONE place per flow rather than implied by which
+// function was called.
+//
+// THE SALT IS A PROPERTY OF THE KEY, and it must be reproducible for as long as
+// the key owns the wallet, so it is stored next to the public half
+// (privy_wallets.owner_salt) and served back by /api/wallet/export. A salt that
+// could not be recovered would be a wallet nobody can ever sign again.
+export async function deriveOwnerSecretKey(password: string, salt: string): Promise<Uint8Array> {
   const encoder = new TextEncoder();
   const material = await crypto.subtle.importKey("raw", encoder.encode(password), "PBKDF2", false, ["deriveBits"]);
   const bits = await crypto.subtle.deriveBits(
     {
       name: "PBKDF2",
-      salt: encoder.encode(exportSalt(walletAddress)),
+      salt: encoder.encode(salt),
       iterations: PBKDF2_ITERATIONS,
       hash: "SHA-256",
     },

@@ -33,7 +33,7 @@ import DashboardPanel from "./DashboardPanel";
 import IouClient from "./IouClient";
 import AgentEconomyPanel from "./AgentEconomyPanel";
 import { gatewayReceiptUrl } from "./JobTrail";
-import { ownerKeyNeeded, signedSend, type SignedSendResult } from "./signed-send";
+import { payErrorMessage, walletPost } from "./signed-send";
 import SettlementAgentsPanel, { AGENT_STEPS, type AgentTabState } from "./SettlementAgentsPanel";
 import { HistoryCard, PaidBillStamp } from "./HistoryCard";
 import { PosterCell, PosterFact, PosterHero, PosterValue, SectionHead, legendOf, type Step } from "./SpecCard";
@@ -1419,28 +1419,14 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
         return next;
       });
       // A CLAIMED wallet signs its own payment: the server has no key for it, so
-      // this becomes prepare → sign here → relay. signedSend is that round trip;
-      // an unclaimed wallet takes the plain POST it always did. Both reduce to the
-      // same {ok, error} shape so the handling below is one branch, not two.
-      const claimed = me?.walletAddress ? await ownerKeyNeeded() : { needed: false, address: null, hasKey: false };
-      const outcome =
-        claimed.needed && claimed.address
-          ? await signedSend(`/api/debts/${debt.id}/pay`, claimed.address)
-          : await (async (): Promise<SignedSendResult> => {
-              const res = await fetch(`/api/debts/${debt.id}/pay`, { method: "POST" });
-              const body = await res.json().catch(() => ({}));
-              return res.ok
-                ? { ok: true, data: body }
-                : { ok: false, error: body.error ?? "Payment failed.", status: res.status };
-            })();
+      // this becomes prepare → sign here → relay. walletPost makes that choice from
+      // the wallet's own state rather than from anything this panel knows, and both
+      // paths reduce to the same {ok, error} shape so the handling below is one
+      // branch, not two.
+      const outcome = await walletPost(`/api/debts/${debt.id}/pay`);
 
       if (!outcome.ok) {
-        const message =
-          outcome.error === "insufficient_funds"
-            ? "Your wallet needs more test USDC to cover this."
-            : outcome.error === "unlock_owner_key"
-              ? "This wallet is yours — open the wallet panel and enter your export password to sign payments."
-              : outcome.error;
+        const message = payErrorMessage(outcome.error);
         setBillState("error");
         failFlow(message);
         setDebtMessages((current) => ({ ...current, [key]: { tone: "error", message } }));
@@ -1484,12 +1470,9 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
           delete next[debtKey];
           return next;
         });
-        const res = await fetch(`/api/onchain-bills/${debt.billId}/pay`, { method: "POST" });
-        const data = await res.json().catch(() => ({}));
-        if (!res.ok) {
-          const message = data.error === "insufficient_funds"
-            ? "Your wallet needs more test USDC."
-            : (data.error ?? "Payment failed.");
+        const outcome = await walletPost(`/api/onchain-bills/${debt.billId}/pay`);
+        if (!outcome.ok) {
+          const message = payErrorMessage(outcome.error);
           setBillState("error");
           failFlow(message);
           setDebtMessages((current) => ({
@@ -1606,10 +1589,9 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
       }
       try {
         setBillState("working");
-        const res = await fetch(`/api/onchain-bills/${debt.billId}/refund`, { method: "POST" });
-        const data = await res.json().catch(() => ({}));
-        if (!res.ok) {
-          fail(data.error ?? "Refund failed.");
+        const outcome = await walletPost(`/api/onchain-bills/${debt.billId}/refund`);
+        if (!outcome.ok) {
+          fail(payErrorMessage(outcome.error));
           return;
         }
         succeed();
@@ -1930,14 +1912,14 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
       try {
         setBillState("working");
         setDebtMessages((current) => ({ ...current, [debtKey]: { tone: "neutral", message: "Claiming paid funds." } }));
-        const res = await fetch(`/api/onchain-bills/${debt.billId}/claim`, { method: "POST" });
-        const data = await res.json().catch(() => ({}));
-        if (!res.ok) {
+        const outcome = await walletPost(`/api/onchain-bills/${debt.billId}/claim`);
+        if (!outcome.ok) {
+          const message = payErrorMessage(outcome.error);
           setBillState("error");
-          failFlow(data.error ?? "Claim failed.");
+          failFlow(message);
           setDebtMessages((current) => ({
             ...current,
-            [debtKey]: { tone: "error", message: data.error ?? "Claim failed." },
+            [debtKey]: { tone: "error", message },
           }));
           return;
         }
@@ -2391,20 +2373,15 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
     body: Record<string, unknown>,
     successMessage: string,
   ): Promise<boolean> {
-    const res = await fetch(path, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) {
+    // walletPost, so all three recurring actions (authorize, revoke, claim) route
+    // through the same decision about who holds the key. They share this helper,
+    // which is why wiring the user-signed path is one change here rather than three
+    // at the call sites — and why none of them can drift from the others.
+    const outcome = await walletPost(path, body);
+    if (!outcome.ok) {
       setRecurringState("error");
       setRecurringMessage(
-        data.error === "insufficient_funds"
-          ? "Your wallet needs more test USDC to cover the gas."
-          : data.error === "locked"
-            ? "Unlock your wallet, then try again."
-            : (data.error ?? "The action failed."),
+        outcome.error === "locked" ? "Unlock your wallet, then try again." : payErrorMessage(outcome.error),
       );
       return false;
     }

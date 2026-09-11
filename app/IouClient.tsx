@@ -42,6 +42,7 @@ import { providerDisplay } from "@/lib/provider-display";
 import type { AccountProvider, IdentityProvider } from "@/lib/types";
 import { arcWalletClient } from "@/lib/wagmi";
 import { DISCORD_PATH } from "./ProviderTag";
+import { payErrorMessage, walletPost } from "./signed-send";
 
 type Me = { id: string; provider?: AccountProvider | null; handle: string; walletAddress: string | null };
 
@@ -574,14 +575,9 @@ export default function IouClient({ onReceipts }: { onReceipts: () => void }) {
   // Server-signed: a one-participant bill in the registry. I'm the splitter, so
   // I'm the one who can claim it — which is exactly what "owes me" means.
   async function sendAsk(plan: IouPlan): Promise<TxRef> {
-    const res = await fetch("/api/onchain-bills/create", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(askBody(plan)),
-    });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(data.error || "Couldn't put that on Arc.");
-    return data.txHash ? { url: explorerTxUrl(data.txHash) } : null;
+    const outcome = await walletPost("/api/onchain-bills/create", askBody(plan) as Record<string, unknown>);
+    if (!outcome.ok) throw new Error(payErrorMessage(outcome.error) || "Couldn't put that on Arc.");
+    return outcome.data.txHash ? { url: explorerTxUrl(outcome.data.txHash as string) } : null;
   }
 
   // A direct transfer. The registry can't hold "I owe you" — createBill makes
@@ -595,24 +591,20 @@ export default function IouClient({ onReceipts }: { onReceipts: () => void }) {
   async function settleNow(plan: IouPlan): Promise<TxRef> {
     const to = await resolveTarget(plan);
 
-    const res = await fetch("/api/wallet/send", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ to, amount: plan.amountUsd }),
-    });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) {
+    // walletPost, not a plain POST: /api/wallet/send has been user-signed since the
+    // wallet panel's send tab moved onto it, so a claimed wallet paying an IOU from
+    // here would otherwise ask a server that holds no key for it to sign.
+    const outcome = await walletPost("/api/wallet/send", { to, amount: plan.amountUsd });
+    if (!outcome.ok) {
       throw new Error(
-        data.error === "insufficient_funds"
-          ? "Not enough USDC in your wallet."
-          : data.error === "locked"
-            ? "Unlock your wallet first — the wallet button, bottom right."
-            : data.error || "Transfer failed.",
+        outcome.error === "locked"
+          ? "Unlock your wallet first — the wallet button, bottom right."
+          : payErrorMessage(outcome.error) || "Transfer failed.",
       );
     }
     // Circle answers before the transfer mines, so the hash arrives later — the
     // row links itself once it does rather than holding the whole commit up.
-    return data.txId ? { pending: waitForCircleTxUrl(data.txId) } : null;
+    return outcome.data.txId ? { pending: waitForCircleTxUrl(outcome.data.txId as string) } : null;
   }
 
   // The same ask, signed in the user's own wallet instead of their Splitsy one.
