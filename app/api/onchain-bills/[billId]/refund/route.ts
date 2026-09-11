@@ -2,6 +2,7 @@ import { cookies } from "next/headers";
 import { getSessionUser } from "@/lib/session";
 import { verifyWalletUnlock, WALLET_UNLOCK_COOKIE } from "@/lib/session-core";
 import { encodeRefund } from "@/lib/registry-calldata";
+import { userSignedLeg, type UserSignedBody } from "@/lib/user-signed";
 import { executeContract } from "@/lib/wallet-provider";
 import { REGISTRY_ADDRESS, getBillOnchain, getParticipantOnchain } from "@/lib/arc-read";
 import { refundableNow } from "@/lib/treasury";
@@ -16,7 +17,7 @@ function isBillId(v: string): boolean {
 // The payer's exit from a failed all-or-nothing bill. The registry enforces every
 // precondition itself; the checks below exist only to turn a revert the user
 // cannot read into a sentence they can.
-export async function POST(_request: Request, { params }: { params: Promise<{ billId: string }> }) {
+export async function POST(request: Request, { params }: { params: Promise<{ billId: string }> }) {
   const user = await getSessionUser();
   if (!user) return Response.json({ error: "Not signed in" }, { status: 401 });
 
@@ -58,7 +59,21 @@ export async function POST(_request: Request, { params }: { params: Promise<{ bi
   }
 
   try {
-    const tx = await executeContract(user.circle_wallet_id, REGISTRY_ADDRESS, encodeRefund(id));
+    const data = encodeRefund(id);
+    // A claimed wallet signs for itself. `refundable` is computed from chain state
+    // on both passes above, so the relay cannot be handed a refund for a bill whose
+    // conditions no longer hold.
+    const signed = await userSignedLeg({
+      body: (await request.json().catch(() => null)) as UserSignedBody | null,
+      walletId: user.circle_wallet_id,
+      userId: user.id,
+      to: REGISTRY_ADDRESS,
+      data,
+      context: `bill-refund:${billId}`,
+    });
+    if (signed && "response" in signed) return signed.response;
+
+    const tx = signed ? signed.tx : await executeContract(user.circle_wallet_id, REGISTRY_ADDRESS, data);
     return Response.json({ ok: true, txHash: tx.txHash, amount: refundable.toString() });
   } catch (err) {
     return Response.json({ error: err instanceof Error ? err.message : "refund failed" }, { status: 502 });

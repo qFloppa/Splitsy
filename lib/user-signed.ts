@@ -121,3 +121,85 @@ export async function relayForUser(args: {
   const { sendUserSigned } = await import("./privy-wallet.ts");
   return { tx: await sendUserSigned(ticket.walletId, ticket.transaction, args.signature, args.pollMs) };
 }
+
+// THE WHOLE BRANCH, for a route whose payment is one contract call.
+//
+// Most migrated routes are the same four lines: if the user must sign, either
+// hand out a ticket or relay one, and otherwise do what the route always did. This
+// collapses that into a single call so the route keeps its guards and its ledger
+// writes and gains almost nothing else.
+//
+// Returns `null` when the server should sign — meaning the wallet is custodial, or
+// this is the Circle stack — so the caller's existing executeContract path runs
+// untouched. That is the default, and it is what keeps this safe to add to a route
+// before anyone has claimed anything.
+//
+// NOT for multi-leg payments. A route that sends approve-then-pay has to decide
+// which leg it is on by reading the chain, and a helper that returned one ticket
+// would silently only ever do the first. Those routes call prepareForUser and
+// relayForUser directly, with their own leg in the context.
+//
+// What the two extra passes look like on the wire. A route that already parses its
+// own body can intersect this with its own shape; one that does not can parse
+// straight into it.
+export type UserSignedBody = { prepare?: unknown; ticket?: unknown; signature?: unknown };
+
+// TAKES THE PARSED BODY, not the Request. A body can only be read once, and
+// several of these routes have already read it to find the bill id they are acting
+// on — a second `request.json()` in here would throw on exactly those callers.
+export async function userSignedLeg(args: {
+  body: UserSignedBody | null;
+  walletId: string;
+  userId: string;
+  to: `0x${string}`;
+  data: `0x${string}`;
+  context: string;
+  pollMs?: number;
+}): Promise<{ response: Response } | { tx: TxResult } | null> {
+  if (!(await userMustSign(args.walletId))) return null;
+
+  const body = args.body;
+
+  if (body?.prepare === true) {
+    try {
+      const prepared = await prepareForUser({
+        walletId: args.walletId,
+        userId: args.userId,
+        to: args.to,
+        data: args.data,
+        context: args.context,
+      });
+      return { response: Response.json(prepared) };
+    } catch (err) {
+      return {
+        response: Response.json(
+          { error: err instanceof Error ? err.message : "Could not prepare this payment." },
+          { status: 502 },
+        ),
+      };
+    }
+  }
+
+  if (body?.ticket !== undefined) {
+    const relayed = await relayForUser({
+      ticket: body.ticket,
+      signature: body.signature,
+      userId: args.userId,
+      walletId: args.walletId,
+      context: args.context,
+      pollMs: args.pollMs,
+    });
+    if ("error" in relayed) return { response: Response.json({ error: relayed.error }, { status: relayed.status }) };
+    return { tx: relayed.tx };
+  }
+
+  // A claimed wallet reached here with neither a prepare nor a ticket, which means
+  // a client that has not been taught to sign. Said plainly: the server cannot do
+  // this for them, and a retry of the same request will not help.
+  return {
+    response: Response.json(
+      { error: "This wallet is yours — enter your export password to sign this payment." },
+      { status: 409 },
+    ),
+  };
+}
