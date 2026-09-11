@@ -23,6 +23,7 @@ import {
   getParticipantsOnchain,
   REGISTRY_ADDRESS,
 } from "@/lib/arc-read";
+import { userMustSign } from "@/lib/user-signed";
 import { executeContract } from "@/lib/wallet-provider";
 import { decideDunning, type DunningAction } from "@/lib/dunning";
 import { encodeCollectDebt } from "@/lib/registry-calldata";
@@ -115,8 +116,14 @@ async function handleDebtor(input: {
   // debtor's allowance/balance leave nothing.
   const collectible = hasMandate ? await getCollectibleOnchain(billId, debtor).catch(() => 0n) : 0n;
 
+  // Whether this creditor's wallet can still be signed for here. A creditor who
+  // took sole ownership cannot be pulled from by a cron — collectDebt is
+  // splitter-only and we hold no key — so the ladder drops to escalate instead of
+  // returning a collect that would revert AFTER the slot below is claimed.
+  const canPull = !(await userMustSign(input.creditor.walletId));
+
   const decision = decideDunning(
-    { dueDate: input.dueDate, remaining: input.remaining, hasMandate, collectible, alreadyLogged },
+    { dueDate: input.dueDate, remaining: input.remaining, hasMandate, collectible, alreadyLogged, canPull },
     input.now,
   );
   if (decision.action === "none") return null;
