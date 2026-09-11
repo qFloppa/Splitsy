@@ -305,6 +305,15 @@ export async function PUT(request: Request) {
 // Writes the chain only when the on-chain half actually differs from what is
 // already there. Returns the tx hash, or null when nothing needed signing —
 // which is the common case, because the settings panel saves on every blur.
+//
+// NOT MIGRATED TO USER SIGNING, because neither executeContract below is
+// reachable on the Privy stack. The arming path throws outright at :363 — it
+// needs an SCA's executeBatch and these wallets are EOAs — and both paths are
+// behind isMandateConfigured(), which is false wherever
+// NEXT_PUBLIC_AUTOPAY_MANDATE_ADDRESS is unset, as it is on the Privy
+// deployment (docs/deployments.md). Adding a prepare/sign/relay branch here
+// would be code no request can enter, and it would have to be maintained as if
+// it worked. Revisit together with the mandate feature itself.
 async function syncMandateOnchain(
   user: { circle_wallet_id: string | null; wallet_address: string | null },
   next: { enabled: boolean; maxPerBillUsdc: number; maxPerDayUsdc: number; trustedCreators: string[] },

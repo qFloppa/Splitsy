@@ -4,6 +4,7 @@ import { triggerAutopay } from "@/lib/autopay-trigger";
 import { resolveParticipants } from "@/lib/wallet-resolve";
 import { billMetadataHash } from "@/lib/bill-metadata";
 import { encodeCreateBill } from "@/lib/registry-calldata";
+import { userSignedLeg, type UserSignedBody } from "@/lib/user-signed";
 import { executeContract, InsufficientFundsError } from "@/lib/wallet-provider";
 import { REGISTRY_ADDRESS, getBillOnchain, getBillIdsForSplitterOnchain } from "@/lib/arc-read";
 import { publishOnchainBillPreimage } from "@/lib/onchain-bill-preimage-repo";
@@ -104,7 +105,21 @@ export async function POST(request: Request) {
   // before Circle reported one, which the caller reads as "no link".
   let txHash: string | null = null;
   try {
-    ({ txHash } = await executeContract(user.circle_wallet_id, REGISTRY_ADDRESS, encodeCreateBill(metadataHash, addresses, owed, BigInt(dueDate ?? 0), escrowUntilFull)));
+    const data = encodeCreateBill(metadataHash, addresses, owed, BigInt(dueDate ?? 0), escrowUntilFull);
+    // A claimed wallet signs its own bill creation. The metadata hash is in the
+    // context: it commits to the merchant, the amounts and the participants, so a
+    // ticket prepared for one bill cannot create a different one.
+    const signed = await userSignedLeg({
+      body: body as UserSignedBody | null,
+      walletId: user.circle_wallet_id,
+      userId: user.id,
+      to: REGISTRY_ADDRESS,
+      data,
+      context: `bill-create:${metadataHash}`,
+    });
+    if (signed && "response" in signed) return signed.response;
+
+    ({ txHash } = signed ? signed.tx : await executeContract(user.circle_wallet_id, REGISTRY_ADDRESS, data));
   } catch (err) {
     if (err instanceof InsufficientFundsError) return Response.json({ error: "insufficient_funds" }, { status: 402 });
     return Response.json({ error: err instanceof Error ? err.message : "createBill failed" }, { status: 502 });

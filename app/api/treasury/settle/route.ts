@@ -23,6 +23,7 @@ import { after } from "next/server";
 import { getSessionUser } from "@/lib/session";
 import { verifyWalletUnlock, WALLET_UNLOCK_COOKIE } from "@/lib/session-core";
 import { encodeApprove, encodeExecuteBatch, encodeSettle } from "@/lib/registry-calldata";
+import { userSignedLeg, type UserSignedBody } from "@/lib/user-signed";
 import { executeContract, InsufficientFundsError, walletProviderName } from "@/lib/wallet-provider";
 import {
   REGISTRY_ADDRESS,
@@ -171,7 +172,22 @@ export async function POST(request: Request) {
   //    executeBatch lives on an SCA account).
   let tx: { txHash: string | null };
   try {
-    tx = await executeContract(walletId, wallet, encodeExecuteBatch(calls));
+    const data = encodeExecuteBatch(calls);
+    // A claimed wallet signs its own settlement. The batch is assembled from
+    // chain reads above on both passes, and the context carries a digest of the
+    // legs — a settlement is many calls in one transaction, so binding only the
+    // wallet would let a ticket for one plan relay against a different one.
+    const signed = await userSignedLeg({
+      body: (body ?? null) as UserSignedBody | null,
+      walletId,
+      userId: user.id,
+      to: wallet,
+      data,
+      context: `settle:${calls.length}:${total.toString()}`,
+    });
+    if (signed && "response" in signed) return signed.response;
+
+    tx = signed ? signed.tx : await executeContract(walletId, wallet, data);
   } catch (err) {
     if (err instanceof InsufficientFundsError) {
       return Response.json({ error: "insufficient_funds" }, { status: 402 });

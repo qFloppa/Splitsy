@@ -42,8 +42,10 @@ export async function signedSend(
   }
 
   // Bounded so a server that always answered `more: true` could not spin here.
-  // Three is one more than the longest real sequence (approve → pay).
-  const MAX_LEGS = 3;
+  // 32 is far past any real sequence — the longest is a social pay-link covering
+  // one approval plus one leg per person — while still being a hard stop rather
+  // than a promise about how many legs the server may ask for.
+  const MAX_LEGS = 32;
   let last: Record<string, unknown> = {};
 
   for (let leg = 0; leg < MAX_LEGS; leg++) {
