@@ -4,6 +4,7 @@ import * as Dialog from "@radix-ui/react-dialog";
 import confetti from "canvas-confetti";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { billUnitsToUsdc } from "@/lib/bill-split-contracts";
+import { typableAmount } from "@/lib/iou";
 import {
   buildSettleItems,
   clearsSection,
@@ -486,6 +487,11 @@ function WalletDebtBody({
                 className="settle-amount"
                 inputMode="decimal"
                 onChange={(event) =>
+                  // Gated live with the app's one amount rule (lib/iou.ts), the
+                  // same one the IOU composer and every poster figure use. type
+                  // ="number" narrows a keyboard but still accepts "1e5", a
+                  // second sign, and decimals past the two this deck can show.
+                  typableAmount(event.target.value) &&
                   deck.setPartialPayments({ ...deck.partialPayments, [item.id]: event.target.value })
                 }
                 type="number"
@@ -641,7 +647,10 @@ function ClaimBody({
                 aria-label={`Amount to collect from bill ${debt.billId.toString()}`}
                 className="settle-amount"
                 inputMode="decimal"
-                onChange={(event) => deck.setClaimAmounts({ ...deck.claimAmounts, [item.id]: event.target.value })}
+                onChange={(event) =>
+                  typableAmount(event.target.value) &&
+                  deck.setClaimAmounts({ ...deck.claimAmounts, [item.id]: event.target.value })
+                }
                 type="number"
                 value={deck.claimAmounts[item.id] ?? claimableLabel}
               />

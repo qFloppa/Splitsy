@@ -5,7 +5,7 @@ import { ArrowUpRight, Check, Loader2, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { waitForCircleTxUrl } from "@/lib/arc-explorer";
 import { readArcUsdcBalance, billUnitsToUsdc } from "@/lib/bill-split-contracts";
-import { sanitizeAmount } from "@/lib/amount-input";
+import { parseAmount, typableAmount } from "@/lib/iou";
 import { providerDisplay } from "@/lib/provider-display";
 import type { AccountProvider } from "@/lib/types";
 import ExportTab, { WalletMore } from "./ExportTab";
@@ -429,9 +429,9 @@ export default function XAuthControl() {
                                     only because the flag makes it true. */}
                                 {privyUi ? (
                                   <p className="wallet-note">
-                                    <b>Yours alone.</b> The key lives with Privy, under your login — Splitsy
-                                    cannot move this money, and every payment asks you to approve it first.
-                                    Take the key with you from the <b>export</b> tab.
+                                    The key lives with Privy, under your login — Splitsy cannot move this
+                                    money, and every payment asks you to approve it first. Take the key
+                                    with you from the <b>export</b> tab.
                                   </p>
                                 ) : (
                                   <p className="wallet-note">
@@ -1174,17 +1174,15 @@ function SendTab({ balance, onSent, walletAddress, privyUi }: { balance: string 
       <div className="wallet-line" data-figure>
         <input
           value={amount}
-          // SHAPED AS IT IS TYPED, not validated on submit. The field took any
-          // string at all — letters, several dots, an essay — and the first thing
-          // that noticed was Number(amount) turning it into NaN somewhere past
-          // the PIN gate. USDC is six decimals, so anything past the sixth is a
-          // figure the chain cannot represent and the user cannot see.
-          //
-          // maxLength is the backstop rather than the rule: the regex already
-          // bounds the string, and a hard cap only matters for a paste.
-          onChange={(e) => setAmount(sanitizeAmount(e.target.value))}
+          // GATED LIVE, with the app's own rule. This field took any string at
+          // all — letters, several dots, an essay — and the first thing that
+          // noticed was Number(amount) becoming NaN somewhere past the PIN gate.
+          // typableAmount (lib/iou.ts) is the same gate the IOU composer and
+          // every poster figure already use: dollars, two decimals, seven
+          // figures, and it REFUSES the keystroke rather than rewriting the value
+          // under the caret. One rule for every amount in the product.
+          onChange={(e) => typableAmount(e.target.value) && setAmount(e.target.value)}
           inputMode="decimal"
-          maxLength={12}
           aria-label="Amount in USDC"
           placeholder="0.00"
         />
@@ -1238,7 +1236,7 @@ function SendTab({ balance, onSent, walletAddress, privyUi }: { balance: string 
           </button>
         </>
       ) : null}
-      <button type="button" onClick={send} disabled={phase === "sending" || !to || !(Number(amount) > 0) || needsOwnerKey} className="settle-action">
+      <button type="button" onClick={send} disabled={phase === "sending" || !to || parseAmount(amount) === null || needsOwnerKey} className="settle-action">
         {phase === "sending" ? "…" : ownerKey ? "sign & send" : "send"} ›
       </button>
       {message ? (
