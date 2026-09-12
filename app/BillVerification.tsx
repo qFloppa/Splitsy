@@ -73,8 +73,10 @@ async function scanReceiptTotalUsd(bytes: Uint8Array): Promise<number | null> {
 // Independent re-OCR of the receipt vs the on-chain total. "altered" is the
 // signal that the creator charged something other than what the receipt reads.
 // "no-receipt" = the creator typed the total by hand (nothing to cross-check).
+// "iou" = there was never a receipt to miss: a one-person stated debt, where the
+// amount IS the claim, so the receipt check doesn't apply at all.
 export type AuditState =
-  | { state: "idle" | "checking" | "unavailable" | "no-receipt" }
+  | { state: "idle" | "checking" | "unavailable" | "no-receipt" | "iou" }
   | { state: "ok" | "altered"; scannedUsd: number; onchainUsd: number };
 
 export type VerificationResult = {
@@ -130,8 +132,14 @@ export function useBillVerification(billId: bigint, metadataHash: `0x${string}`)
         }
         if (!ok) return;
         if (!preimage.receiptHash || !preimage.receiptUrl) {
-          // Hand-entered bill: the creator typed the total, no receipt exists.
-          if (!cancelled) setAudit({ state: "no-receipt" });
+          // No receipt: either an IOU (one person, a stated amount — lib/iou.ts
+          // creates exactly one participant) or a hand-typed split. Only the
+          // second one is missing something, so only it gets told about it.
+          // Read off the verified preimage, so the participant count is as
+          // tamper-proof as the total.
+          // ponytail: one participant + no receipt IS the IOU test — a `kind`
+          // column on onchain_bill_preimages if the two ever need telling apart.
+          if (!cancelled) setAudit({ state: preimage.participantLabels.length === 1 ? "iou" : "no-receipt" });
           return;
         }
 
@@ -237,6 +245,9 @@ export default function BillVerification({
 
   const verified = status === "verified";
   const altered = verified && audit.state === "altered";
+  // An IOU has no receipt by design, so every sentence about one is noise here —
+  // and what was committed is the amount and who owes it, not a merchant/split.
+  const iou = audit.state === "iou";
   // Green reassurance is only honest when the commitment matches AND the receipt
   // total agrees. An altered total is treated as a red warning, like a mismatch.
   const safe = verified && !altered;
@@ -257,8 +268,9 @@ export default function BillVerification({
           total match the receipt. */}
       {verified ? (
         <p>
-          Genuine bill on Arc — the details shown here are exactly what the creator committed, and can’t have been
-          edited since.
+          {iou
+            ? "Genuine IOU on Arc — the amount and who owes it are exactly what the creator committed, and can’t have been edited since."
+            : "Genuine bill on Arc — the details shown here are exactly what the creator committed, and can’t have been edited since."}
         </p>
       ) : (
         <p data-tone="warn">Details don’t match Arc — don’t pay until the creator re-checks this bill.</p>
@@ -272,7 +284,7 @@ export default function BillVerification({
         </p>
       ) : null}
 
-      {verified ? (
+      {verified && !iou ? (
         <p data-tone={altered ? "warn" : undefined}>
           {audit.state === "checking"
             ? "Checking the total against the receipt…"
@@ -313,22 +325,28 @@ export default function BillVerification({
       {showDetail ? (
         <div className="bill-verify-detail">
           <p>
-            <b>1. Genuine bill on Arc.</b> When this bill was created, Splitsy wrote a tamper-proof fingerprint of its
-            details onto the Arc blockchain, where it can’t be edited. Your browser recomputed that fingerprint and
-            {verified
-              ? " it matches — so the merchant, total, and split shown here are exactly what the creator committed. (This does NOT mean the total is correct — that’s check 2.)"
-              : " it does NOT match — so what you’re shown is not what was committed. Don’t pay."}
+            {/* An IOU has one check, so it loses the numbering with it. */}
+            <b>{iou ? "Genuine IOU on Arc." : "1. Genuine bill on Arc."}</b> When this {iou ? "IOU" : "bill"} was
+            created, Splitsy wrote a tamper-proof fingerprint of its details onto the Arc blockchain, where it can’t be
+            edited. Your browser recomputed that fingerprint and
+            {!verified
+              ? " it does NOT match — so what you’re shown is not what was committed. Don’t pay."
+              : iou
+                ? " it matches — so the amount and who owes it are exactly what the creator committed. An IOU is a stated amount, not a receipt, so there is nothing else to check it against."
+                : " it matches — so the merchant, total, and split shown here are exactly what the creator committed. (This does NOT mean the total is correct — that’s check 2.)"}
           </p>
-          <p>
-            <b>2. Total matches the receipt.</b>{" "}
-            {audit.state === "no-receipt"
-              ? "This bill has no receipt — the creator entered the total by hand, so there’s nothing to cross-check the amount against."
-              : audit.state === "ok"
-                ? "The receipt image is committed too, so your browser re-read it and confirmed its total matches what you’re being charged."
-                : audit.state === "altered"
-                  ? "Your browser re-read the committed receipt: the total the creator committed doesn’t match the amount printed on the receipt. The bill is genuine, but the charged total is wrong."
-                  : "The receipt image is committed, but your browser couldn’t re-read its total automatically — open it above and compare by eye."}
-          </p>
+          {iou ? null : (
+            <p>
+              <b>2. Total matches the receipt.</b>{" "}
+              {audit.state === "no-receipt"
+                ? "This bill has no receipt — the creator entered the total by hand, so there’s nothing to cross-check the amount against."
+                : audit.state === "ok"
+                  ? "The receipt image is committed too, so your browser re-read it and confirmed its total matches what you’re being charged."
+                  : audit.state === "altered"
+                    ? "Your browser re-read the committed receipt: the total the creator committed doesn’t match the amount printed on the receipt. The bill is genuine, but the charged total is wrong."
+                    : "The receipt image is committed, but your browser couldn’t re-read its total automatically — open it above and compare by eye."}
+            </p>
+          )}
           <p className="bill-verify-hash">{metadataHash}</p>
         </div>
       ) : null}
