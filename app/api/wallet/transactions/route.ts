@@ -49,6 +49,17 @@ export async function GET() {
     const transactions = await enrich(txs, wallet);
     return Response.json({ transactions, explorer: EXPLORER });
   } catch {
-    return Response.json({ transactions: [] });
+    // A FAILED READ IS NOT AN EMPTY WALLET, and saying so cost a real debugging
+    // session: this returned a bare [] for any failure, so the panel rendered "No
+    // transactions yet" whether the wallet had never been used or the RPC had just
+    // refused. On the Privy stack the history IS the chain — ten getLogs chunk
+    // pairs per load against an endpoint that rate-limits bursts (-32005/-32011,
+    // see lib/privy-wallet.ts:listTransactions) — so the failure is ordinary
+    // enough that it must be told apart from the honest empty answer.
+    //
+    // Still a 200 with an empty list: the panel renders the same shape either way
+    // and only the message differs. What it must never do is claim a balance's
+    // history is empty on the strength of a read that did not happen.
+    return Response.json({ transactions: [], unreadable: true, explorer: EXPLORER });
   }
 }

@@ -10,6 +10,8 @@
 // THE KEY NEVER COMES BACK HERE. It lives in ./session-owner-key, module-scoped,
 // and is read at the moment of signing. Nothing in this file returns it, stores it,
 // or accepts it as an argument from a caller that might hold it longer.
+import { decodeFunctionData, erc20Abi, formatUnits } from "viem";
+import { ARC_USDC_ADDRESS } from "@/lib/recurring-contracts";
 import { ownerKeyFor } from "./session-owner-key";
 import { privyUiActive, signerOrNull, type PreparedPlan } from "./privy-signer";
 
@@ -97,24 +99,60 @@ export async function signedSend(
 // WHAT THE USER IS BEING ASKED TO APPROVE, in Privy's modal, in words.
 //
 // Derived from the route rather than passed in, so the nine call sites do not
-// change. A route with no entry here still gets a prompt — Privy decodes the
-// calldata itself — it just gets a generic sentence above it, which is the right
-// failure for a new route somebody forgot to add.
-const PAYMENT_LABEL: Record<string, string> = {
-  "/api/wallet/send": "Send USDC from your Splitsy wallet.",
-  "/api/debts/": "Pay what you owe on this bill.",
-  "/api/onchain-bills/": "Settle your share of this on-chain bill.",
-  "/api/recurring/": "Authorise this recurring tab.",
-  "/api/treasury/settle": "Settle these balances in one go.",
-  "/api/pay/": "Pay this Splitsy payment link.",
-  "/api/agents/mandate": "Authorise your agent to pay on your behalf.",
+// change. A route with no entry here still gets a prompt — it just gets a generic
+// sentence above it, which is the right failure for a new route somebody forgot
+// to add.
+const PAYMENT_LABEL: Record<string, { description: string; action: string }> = {
+  "/api/wallet/send": { description: "Send USDC from your Splitsy wallet.", action: "Send USDC" },
+  "/api/debts/": { description: "Pay what you owe on this bill.", action: "Pay a debt" },
+  "/api/onchain-bills/": { description: "Settle your share of this on-chain bill.", action: "Pay a bill" },
+  "/api/recurring/": { description: "Authorise this recurring tab.", action: "Recurring tab" },
+  "/api/treasury/settle": { description: "Settle these balances in one go.", action: "Settle up" },
+  "/api/pay/": { description: "Pay this Splitsy payment link.", action: "Pay a link" },
+  "/api/agents/mandate": { description: "Authorise your agent to pay on your behalf.", action: "Agent mandate" },
 };
 
-function paymentLabel(url: string): string {
-  for (const [prefix, label] of Object.entries(PAYMENT_LABEL)) {
-    if (url.startsWith(prefix)) return label;
+// THE FIGURE, READ OUT OF THE BYTES THE USER IS ABOUT TO SIGN.
+//
+// Not fetched, not remembered from the form, not recomputed from the row — decoded
+// from the calldata itself, so what the prompt says and what gets signed cannot
+// disagree. That is the only version of this worth showing: a number carried
+// alongside the payload could drift from it, and this prompt is the last thing
+// between the user and their money.
+//
+// Only USDC transfer and approve, and only at Arc's USDC address. Every other
+// call this app prepares — payDebt, claim, settle — moves money that was already
+// authorised by an approve in the leg before, and guessing at an amount inside a
+// registry call would be inventing one. Those get the sentence with no figure,
+// which is honest; `null` here means "this leg names no amount", not "unknown".
+function decodedAmount(plan: PreparedPlan): { amount: string; isApprove: boolean } | null {
+  if (plan.to.toLowerCase() !== (ARC_USDC_ADDRESS as string).toLowerCase()) return null;
+  try {
+    const { functionName, args } = decodeFunctionData({ abi: erc20Abi, data: plan.data as `0x${string}` });
+    if (functionName !== "transfer" && functionName !== "approve") return null;
+    return { amount: `${formatUnits(args[1] as bigint, 6)} USDC`, isApprove: functionName === "approve" };
+  } catch {
+    // Not an ERC-20 call at all, or calldata this abi cannot read. No figure.
+    return null;
   }
-  return "Approve this Splitsy payment on Arc Testnet.";
+}
+
+function paymentSummary(url: string, plan: PreparedPlan): { description: string; action: string } {
+  const label =
+    Object.entries(PAYMENT_LABEL).find(([prefix]) => url.startsWith(prefix))?.[1] ??
+    { description: "Approve this Splitsy payment on Arc Testnet.", action: "Payment" };
+  const decoded = decodedAmount(plan);
+  if (!decoded) return label;
+  // AN APPROVE IS A CEILING, NOT A PAYMENT, and saying "12 USDC" for one would be
+  // wrong twice over: nothing moves in that transaction, and the figure is a
+  // limit rather than an amount. Taken from the decoded function name rather than
+  // a selector constant, so there is no magic hex to get wrong.
+  return {
+    description: decoded.isApprove
+      ? `Allow up to ${decoded.amount} to be taken for this payment. ${label.description}`
+      : `${decoded.amount}. ${label.description}`,
+    action: label.action,
+  };
 }
 
 // The same three steps as signedSend, with the middle one moved into Privy's UI.
@@ -152,7 +190,7 @@ async function privySend(
 
     let signedTransaction: string;
     try {
-      signedTransaction = await send(plan.transaction as PreparedPlan, paymentLabel(url));
+      signedTransaction = await send(plan.transaction as PreparedPlan, paymentSummary(url, plan.transaction as PreparedPlan));
     } catch (err) {
       // Dismissing the prompt lands here, and it is not a failure worth shouting
       // about — the user decided not to pay. Reported with the other refusals so

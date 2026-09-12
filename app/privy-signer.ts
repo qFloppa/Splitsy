@@ -60,7 +60,10 @@ export function toPrivyTransaction(plan: PreparedPlan) {
 // Returns the SIGNED TRANSACTION, not a signature over a payload: Privy's
 // signTransaction resolves eth_signTransaction, whose answer is the serialized
 // type-2 transaction. The server broadcasts it.
-export type PrivySigner = (plan: PreparedPlan, description: string) => Promise<string>;
+//
+// `ui` is what the prompt SAYS, and it is the caller's job because only the
+// caller knows which payment this is. See paymentSummary in ./signed-send.
+export type PrivySigner = (plan: PreparedPlan, ui: { description: string; action: string }) => Promise<string>;
 
 let signer: PrivySigner | null = null;
 let uiActive = false;

@@ -63,7 +63,7 @@ function PrivyBridge() {
       forgetSigner();
       return;
     }
-    rememberSigner(async (plan, description) => {
+    rememberSigner(async (plan, ui) => {
       const { signature } = await signTransaction(toPrivyTransaction(plan), {
         address,
         // The branded confirmation, which is the whole point of this migration.
@@ -71,7 +71,23 @@ function PrivyBridge() {
         // the user sees a prompt is a promise this app makes in its own copy, and
         // a console setting somebody else can flip is not where that promise
         // should live.
-        uiOptions: { showWalletUIs: true, description, buttonText: "Approve", isCancellable: true },
+        //
+        // THE AMOUNT IS IN `description` BECAUSE PRIVY CANNOT WORK IT OUT HERE.
+        // It does decode ERC-20 transfer and approve calldata by default, but
+        // decoding gives it an integer and a token address — and on Arc Testnet
+        // it has no metadata to turn 0x3600… into "USDC, 6 decimals" and no price
+        // feed to convert it. Its own comment rules out asking for native-token
+        // figures only, so the prompt had nothing to show. The caller decodes the
+        // exact bytes about to be signed and says the number itself, which is the
+        // most honest display available: it is read from the payload, not from a
+        // parallel claim about it.
+        uiOptions: {
+          showWalletUIs: true,
+          description: ui.description,
+          buttonText: "Approve",
+          isCancellable: true,
+          transactionInfo: { title: "Payment", action: ui.action },
+        },
       });
       return signature;
     });

@@ -1244,19 +1244,34 @@ type WalletTx = { id: string; direction: "in" | "out"; amount: string; address: 
 
 function HistoryTab() {
   const [txs, setTxs] = useState<WalletTx[] | null>(null);
+  // Told apart from "none yet", because the two need different words and the user
+  // can act on one of them. See the catch in app/api/wallet/transactions.
+  const [unreadable, setUnreadable] = useState(false);
   const [explorer, setExplorer] = useState("https://testnet.arcscan.app");
 
   useEffect(() => {
     fetch("/api/wallet/transactions")
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error("auth"))))
-      .then((d: { transactions: WalletTx[]; explorer?: string }) => {
+      .then((d: { transactions: WalletTx[]; explorer?: string; unreadable?: boolean }) => {
         setTxs(d.transactions);
+        setUnreadable(d.unreadable === true);
         if (d.explorer) setExplorer(d.explorer);
       })
-      .catch(() => setTxs([]));
+      .catch(() => {
+        setTxs([]);
+        setUnreadable(true);
+      });
   }, []);
 
   if (txs === null) return <p className="wallet-note">Reading the chain…</p>;
+  if (unreadable) {
+    return (
+      <p className="wallet-note" data-tone="warn" role="status">
+        Couldn&apos;t read the chain just now, so this list may be incomplete — your balance and
+        your money are unaffected. Try again in a moment.
+      </p>
+    );
+  }
   if (txs.length === 0) return <p className="wallet-note">No transactions yet.</p>;
 
   return (
