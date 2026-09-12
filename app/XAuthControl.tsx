@@ -372,12 +372,13 @@ export default function XAuthControl() {
                   </div>
 
                   <div className="wallet-tabs">
-                    {/* `export` is Splitsy's own ceremony for a wallet Splitsy
-                        minted, and there is no such wallet when Privy's UI is on:
-                        an embedded wallet's key lives in Privy's iframe and comes
-                        out through Privy's own export, not ours. The route would
-                        answer for the wrong thing, so the tab is not offered. */}
-                    {(me.custodian === "Privy" && !privyUi ? [...TABS, { id: "export" as Tab, label: "export" }] : TABS).map((t) => (
+                    {/* The export tab exists on both Privy paths, but it is not
+                        the same tab. Splitsy's ceremony (ExportTab) is for a
+                        wallet Splitsy minted and holds a signer on; an embedded
+                        wallet's key lives in Privy's iframe and comes out through
+                        Privy's own modal. Same word, different mechanism, so the
+                        body branches rather than the tab list. */}
+                    {(me.custodian === "Privy" ? [...TABS, { id: "export" as Tab, label: "export" }] : TABS).map((t) => (
                       <button
                         key={t.id}
                         type="button"
@@ -429,6 +430,7 @@ export default function XAuthControl() {
                                   <p className="wallet-note">
                                     <b>Yours alone.</b> The key lives with Privy, under your login — Splitsy
                                     cannot move this money, and every payment asks you to approve it first.
+                                    Take the key with you from the <b>export</b> tab.
                                   </p>
                                 ) : (
                                   <p className="wallet-note">
@@ -474,7 +476,11 @@ export default function XAuthControl() {
                     ) : tab === "receive" ? (
                       <ReceiveTab address={me.walletAddress} copied={copied} onCopy={copyAddress} />
                     ) : tab === "export" && me.walletAddress ? (
-                      <ExportTab address={me.walletAddress} handle={me.handle} />
+                      privyUi ? (
+                        <PrivyExportTab address={me.walletAddress} />
+                      ) : (
+                        <ExportTab address={me.walletAddress} handle={me.handle} />
+                      )
                     ) : (
                       <HistoryTab />
                     )}
@@ -774,6 +780,66 @@ function UnlockGate({ onUnlocked }: { onUnlocked: () => void }) {
       <button type="button" onClick={unlock} disabled={busy || !pin} className="settle-action">
         {busy ? "…" : "unlock"} ›
       </button>
+      {message ? (
+        <p className="wallet-note" data-tone="warn" role="status">
+          {message}
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
+// The export tab for an EMBEDDED wallet, which is a different thing from
+// app/ExportTab.tsx even though it wears the same word.
+//
+// Splitsy's ceremony exists because Splitsy minted the wallet and held a signer
+// on it: it hands ownership over, records a public key, and proves an export
+// against it. None of that applies here — this wallet was never Splitsy's, so
+// there is nothing to hand over and no password of ours to derive. The key is in
+// Privy's iframe, on Privy's domain, and Privy's own modal is the only thing that
+// can show it. This screen is therefore a sentence and a button.
+//
+// Deliberately not hidden. Being able to walk away with the key is most of what
+// "your wallet" means, and an earlier pass dropped the tab entirely on this path
+// — which quietly removed a capability the user had rather than replacing it.
+function PrivyExportTab({ address }: { address: string }) {
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+
+  async function open() {
+    setMessage(null);
+    setBusy(true);
+    try {
+      const { privyExportWallet } = await import("./privy-signer");
+      await privyExportWallet(address);
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "Could not open the export window.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div>
+      <Label>export your key</Label>
+      <p className="wallet-note">
+        This wallet is <b>yours</b>. Its key is held by Privy under your login — Splitsy has never
+        had a copy and cannot make one — and you can take it out and use it in any other wallet.
+      </p>
+      <p className="wallet-note" data-tone="warn">
+        The key is shown in Privy&apos;s own window, not this one. Anyone who gets it can spend
+        this wallet, so copy it somewhere only you can read.
+      </p>
+      <button type="button" onClick={open} disabled={busy} className="settle-action">
+        {busy ? "…" : "show my key"} ›
+      </button>
+      <WalletMore label="why a separate window">
+        <p className="wallet-note">
+          Privy renders the key in a frame served from its own domain, so this page cannot read
+          it even in principle. That is the point: an app that could show you your key could also
+          keep it.
+        </p>
+      </WalletMore>
       {message ? (
         <p className="wallet-note" data-tone="warn" role="status">
           {message}

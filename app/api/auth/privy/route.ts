@@ -1,4 +1,5 @@
 import type { NextRequest } from "next/server";
+import { NextResponse } from "next/server";
 import { finishProviderLogin } from "@/lib/oauth-callback";
 import { deletePendingWallet, getPendingWallet } from "@/lib/pending-wallets-repo";
 import { privyEmbeddedWallet, privyProfile, privyUserFromToken, upsertUserFromPrivy } from "@/lib/privy-identity";
@@ -66,7 +67,14 @@ export async function POST(request: NextRequest) {
   // stranger who was tagged before they joined and whose PREGENERATED wallet Privy
   // attached to their account on first login. Only the last one has a balance
   // already, and it needs no sweep because the address never changed hands.
+  //
+  // IT MAY NOT BE THERE YET, AND THAT IS NORMAL. `createOnLogin` builds the wallet
+  // in the browser after authentication, so the first call of a fresh signup can
+  // arrive before it exists. That is not an error and must not fail the login —
+  // the caller sees `walletAddress: null`, and app/PrivyShell.tsx calls again once
+  // Privy reports one. This route is idempotent precisely so it can.
   const wallet = privyEmbeddedWallet(verified.accounts);
+  let linked: string | null = null;
   if (wallet) {
     try {
       // claimed_at is set from the first moment, and that is the honest record:
@@ -91,6 +99,7 @@ export async function POST(request: NextRequest) {
         owner_kind: "privy_embedded",
       });
       await setUserWallet(appUser.id, wallet.address, wallet.walletId);
+      linked = wallet.address.toLowerCase();
 
       // The pending row was a POINTER to this wallet, not a holding address, so
       // clearing it moves nothing. Only when the two agree: if they do not, the
@@ -113,7 +122,7 @@ export async function POST(request: NextRequest) {
   // path and the OAuth ones cannot drift. The profile is passed again rather than
   // the row: upsertUserFromPrivy has already decided the key, and re-upserting
   // under it is what makes this idempotent.
-  return finishProviderLogin({
+  const loggedIn = await finishProviderLogin({
     provider: appUser.provider,
     profile: {
       providerUserId: appUser.provider_user_id,
@@ -125,4 +134,12 @@ export async function POST(request: NextRequest) {
     sessionSecret,
     mode: "json",
   });
+
+  // WHAT WAS LINKED, REPORTED BACK, and it is not decoration: it is the only thing
+  // that tells the caller whether calling again would achieve anything. Without
+  // it the bridge cannot distinguish "the wallet arrived, reload to show it" from
+  // "still no wallet, reloading would just ask again" — and the second one is an
+  // endless reload. Headers are carried over verbatim so the session cookie
+  // finishProviderLogin just set survives being rewrapped.
+  return NextResponse.json({ ok: true, walletAddress: linked }, { headers: loggedIn.headers });
 }

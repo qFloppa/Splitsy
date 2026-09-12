@@ -66,6 +66,7 @@ let signer: PrivySigner | null = null;
 let uiActive = false;
 let login: (() => void) | null = null;
 let logout: (() => Promise<void>) | null = null;
+let exportWallet: ((options: { address: string }) => Promise<void>) | null = null;
 
 export function rememberSigner(fn: PrivySigner): void {
   signer = fn;
@@ -95,9 +96,14 @@ export function markPrivyUi(): void {
   uiActive = true;
 }
 
-export function rememberAuth(fns: { login: () => void; logout: () => Promise<void> }): void {
+export function rememberAuth(fns: {
+  login: () => void;
+  logout: () => Promise<void>;
+  exportWallet: (options: { address: string }) => Promise<void>;
+}): void {
   login = fns.login;
   logout = fns.logout;
+  exportWallet = fns.exportWallet;
 }
 
 // Open Privy's login modal. No-op before the shell has loaded, which is the right
@@ -105,6 +111,21 @@ export function rememberAuth(fns: { login: () => void; logout: () => Promise<voi
 // promised yet, and the user presses it again.
 export function privyLogin(): void {
   login?.();
+}
+
+// Show the user their embedded wallet's private key, in PRIVY'S OWN WINDOW.
+//
+// The key is rendered in an iframe on Privy's domain, so it never enters this
+// app's page and Splitsy cannot read it — which is the whole reason this is
+// Privy's modal rather than a screen of ours. Splitsy's own export ceremony
+// (app/ExportTab.tsx) is for wallets Splitsy minted and has nothing to do with
+// this one.
+//
+// Resolves when the user closes the modal, and throws if Privy has no embedded
+// wallet for them; the caller shows the message rather than assuming success.
+export async function privyExportWallet(address: string): Promise<void> {
+  if (!exportWallet) throw new Error("Your wallet isn't connected yet — reload and try again.");
+  await exportWallet({ address });
 }
 
 // End the Privy session too. Splitsy's own sign-out clears its cookie, and
