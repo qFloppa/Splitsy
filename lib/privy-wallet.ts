@@ -652,6 +652,25 @@ export async function sendBrowserSigned(
     throw new Error("The signed transaction does not match the one this payment prepared — refusing to broadcast");
   }
 
+  // WHICH WALLET SIGNED, CHECKED HERE TOO, for the message rather than for the
+  // safety: broadcastSigned already refuses anything that does not recover to
+  // this wallet, and its wording — "Signature recovers to 0x…, not 0x…" — is
+  // written for whoever is reading a server log. It reached users verbatim as
+  // "Privy send failed: Signature recovers to …", which names two addresses and
+  // no remedy.
+  //
+  // On this path the cause is knowable and singular: the row names a different
+  // wallet than the browser's Privy session holds, which is what a stale
+  // users.wallet_address looks like from down here. Reloading repoints it
+  // (app/PrivyShell.tsx), so that is what the message says. One extra ecrecover
+  // on a path that is about to do several chain reads anyway.
+  const signer = await recoverTransactionAddress({ serializedTransaction: asEip1559(signedTransaction) });
+  if (signer !== from) {
+    throw new Error(
+      "This payment was signed by a different wallet than the one on your account. Reload the page and try again.",
+    );
+  }
+
   try {
     return awaitSettlement(await broadcastSigned(signedTransaction, from), pollMs);
   } catch (e) {

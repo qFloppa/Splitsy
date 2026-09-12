@@ -114,6 +114,17 @@ function PrivyBridge() {
   // getSessionUser() are untouched, which is the reason for doing it this way
   // rather than teaching every route to read a Privy token.
   //
+  // THE ROW MUST NAME THE WALLET THE BROWSER ACTUALLY HOLDS, which is a stricter
+  // test than "the row names a wallet" and the reason this is not a one-shot. An
+  // EXISTING Splitsy account arrives here with an address already — the one from
+  // the stack it used before — and skipping those left the row pointing at a
+  // wallet this browser cannot sign for. The server then prepared a transaction
+  // for the old wallet, Privy signed with the embedded one, and broadcastSigned
+  // refused it: "Signature recovers to 0x… , not 0x…". Nothing moved, but nothing
+  // worked either, and the message was internal. Existing accounts getting a NEW
+  // embedded wallet at a NEW address is the settled behaviour (plan, 2026-09-12),
+  // so a row that disagrees is a row to repoint, not a reason to stop.
+  //
   // THE RELOAD IS CONDITIONAL ON SOMETHING HAVING CHANGED, which is what keeps it
   // from becoming a loop: a signed-in user whose wallet Privy has not created
   // asks, is told `walletAddress: null`, and stops. Reloading on a bare `ok` would
@@ -129,8 +140,11 @@ function PrivyBridge() {
           .then((r) => r.json())
           .then((d: { user: { walletAddress: string | null } | null }) => d.user);
         const already = me?.walletAddress?.toLowerCase() ?? null;
-        // Signed in and the row already names a wallet: nothing left to do.
-        if (me && already) return;
+        // Signed in AND the row already names the wallet this browser is holding:
+        // nothing to do. When the address is not known yet the exchange still
+        // runs — the server reads it from Privy itself — and the reload guard
+        // below is what stops that from repeating pointlessly.
+        if (me && already && address && already === address.toLowerCase()) return;
 
         const accessToken = await getAccessToken();
         if (!accessToken) return;
