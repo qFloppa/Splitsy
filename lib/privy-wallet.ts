@@ -254,6 +254,17 @@ async function prepareTransfer(from: `0x${string}`, to: `0x${string}`, data: `0x
   };
 }
 
+// A signed transaction is only safe to hand to viem once its type is known, and
+// the type is the first byte. Named because two callers need the check BEFORE
+// they parse — the browser-signed relay has to read the bytes to compare them
+// against the ticket, which happens before any broadcast.
+function asEip1559(signed: string): `0x02${string}` {
+  if (!signed.startsWith("0x02")) {
+    throw new Error(`Expected an EIP-1559 (type 2) signed transaction, got ${signed.slice(0, 4)}`);
+  }
+  return signed as `0x02${string}`;
+}
+
 // RLP in, hash on the wire out — everything between the signature and the receipt
 // wait, for BOTH signers. Shared rather than duplicated because the three checks
 // below are the only thing standing between a signature and money moving, and a
@@ -267,10 +278,7 @@ async function prepareTransfer(from: `0x${string}`, to: `0x${string}`, data: `0x
 async function broadcastSigned(signed_transaction: string, from: `0x${string}`): Promise<Sent> {
   // The prefix check is what makes the cast below honest rather than assumed: we
   // asked for a type-2 transaction, so confirm it is one before viem parses it.
-  if (!signed_transaction.startsWith("0x02")) {
-    throw new Error(`Expected an EIP-1559 (type 2) signed transaction, got ${signed_transaction.slice(0, 4)}`);
-  }
-  const serializedTransaction = signed_transaction as `0x02${string}`;
+  const serializedTransaction = asEip1559(signed_transaction);
   const signer = await recoverTransactionAddress({ serializedTransaction });
   if (signer !== from) {
     throw new Error(`Signature recovers to ${signer}, not ${from} — refusing to broadcast`);
@@ -588,6 +596,72 @@ export async function sendUserSigned(
   }
 }
 
+// ── The embedded-wallet relay ─────────────────────────────────────────────────
+// Same three steps as sendUserSigned — prepare, the user authorizes, we relay —
+// with the middle one moved. There, the browser signed a PRIVY AUTHORIZATION and
+// Privy produced the transaction signature; here Privy's own UI has already
+// prompted the user and handed back the signed transaction itself, so there is
+// nothing left to ask Privy for. Only the signing moved: the server still builds
+// the bytes (nonce and gas are chain reads, and ARC_TESTNET_RPC may be a keyed
+// endpoint that must not reach a browser) and still broadcasts them.
+
+// Whether the bytes the browser signed ARE the bytes this server prepared.
+//
+// THIS IS THE CHECK THAT REPLACES THE ONE WE LOST. On the authorization path the
+// server signs the ticket's exact transaction itself, so there is nothing to
+// compare. Here the client produces the signed bytes, and broadcastSigned's
+// recovery check only proves WHO signed — not WHAT. Without this, a user could
+// sign any transaction from their own wallet, hand it back against a ticket for a
+// debt, and have the route mark that debt paid: self-serving, cheap, and
+// invisible in the ledger afterwards.
+//
+// Gas is deliberately NOT compared. A signer that re-estimates upward costs the
+// user more of their own gas and settles the same transfer; one that estimates
+// too low runs out of gas, reverts, and settledOrThrow refuses the receipt. Both
+// are already handled, and demanding equality would break on any signer that
+// populates its own fees. `value` IS compared, against zero: every transaction
+// this app prepares is a contract call, so any native value at all is a payload
+// that was not in the plan.
+//
+// Pure, and exported for the unit test — this is the one piece of the relay whose
+// mistakes cannot be caught by anything downstream.
+export function matchesPrepared(
+  signed: { to?: string | null; data?: string; nonce?: number; chainId?: number; value?: bigint },
+  prepared: PreparedTransaction,
+): boolean {
+  const hex = (v: unknown): string | null => (typeof v === "string" ? v.toLowerCase() : null);
+  if (signed.value !== undefined && signed.value !== 0n) return false;
+  if (signed.chainId !== prepared.chain_id) return false;
+  if (signed.nonce === undefined || numberToHex(signed.nonce) !== hex(prepared.nonce)) return false;
+  if (hex(signed.to) === null || hex(signed.to) !== hex(prepared.to)) return false;
+  return (hex(signed.data) ?? "0x") === (hex(prepared.data) ?? "0x");
+}
+
+// Relay a transaction Privy's embedded-wallet UI signed in the user's browser.
+export async function sendBrowserSigned(
+  walletId: string,
+  transaction: PreparedTransaction,
+  signedTransaction: string,
+  pollMs = 6_000,
+): Promise<TxResult> {
+  const from = getAddress((await privy().wallets().get(walletId)).address);
+
+  // Read and compare BEFORE anything is broadcast, so a mismatch costs nothing.
+  const parsed = parseTransaction(asEip1559(signedTransaction));
+  if (!matchesPrepared(parsed, transaction)) {
+    throw new Error("The signed transaction does not match the one this payment prepared — refusing to broadcast");
+  }
+
+  try {
+    return awaitSettlement(await broadcastSigned(signedTransaction, from), pollMs);
+  } catch (e) {
+    // Identical treatment to the authorization path's: only a PROVEN fate changes
+    // the story, so a broadcast that may have landed is never reported as one that
+    // did not.
+    return orThrow(await classifySendFailure(e));
+  }
+}
+
 // What a throw out of the signing or broadcast half MEANS, for both paths.
 //
 // Returns rather than throws, because one of the three answers is not an error at
@@ -735,6 +809,50 @@ export const walletSpec = (namespace: string, idempotencyKey: string) => ({
   ],
   idempotency_key: idempotencyKey,
 });
+
+// A wallet for someone who has not arrived yet — THEIRS from creation.
+//
+// The problem this solves is old: money needs an address the moment a bill tags
+// @alice, and no key of Alice's can exist before she has ever signed in. The
+// previous answer was a holding wallet Splitsy owned, swept into her real one
+// when she turned up — two addresses, a sweep that can fail, and a window in
+// which her money sat in our wallet. Privy's answer is to create the PRIVY USER
+// at the same time: the wallet is attached to an account keyed by a string only
+// we know, and when Alice signs in and links a real account to it, the wallet
+// "appears" in hers. Same address throughout, no sweep, no holding.
+//
+// So the escrow-orphaning gap app/api/wallet/provision/route.ts marks `ponytail:`
+// does not exist on this path — the address a bill binds a debt to IS the user's
+// wallet, and there is nothing left to orphan.
+//
+// KEYED ON THE HANDLE, deliberately, because at tagging time the handle is the
+// only thing known about this person. custom_auth is Privy's arbitrary-id slot
+// and takes it verbatim; the "<provider>:<handle>" shape matches the refId
+// convention the rest of the wallet code uses.
+//
+// NO OWNER QUORUM AND NO ADDITIONAL SIGNER. An embedded wallet is controlled by
+// the Privy user it belongs to, so naming our quorum would be reintroducing the
+// custody this replaces. That is also why the row this produces is recorded as
+// claimed from the first moment (app/api/auth/privy/route.ts): the server cannot
+// sign for it and must not try.
+export async function pregenerateWallet(customUserId: string): Promise<ProviderWallet> {
+  const user = await privy()
+    .users()
+    .create({
+      linked_accounts: [{ type: "custom_auth", custom_user_id: customUserId }],
+      wallets: [{ chain_type: "ethereum" }],
+    });
+
+  // The same reader the login route uses (lib/privy-identity.ts), so "which of a
+  // Privy user's accounts is the pay wallet" is answered in ONE place. Two copies
+  // of that filter is two chances to pick a linked browser wallet by mistake.
+  const { privyEmbeddedWallet } = await import("./privy-identity.ts");
+  const wallet = privyEmbeddedWallet(user.linked_accounts ?? []);
+  // Privy accepted the user but returned no wallet, which would otherwise surface
+  // later as a bill pointing at `undefined`. Named here, where the cause is known.
+  if (!wallet) throw new Error(`Privy created ${customUserId} without an Ethereum wallet`);
+  return { address: wallet.address, walletId: wallet.walletId };
+}
 
 // Arc's public RPC refuses an eth_getLogs range wider than ~25k blocks (-32012
 // "requested range too large") and caps one response at 20k logs, so a wallet's

@@ -7,6 +7,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { useAccount, useAccountEffect } from "wagmi";
 import { isStaleWalletSession, SESSION_ENDED_EVENT } from "@/lib/agent-link";
+import { privyLogin } from "./privy-signer";
 
 // Single header entry point for all sign-in methods — collapses the four
 // per-provider buttons into one "Sign in" dropdown so the header isn't crowded.
@@ -26,14 +27,21 @@ const ITEM_CLASS =
 
 export default function SignInMenu() {
   const [me, setMe] = useState<{ provider?: string | null; handle: string } | null | undefined>(undefined);
+  // Whether Privy's modal is the door on this deployment (WALLET_UI). Read from
+  // the server alongside the session, so signed-out visitors get the right one —
+  // which is exactly when it matters.
+  const [privyUi, setPrivyUi] = useState(false);
   const { address } = useAccount();
 
   useEffect(() => {
     let active = true;
     fetch("/api/me")
       .then((r) => r.json())
-      .then((d: { user: { provider?: string | null; handle: string } | null }) => {
-        if (active) setMe(d.user);
+      .then((d: { user: { provider?: string | null; handle: string } | null; walletUi?: string }) => {
+        if (active) {
+          setMe(d.user);
+          setPrivyUi(d.walletUi === "privy");
+        }
       })
       .catch(() => {
         if (active) setMe(null);
@@ -102,6 +110,23 @@ export default function SignInMenu() {
   // dropdown instead: holding keys is not the same as having a social login, and
   // someone who signed in with a wallet must still be able to add one.
   if (me && me.provider !== "wallet") return null;
+
+  // ONE BUTTON INSTEAD OF FOUR when Privy owns the door. The same four providers
+  // are behind it — the Privy modal is configured with exactly X, Discord, Google
+  // and email (app/PrivyShell.tsx) — so nothing is lost, and having both would be
+  // two doors to the same account through different plumbing.
+  //
+  // privyLogin() rather than usePrivy(), deliberately: a hook here would pull
+  // Privy's whole SDK into the header on every deployment, including the ones
+  // where this branch never runs. It reads the same module-scoped spot the signer
+  // uses, and no-ops harmlessly in the moment before the shell has loaded.
+  if (privyUi) {
+    return (
+      <button className="iou-provider bill-toggle" type="button" onClick={privyLogin}>
+        Sign in
+      </button>
+    );
+  }
 
   return (
     <DropdownMenu.Root>

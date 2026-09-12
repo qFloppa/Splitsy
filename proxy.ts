@@ -37,9 +37,14 @@ export function proxy(request: NextRequest) {
     "base-uri 'self'",
     "object-src 'none'",
     "frame-ancestors 'none'",
-    "frame-src https://challenges.cloudflare.com",
+    // auth.privy.io is where Privy's embedded wallet lives — the key is held in a
+    // cross-origin iframe this page cannot read, which is the point of it. Without
+    // this the frame is blocked and every Privy sign-in and confirmation hangs
+    // with nothing on screen to say why. Its CAPTCHA is the Cloudflare frame that
+    // was already allowed.
+    "frame-src https://challenges.cloudflare.com https://auth.privy.io",
     "form-action 'self'",
-    `img-src 'self' data: blob: https://pbs.twimg.com https://abs.twimg.com https://unavatar.io https://cdn.discordapp.com https://lh3.googleusercontent.com${supabaseOrigin ? ` ${supabaseOrigin}` : ""}`,
+    `img-src 'self' data: blob: https://pbs.twimg.com https://abs.twimg.com https://unavatar.io https://cdn.discordapp.com https://lh3.googleusercontent.com https://auth.privy.io${supabaseOrigin ? ` ${supabaseOrigin}` : ""}`,
     "font-src 'self' data:",
     "style-src 'self' 'unsafe-inline'",
     `script-src 'self' 'nonce-${nonce}' 'strict-dynamic'${isDev ? " 'unsafe-eval'" : ""}`,

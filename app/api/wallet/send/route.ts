@@ -52,6 +52,7 @@ export async function POST(request: Request) {
     prepare?: unknown;
     ticket?: unknown;
     signature?: unknown;
+    signedTransaction?: unknown;
   } | null;
   const to = String(body?.to ?? "").trim();
   const amount = Number(body?.amount);
@@ -98,6 +99,7 @@ export async function POST(request: Request) {
     const relayed = await relayForUser({
       ticket: body.ticket,
       signature: body.signature,
+      signedTransaction: body.signedTransaction,
       userId: user.id,
       walletId: user.circle_wallet_id,
       context,

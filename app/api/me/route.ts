@@ -1,15 +1,21 @@
 import { getSessionUser } from "@/lib/session";
-import { walletProviderLabel } from "@/lib/wallet-provider";
+import { walletProviderLabel, walletUiName } from "@/lib/wallet-provider";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function GET() {
   const user = await getSessionUser();
+  // OUTSIDE `user`, because the sign-in menu needs it while signed OUT: it decides
+  // whether the header opens Privy's modal or the four OAuth links. One server
+  // value read by every panel, rather than a NEXT_PUBLIC copy that can disagree
+  // with the one the routes enforce.
+  const walletUi = walletUiName();
   if (!user) {
-    return Response.json({ user: null });
+    return Response.json({ user: null, walletUi });
   }
   return Response.json({
+    walletUi,
     user: {
       id: user.id,
       provider: user.provider,

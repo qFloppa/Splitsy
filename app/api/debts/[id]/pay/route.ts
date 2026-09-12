@@ -95,7 +95,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     // it safe for the relay to be a second entry into this handler.
     if (await userMustSign(user.circle_wallet_id)) {
       const body = (await request.json().catch(() => null)) as
-        | { prepare?: unknown; ticket?: unknown; signature?: unknown }
+        | { prepare?: unknown; ticket?: unknown; signature?: unknown; signedTransaction?: unknown }
         | null;
 
       // The amount is re-read from the debt row on BOTH passes and never taken
@@ -125,6 +125,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
       const relayed = await relayForUser({
         ticket: body?.ticket,
         signature: body?.signature,
+        signedTransaction: body?.signedTransaction,
         userId: user.id,
         walletId: user.circle_wallet_id,
         context: `debt:${id}`,

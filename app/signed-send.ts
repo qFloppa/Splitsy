@@ -11,6 +11,7 @@
 // and is read at the moment of signing. Nothing in this file returns it, stores it,
 // or accepts it as an argument from a caller that might hold it longer.
 import { ownerKeyFor } from "./session-owner-key";
+import { privyUiActive, signerOrNull, type PreparedPlan } from "./privy-signer";
 
 export type SignedSendResult =
   | { ok: true; data: Record<string, unknown> }
@@ -93,6 +94,91 @@ export async function signedSend(
   return { ok: true, data: last };
 }
 
+// WHAT THE USER IS BEING ASKED TO APPROVE, in Privy's modal, in words.
+//
+// Derived from the route rather than passed in, so the nine call sites do not
+// change. A route with no entry here still gets a prompt — Privy decodes the
+// calldata itself — it just gets a generic sentence above it, which is the right
+// failure for a new route somebody forgot to add.
+const PAYMENT_LABEL: Record<string, string> = {
+  "/api/wallet/send": "Send USDC from your Splitsy wallet.",
+  "/api/debts/": "Pay what you owe on this bill.",
+  "/api/onchain-bills/": "Settle your share of this on-chain bill.",
+  "/api/recurring/": "Authorise this recurring tab.",
+  "/api/treasury/settle": "Settle these balances in one go.",
+  "/api/pay/": "Pay this Splitsy payment link.",
+  "/api/agents/mandate": "Authorise your agent to pay on your behalf.",
+};
+
+function paymentLabel(url: string): string {
+  for (const [prefix, label] of Object.entries(PAYMENT_LABEL)) {
+    if (url.startsWith(prefix)) return label;
+  }
+  return "Approve this Splitsy payment on Arc Testnet.";
+}
+
+// The same three steps as signedSend, with the middle one moved into Privy's UI.
+//
+// THE SERVER'S PREPARE STEP IS REUSED VERBATIM, and that is deliberate rather
+// than incidental: the nonce and the gas are chain reads, and ARC_TESTNET_RPC may
+// be a keyed endpoint that has no business reaching a browser. So the server goes
+// on building the transaction and broadcasting it — only the SIGNATURE moved,
+// from lib/export-crypto to Privy's own prompt. The server re-checks that the
+// bytes coming back are the bytes it prepared (lib/privy-wallet.ts:matchesPrepared),
+// because on this path the client is what produced them.
+//
+// The multi-leg loop is the same one, for the same reason: a bill payment is
+// approve-then-payDebt and the second leg's nonce follows the first, so the chain
+// decides what comes next. A user approving a bill sees two prompts, which is the
+// honest number — two transactions are being signed.
+async function privySend(
+  url: string,
+  send: NonNullable<ReturnType<typeof signerOrNull>>,
+  body: Record<string, unknown>,
+): Promise<SignedSendResult> {
+  const MAX_LEGS = 32;
+  let last: Record<string, unknown> = {};
+
+  for (let leg = 0; leg < MAX_LEGS; leg++) {
+    const prepared = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ...body, prepare: true }),
+    });
+    const plan = await prepared.json();
+    if (!prepared.ok) {
+      return { ok: false, error: plan.error ?? "Could not prepare this payment.", status: prepared.status, locked: prepared.status === 403, data: plan };
+    }
+
+    let signedTransaction: string;
+    try {
+      signedTransaction = await send(plan.transaction as PreparedPlan, paymentLabel(url));
+    } catch (err) {
+      // Dismissing the prompt lands here, and it is not a failure worth shouting
+      // about — the user decided not to pay. Reported with the other refusals so
+      // the panels that already render `error` need no new branch.
+      return { ok: false, error: err instanceof Error ? err.message : "You did not approve this payment.", status: 401 };
+    }
+
+    const relayed = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      // The TICKET goes back with the bytes, and the server relays the transaction
+      // the ticket carries — not one the client names. Same property as the
+      // authorization path; here the bytes are additionally compared against it.
+      body: JSON.stringify({ ...body, ticket: plan.ticket, signedTransaction }),
+    });
+    const data = await relayed.json();
+    if (!relayed.ok) {
+      return { ok: false, error: data.error ?? "Payment failed.", status: relayed.status, locked: relayed.status === 403, data };
+    }
+    last = data;
+    if (data.more !== true) return { ok: true, data };
+  }
+
+  return { ok: true, data: last };
+}
+
 // Whether this wallet signs for itself. Routes answer it per-payment, but a panel
 // needs it up front to decide whether to ask for the password at all.
 export async function ownerKeyNeeded(): Promise<{ needed: boolean; address: string | null; hasKey: boolean }> {
@@ -132,6 +218,9 @@ export function payErrorMessage(error: string): string {
   if (error === "unlock_owner_key") {
     return "This wallet is yours — open the wallet panel and enter your export password to sign payments.";
   }
+  if (error === "privy_signer_missing") {
+    return "Your wallet isn't connected yet — sign in with Privy, then try this payment again.";
+  }
   if (error === "insufficient_funds") return "Your wallet needs more test USDC to cover this.";
   return error;
 }
@@ -151,7 +240,21 @@ export function payErrorMessage(error: string): string {
 // behaviour, and the server refusing a payment it cannot sign is a recoverable
 // error message — where wrongly deciding the browser must sign would demand a
 // password from a user who has never set one.
+//
+// THE PRIVY BRANCH COMES FIRST AND IS ABSOLUTE. When this deployment asks users
+// to approve in Privy's own modal, there is no other signer for a pay wallet:
+// the wallet is Privy's embedded one, Splitsy holds no key to it, and falling
+// through would put the user in front of "enter your export password" for a
+// password that does not exist. A missing signer is therefore a refusal with its
+// own message rather than a fallback — the same shape signedSend uses when no
+// owner key is cached, so the panels need no new branch.
 export async function walletPost(url: string, body: Record<string, unknown> = {}): Promise<SignedSendResult> {
+  if (privyUiActive()) {
+    const send = signerOrNull();
+    if (!send) return { ok: false, error: "privy_signer_missing", status: 401 };
+    return privySend(url, send, body);
+  }
+
   claimStatus ??= ownerKeyNeeded();
   const claimed = await claimStatus.catch(() => ({ needed: false, address: null, hasKey: false }));
 

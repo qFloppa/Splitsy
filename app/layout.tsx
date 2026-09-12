@@ -6,6 +6,7 @@ import "./globals.css";
 import WagmiProviders from "./WagmiProviders";
 import { HeroBackground } from "@/components/ui/hero-background";
 import { SiteFooter } from "@/components/SiteFooter";
+import { walletUiName } from "@/lib/wallet-provider";
 
 // Self-hosted via next/font: no external requests, no layout shift. The CSS
 // font stacks in globals.css lead with these variables and keep the old
@@ -96,6 +97,7 @@ export default async function RootLayout({
   // proxy.ts issues a per-request CSP nonce (x-nonce); without it the inline
   // theme script below is blocked by script-src.
   const nonce = (await headers()).get("x-nonce") ?? undefined;
+  const privyAppId = walletUiName() === "privy" ? process.env.PRIVY_APP_ID : undefined;
 
   return (
     <html
@@ -142,7 +144,13 @@ export default async function RootLayout({
           </div>
         ) : null}
         <HeroBackground />
-        <WagmiProviders>{children}</WagmiProviders>
+        {/* The Privy app id is passed only when WALLET_UI names Privy as the UI,
+            so the switch is read ONCE, on the server, with the same exact-match
+            rule the wallet stack uses — an empty value here is what keeps the
+            SDK, its modal and its iframe out of the page entirely. */}
+        <WagmiProviders privyAppId={privyAppId} nonce={nonce}>
+          {children}
+        </WagmiProviders>
         <SiteFooter />
       </body>
     </html>

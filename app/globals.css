@@ -223,6 +223,37 @@ body {
   background: var(--background);
   color: var(--foreground);
   font-family: var(--font-hanken), "Hanken Grotesk", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+
+  /* ── Privy's modal, wearing Splitsy's palette ──────────────────────────────
+     Privy generates its whole palette from appearance.theme — which is handed
+     Splitsy's own surface colour, not the word 'dark' (app/WagmiProviders.tsx) —
+     and injects it on :root. These are the few it cannot derive from a single
+     background: the brand accent, the semantic colours, and the corner radius.
+
+     ON <body>, NOT :root, and that is load-bearing rather than tidy. Privy's own
+     declarations land on :root, so a :root rule here would be a coin toss on
+     stylesheet order; body sets them one level nearer the modal, which portals
+     into body, and custom properties resolve from the nearest ancestor that
+     declares them. It also means both themes are covered by these same lines,
+     because every value is a token that already follows [data-theme].
+
+     The hovers, borders and icon greys are deliberately LEFT to Privy. They are
+     derived from the background it was given, so they stay internally consistent
+     — overriding a background without its matching hover is how a themed widget
+     ends up with a grey wash over a navy sheet. */
+  --privy-color-accent: var(--accent);
+  --privy-color-accent-light: var(--accent-soft);
+  --privy-color-accent-dark: var(--accent-strong);
+  --privy-color-success: var(--success);
+  --privy-color-success-light: var(--success-soft);
+  --privy-color-error: var(--danger-text);
+  --privy-color-warn: var(--warning-text);
+  --privy-link-navigation-color: var(--accent);
+  --privy-border-radius-xs: 4px;
+  --privy-border-radius-sm: calc(var(--radius) - 4px);
+  --privy-border-radius-md: calc(var(--radius) - 2px);
+  --privy-border-radius-mdlg: var(--radius);
+  --privy-border-radius-lg: calc(var(--radius) + 4px);
 }
 
 button,
@@ -230,7 +261,6 @@ input,
 select {
   font: inherit;
 }
-
 button {
   cursor: pointer;
 }

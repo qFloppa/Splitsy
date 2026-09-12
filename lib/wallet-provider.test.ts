@@ -1,11 +1,40 @@
 import assert from "node:assert/strict";
 import { afterEach, test } from "node:test";
-import { broadcastTxHash, looksLikeTxHash, settlingVerdict, txFate, walletProviderName } from "./wallet-provider.ts";
+import { broadcastTxHash, looksLikeTxHash, settlingVerdict, txFate, walletProviderName, walletUiName } from "./wallet-provider.ts";
 
 const original = process.env.WALLET_PROVIDER;
+const originalUi = process.env.WALLET_UI;
 afterEach(() => {
   if (original === undefined) delete process.env.WALLET_PROVIDER;
   else process.env.WALLET_PROVIDER = original;
+  if (originalUi === undefined) delete process.env.WALLET_UI;
+  else process.env.WALLET_UI = originalUi;
+});
+
+// The SAME failure direction as the stack switch, for the same reason: the newer
+// path must never be reached by accident. Independent of WALLET_PROVIDER on
+// purpose — the popup can be turned on and off without touching custody.
+test("the app's own screens are the default, so an unset WALLET_UI never picks Privy's", () => {
+  delete process.env.WALLET_UI;
+  assert.equal(walletUiName(), "app");
+});
+
+test("only the exact string 'privy' selects Privy's UI", () => {
+  process.env.WALLET_UI = "privy";
+  assert.equal(walletUiName(), "privy");
+  for (const wrong of ["Privy", "privy ", "prvy", "", "true"]) {
+    process.env.WALLET_UI = wrong;
+    assert.equal(walletUiName(), "app", `${JSON.stringify(wrong)} must not select Privy's UI`);
+  }
+});
+
+test("the two switches do not read each other", () => {
+  process.env.WALLET_PROVIDER = "privy";
+  delete process.env.WALLET_UI;
+  assert.equal(walletUiName(), "app", "the Privy stack alone must not turn the popup on");
+  delete process.env.WALLET_PROVIDER;
+  process.env.WALLET_UI = "privy";
+  assert.equal(walletProviderName(), "circle", "the popup alone must not move custody");
 });
 
 test("circle is the default, so an unset var can never silently pick Privy", () => {

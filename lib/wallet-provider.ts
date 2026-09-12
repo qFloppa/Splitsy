@@ -53,6 +53,27 @@ export function walletProviderName(): "circle" | "privy" {
   return process.env.WALLET_PROVIDER === "privy" ? "privy" : "circle";
 }
 
+// WHO ASKS THE USER TO APPROVE A PAYMENT — a different question from who holds
+// the wallet, and deliberately a separate switch.
+//
+// WALLET_PROVIDER decides custody; this decides whether Privy's own modal is the
+// thing the user confirms in. Keeping them apart is what lets the popup be turned
+// on, compared against the screens we wrote, and turned off again without
+// touching anybody's keys. The cost is one more combination to test, accepted on
+// purpose (plan, 2026-09-12).
+//
+// "privy" only makes sense on top of WALLET_PROVIDER=privy — an embedded wallet
+// IS a Privy wallet — but the two are not folded into one value, because folding
+// them is exactly the coupling the separate switch exists to avoid. See
+// docs/deployments.md.
+//
+// Exact match with an OFF default, like walletProviderName and claimEnabled: a
+// typo, a capitalised value or an unset var in a new environment must leave the
+// newer path off, never on.
+export function walletUiName(): "app" | "privy" {
+  return process.env.WALLET_UI === "privy" ? "privy" : "app";
+}
+
 // The same answer as a proper noun, for the messages that used to hard-code
 // "Circle" for a failure either stack can produce. NAMED rather than made neutral:
 // "not configured" is an operator's problem and the operator needs to know WHICH

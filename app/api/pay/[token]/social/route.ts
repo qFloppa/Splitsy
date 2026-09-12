@@ -143,6 +143,7 @@ export async function POST(request: Request, ctx: RouteContext<"/api/pay/[token]
         const relayed = await relayForUser({
           ticket: signBody.ticket,
           signature: signBody.signature,
+          signedTransaction: signBody.signedTransaction,
           userId: user.id,
           walletId: user.circle_wallet_id,
           context,

@@ -5,6 +5,16 @@ is the default in `walletProviderName()` (`lib/wallet-provider.ts:52`) — the m
 is exact, so a typo, a capitalised value or an unset variable in a new
 environment all land on the Circle stack rather than the newer one.
 
+`WALLET_UI` is a **second, independent** switch with the same exact-match rule and
+the same OFF default (`walletUiName()`). `WALLET_PROVIDER` decides who holds the
+wallet; `WALLET_UI` decides who asks the user to approve a payment. Set to
+`privy`, Privy's own modal is the login door and its confirmation prompt stands in
+front of every transaction, spending from a Privy **embedded** wallet the user
+owns from creation. It only makes sense on top of `WALLET_PROVIDER=privy` — an
+embedded wallet is a Privy wallet — and the two are kept apart so the popup can be
+compared against the app's own screens and turned off again without touching
+anybody's custody.
+
 The Preview column below describes the arrangement this branch is meant to run
 under. The console half of it — the branch domain, the four OAuth/Turnstile
 callback registrations and the environment variables — is done by hand; nothing in
@@ -18,6 +28,7 @@ this repo asserts it is in place.
 |---|---|---|
 | Branch | `main` | `privy-wallet-stack` |
 | `WALLET_PROVIDER` | unset → `circle` | `privy` |
+| `WALLET_UI` | unset → the app's own screens | `privy` (opt in per deploy) |
 | `WALLET_CLAIM_ENABLED` | unset → off | unset → off (opt in per deploy) |
 | Wallets | Circle DCW, SCA | Privy embedded, EOA |
 | Network | Arc Testnet (5042002) | Arc Testnet (5042002) |
@@ -47,6 +58,73 @@ webhook coming to confirm a Privy transfer — nothing would report a debt paid 
 the moment it settles: the row would sit in `settling` until the debtor pressed Pay
 again, which is when that route re-reads the stored hash and finishes the job
 (`:42-69`). A self-heal on the next press is not a confirmation, so leave it unset.
+
+---
+
+## What `WALLET_UI=privy` changes
+
+Set it and the login door, the pay wallet and the confirmation all move to Privy.
+Nine things follow, and none of them are reversible for a user who has already
+signed in through it — they will have a **new wallet at a new address**.
+
+**Privy owns login.** The header's four OAuth links collapse into one button that
+opens Privy's modal (`app/SignInMenu.tsx`), configured with exactly X, Discord,
+Google and email. `POST /api/auth/privy` verifies the access token server-side,
+maps the Privy user onto the `users` row that person already has, and sets the
+ordinary Splitsy session cookie — so the ~40 route handlers calling
+`getSessionUser()` are untouched, and so are logout, the PIN unlock and the
+wallet-proof cookie. The app's own OAuth routes still work and are still what the
+Circle stack uses; nothing was deleted.
+
+**The mapping is per provider, and getting it wrong forks an account silently.**
+`lib/privy-identity.ts` keys X and Discord on Privy's `subject`, and Google *and*
+email-OTP both on the lowercased email address — which is what makes "sign in with
+Google" and "email me a code" one account, exactly as
+`app/api/auth/google/callback/route.ts:138` already does. It looks the row up by
+provider id first and by **handle** second, so a Privy `subject` that turns out not
+to be the id X's own API returned still lands on the existing row rather than
+creating a second one. That second lookup is why no manual id comparison is needed
+before turning this on.
+
+**Existing accounts keep everything except their wallet address.** The row, the
+handle, the debts, the bills and the reputation all stay; the pay wallet becomes a
+fresh Privy embedded one at a new address. The old wallet is **abandoned — not
+swept and not imported**, because a claimed wallet's key is one Splitsy cannot
+export by design. Anything already on chain against the old address stays pointed
+at it. Acceptable on testnet and **not** acceptable on mainnet.
+
+**Every payment shows a prompt.** `walletPost` (`app/signed-send.ts`) takes a third
+branch: the server prepares the transaction exactly as it already did, Privy's
+modal asks the user, and the server broadcasts what comes back. A bill payment is
+approve-then-pay, so it shows **two** prompts — two transactions really are being
+signed.
+
+**The server verifies the bytes, not just the signer.** On this path the client
+produces the signed transaction, so `lib/privy-wallet.ts:matchesPrepared` compares
+it against the ticket's transaction before broadcasting. Without that, a user
+could sign anything at all from their own wallet and have a route mark a debt paid.
+
+**Pregenerated wallets replace the holding-wallet sweep.** Tagging a handle that
+has never signed in creates a Privy user keyed `custom_auth: "x:alice"` with an
+embedded wallet inside it (`lib/wallet-resolve.ts`). When Alice signs in and links
+a real account, that wallet appears in hers — same address, no sweep, and the
+`ponytail:` escrow-orphaning gap in `app/api/wallet/provision/route.ts` has nothing
+to orphan. Privy caps user creation at **240/minute**.
+
+**The setup ceremony and the export tab disappear.** Both are Splitsy's own
+machinery for a wallet Splitsy minted, and there is no such wallet here. The
+password/passkey route still exists and still works with `WALLET_UI` unset.
+
+**The CSP had to change.** `frame-src` now allows `https://auth.privy.io` — the
+embedded wallet lives in a cross-origin iframe this page cannot read, which is the
+point of it — and `PrivyProvider` is handed the same per-request nonce the inline
+theme script uses (`proxy.ts`, `app/PrivyShell.tsx`). Without either, login stalls
+with nothing on screen to say why.
+
+**Privy's SDK is only fetched where it is used.** `app/PrivyShell.tsx` is a
+`next/dynamic` leaf beside the app rather than a provider around it, which works
+because signing, login and logout all travel through the module-scoped spot in
+`app/privy-signer.ts`. On the Circle stack the chunk is never requested.
 
 ---
 
@@ -143,7 +221,11 @@ nobody is reading.
 correcting it needs a **redeploy**, not just a saved variable.
 
 **`WALLET_CLAIM_ENABLED=true` hands pay wallets to their users, and it cannot be
-taken back.** A claim moves ownership to the user's password-derived key and
+taken back.** Unset is OFF, and only the exact string `true` turns it on
+(`claimEnabled()`, `lib/wallet-gate.ts:38`). It is **irrelevant when
+`WALLET_UI=privy`** — an embedded wallet is already the user's and has nothing to
+claim — so what follows is about the app's own wallets. A claim moves ownership to
+the user's password-derived key and
 revokes our `additional_signer` in one `wallets().update()`, after which Privy
 answers 401 to anything Splitsy sends — measured in
 `scripts/privy-claim-probe.ts`: 401 on `signTransaction`, 401 on `_export`, 0

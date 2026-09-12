@@ -112,6 +112,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ bil
         const relayed = await relayForUser({
           ticket: body.ticket,
           signature: body.signature,
+          signedTransaction: body.signedTransaction,
           userId: user.id,
           walletId: user.circle_wallet_id,
           context,

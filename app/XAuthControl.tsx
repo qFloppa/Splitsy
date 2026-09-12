@@ -9,7 +9,8 @@ import { providerDisplay } from "@/lib/provider-display";
 import type { AccountProvider } from "@/lib/types";
 import ExportTab, { WalletMore } from "./ExportTab";
 import { ProviderIcon } from "./ProviderTag";
-import { signedSend, type SignedSendResult } from "./signed-send";
+import { privyLogout } from "./privy-signer";
+import { signedSend, walletPost, type SignedSendResult } from "./signed-send";
 
 type Me = { id: string; provider?: AccountProvider | null; providerUserId?: string | null; handle: string; name: string | null; avatarUrl: string | null; walletAddress: string | null; custodian?: "Circle" | "Privy" };
 type Tab = "info" | "send" | "receive" | "history" | "export";
@@ -86,6 +87,10 @@ function Label({ children }: { children: React.ReactNode }) {
 
 export default function XAuthControl() {
   const [me, setMe] = useState<Me | null>(null);
+  // Whether Privy's own UI is what this deployment asks users to approve in. From
+  // the server (WALLET_UI, via /api/me) rather than from a NEXT_PUBLIC copy, so
+  // the panel and the routes can never disagree about which world they are in.
+  const [privyUi, setPrivyUi] = useState(false);
   const [loading, setLoading] = useState(true);
   const [open, setOpen] = useState(false);
   const [balance, setBalance] = useState<string | null>(null);
@@ -122,8 +127,11 @@ export default function XAuthControl() {
     let active = true;
     fetch("/api/me")
       .then((r) => r.json())
-      .then((data: { user: Me | null }) => {
-        if (active) setMe(data.user);
+      .then((data: { user: Me | null; walletUi?: string }) => {
+        if (active) {
+          setMe(data.user);
+          setPrivyUi(data.walletUi === "privy");
+        }
       })
       .catch(() => {
         if (active) setMe(null);
@@ -284,7 +292,24 @@ export default function XAuthControl() {
             >
               <span className="settle-label">wallet</span>
               <span className="wallet-grip-end">
-                <form action="/api/auth/logout" method="post">
+                {/* SIGNING OUT HAS TO END BOTH SESSIONS. Splitsy's cookie is only
+                    half of it on the Privy stack — leave the Privy login standing
+                    and the bridge hands the user straight back a session on the
+                    next page load, so "sign out" would visibly do nothing. The
+                    form still does the real work; this only clears Privy first. */}
+                <form
+                  action="/api/auth/logout"
+                  method="post"
+                  onSubmit={
+                    privyUi
+                      ? (e) => {
+                          e.preventDefault();
+                          const form = e.currentTarget;
+                          void privyLogout().finally(() => form.submit());
+                        }
+                      : undefined
+                  }
+                >
                   <button type="submit" className="iou-provider">
                     sign out
                   </button>
@@ -315,11 +340,18 @@ export default function XAuthControl() {
                 />
               ) : hasPin === true && unlocked === false ? (
                 <UnlockGate onUnlocked={() => setUnlocked(true)} />
-              ) : !me.walletAddress && me.custodian === "Privy" ? (
+              ) : !me.walletAddress && me.custodian === "Privy" && !privyUi ? (
                 // AFTER the PIN gates, because provisioning requires the unlock
                 // cookie. Privy only: /api/wallet/provision answers 404 on the
                 // Circle stack, where the wallet is minted at login because its
                 // keys were never the user's to hold.
+                //
+                // AND NOT WHEN PRIVY'S UI IS ON. There is no ceremony to run
+                // there: the wallet is Privy's embedded one, created at login and
+                // recorded by /api/auth/privy, so a password-and-passkey form
+                // would be asking the user to make keys for a wallet that already
+                // has one. A wallet that is briefly missing falls through to the
+                // info tab, which says it is being created.
                 <WalletSetupGate me={me} onDone={onWalletReady} />
               ) : (
                 <>
@@ -340,7 +372,12 @@ export default function XAuthControl() {
                   </div>
 
                   <div className="wallet-tabs">
-                    {(me.custodian === "Privy" ? [...TABS, { id: "export" as Tab, label: "export" }] : TABS).map((t) => (
+                    {/* `export` is Splitsy's own ceremony for a wallet Splitsy
+                        minted, and there is no such wallet when Privy's UI is on:
+                        an embedded wallet's key lives in Privy's iframe and comes
+                        out through Privy's own export, not ours. The route would
+                        answer for the wrong thing, so the tab is not offered. */}
+                    {(me.custodian === "Privy" && !privyUi ? [...TABS, { id: "export" as Tab, label: "export" }] : TABS).map((t) => (
                       <button
                         key={t.id}
                         type="button"
@@ -380,11 +417,25 @@ export default function XAuthControl() {
                                     signer. The claim is state-dependent and this
                                     tab holds no claim state, so it stops making it
                                     — the export tab has the row and already says
-                                    the true version of it, in both directions. */}
-                                <p className="wallet-note">
-                                  <b>Held by Privy</b>, the custodian. Who can move this money —
-                                  you, Splitsy, or both — is in the <b>export</b> tab.
-                                </p>
+                                    the true version of it, in both directions.
+
+                                    With Privy's UI on there IS no such state to
+                                    be unsure about: an embedded wallet is the
+                                    user's from creation, Splitsy holds no key and
+                                    there is no export tab to point at. So this
+                                    says the simpler, stronger thing — and says it
+                                    only because the flag makes it true. */}
+                                {privyUi ? (
+                                  <p className="wallet-note">
+                                    <b>Yours alone.</b> The key lives with Privy, under your login — Splitsy
+                                    cannot move this money, and every payment asks you to approve it first.
+                                  </p>
+                                ) : (
+                                  <p className="wallet-note">
+                                    <b>Held by Privy</b>, the custodian. Who can move this money —
+                                    you, Splitsy, or both — is in the <b>export</b> tab.
+                                  </p>
+                                )}
                                 <WalletMore label="about Privy">
                                   <p className="wallet-note">
                                     A SOC&nbsp;2–audited custody provider, independently reviewed by
@@ -419,7 +470,7 @@ export default function XAuthControl() {
                         )}
                       </>
                     ) : tab === "send" ? (
-                      <SendTab balance={balance} onSent={refreshBalanceAfterSend} walletAddress={me.walletAddress} />
+                      <SendTab balance={balance} onSent={refreshBalanceAfterSend} walletAddress={me.walletAddress} privyUi={privyUi} />
                     ) : tab === "receive" ? (
                       <ReceiveTab address={me.walletAddress} copied={copied} onCopy={copyAddress} />
                     ) : tab === "export" && me.walletAddress ? (
@@ -752,7 +803,7 @@ function ReceiveTab({ address, copied, onCopy }: { address: string | null; copie
 
 type SendPhase = "form" | "sending" | "done" | "error";
 
-function SendTab({ balance, onSent, walletAddress }: { balance: string | null; onSent: () => void; walletAddress: string | null }) {
+function SendTab({ balance, onSent, walletAddress, privyUi }: { balance: string | null; onSent: () => void; walletAddress: string | null; privyUi: boolean }) {
   const [unlocked, setUnlocked] = useState(false);
   const [to, setTo] = useState("");
   const [amount, setAmount] = useState("");
@@ -892,8 +943,15 @@ function SendTab({ balance, onSent, walletAddress }: { balance: string | null; o
       // signedSend is the shared prepare/sign/relay round trip (app/signed-send.ts),
       // the same one the debt and bill panels use. It reads the key from the session
       // module rather than taking it as an argument, so nothing here holds it.
-      const outcome =
-        ownerKey && exportStatus
+      //
+      // WITH PRIVY'S UI ON, THIS TAB USES walletPost LIKE EVERY OTHER SURFACE.
+      // It is the one spending screen that still called signedSend directly — a
+      // leftover from being the first one written — and on this stack that would
+      // have sent it down the server-signed path to a 409, because exportStatus
+      // is null for an embedded wallet and there is no export password to derive.
+      const outcome = privyUi
+        ? await walletPost("/api/wallet/send", { to, amount: Number(amount) })
+        : ownerKey && exportStatus
           ? await signedSend("/api/wallet/send", exportStatus.address, { to, amount: Number(amount) })
           : await sendSignedBySplitsy();
 
@@ -991,11 +1049,13 @@ function SendTab({ balance, onSent, walletAddress }: { balance: string | null; o
             falling back, so reaching here at all means our signer is still on it. */}
         {signedBy ? (
           <p className="wallet-note">
-            {signedBy === "you"
-              ? "Signed by your export password — Splitsy did not authorise this transfer."
-              : exportStatus
-                ? "Signed by Splitsy — its signer is still on this wallet. Enter your export password in the export tab to sign your own sends."
-                : "Signed by Splitsy. Set an export password to sign your own sends."}
+            {privyUi
+              ? "Approved by you in Privy — Splitsy holds no key to this wallet and could not have sent it."
+              : signedBy === "you"
+                ? "Signed by your export password — Splitsy did not authorise this transfer."
+                : exportStatus
+                  ? "Signed by Splitsy — its signer is still on this wallet. Enter your export password in the export tab to sign your own sends."
+                  : "Signed by Splitsy. Set an export password to sign your own sends."}
           </p>
         ) : null}
         {sentTxUrl ? (

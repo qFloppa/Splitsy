@@ -7,6 +7,7 @@ import {
   fateFromReads,
   isNonceCollision,
   logsToWalletTxs,
+  matchesPrepared,
   quorumLabel,
   receiptToState,
   settledOrThrow,
@@ -340,4 +341,73 @@ test("a quorum label is never longer than Privy's 50-character cap", () => {
   // site, so a new caller cannot reintroduce this.
   assert.ok(quorumLabel("x".repeat(500)).length <= 50);
   assert.ok(quorumLabel("").length <= 50);
+});
+
+// ── matchesPrepared ───────────────────────────────────────────────────────────
+// The only thing standing between a browser-signed transaction and a ledger row,
+// once Privy's UI rather than our authorization payload is what the user approves.
+// broadcastSigned proves WHO signed; this proves WHAT.
+
+// The exact shape prepareTransfer builds (lib/privy-wallet.ts): snake_case, hex
+// quantities, chain id as a number, no `value` because every call is a contract call.
+const PREPARED = {
+  to: "0x3600000000000000000000000000000000000000",
+  data: "0xa9059cbb0000000000000000000000002222222222222222222222222222222222222222000000000000000000000000000000000000000000000000000000000007a120",
+  nonce: "0x5",
+  chain_id: 5042002,
+  type: 2,
+  gas_limit: "0xea60",
+  max_fee_per_gas: "0x59682f00",
+  max_priority_fee_per_gas: "0x3b9aca00",
+};
+// What viem's parseTransaction hands back for bytes signed against it.
+const SIGNED = {
+  to: PREPARED.to,
+  data: PREPARED.data,
+  nonce: 5,
+  chainId: 5042002,
+  value: undefined as bigint | undefined,
+};
+
+test("the transaction the server prepared matches itself", () => {
+  assert.equal(matchesPrepared(SIGNED, PREPARED), true);
+});
+
+test("casing is not a difference — the chain does not care and neither may this", () => {
+  assert.equal(matchesPrepared({ ...SIGNED, to: PREPARED.to.toUpperCase().replace("0X", "0x"), data: PREPARED.data.toUpperCase().replace("0X", "0x") }, PREPARED), true);
+});
+
+test("a different recipient, payload, nonce or chain is refused", () => {
+  assert.equal(matchesPrepared({ ...SIGNED, to: "0x2222222222222222222222222222222222222222" }, PREPARED), false);
+  assert.equal(matchesPrepared({ ...SIGNED, data: "0xdeadbeef" }, PREPARED), false);
+  assert.equal(matchesPrepared({ ...SIGNED, nonce: 6 }, PREPARED), false);
+  assert.equal(matchesPrepared({ ...SIGNED, chainId: 1 }, PREPARED), false);
+});
+
+// The substitution the check exists to stop: sign anything at all from your own
+// wallet, hand it back against a ticket for a debt, and have the route mark that
+// debt paid. Same signer, same wallet, so the recovery check would wave it through.
+test("an unrelated transaction signed by the same wallet is refused", () => {
+  assert.equal(
+    matchesPrepared({ to: "0x9999999999999999999999999999999999999999", data: "0x", nonce: 5, chainId: 5042002 }, PREPARED),
+    false,
+  );
+});
+
+test("native value is refused, because nothing this app prepares carries any", () => {
+  assert.equal(matchesPrepared({ ...SIGNED, value: 0n }, PREPARED), true);
+  assert.equal(matchesPrepared({ ...SIGNED, value: 1n }, PREPARED), false);
+});
+
+test("missing fields are refused rather than treated as a match", () => {
+  assert.equal(matchesPrepared({ ...SIGNED, nonce: undefined }, PREPARED), false);
+  assert.equal(matchesPrepared({ ...SIGNED, to: null }, PREPARED), false);
+  assert.equal(matchesPrepared({ ...SIGNED, chainId: undefined }, PREPARED), false);
+});
+
+// Gas is free on purpose: a signer that re-estimates upward settles the same
+// transfer out of the user's own gas, and one that estimates too low reverts and
+// is refused by the receipt check instead.
+test("a different gas estimate is not a mismatch", () => {
+  assert.equal(matchesPrepared(SIGNED, { ...PREPARED, gas_limit: "0x1d4c0", max_fee_per_gas: "0x77359400" }), true);
 });

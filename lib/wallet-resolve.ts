@@ -18,8 +18,33 @@ export type ResolveDeps = {
 async function defaultMintPending(provider: IdentityProvider, handle: string): Promise<string> {
   // Lazy import: keeps the wallet backend's SDK out of this module's load-time
   // graph so unit tests (node --test) can import wallet-resolve.ts with stub deps.
-  const { getOrCreateWallet, walletProviderLabel } = await import("./wallet-provider.ts");
+  const { getOrCreateWallet, walletProviderLabel, walletUiName } = await import("./wallet-provider.ts");
   const norm = normalizePendingHandle(handle);
+
+  // ON THE PRIVY-UI STACK THE WALLET IS THEIRS FROM CREATION. Privy makes a user
+  // account keyed on this handle and an embedded wallet inside it, and when that
+  // person finally signs in and links a real account, the same wallet appears in
+  // theirs. So there is no holding address and no sweep: the row below stops being
+  // a record of a wallet Splitsy holds and becomes a pointer to one it never did.
+  //
+  // Gated on WALLET_UI rather than WALLET_PROVIDER because the handover only works
+  // if Privy is also the login — a wallet inside a Privy account is unreachable to
+  // someone who signs in through the app's own OAuth routes, and pregenerating one
+  // for them would strand the money rather than hold it.
+  if (walletUiName() === "privy") {
+    const { pregenerateWallet } = await import("./privy-wallet.ts");
+    const wallet = await pregenerateWallet(`${provider}:${norm}`);
+    await insertPendingWallet({
+      provider,
+      handle: norm,
+      wallet_address: wallet.address,
+      // The column name is legacy from the Circle era; on this stack it holds the
+      // Privy wallet id, exactly as users.circle_wallet_id does.
+      circle_wallet_id: wallet.walletId,
+    });
+    return wallet.address;
+  }
+
   // Namespaced refId so a pre-mint can never collide with a real signin wallet
   // ("<provider>:<providerUserId>"). Keyed by handle, not user id.
   const wallet = await getOrCreateWallet("prem", `${provider}:${norm}`);
