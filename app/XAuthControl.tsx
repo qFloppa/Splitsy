@@ -5,6 +5,7 @@ import { ArrowUpRight, Check, Loader2, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { waitForCircleTxUrl } from "@/lib/arc-explorer";
 import { readArcUsdcBalance, billUnitsToUsdc } from "@/lib/bill-split-contracts";
+import { sanitizeAmount } from "@/lib/amount-input";
 import { providerDisplay } from "@/lib/provider-display";
 import type { AccountProvider } from "@/lib/types";
 import ExportTab, { WalletMore } from "./ExportTab";
@@ -1173,8 +1174,17 @@ function SendTab({ balance, onSent, walletAddress, privyUi }: { balance: string 
       <div className="wallet-line" data-figure>
         <input
           value={amount}
-          onChange={(e) => setAmount(e.target.value)}
+          // SHAPED AS IT IS TYPED, not validated on submit. The field took any
+          // string at all — letters, several dots, an essay — and the first thing
+          // that noticed was Number(amount) turning it into NaN somewhere past
+          // the PIN gate. USDC is six decimals, so anything past the sixth is a
+          // figure the chain cannot represent and the user cannot see.
+          //
+          // maxLength is the backstop rather than the rule: the regex already
+          // bounds the string, and a hard cap only matters for a paste.
+          onChange={(e) => setAmount(sanitizeAmount(e.target.value))}
           inputMode="decimal"
+          maxLength={12}
           aria-label="Amount in USDC"
           placeholder="0.00"
         />
@@ -1228,7 +1238,7 @@ function SendTab({ balance, onSent, walletAddress, privyUi }: { balance: string 
           </button>
         </>
       ) : null}
-      <button type="button" onClick={send} disabled={phase === "sending" || !to || !amount || needsOwnerKey} className="settle-action">
+      <button type="button" onClick={send} disabled={phase === "sending" || !to || !(Number(amount) > 0) || needsOwnerKey} className="settle-action">
         {phase === "sending" ? "…" : ownerKey ? "sign & send" : "send"} ›
       </button>
       {message ? (

@@ -1265,8 +1265,23 @@ export const backend: WalletBackend = {
   // Read from the chain, not from a vendor indexer. Circle's listTransactions has
   // no Privy counterpart, and USDC Transfer logs are the same truth without a
   // second system to be stale.
+  //
+  // NEWEST FIRST, AND BOUNDED BY TIME rather than only by depth. The walk is ten
+  // chunks of two getLogs calls, and each pair costs ~0.4s from a fast network —
+  // so the full sweep can outlast a serverless function's limit, and when it did,
+  // EVERYTHING was thrown away including the newest chunk that had already
+  // answered. Measured on Arc: a wallet's recent activity is in chunk 0, found in
+  // under half a second, and then discarded ten chunks later.
+  //
+  // So the loop stops when the budget is spent and returns what it has. It already
+  // walked head-downwards, which is what makes a partial answer the RIGHT partial
+  // answer — the most recent transactions, which is what a wallet panel shows.
+  // `complete` tells the caller whether the whole window was covered, so an
+  // exhausted budget can be reported as "recent activity" rather than as the
+  // whole truth. A budget that expires is not an error and must not read as one.
   async listTransactions(_walletId: string, address: string): Promise<WalletTx[]> {
     const self = getAddress(address);
+    const deadline = Date.now() + HISTORY_BUDGET_MS;
     const head = await publicClient.getBlockNumber();
     const oldest = head > LOOKBACK_BLOCKS ? head - LOOKBACK_BLOCKS : 0n;
     const logs: TransferLog[] = [];
@@ -1284,6 +1299,9 @@ export const backend: WalletBackend = {
       ]);
       logs.push(...out, ...incoming);
       toBlock = fromBlock - 1n;
+      // Checked AFTER a chunk, never before, so the newest window always runs: an
+      // exhausted budget returns recent history rather than nothing.
+      if (Date.now() > deadline) break;
     }
 
     // One row per TRANSACTION: logsToWalletTxs dedupes on the hash, which is what a
@@ -1291,3 +1309,7 @@ export const backend: WalletBackend = {
     return logsToWalletTxs(logs, self);
   },
 };
+
+// The budget above. Comfortably inside a 10s serverless limit once the rest of
+// the request is allowed for, and far more than the ~0.4s the newest chunk needs.
+const HISTORY_BUDGET_MS = 5_000;

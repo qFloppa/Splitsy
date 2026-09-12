@@ -5,6 +5,12 @@ import { readUsdcMovedInTx } from "@/lib/arc-read";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+// The chain walk is bounded to ~5s (lib/privy-wallet.ts:HISTORY_BUDGET_MS) and
+// enrich() adds a receipt read per zero-amount row on top. Asked for explicitly
+// so the platform's default 10s is not the thing deciding whether a wallet has a
+// history — the host caps this to whatever the plan allows, which is fine: the
+// budget inside is what actually guarantees an answer.
+export const maxDuration = 30;
 
 const EXPLORER = process.env.ARC_TESTNET_EXPLORER_URL ?? "https://testnet.arcscan.app";
 
