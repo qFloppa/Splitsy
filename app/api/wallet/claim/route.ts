@@ -134,7 +134,7 @@ export async function POST(request: Request) {
     // here leaves the wallet exactly as it was, still ours, still working.
     const ownerQuorumId = await createOwnerQuorum(
       recoveryPublicKey ? [publicKey, recoveryPublicKey] : [publicKey],
-      g.walletId,
+      `wallet ${g.walletId}`,
     );
 
     // THE CLAIM. One call: ownership moves and our signer is revoked together.

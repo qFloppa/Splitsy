@@ -980,12 +980,22 @@ function SendTab({ balance, onSent, walletAddress }: { balance: string | null; o
         </p>
         {/* WHICH SIGNER, out loud. A user who set an export password did so to stop
             Splitsy moving their money, and a silent fallback to the server-signed
-            path would leave that unverifiable by the person it is for. */}
+            path would leave that unverifiable by the person it is for.
+
+            THREE STATES, NOT TWO. "Set an export password" is the wrong advice for
+            someone who already has one — exportStatus is non-null exactly when a
+            key is recorded (the effect above keeps only state: "enabled"), and
+            then the fallback means the key was not unlocked this session, not that
+            it is missing. That case also implies the wallet is unclaimed: a claimed
+            one makes userMustSign true and the route refuses to sign rather than
+            falling back, so reaching here at all means our signer is still on it. */}
         {signedBy ? (
           <p className="wallet-note">
             {signedBy === "you"
               ? "Signed by your export password — Splitsy did not authorise this transfer."
-              : "Signed by Splitsy. Set an export password to sign your own sends."}
+              : exportStatus
+                ? "Signed by Splitsy — its signer is still on this wallet. Enter your export password in the export tab to sign your own sends."
+                : "Signed by Splitsy. Set an export password to sign your own sends."}
           </p>
         ) : null}
         {sentTxUrl ? (

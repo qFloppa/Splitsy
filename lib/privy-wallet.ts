@@ -865,11 +865,31 @@ export function claimLanded(
 // NOT REUSABLE ACROSS WALLETS. Each claim creates its own quorum: the keys are
 // derived per wallet address (exportSalt), so two wallets never share a member, and
 // a shared quorum would make one lost password a loss of several wallets.
-export async function createOwnerQuorum(publicKeysBase64: string[], walletId: string): Promise<string> {
+//
+// `label` NAMES THE QUORUM IN PRIVY'S DASHBOARD AND NOTHING ELSE. It is not an
+// identifier, nothing is looked up by it, and Privy caps display_name at 50
+// characters — so it is clamped HERE rather than trusted from the caller. The
+// claim path passes a 24-char wallet id and fits; provisioning passes
+// `user:<uuid>`, which is 56 with the prefix and was rejected with a 400 at the
+// worst possible moment: after the user has created a passkey and typed a
+// password twice, but before any wallet exists to show for it. A label is the
+// last thing that should be able to fail a ceremony, so it cannot.
+const QUORUM_LABEL_MAX = 50;
+
+// Pure, exported and tested, because the failure it prevents is a 400 from Privy
+// in the middle of an irreversible ceremony and the only thing standing between
+// them is an arithmetic nobody can eyeball: a prefix length plus a caller's
+// string. Truncated from the FRONT of the suffix, so what survives is the end of
+// the id — the part that actually distinguishes one quorum from another.
+export function quorumLabel(label: string): string {
+  return `splitsy ${label}`.slice(0, QUORUM_LABEL_MAX);
+}
+
+export async function createOwnerQuorum(publicKeysBase64: string[], label: string): Promise<string> {
   if (publicKeysBase64.length === 0) throw new Error("A wallet cannot be claimed with no owner key");
   const created = await privy().keyQuorums().create({
     authorization_threshold: 1,
-    display_name: `splitsy wallet ${walletId}`,
+    display_name: quorumLabel(label),
     public_keys: publicKeysBase64,
   });
   if (!created.id) throw new Error("Privy created an owner quorum with no id");

@@ -7,6 +7,7 @@ import {
   fateFromReads,
   isNonceCollision,
   logsToWalletTxs,
+  quorumLabel,
   receiptToState,
   settledOrThrow,
   sweepAmountUsdc,
@@ -320,4 +321,23 @@ test("a balance above the reserve sweeps the rest, truncated to USDC's 6 decimal
   // The reserve is a parameter so a caller can prove the boundary moves with it.
   assert.equal(sweepAmountUsdc(1, 0.25), 0.75);
   assert.equal(sweepAmountUsdc(0.25, 0.25), 0);
+});
+
+// ── The quorum label ───────────────────────────────────────────────────────────
+// Privy caps display_name at 50 characters and answers 400 when it is longer. The
+// cost of getting this wrong is not a bad label: createOwnerQuorum is the first
+// call of the setup ceremony, so it fails AFTER the user has created a passkey and
+// typed a password twice, and before any wallet exists to show for it.
+test("a quorum label is never longer than Privy's 50-character cap", () => {
+  // The provisioning caller, which is what actually blew the limit: "splitsy "
+  // plus "user:" plus a 36-character UUID is 49 before truncation... and 56 with
+  // the old "splitsy wallet " prefix, which is the 400 this test exists for.
+  const uuid = "0e9d4e6e-9a1d-4b3a-9c2f-1a2b3c4d5e6f";
+  assert.ok(quorumLabel(`user:${uuid}`).length <= 50);
+  // The claim caller, which fits untruncated and must keep reading as it did.
+  assert.equal(quorumLabel("wallet y43uwrgbf7i2gfgcmeir6lqp"), "splitsy wallet y43uwrgbf7i2gfgcmeir6lqp");
+  // Nothing a caller can pass gets through: the clamp is here, not at the call
+  // site, so a new caller cannot reintroduce this.
+  assert.ok(quorumLabel("x".repeat(500)).length <= 50);
+  assert.ok(quorumLabel("").length <= 50);
 });
