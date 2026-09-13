@@ -86,6 +86,28 @@ export async function resolveParticipantAddress(
   return deps.mintPending(provider, handle);
 }
 
+/**
+ * The same walk as {@link resolveParticipantAddress}, stopping at "there is
+ * nobody here" instead of minting.
+ *
+ * ADDITIVE ON PURPOSE. resolveParticipants is shared by the three bill and
+ * recurring routes, which still need an address for every participant at
+ * createBill time; changing its answer would break them. The settle rail is the
+ * one that MOVES money, so it is the one that must not send to an address
+ * nobody holds — it asks this instead and escrows when the answer is null.
+ */
+export async function lookupParticipantAddress(
+  provider: IdentityProvider,
+  handle: string,
+  deps: ResolveDeps = realDeps,
+): Promise<string | null> {
+  const user = await deps.getUserByProviderHandle(provider, handle);
+  if (user?.wallet_address) return user.wallet_address;
+
+  const pending = await deps.getPendingWallet(provider, handle);
+  return pending?.wallet_address ?? null;
+}
+
 export async function resolveParticipants(
   rows: { provider: IdentityProvider; handle: string }[],
   deps: ResolveDeps = realDeps,

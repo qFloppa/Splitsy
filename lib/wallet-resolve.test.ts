@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { resolveParticipantAddress, type ResolveDeps } from "./wallet-resolve.ts";
+import {
+  lookupParticipantAddress,
+  resolveParticipantAddress,
+  type ResolveDeps,
+} from "./wallet-resolve.ts";
 
 const ADDR_USER = "0x" + "11".repeat(20);
 const ADDR_PENDING = "0x" + "22".repeat(20);
@@ -51,4 +55,24 @@ test("a user with no wallet_address yet falls through to pending/mint", async ()
     mintPending: async () => ADDR_MINTED,
   };
   assert.equal(await resolveParticipantAddress("x", "alice", deps), ADDR_MINTED);
+});
+
+test("lookup finds a real user's wallet", async () => {
+  const address = await lookupParticipantAddress("email", "dani@example.com", {
+    getUserByProviderHandle: async () => ({ wallet_address: "0xUSER" }),
+    getPendingWallet: async () => null,
+    mintPending: async () => { throw new Error("must not mint"); },
+  });
+  assert.equal(address, "0xUSER");
+});
+
+test("lookup answers null for someone who has never signed in", async () => {
+  // The whole point: no wallet is minted, so no money can be sent to an address
+  // its supposed owner cannot reach.
+  const address = await lookupParticipantAddress("email", "nobody@example.com", {
+    getUserByProviderHandle: async () => null,
+    getPendingWallet: async () => null,
+    mintPending: async () => { throw new Error("must not mint"); },
+  });
+  assert.equal(address, null);
 });
