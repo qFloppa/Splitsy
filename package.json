@@ -29,6 +29,7 @@
     "test:gateway": "node --test --experimental-strip-types lib/gateway-browser.test.ts",
     "test:wallet-chain": "node --test --experimental-strip-types lib/wagmi.test.ts",
     "test:wallet-provider": "node --test --experimental-strip-types lib/wallet-provider.test.ts lib/privy-wallet.test.ts lib/privy-identity.test.ts lib/user-signed.test.ts lib/arc-explorer.test.ts lib/export-crypto.test.ts lib/tx-ticket.test.ts",
+    "test:escrow": "node --test --experimental-strip-types lib/handle-escrow.test.ts",
     "test:settle": "node --test --experimental-strip-types lib/settle-items.test.ts lib/arc-read.test.ts",
     "test:iou": "node --test --experimental-strip-types lib/iou.test.ts",
     "test:footer": "node --test --experimental-strip-types lib/site-contracts.test.ts",
