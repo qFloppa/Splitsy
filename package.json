@@ -10,6 +10,7 @@
     "deploy:arc:bill-registry": "node --env-file=.env.local ./node_modules/hardhat/dist/src/cli.js run --network arcTestnet scripts/deploy-bill-split-registry.ts",
     "deploy:arc:factory": "node --env-file=.env.local ./node_modules/hardhat/dist/src/cli.js run --network arcTestnet scripts/deploy-recurring-tab-factory.ts",
     "deploy:arc:autopay-mandate": "node --env-file=.env.local ./node_modules/hardhat/dist/src/cli.js run --network arcTestnet scripts/deploy-autopay-mandate.ts",
+    "deploy:arc:handle-escrow": "node --env-file=.env.local ./node_modules/hardhat/dist/src/cli.js run --network arcTestnet scripts/deploy-handle-escrow.ts",
     "scout:setup": "node --experimental-strip-types --env-file=.env.local scripts/scout-setup.ts",
     "settler:setup": "node --experimental-strip-types --env-file=.env.local scripts/settler-setup.ts",
     "agents:setup": "node --experimental-strip-types --env-file=.env.local scripts/service-agents-setup.ts",
