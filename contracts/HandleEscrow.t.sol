@@ -49,6 +49,12 @@ contract HandleEscrowTest is Test {
   }
 
   function test_depositHoldsTheMoney() public {
+    // Armed before the call, with no external call in between — vm.prank inside
+    // _deposit is a cheatcode, not a call, so it does not consume this. The id
+    // is a literal because the first deposit is always 1, asserted just below.
+    vm.expectEmit(true, true, true, true, address(escrow));
+    emit Deposited(1, alice, DANI_HASH, AMOUNT);
+
     uint256 id = _deposit();
     assertEq(id, 1);
     assertEq(usdc.balanceOf(address(escrow)), AMOUNT);
@@ -70,11 +76,14 @@ contract HandleEscrowTest is Test {
   function test_releaseAnnouncesWhoWasPaid() public {
     uint256 id = _deposit();
     uint256 deadline = block.timestamp + 1 hours;
+    // Signed before arming: _sign staticcalls the escrow for the typehash and
+    // the domain separator, and those calls would consume the expectation.
+    bytes memory sig = _sign(id, dani, deadline);
 
     vm.expectEmit(true, true, false, true, address(escrow));
     emit Released(id, dani, AMOUNT);
 
-    escrow.release(id, dani, deadline, _sign(id, dani, deadline));
+    escrow.release(id, dani, deadline, sig);
   }
 
   function test_releaseRejectsAWrongSigner() public {
@@ -109,6 +118,10 @@ contract HandleEscrowTest is Test {
 
   function test_reclaimReturnsTheMoneyToTheSender() public {
     uint256 id = _deposit();
+
+    vm.expectEmit(true, true, false, true, address(escrow));
+    emit Reclaimed(id, alice, AMOUNT);
+
     vm.prank(alice);
     escrow.reclaim(id);
     assertEq(usdc.balanceOf(alice), 100e6);
