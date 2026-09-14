@@ -58,21 +58,28 @@ type Me = { id: string; provider?: AccountProvider | null; handle: string; walle
 // `txUrl` is the explorer link for the transaction this row became, once there is
 // one: absent while it's in flight, and absent for good on a Circle transfer
 // whose hash never surfaced inside waitForCircleTxUrl's window.
-// `state` has three words, not two: "escrowed" is the money that has left the
-// sender and not arrived at anyone, because the recipient has no wallet yet.
-type RecentRow = IouLedgerRow & { note: string; state: "pending" | "settled" | "escrowed"; txUrl?: string };
+// `state` has four words, not two. "escrowed" is money that has left the sender
+// and not arrived at anyone, because the recipient has no wallet yet;
+// "escrow-unrecorded" is that same money with nothing indexing who it is for,
+// which only its sender can now recover.
+type RecentRow = IouLedgerRow & {
+  note: string;
+  state: "pending" | "settled" | "escrowed" | "escrow-unrecorded";
+  txUrl?: string;
+};
 
 // What a rail hands back about the transaction it just made. A browser-signed
 // rail has the hash in hand; a Circle-signed transfer only learns it a few
 // seconds later, so that one hands back the wait instead of blocking on it.
 type TxRef = { url: string } | { pending: Promise<string | null> } | null;
 
-// That, plus whether the money went into escrow rather than to the recipient.
-// `commit` needs to know to pick the row's word, and it has to travel WITH the
-// transaction — a module-level flag would be a second source of truth for one
-// commit, and the wrong one the moment two are in flight. No handle here: the
-// row already carries the label the ledger shows.
-type RailResult = { tx: TxRef; escrowed?: boolean };
+// That, plus what `commit` needs to describe the outcome. `escrowed` picks the
+// row's word; `warning` is the sentence for money that reached escrow while the
+// record of who it is for did not — which must never be reported as a clean
+// "waiting for @dani". Both travel WITH the transaction: a module-level flag
+// would be a second source of truth, and the wrong one the moment two commits
+// are in flight. No handle here — the row already carries the label.
+type RailResult = { tx: TxRef; escrowed?: boolean; warning?: string };
 
 const reduced = () => window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
 const money = (n: number) => n.toFixed(2);
@@ -92,6 +99,14 @@ const spendError = (error: string, fallback: string) =>
 // no escrow deployed there is nowhere for this money to wait, and the old
 // behaviour — pay a wallet nobody holds — is what this whole rail replaces.
 const NO_ESCROW = "You can't settle to someone who hasn't signed up yet.";
+
+// What to say when money reached escrow and the record of who it is for did not.
+// The two identifiers ARE the message: an unindexed deposit is recoverable by
+// its sender and by nobody else, and a console line in a tab they are about to
+// close is not a record. "Don't send it again" comes first because `deposit` is
+// create-style — a retry is a second pile of money, not a repair.
+const unrecorded = (detail: string, depositId: string | null, txHash: string | null) =>
+  `${detail} Don't send it again. Keep this: deposit ${depositId ?? "unknown"}, transaction ${txHash ?? "unknown"}.`;
 
 // The composer's fields, snapshotted so a failed commit can put them back
 // exactly as typed rather than making the user retype a sentence we lost.
@@ -618,13 +633,18 @@ export default function IouClient({ onReceipts }: { onReceipts: () => void }) {
     return (body.resolved[0]?.address ?? null) as `0x${string}` | null;
   }
 
-  // Tell the server what a login should release, once the money is already in
-  // escrow. Best-effort AFTER the fact on purpose: failing the IOU here would
-  // put the sentence back in the composer and invite a retry that deposits a
-  // SECOND time. The deposit stays reclaimable by its sender either way, so the
-  // worst case is money that has to be taken back by hand rather than money lost.
-  async function recordEscrowDeposit(plan: IouPlan, depositId: string, txHash: string | null) {
-    await fetch("/api/escrow/deposits", {
+  // Record a deposit the BROWSER wallet made. The custodial rail needs none of
+  // this — /api/escrow/deposit writes its own row before it answers — but a
+  // browser-signed deposit happens without the server ever seeing it.
+  //
+  // Returns undefined when the row landed, or the sentence to put on screen when
+  // it did not. It never throws: the money is already in escrow, so failing the
+  // IOU here would restore the composer and invite a retry that deposits twice.
+  async function recordEscrowDeposit(plan: IouPlan, depositId: string | null, txHash: string | null) {
+    if (!depositId) {
+      return unrecorded("That money is in escrow, but Splitsy couldn't confirm which deposit.", null, txHash);
+    }
+    const res = await fetch("/api/escrow/deposits", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -634,11 +654,21 @@ export default function IouClient({ onReceipts }: { onReceipts: () => void }) {
         handle: plan.handle,
         txHash,
       }),
-    })
-      .then(async (r) => {
-        if (!r.ok) console.error("Recording the escrow deposit failed:", r.status, await r.text());
-      })
-      .catch((err) => console.error("Recording the escrow deposit failed:", err));
+    }).catch(() => null);
+    if (res?.ok) return undefined;
+    return unrecorded("That money is in escrow, but Splitsy couldn't record who it's for.", depositId, txHash);
+  }
+
+  // Is there still a session RIGHT NOW? `me` is a snapshot from page load, so a
+  // session that expired since then passes a `!me` check, deposits, and only
+  // then discovers that recording is session-gated — with the money already
+  // gone. Asking the server narrows that window from the page's lifetime to the
+  // couple of seconds before the spend.
+  async function stillSignedIn() {
+    const live = await fetch("/api/me")
+      .then((r) => r.json())
+      .catch(() => null);
+    return Boolean(live?.user);
   }
 
   // Connect (if needed), land on Arc, and hand back a wallet ready to sign.
@@ -678,17 +708,18 @@ export default function IouClient({ onReceipts }: { onReceipts: () => void }) {
         handle: plan.handle,
         amount: plan.amountUsd,
       });
+      // A refusal here spent nothing — the route gates before it deposits — so
+      // this is the one escrow failure that may safely put the composer back.
       if (!outcome.ok) throw new Error(spendError(outcome.error, "Couldn't put that in escrow."));
       const txHash = typeof outcome.data.txHash === "string" ? outcome.data.txHash : null;
-      // No id means the route answered 202: the money IS in escrow but it could
-      // not confirm which deposit. Nothing to record, and nothing to retry —
-      // retrying would deposit again. Named in the console so it can be found.
-      if (typeof outcome.data.depositId === "string") {
-        await recordEscrowDeposit(plan, outcome.data.depositId, txHash);
-      } else {
-        console.error("Escrowed, but the deposit id was not confirmed:", outcome.data);
-      }
-      return { tx: txHash ? { url: explorerTxUrl(txHash) } : null, escrowed: true };
+      const depositId = typeof outcome.data.depositId === "string" ? outcome.data.depositId : null;
+      // The route writes its own row, so success needs nothing more from here.
+      // An `error` on a 2xx is its 202: the money moved and the row did not, or
+      // may not have. walletPost reports 202 as ok, which is why this is read
+      // off the body rather than off `outcome.ok`.
+      const warning =
+        typeof outcome.data.error === "string" ? unrecorded(outcome.data.error, depositId, txHash) : undefined;
+      return { tx: txHash ? { url: explorerTxUrl(txHash) } : null, escrowed: true, warning };
     }
 
     // walletPost, not a plain POST: /api/wallet/send has been user-signed since the
@@ -770,21 +801,27 @@ export default function IouClient({ onReceipts }: { onReceipts: () => void }) {
       if (!isHandleEscrowConfigured()) throw new Error(NO_ESCROW);
       // A CONNECTED WALLET IS NOT A SESSION. pickSigner answers "wallet" for a
       // browser wallet that never signed in, and /api/escrow/deposits is
-      // session-gated — so without this the deposit would land and its index row
-      // would 401, leaving money in escrow that no login can ever be told to
-      // release. Refusing before the spend, the same fail-closed rule as an
-      // unset escrow: never strand.
-      if (!me) throw new Error("Sign in first — Splitsy has to record who this is waiting for.");
+      // session-gated — so without this the deposit would land and its row would
+      // 401, leaving money in escrow no login can be told to release. Asked of
+      // the server, not of `me`, because `me` is a page-load snapshot.
+      if (!(await stillSignedIn())) {
+        throw new Error("Sign in first — Splitsy has to record who this is waiting for.");
+      }
       await ensureBillSplitWalletOnArc(wallet);
       // Two prompts, which is the honest number — two transactions are signed.
+      // Both of these may still throw: nothing has been deposited yet.
       await approveHandleEscrow({ ...wallet, amount });
       const deposited = await depositToHandleEscrow({
         ...wallet,
         handleHash: handleHash(plan.provider, plan.handle),
         amount,
       });
-      await recordEscrowDeposit(plan, deposited.depositId.toString(), deposited.hash);
-      return { tx: { url: explorerTxUrl(deposited.hash) }, escrowed: true };
+      // PAST HERE NOTHING MAY THROW. The deposit is on chain, and commit's catch
+      // would put the sentence back in the composer — where the user's natural
+      // next move is to press settle again, depositing a second time. So a
+      // failure from this point is a WARNING on a row that stays put.
+      const warning = await recordEscrowDeposit(plan, deposited.depositId?.toString() ?? null, deposited.hash);
+      return { tx: { url: explorerTxUrl(deposited.hash) }, escrowed: true, warning };
     }
 
     if (to.toLowerCase() === wallet.account.toLowerCase()) throw new Error("That handle is your own wallet.");
@@ -851,12 +888,17 @@ export default function IouClient({ onReceipts }: { onReceipts: () => void }) {
           ? await (signer === "wallet" ? askWithWallet(plan) : sendAsk(plan))
           : await (signer === "wallet" ? settleWithWallet(plan) : settleNow(plan));
       // "escrowed" is not a lesser success — the IOU happened. It is where the
-      // money IS: out of the sender's wallet and not yet in anyone's.
-      setRecent((r) =>
-        r.map((x) => (x.id === id ? { ...x, state: done.escrowed ? "escrowed" : "settled" } : x)),
-      );
+      // money IS: out of the sender's wallet and not yet in anyone's. A warning
+      // downgrades it again, because money nothing is indexing must never read
+      // as "waiting for @dani".
+      const state = done.warning ? "escrow-unrecorded" : done.escrowed ? "escrowed" : "settled";
+      setRecent((r) => r.map((x) => (x.id === id ? { ...x, state } : x)));
       stampTx(id, done.tx);
-      if (plan.kind === "settle" && !reduced()) {
+      // Shown even though the commit succeeded, and no confetti over it: this is
+      // the one sentence standing between the sender and money only they can get
+      // back.
+      if (done.warning) setError(done.warning);
+      if (plan.kind === "settle" && !done.warning && !reduced()) {
         void confetti({
           colors: ["#2775ca", "#3ee6d6", "#17a56b"],
           origin: { y: 0.5 },
@@ -1143,6 +1185,11 @@ export default function IouClient({ onReceipts }: { onReceipts: () => void }) {
                     // matters more right now than what it was for, and the note
                     // comes back the moment the row is recalled.
                     <span className="iou-row-note"> · waiting for {row.label}</span>
+                  ) : state === "escrow-unrecorded" ? (
+                    // NOT "waiting for @dani" — nothing is waiting, because
+                    // nothing recorded who for. The full sentence, with the ids
+                    // to recover it by, is in the message above the composer.
+                    <span className="iou-row-note"> · in escrow, not recorded — don&apos;t resend</span>
                   ) : note ? (
                     <span className="iou-row-note"> · {note}</span>
                   ) : null}

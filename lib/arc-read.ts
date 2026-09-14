@@ -515,18 +515,24 @@ export async function getEscrowDepositOnchain(id: bigint) {
 }
 
 /**
- * The id a deposit landed under, read out of its own transaction.
+ * The deposit a transaction created, read out of its own `Deposited` event.
  *
  * `deposit()` returns the id, but a return value does not survive being sent as
- * a transaction — so the `Deposited` event is the only place it exists off the
- * caller's stack. Filtered by the emitting address first: the same transaction
- * also carries USDC's `Transfer`, which this abi cannot read anyway, and a log
- * from any other contract has no business naming our deposit ids.
+ * a transaction — so the event is the only place it exists off the caller's
+ * stack. Filtered by the emitting address first: the same transaction also
+ * carries USDC's `Transfer`, which this abi cannot read anyway, and a log from
+ * any other contract has no business naming our deposit ids.
+ *
+ * `depositor` and `amount` come back with it because they are CHAIN FACTS from
+ * the same log — the caller writing an index row needs exactly those two and
+ * must not take either from a request body.
  *
  * null for every kind of "could not establish it" — an unmined hash, a reverted
- * transaction, no event. The caller answers 202 rather than guessing an id.
+ * transaction, no event.
  */
-export async function getDepositedIdFromTx(txHash: string | null): Promise<bigint | null> {
+export async function getDepositedFromTx(
+  txHash: string | null,
+): Promise<{ id: bigint; depositor: `0x${string}`; amount: bigint } | null> {
   if (!txHash || !/^0x[0-9a-fA-F]{64}$/.test(txHash)) return null;
   // Both signing paths already waited for settlement before handing the hash
   // over, so this is normally one call. The short wait is for the Circle backend,
@@ -541,7 +547,9 @@ export async function getDepositedIdFromTx(txHash: string | null): Promise<bigin
     if (log.address.toLowerCase() !== HANDLE_ESCROW_ADDRESS.toLowerCase()) continue;
     try {
       const ev = decodeEventLog({ abi: HANDLE_ESCROW_ABI, data: log.data, topics: log.topics });
-      if (ev.eventName === "Deposited") return ev.args.id;
+      if (ev.eventName === "Deposited") {
+        return { id: ev.args.id, depositor: ev.args.depositor, amount: ev.args.amount };
+      }
     } catch {
       continue;
     }

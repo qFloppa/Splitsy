@@ -104,6 +104,10 @@ export async function signedSend(
 // to add.
 const PAYMENT_LABEL: Record<string, { description: string; action: string }> = {
   "/api/wallet/send": { description: "Send USDC from your Splitsy wallet.", action: "Send USDC" },
+  // The recipient has no wallet yet, so this holds the money for their handle
+  // instead of sending it. Says "held" rather than "sent" because that is the
+  // difference the user is being asked to approve — and it stays reclaimable.
+  "/api/escrow/deposit": { description: "Held in escrow until they sign up. You can take it back.", action: "Escrow an IOU" },
   "/api/debts/": { description: "Pay what you owe on this bill.", action: "Pay a debt" },
   "/api/onchain-bills/": { description: "Settle your share of this on-chain bill.", action: "Pay a bill" },
   "/api/recurring/": { description: "Authorise this recurring tab.", action: "Recurring tab" },

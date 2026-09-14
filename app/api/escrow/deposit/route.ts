@@ -1,22 +1,24 @@
 // SINGULAR — this route SPENDS. It moves the signed-in user's USDC into
-// HandleEscrow. Its neighbour app/api/escrow/deposits (plural) moves no money at
-// all; it only writes the index row for a deposit that already happened.
+// HandleEscrow and writes the index row for it before answering. Its neighbour
+// app/api/escrow/deposits (plural) moves no money at all; it writes that same
+// row for the browser-wallet rail, which deposits without the server's help.
 import { cookies } from "next/headers";
-import { parseUnits } from "viem";
+import { formatUnits, parseUnits } from "viem";
 import {
   HANDLE_ESCROW_ADDRESS,
-  getDepositedIdFromTx,
+  getDepositedFromTx,
   getUsdcAllowanceOnchain,
   isHandleEscrowConfigured,
   usdcShortfallMessage,
 } from "@/lib/arc-read";
+import { insertEscrowDeposit } from "@/lib/escrow-deposits-repo";
 import { encodeDeposit, handleHash } from "@/lib/handle-escrow";
 import { validHandle } from "@/lib/iou";
 import { encodeApprove } from "@/lib/registry-calldata";
 import { getSessionUser } from "@/lib/session";
 import { verifyWalletUnlock, WALLET_UNLOCK_COOKIE } from "@/lib/session-core";
 import { prepareForUser, relayForUser, userMustSign, type UserSignedBody } from "@/lib/user-signed";
-import { executeContract, InsufficientFundsError } from "@/lib/wallet-provider";
+import { executeContract, InsufficientFundsError, isBroadcast, broadcastTxHash } from "@/lib/wallet-provider";
 import type { IdentityProvider } from "@/lib/types";
 
 export const runtime = "nodejs";
@@ -148,12 +150,9 @@ export async function POST(request: Request) {
         // The approve landed; the browser prepares again and the allowance read
         // above hands it the deposit.
         if (leg === "approve") return Response.json({ ok: true, txHash: relayed.tx.txHash, more: true });
-        return await deposited(relayed.tx.txHash);
+        return await deposited(relayed.tx.txHash, provider, handle);
       } catch (err) {
-        if (err instanceof InsufficientFundsError) {
-          return Response.json({ error: "insufficient_funds" }, { status: 402 });
-        }
-        return Response.json({ error: err instanceof Error ? err.message : "deposit failed" }, { status: 502 });
+        return failed(err, leg === "deposit");
       }
     }
 
@@ -166,27 +165,90 @@ export async function POST(request: Request) {
   // ── The server signs ────────────────────────────────────────────────────────
   try {
     await executeContract(user.circle_wallet_id, ARC_USDC_ADDRESS, encodeApprove(HANDLE_ESCROW_ADDRESS, amountUnits));
-    const tx = await executeContract(user.circle_wallet_id, HANDLE_ESCROW_ADDRESS, encodeDeposit(hash, amountUnits));
-    return await deposited(tx.txHash);
   } catch (err) {
-    if (err instanceof InsufficientFundsError) {
-      return Response.json({ error: "insufficient_funds" }, { status: 402 });
-    }
-    return Response.json({ error: err instanceof Error ? err.message : "deposit failed" }, { status: 502 });
+    // Nothing is deposited yet, so every failure here is safely retryable —
+    // including a broadcast-tagged one, where the worst case is an allowance set
+    // twice.
+    return failed(err, false);
+  }
+  try {
+    const tx = await executeContract(user.circle_wallet_id, HANDLE_ESCROW_ADDRESS, encodeDeposit(hash, amountUnits));
+    return await deposited(tx.txHash, provider, handle);
+  } catch (err) {
+    return failed(err, true);
   }
 }
 
-// The answer, once the money has moved. 202 rather than an error when the id
-// cannot be read: the deposit IS on chain and the caller must not retry it, but
-// without an id there is nothing to record and nothing for a login to release —
-// so the sender is told to expect it back by hand rather than told it worked.
-async function deposited(txHash: string | null) {
-  const depositId = await getDepositedIdFromTx(txHash);
-  if (depositId === null) {
+// The answer once the money has moved — AND THE ROW THAT MAKES IT FINDABLE.
+//
+// WRITTEN HERE, NOT LEFT TO THE CLIENT. A deposit whose index row never lands is
+// the stranding this plan exists to remove wearing a friendlier sentence: the
+// contract holds the money, getOpenDeposits cannot see it, and no login will
+// ever release it. This route is the only place that holds the session, the
+// validated handle and a chain-confirmed id at the same moment, so it is the
+// only place that can record one without a second network hop that might not
+// happen.
+//
+// Every figure describing the money comes from the Deposited event, so Ruling
+// 4's identity binding is inherent rather than re-checked: the handleHash in
+// that log is the one this route computed from (provider, handle) and deposited
+// against. The plural route still re-reads and re-checks, because its caller is
+// a browser that deposited on its own.
+//
+// An unreadable id, or a row that will not write, is a 202 carrying both
+// identifiers: the caller must NOT retry (deposit is create-style), and the
+// sender has to be shown what to reclaim.
+async function deposited(txHash: string | null, provider: string, handle: string) {
+  const found = await getDepositedFromTx(txHash);
+  if (!found) {
     return Response.json(
       { error: "The money is in escrow, but its deposit id could not be confirmed.", txHash },
       { status: 202 },
     );
   }
-  return Response.json({ ok: true, depositId: depositId.toString(), txHash });
+
+  const depositId = found.id.toString();
+  try {
+    await insertEscrowDeposit({
+      escrow_address: HANDLE_ESCROW_ADDRESS,
+      deposit_id: depositId,
+      provider,
+      handle,
+      depositor_address: found.depositor,
+      amount_usdc: formatUnits(found.amount, 6),
+      // Not from the body: this is the hash getDepositedFromTx just read a
+      // receipt for, so it names the transaction that actually made this row.
+      tx_hash: txHash,
+    });
+  } catch (err) {
+    console.error("Escrow deposit landed but its row did not:", depositId, txHash, err);
+    return Response.json(
+      { error: "The money is in escrow, but Splitsy could not record who it is for.", depositId, txHash },
+      { status: 202 },
+    );
+  }
+
+  return Response.json({ ok: true, depositId, txHash });
+}
+
+// `mayHaveDeposited` is the whole question. A broadcast tag means the backend
+// ACCEPTED the transaction — lib/circle-dcw.ts sets it when the POLL fails, not
+// the send — so the money is very likely to move. [billId]/pay can report that
+// as a plain failure because a repeated payDebt is safe; a repeated deposit is a
+// second pile of money in escrow. So this answers 202 and tells the sender not
+// to retry, rather than a 502 that hands them back a composer to press again.
+function failed(err: unknown, mayHaveDeposited: boolean) {
+  if (err instanceof InsufficientFundsError) {
+    return Response.json({ error: "insufficient_funds" }, { status: 402 });
+  }
+  if (mayHaveDeposited && isBroadcast(err)) {
+    return Response.json(
+      {
+        error: "This deposit may already have gone through — don't send it again. Check your wallet history first.",
+        txHash: broadcastTxHash(err),
+      },
+      { status: 202 },
+    );
+  }
+  return Response.json({ error: err instanceof Error ? err.message : "deposit failed" }, { status: 502 });
 }

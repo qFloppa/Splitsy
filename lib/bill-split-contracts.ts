@@ -447,9 +447,15 @@ export async function approveHandleEscrow({ walletClient, account, amount }: Bil
 // THE ID IS THE POINT. It is the only handle on this deposit afterwards — a
 // release names it, a reclaim names it — and `deposit()`'s return value does not
 // survive being sent as a transaction, so the Deposited event is where it has to
-// be read from. Same trick as parseBillCreated, and the same consequence: an id
-// we fail to read is money that needs reclaiming by hand, so a missing event is
-// an error rather than a null.
+// be read from. Same trick as parseBillCreated.
+//
+// IT DOES NOT THROW ONCE THE TRANSACTION IS OUT. Every other helper here treats
+// a receipt problem as a failure, because every other call they make is safe to
+// repeat — `deposit` is create-style, so a caller that retried would put a
+// SECOND pile of money in escrow. So the only throw after writeContract is a
+// PROVEN revert, where the chain has said nothing moved; a receipt we could not
+// read, or an event we could not find, comes back as `depositId: null` and the
+// caller has to tell the user rather than offer them a retry.
 export async function depositToHandleEscrow({
   walletClient,
   account,
@@ -466,14 +472,16 @@ export async function depositToHandleEscrow({
     account,
     chain: arcTestnet,
   });
-  const receipt = assertReceiptSuccess(await publicClient.waitForTransactionReceipt({ hash }), "Escrow deposit");
-  const depositId = parseDeposited(receipt);
 
-  if (depositId === null) {
-    throw new Error("The escrow deposit succeeded, but no Deposited event was found.");
+  const receipt = await publicClient.waitForTransactionReceipt({ hash }).catch(() => null);
+  // A reverted receipt is the one PROVEN failure: no funds moved, so a retry is
+  // safe and the caller should be allowed one. Worded like assertReceiptSuccess,
+  // which this cannot use because it needs the null-tolerant shape.
+  if (receipt && receipt.status !== "success") {
+    throw new Error("Escrow deposit failed: the transaction reverted on Arc and no funds were moved.");
   }
 
-  return { hash, depositId };
+  return { hash, depositId: receipt ? parseDeposited(receipt) : null };
 }
 
 // A plain USDC transfer on Arc, signed in the user's own wallet — the browser
