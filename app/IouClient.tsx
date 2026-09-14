@@ -12,13 +12,18 @@ import { explorerTxUrl, waitForCircleTxUrl } from "@/lib/arc-explorer";
 import { billMetadataHash } from "@/lib/bill-metadata";
 import {
   BILL_SPLIT_REGISTRY_ADDRESS,
+  HANDLE_ESCROW_ADDRESS,
+  approveHandleEscrow,
   createBillSplit,
   createBillSplitWallet,
+  depositToHandleEscrow,
   ensureBillSplitWalletOnArc,
   isBillRegistryConfigured,
+  isHandleEscrowConfigured,
   transferArcUsdc,
   usdcToBillUnits,
 } from "@/lib/bill-split-contracts";
+import { handleHash } from "@/lib/handle-escrow";
 import {
   askBody,
   compactTarget,
@@ -53,18 +58,40 @@ type Me = { id: string; provider?: AccountProvider | null; handle: string; walle
 // `txUrl` is the explorer link for the transaction this row became, once there is
 // one: absent while it's in flight, and absent for good on a Circle transfer
 // whose hash never surfaced inside waitForCircleTxUrl's window.
-type RecentRow = IouLedgerRow & { note: string; state: "pending" | "settled"; txUrl?: string };
+// `state` has three words, not two: "escrowed" is the money that has left the
+// sender and not arrived at anyone, because the recipient has no wallet yet.
+type RecentRow = IouLedgerRow & { note: string; state: "pending" | "settled" | "escrowed"; txUrl?: string };
 
 // What a rail hands back about the transaction it just made. A browser-signed
 // rail has the hash in hand; a Circle-signed transfer only learns it a few
 // seconds later, so that one hands back the wait instead of blocking on it.
 type TxRef = { url: string } | { pending: Promise<string | null> } | null;
 
+// That, plus whether the money went into escrow rather than to the recipient.
+// `commit` needs to know to pick the row's word, and it has to travel WITH the
+// transaction — a module-level flag would be a second source of truth for one
+// commit, and the wrong one the moment two are in flight. No handle here: the
+// row already carries the label the ledger shows.
+type RailResult = { tx: TxRef; escrowed?: boolean };
+
 const reduced = () => window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
 const money = (n: number) => n.toFixed(2);
 // Both producers build "<explorer>/tx/<hash>", so the tail is the hash — shown
 // short, the same form an address takes everywhere else on this page.
 const txLabel = (url: string) => shortAddress(url.slice(url.lastIndexOf("/") + 1));
+
+// What to say when a route refuses to spend. "locked" is a sentinel with a
+// remedy no generic sentence can name; everything else payErrorMessage already
+// knows how to put into words.
+const spendError = (error: string, fallback: string) =>
+  error === "locked"
+    ? "Unlock your wallet first — the wallet button, bottom right."
+    : payErrorMessage(error) || fallback;
+
+// Said the same way by both settle rails, because it is the same refusal: with
+// no escrow deployed there is nowhere for this money to wait, and the old
+// behaviour — pay a wallet nobody holds — is what this whole rail replaces.
+const NO_ESCROW = "You can't settle to someone who hasn't signed up yet.";
 
 // The composer's fields, snapshotted so a failed commit can put them back
 // exactly as typed rather than making the user retype a sentence we lost.
@@ -563,6 +590,57 @@ export default function IouClient({ onReceipts }: { onReceipts: () => void }) {
     return to as `0x${string}`;
   }
 
+  // The same walk, stopping at "nobody" instead of minting. null is a real
+  // answer here — it is what the settle rails escrow on.
+  //
+  // A SECOND FUNCTION RATHER THAN A FLAG ON THE FIRST, because resolveTarget's
+  // third caller is askWithWallet, which puts the answer straight into a bill's
+  // participant list. A null there is a bill nobody can pay, so that rail has to
+  // go on minting until bills stop needing an address for a stranger.
+  async function lookupTarget(plan: IouPlan): Promise<`0x${string}` | null> {
+    // An address is its own answer, and never null — same short-circuit as above.
+    if (plan.provider === "wallet") return plan.handle as `0x${string}`;
+    const res = await fetch("/api/onchain-bills/resolve", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      // A BOOLEAN false. The route's gate is `mint !== false`, so a string
+      // "false" — or a misspelled key — silently mints, which is exactly the
+      // stranded pre-mint this rail exists to stop.
+      body: JSON.stringify({ participants: [{ provider: plan.provider, handle: plan.handle }], mint: false }),
+    });
+    const body = await res.json().catch(() => null);
+    // A FAILED LOOKUP IS NOT "NOBODY HAS A WALLET". Reading a 503 as null would
+    // escrow money away from someone who could have been paid directly, and they
+    // would wait for a sign-in they have already done.
+    if (!res.ok || !Array.isArray(body?.resolved)) {
+      throw new Error(body?.error || "Couldn't look up that handle.");
+    }
+    return (body.resolved[0]?.address ?? null) as `0x${string}` | null;
+  }
+
+  // Tell the server what a login should release, once the money is already in
+  // escrow. Best-effort AFTER the fact on purpose: failing the IOU here would
+  // put the sentence back in the composer and invite a retry that deposits a
+  // SECOND time. The deposit stays reclaimable by its sender either way, so the
+  // worst case is money that has to be taken back by hand rather than money lost.
+  async function recordEscrowDeposit(plan: IouPlan, depositId: string, txHash: string | null) {
+    await fetch("/api/escrow/deposits", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        escrowAddress: HANDLE_ESCROW_ADDRESS,
+        depositId,
+        provider: plan.provider,
+        handle: plan.handle,
+        txHash,
+      }),
+    })
+      .then(async (r) => {
+        if (!r.ok) console.error("Recording the escrow deposit failed:", r.status, await r.text());
+      })
+      .catch((err) => console.error("Recording the escrow deposit failed:", err));
+  }
+
   // Connect (if needed), land on Arc, and hand back a wallet ready to sign.
   // HomeClient's connectWallets minus everything this page has no use for — no
   // recurring tabs, no bridge session, no registry sweep.
@@ -574,10 +652,10 @@ export default function IouClient({ onReceipts }: { onReceipts: () => void }) {
 
   // Server-signed: a one-participant bill in the registry. I'm the splitter, so
   // I'm the one who can claim it — which is exactly what "owes me" means.
-  async function sendAsk(plan: IouPlan): Promise<TxRef> {
+  async function sendAsk(plan: IouPlan): Promise<RailResult> {
     const outcome = await walletPost("/api/onchain-bills/create", askBody(plan) as Record<string, unknown>);
     if (!outcome.ok) throw new Error(payErrorMessage(outcome.error) || "Couldn't put that on Arc.");
-    return outcome.data.txHash ? { url: explorerTxUrl(outcome.data.txHash as string) } : null;
+    return { tx: outcome.data.txHash ? { url: explorerTxUrl(outcome.data.txHash as string) } : null };
   }
 
   // A direct transfer. The registry can't hold "I owe you" — createBill makes
@@ -585,33 +663,49 @@ export default function IouClient({ onReceipts }: { onReceipts: () => void }) {
   // the other person. I hold the money and I'm the one who owes it, so there is
   // nothing for escrow to coordinate: just pay.
   //
-  // ponytail: no deferred "I owe" — that needs an off-chain row against a
-  // creditor who may not have an account. Add bill_debts-backed IOUs when
-  // someone actually asks to record a debt they can't yet pay.
-  async function settleNow(plan: IouPlan): Promise<TxRef> {
-    const to = await resolveTarget(plan);
+  // Unless there is nobody to pay. A handle that belongs to no wallet used to be
+  // pre-minted one, and the money went somewhere neither side could reach; now it
+  // goes into HandleEscrow and waits. That escrow deposit IS the off-chain row
+  // against a creditor who may not have an account — the thing this comment used
+  // to say did not exist.
+  async function settleNow(plan: IouPlan): Promise<RailResult> {
+    const to = await lookupTarget(plan);
+
+    if (!to) {
+      if (!isHandleEscrowConfigured()) throw new Error(NO_ESCROW);
+      const outcome = await walletPost("/api/escrow/deposit", {
+        provider: plan.provider,
+        handle: plan.handle,
+        amount: plan.amountUsd,
+      });
+      if (!outcome.ok) throw new Error(spendError(outcome.error, "Couldn't put that in escrow."));
+      const txHash = typeof outcome.data.txHash === "string" ? outcome.data.txHash : null;
+      // No id means the route answered 202: the money IS in escrow but it could
+      // not confirm which deposit. Nothing to record, and nothing to retry —
+      // retrying would deposit again. Named in the console so it can be found.
+      if (typeof outcome.data.depositId === "string") {
+        await recordEscrowDeposit(plan, outcome.data.depositId, txHash);
+      } else {
+        console.error("Escrowed, but the deposit id was not confirmed:", outcome.data);
+      }
+      return { tx: txHash ? { url: explorerTxUrl(txHash) } : null, escrowed: true };
+    }
 
     // walletPost, not a plain POST: /api/wallet/send has been user-signed since the
     // wallet panel's send tab moved onto it, so a claimed wallet paying an IOU from
     // here would otherwise ask a server that holds no key for it to sign.
     const outcome = await walletPost("/api/wallet/send", { to, amount: plan.amountUsd });
-    if (!outcome.ok) {
-      throw new Error(
-        outcome.error === "locked"
-          ? "Unlock your wallet first — the wallet button, bottom right."
-          : payErrorMessage(outcome.error) || "Transfer failed.",
-      );
-    }
+    if (!outcome.ok) throw new Error(spendError(outcome.error, "Transfer failed."));
     // Circle answers before the transfer mines, so the hash arrives later — the
     // row links itself once it does rather than holding the whole commit up.
-    return outcome.data.txId ? { pending: waitForCircleTxUrl(outcome.data.txId as string) } : null;
+    return { tx: outcome.data.txId ? { pending: waitForCircleTxUrl(outcome.data.txId as string) } : null };
   }
 
   // The same ask, signed in the user's own wallet instead of their Splitsy one.
   // It has to build the bill EXACTLY as app/api/onchain-bills/create does —
   // "@handle" label, no receipt, no due date — because those fields are the
   // metadataHash, and a payer verifies an IOU by recomputing it.
-  async function askWithWallet(plan: IouPlan): Promise<TxRef> {
+  async function askWithWallet(plan: IouPlan): Promise<RailResult> {
     if (!isBillRegistryConfigured()) throw new Error("The bill registry isn't configured yet.");
     const wallet = await connectWallet();
     const to = await resolveTarget(plan);
@@ -658,19 +752,45 @@ export default function IouClient({ onReceipts }: { onReceipts: () => void }) {
       })
       .catch(() => {});
 
-    return { url: explorerTxUrl(created.hash) };
+    return { tx: { url: explorerTxUrl(created.hash) } };
   }
 
   // The settle, signed in the user's own wallet: one USDC transfer on Arc. Same
-  // reasoning as settleNow — an "I owe you" has no registry shape — only the
-  // signature comes from the browser rather than the server.
-  async function settleWithWallet(plan: IouPlan): Promise<TxRef> {
+  // reasoning as settleNow — an "I owe you" has no registry shape, and a handle
+  // with no wallet behind it goes to escrow instead — only the signature comes
+  // from the browser rather than the server.
+  async function settleWithWallet(plan: IouPlan): Promise<RailResult> {
     const wallet = await connectWallet();
-    const to = await resolveTarget(plan);
+    const to = await lookupTarget(plan);
+    const amount = usdcToBillUnits(plan.amountUsd.toFixed(2));
+
+    // Before the self-check, which only means anything when there IS an address:
+    // an escrowed deposit names a handle, and the depositor can reclaim it.
+    if (!to) {
+      if (!isHandleEscrowConfigured()) throw new Error(NO_ESCROW);
+      // A CONNECTED WALLET IS NOT A SESSION. pickSigner answers "wallet" for a
+      // browser wallet that never signed in, and /api/escrow/deposits is
+      // session-gated — so without this the deposit would land and its index row
+      // would 401, leaving money in escrow that no login can ever be told to
+      // release. Refusing before the spend, the same fail-closed rule as an
+      // unset escrow: never strand.
+      if (!me) throw new Error("Sign in first — Splitsy has to record who this is waiting for.");
+      await ensureBillSplitWalletOnArc(wallet);
+      // Two prompts, which is the honest number — two transactions are signed.
+      await approveHandleEscrow({ ...wallet, amount });
+      const deposited = await depositToHandleEscrow({
+        ...wallet,
+        handleHash: handleHash(plan.provider, plan.handle),
+        amount,
+      });
+      await recordEscrowDeposit(plan, deposited.depositId.toString(), deposited.hash);
+      return { tx: { url: explorerTxUrl(deposited.hash) }, escrowed: true };
+    }
+
     if (to.toLowerCase() === wallet.account.toLowerCase()) throw new Error("That handle is your own wallet.");
     await ensureBillSplitWalletOnArc(wallet);
-    const receipt = await transferArcUsdc({ ...wallet, to, amount: usdcToBillUnits(plan.amountUsd.toFixed(2)) });
-    return { url: explorerTxUrl(receipt.transactionHash) };
+    const receipt = await transferArcUsdc({ ...wallet, to, amount });
+    return { tx: { url: explorerTxUrl(receipt.transactionHash) } };
   }
 
   // Hang the explorer link on the row this transaction became. A pending hash
@@ -698,10 +818,12 @@ export default function IouClient({ onReceipts }: { onReceipts: () => void }) {
     }
     const plan = planned.plan;
 
-    // Check the lock BEFORE anything animates or resolves. Resolving a handle
-    // pre-mints a wallet for it, and doing that on behalf of someone who then
-    // can't pay leaves a wallet behind for nothing. A browser wallet has no lock
-    // to check — the extension asks at signing time, which is the same gate.
+    // Check the lock BEFORE anything animates. This is no longer the
+    // wallet-leak guard it was written as — the settle rails look a handle up
+    // without minting now — but it is still the cheapest refusal there is, and a
+    // lock discovered after the sentence has flown into the ledger reads as a
+    // failure the user caused. A browser wallet has no lock to check: the
+    // extension asks at signing time, which is the same gate.
     if (plan.kind === "settle" && signer === "social") {
       const pin = await fetch("/api/wallet/pin")
         .then((r) => r.json())
@@ -724,12 +846,16 @@ export default function IouClient({ onReceipts }: { onReceipts: () => void }) {
     try {
       // Four rails, one grid: the sentence picks ask-vs-settle, the signer picks
       // who writes it.
-      const tx =
+      const done =
         plan.kind === "ask"
           ? await (signer === "wallet" ? askWithWallet(plan) : sendAsk(plan))
           : await (signer === "wallet" ? settleWithWallet(plan) : settleNow(plan));
-      setRecent((r) => r.map((x) => (x.id === id ? { ...x, state: "settled" } : x)));
-      stampTx(id, tx);
+      // "escrowed" is not a lesser success — the IOU happened. It is where the
+      // money IS: out of the sender's wallet and not yet in anyone's.
+      setRecent((r) =>
+        r.map((x) => (x.id === id ? { ...x, state: done.escrowed ? "escrowed" : "settled" } : x)),
+      );
+      stampTx(id, done.tx);
       if (plan.kind === "settle" && !reduced()) {
         void confetti({
           colors: ["#2775ca", "#3ee6d6", "#17a56b"],
@@ -1012,7 +1138,14 @@ export default function IouClient({ onReceipts }: { onReceipts: () => void }) {
                   type="button"
                 >
                   {mine ? `I owe ${row.label}` : `${row.label} owes me`}
-                  {note ? <span className="iou-row-note"> · {note}</span> : null}
+                  {state === "escrowed" ? (
+                    // In place of the note, not beside it: where the money is
+                    // matters more right now than what it was for, and the note
+                    // comes back the moment the row is recalled.
+                    <span className="iou-row-note"> · waiting for {row.label}</span>
+                  ) : note ? (
+                    <span className="iou-row-note"> · {note}</span>
+                  ) : null}
                 </button>
                 {txUrl ? (
                   <a className="iou-row-tx" href={txUrl} rel="noreferrer" target="_blank">
