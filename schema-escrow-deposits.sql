@@ -38,7 +38,8 @@ create index if not exists idx_escrow_deposits_open
   on escrow_deposits (provider, handle)
   where status = 'open';
 
--- Deny-all to the anon and authenticated roles, matching the newest tables in
--- this project (schema-privy-wallets.sql): no policies, and the service role
--- bypasses RLS.
+-- Deny-all to the anon and authenticated roles: RLS on, no policies, and the
+-- service role bypasses it. Measured against splitsy-test on 2026-09-14 rather
+-- than assumed — every table there has RLS enabled except x402_payments, which
+-- is a gap in that table, not a precedent for this one.
 alter table escrow_deposits enable row level security;
