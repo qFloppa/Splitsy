@@ -133,6 +133,11 @@ export async function POST(request: NextRequest) {
     request,
     sessionSecret,
     mode: "json",
+    // `linked` is null on the first call of a fresh signup — createOnLogin has not
+    // built the wallet yet — and the escrow release no-ops on that. On the second
+    // call, once Privy reports the address, it is what lets the release name a
+    // real wallet instead of falling back to a row an earlier pass already wrote.
+    walletAddress: linked,
   });
 
   // WHAT WAS LINKED, REPORTED BACK, and it is not decoration: it is the only thing
