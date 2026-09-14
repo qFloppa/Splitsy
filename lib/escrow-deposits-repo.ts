@@ -2,8 +2,9 @@
 //
 // AN INDEX, NEVER AN AUTHORITY. The contract decides whether money may move;
 // these rows only decide what is worth TRYING. A stale 'open' row costs one
-// reverted release (NoSuchDeposit) and nothing else, which is why no function
-// here is consulted before a transfer is allowed — only before one is attempted.
+// chain read (the release asks what the escrow holds before it submits) and
+// nothing else, which is why no function here is consulted before a transfer is
+// allowed — only before one is attempted.
 //
 // It exists because Arc's public RPC refuses an eth_getLogs range wider than
 // ~25k blocks, so "scan the chain for this handle's deposits" is not something a

@@ -36,9 +36,11 @@ import {ReentrancyGuard} from "./security/ReentrancyGuard.sol";
 ///      this contract.
 ///
 ///      TRUST, PLAINLY: the attester decides which address belongs to a handle.
-///      It cannot drain this contract — a signature names one deposit and one
-///      recipient and expires — and a depositor can always {reclaim}. But a
-///      compromised key can misdirect a release. The intended upgrade is to
+///      A compromised key can misdirect a release — and, stated rather than
+///      softened, it can do that to EVERY deposit this contract currently holds,
+///      one signature per id. What it cannot do is take anything this contract
+///      was never given, and it cannot stop a depositor calling {reclaim} first,
+///      which is the whole recovery story. The intended upgrade is to
 ///      move the key inside a TEE, which changes only WHERE THE KEY LIVES: same
 ///      address, same signature, same Solidity. Worth doing once the typical
 ///      balance held here exceeds about a year of instance cost (~$600 at

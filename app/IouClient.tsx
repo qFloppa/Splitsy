@@ -717,8 +717,18 @@ export default function IouClient({ onReceipts }: { onReceipts: () => void }) {
       // An `error` on a 2xx is its 202: the money moved and the row did not, or
       // may not have. walletPost reports 202 as ok, which is why this is read
       // off the body rather than off `outcome.ok`.
+      //
+      // AND AN OK WITH NO DEPOSIT ID IS NOT A DEPOSIT. The multi-leg loops in
+      // app/signed-send.ts give up after MAX_LEGS and report the LAST leg as a
+      // success — an approve, which moves nothing. Every real deposit answers
+      // with an id (or an error saying why it could not), so the absence of both
+      // is the one case that must not reach the ledger as "waiting for @dani".
       const warning =
-        typeof outcome.data.error === "string" ? unrecorded(outcome.data.error, depositId, txHash) : undefined;
+        typeof outcome.data.error === "string"
+          ? unrecorded(outcome.data.error, depositId, txHash)
+          : depositId
+            ? undefined
+            : unrecorded("Splitsy couldn't confirm that deposit went through.", null, txHash);
       return { tx: txHash ? { url: explorerTxUrl(txHash) } : null, escrowed: true, warning };
     }
 
@@ -899,13 +909,23 @@ export default function IouClient({ onReceipts }: { onReceipts: () => void }) {
       // back.
       if (done.warning) setError(done.warning);
       if (plan.kind === "settle" && !done.warning && !reduced()) {
-        void confetti({
-          colors: ["#2775ca", "#3ee6d6", "#17a56b"],
-          origin: { y: 0.5 },
-          particleCount: 110,
-          spread: 68,
-          startVelocity: 36,
-        });
+        // IN ITS OWN try, AND THAT IS NOT DEFENSIVE PROGRAMMING. This sits inside
+        // commit's try, so a throw out of a third-party canvas call would reach
+        // the catch below and run promote() — dropping a row whose money has
+        // already left and handing the sentence back to a user whose natural next
+        // move is to press settle again. Confetti must never be able to cause a
+        // second deposit.
+        try {
+          void confetti({
+            colors: ["#2775ca", "#3ee6d6", "#17a56b"],
+            origin: { y: 0.5 },
+            particleCount: 110,
+            spread: 68,
+            startVelocity: 36,
+          });
+        } catch (confettiErr) {
+          console.error("Confetti failed (the payment did not):", confettiErr);
+        }
       }
       setReload((n) => n + 1);
     } catch (err) {
@@ -1166,7 +1186,13 @@ export default function IouClient({ onReceipts }: { onReceipts: () => void }) {
             // A counterparty the dashboard could only label by address renders
             // as "0xab12…cdef", which is not a handle and can't go back into the
             // sentence. Those rows read; they don't recall.
-            const recallable = !row.label.includes("…") && state !== "pending";
+            //
+            // NEITHER DO THE ESCROW ROWS. Their money has already left the
+            // sender's wallet, and a recall puts the sentence back in the
+            // composer — where pressing settle again deposits a SECOND time for
+            // the same IOU. The "not recorded — don't resend" row offering a
+            // resend was the sharpest version of that.
+            const recallable = !row.label.includes("…") && state !== "pending" && !state?.startsWith("escrow");
             return (
               // A div, not a button: the tx link is interactive content, and
               // nesting that inside a button is invalid and untappable. The

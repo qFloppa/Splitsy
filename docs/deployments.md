@@ -381,11 +381,15 @@ Escrow release pass for <provider>:<handle> failed (login continues, user <id>):
 **A reclaimed deposit's index row stays `status = 'open'` forever.** The table's
 check constraint has only `open` and `released` (`schema-escrow-deposits.sql:24`)
 and nothing watches for `Reclaimed`, so a deposit its sender has taken back
-still looks open to `getOpenDeposits` and every later sign-in retries it. Each
-attempt reverts `NoSuchDeposit` and lands as the first log line above. That is
-the design working, not breakage: the row is an index of what is worth trying,
-never an authority on whether money may move, and the contract is the authority.
-Do not read the table as tracking reclaims — it does not.
+still looks open to `getOpenDeposits` and every later sign-in retries it. The
+retry costs a chain read and no gas: the relay asks the escrow what it holds
+before it submits anything (`lib/escrow-release.ts`), and a deposit that reads
+zero is refused there rather than sent to revert on chain — Arc charges gas in
+USDC for a revert, so the releaser would otherwise pay for that same refusal at
+every sign-in of that handle, forever. The refusal lands as the first log line
+above. That is the design working, not breakage: the row is an index of what is
+worth trying, never an authority on whether money may move, and the contract is
+the authority. Do not read the table as tracking reclaims — it does not.
 
 **`NEXT_PUBLIC_HANDLE_ESCROW_ADDRESS` is inlined at build time, and the two rails
 must agree on it.** As with the banner above, a value present at build is

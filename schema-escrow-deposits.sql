@@ -30,10 +30,15 @@ create table if not exists escrow_deposits (
 );
 
 -- The lookup login performs: "is anything waiting for this handle?"
+-- `handle` plain rather than `lower(handle)`: every writer goes through
+-- normalizeHandle (lib/escrow-deposits-repo.ts), so the column IS already
+-- lowercased — and an expression index cannot serve the `handle = $2` filter
+-- PostgREST actually sends.
 create index if not exists idx_escrow_deposits_open
-  on escrow_deposits (provider, lower(handle))
+  on escrow_deposits (provider, handle)
   where status = 'open';
 
--- Deny-all to the anon and authenticated roles, matching every other table in
--- this project: no policies, and the service role bypasses RLS.
+-- Deny-all to the anon and authenticated roles, matching the newest tables in
+-- this project (schema-privy-wallets.sql): no policies, and the service role
+-- bypasses RLS.
 alter table escrow_deposits enable row level security;

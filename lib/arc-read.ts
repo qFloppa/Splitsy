@@ -503,10 +503,16 @@ export function isHandleEscrowConfigured() {
  * `amount === 0n` is the contract's own "no such deposit" — both exits `delete`
  * the struct, so released and reclaimed deposits read as zero too. Callers treat
  * that as absent rather than as a deposit of nothing.
+ *
+ * `escrowAddress` defaults to this deployment's escrow, which is what the
+ * recording route wants — it refuses any other address before it gets here. The
+ * release path passes the ROW'S OWN address instead: ids restart at 1 in every
+ * deployment, so reading id 3 at the wrong escrow answers about somebody else's
+ * money.
  */
-export async function getEscrowDepositOnchain(id: bigint) {
+export async function getEscrowDepositOnchain(id: bigint, escrowAddress: `0x${string}` = HANDLE_ESCROW_ADDRESS) {
   const r = await publicClient.readContract({
-    address: HANDLE_ESCROW_ADDRESS,
+    address: escrowAddress,
     abi: HANDLE_ESCROW_ABI,
     functionName: "deposits",
     args: [id],

@@ -14,10 +14,11 @@
 // sender at all — it is used in-process to sign and then dropped. The rejected
 // alternative was a stored "owner" address the contract consults, which folds
 // the signer and the sender into one key and leaves the whole escrow one stolen
-// hot key away from being drained. What this design does NOT concede: a
-// compromised attester key still cannot drain anything, because a signature
-// names one deposit, one recipient and one expiry — the worst it can do is
-// misdirect a single deposit, once, before that deadline passes.
+// hot key away from being drained. What this design does NOT concede: money
+// this escrow was never given, and a depositor's {reclaim}, which no signature
+// can block. What it DOES concede, said plainly rather than softened: a stolen
+// attester key can misdirect every deposit the escrow currently holds, one
+// signature per id. Treat this key as money.
 //
 // THE RELEASER WALLET NEEDS USDC, AND NOT FOR THE AMOUNT BEING RELEASED.
 // Arc charges gas in USDC, so the `splitsy`/`escrow-releaser` wallet this relays
@@ -121,6 +122,21 @@ const realDeps: ReleaseDeps = {
     // reaches for whichever wallet SDK this deployment runs, and a login should
     // only load that when there is actually a release to send.
     const { executeContract, getOrCreateWallet } = await import("./wallet-provider.ts");
+    const { getEscrowDepositOnchain } = await import("./arc-read.ts");
+
+    // ASK BEFORE PAYING TO BE TOLD NO. A row stays 'open' forever when its
+    // deposit left by another door — reclaimed by its sender, or released on an
+    // attempt whose bookkeeping write failed — and nothing watches for either.
+    // Submitting the release anyway means a transaction that reverts with
+    // NoSuchDeposit, and Arc charges gas in USDC for a revert, so the releaser
+    // would pay for that same refusal on every later sign-in of this handle,
+    // forever. A read costs nothing and answers the same question: zero is the
+    // contract's own "gone", because both exits delete the struct.
+    const held = await getEscrowDepositOnchain(BigInt(depositId), escrowAddress as `0x${string}`);
+    if (held.amount === 0n) {
+      throw new Error(`Deposit ${depositId} is no longer held by ${escrowAddress} — nothing to release`);
+    }
+
     const payload = JSON.parse(data) as ReleasePayload;
     const callData = encodeRelease(
       BigInt(depositId),
@@ -200,11 +216,13 @@ export async function releaseEscrowForHandle(
         await deps.markReleased(deposit.escrow_address, deposit.deposit_id, txHash);
       } catch (releaseErr) {
         // Reads as expected rather than alarming, because on this rail it often
-        // IS expected: a reclaimed deposit keeps its 'open' row forever (the
-        // table's status constraint has only 'open' and 'released' and nothing
-        // watches for Reclaimed), so NoSuchDeposit on a stale row is the design
-        // working, not breakage. Nothing to clean up and nothing to retry here —
-        // the row stays 'open' and the next sign-in runs this same pass.
+        // IS expected: a deposit that left by another door — reclaimed by its
+        // sender, or released on an attempt whose row write failed — keeps its
+        // 'open' row forever (the table's status constraint has only 'open' and
+        // 'released' and nothing watches for Reclaimed), so "no longer held" on a
+        // stale row is the design working, not breakage. Nothing to clean up and
+        // nothing to retry here — the row stays 'open' and the next sign-in runs
+        // this same pass, which costs a chain read and no gas.
         console.error(
           `Escrow release for ${provider}:${handle} failed for deposit ${deposit.deposit_id} (login continues):`,
           releaseErr,
