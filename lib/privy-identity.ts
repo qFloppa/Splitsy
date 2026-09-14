@@ -104,8 +104,11 @@ export function privyProfile(accounts: readonly PrivyLinkedAccount[]): PrivyProf
 // `connector_type: "embedded"` is the whole filter. A Privy user may also have
 // linked a browser wallet (type "wallet", connector_type "injected"), and paying
 // from that is not what this stack does: the embedded wallet is the one Privy
-// created and can prompt to sign. A pregenerated wallet appears here on first
-// login, which is what makes tagging a stranger work without a sweep.
+// created and can prompt to sign. NOTE: a pregenerated wallet does NOT reappear
+// here on the tagged person's first login — the pre-mint is a separate Privy user
+// and nothing links the two (lib/privy-wallet.ts pregenerateWallet). This reads
+// the embedded wallet of whichever user it is handed; it is the pre-mint's own
+// user at creation, and the real login's user afterwards.
 export function privyEmbeddedWallet(
   accounts: readonly PrivyLinkedAccount[],
 ): { walletId: string; address: string } | null {

@@ -849,11 +849,12 @@ export const walletSpec = (namespace: string, idempotencyKey: string) => ({
 // type, and Privy does not treat them as the same person. Measured on Preview
 // 2026-09-13: one handle, pre-mint user `uhcr6ber15wc93hex5mqrabt` at
 // `0x767C0d…1C76`, real login user `ixejhxkci1dswp709vy728z2` at `0x867aB1…3700`.
-// The SDK cannot close that gap afterwards either — it exposes `create`,
-// `delete`, `unlinkLinkedAccount` and the `getBy*` lookups, but NO LINK METHOD
-// (`node_modules/@privy-io/node/resources/users/users.d.ts:20-240`). Identity
-// must be present at creation or never. 3.11 USDC went to addresses like these
-// and is unrecoverable. The full record is
+// The SDK cannot close that gap afterwards either. Its whole `Users` resource is
+// `create`, `list`, `delete`, twelve `getBy*` lookups, `pregenerateWallets`,
+// `search`, `setCustomMetadata` and `unlinkLinkedAccount`
+// (`node_modules/@privy-io/node/resources/users/users.d.ts:17-243`) — there is NO
+// LINK METHOD, only its opposite. Identity must be present at creation or never.
+// 3.11 USDC went to addresses like these and is unrecoverable. The full record is
 // docs/superpowers/specs/2026-09-13-handle-escrow-design.md ("Root cause").
 //
 // SO THE ESCROW-ORPHANING GAP app/api/wallet/provision/route.ts marks `ponytail:`

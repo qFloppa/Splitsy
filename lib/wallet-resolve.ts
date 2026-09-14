@@ -21,11 +21,16 @@ async function defaultMintPending(provider: IdentityProvider, handle: string): P
   const { getOrCreateWallet, walletProviderLabel, walletUiName } = await import("./wallet-provider.ts");
   const norm = normalizePendingHandle(handle);
 
-  // ON THE PRIVY-UI STACK THE WALLET IS THEIRS FROM CREATION. Privy makes a user
-  // account keyed on this handle and an embedded wallet inside it, and when that
-  // person finally signs in and links a real account, the same wallet appears in
-  // theirs. So there is no holding address and no sweep: the row below stops being
-  // a record of a wallet Splitsy holds and becomes a pointer to one it never did.
+  // ON THE PRIVY-UI STACK THIS PRE-MINT STRANDS THE MONEY — the same bug the
+  // holding-wallet sweep had, in a friendlier shape. It was written believing the
+  // wallet Privy keys on this handle "appears" in the tagged person's account when
+  // they sign in and link a real account, so there would be no holding address and
+  // no sweep. NOTHING PERFORMS THAT LINK AND NOTHING CAN: a pre-mint is a
+  // `custom_auth` account, a later email or social login is a DIFFERENT Privy user,
+  // and the SDK has no method to merge them (measured — lib/privy-wallet.ts
+  // pregenerateWallet, and docs/superpowers/specs/2026-09-13-handle-escrow-design.md).
+  // The settle rail no longer comes here; it escrows against the handle instead.
+  // The bill and recurring routes still do, and still strand, until spec §3.
   //
   // Gated on WALLET_UI rather than WALLET_PROVIDER because the handover only works
   // if Privy is also the login — a wallet inside a Privy account is unreachable to

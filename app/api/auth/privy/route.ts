@@ -62,11 +62,16 @@ export async function POST(request: NextRequest) {
   // THE WALLET IS WHATEVER PRIVY SAYS IT IS. Not minted here, not swept, not
   // adopted by guesswork: the embedded wallet in Privy's own answer is the one the
   // browser can sign with, so it is the only address this row may point at. It
-  // covers all three arrivals at once — a brand-new user whose wallet was created
-  // at login, an existing Splitsy account getting its first embedded wallet, and a
-  // stranger who was tagged before they joined and whose PREGENERATED wallet Privy
-  // attached to their account on first login. Only the last one has a balance
-  // already, and it needs no sweep because the address never changed hands.
+  // covers both arrivals at once — a brand-new user whose wallet was created at
+  // login, and an existing Splitsy account getting its first embedded wallet.
+  //
+  // WHAT IT DOES NOT COVER, contrary to what this comment used to say: a stranger
+  // tagged before they joined does NOT arrive here carrying their pregenerated
+  // wallet. That pre-mint is a separate `custom_auth` Privy user and nothing links
+  // it to this login, so the address below is a NEW one and the pre-mint's balance
+  // stays where it is — measured, see lib/privy-wallet.ts pregenerateWallet. Money
+  // owed to such a person is escrowed against their handle instead and released by
+  // releaseEscrowForHandle in the shared login tail (lib/oauth-callback.ts).
   //
   // IT MAY NOT BE THERE YET, AND THAT IS NORMAL. `createOnLogin` builds the wallet
   // in the browser after authentication, so the first call of a fresh signup can

@@ -329,7 +329,10 @@ is `docs/superpowers/specs/2026-09-13-handle-escrow-design.md`.
 
 **Three variables, and only one of them is a client value.**
 `NEXT_PUBLIC_HANDLE_ESCROW_ADDRESS` is the deployed escrow both settle rails
-name — the browser's deposit rail and the route that records it. Unset means
+name: the server rail, which spends the signed-in user's USDC and writes its own
+index row (`app/api/escrow/deposit`, singular), and the browser-wallet rail,
+which deposits without the server's help and then asks
+`app/api/escrow/deposits` (plural) to record it. Unset means
 REFUSE, never "escrow somewhere else": `isHandleEscrowConfigured()`
 (`lib/arc-read.ts:496` server-side, `lib/bill-split-contracts.ts:990` in the
 browser) is checked before either rail spends anything.
