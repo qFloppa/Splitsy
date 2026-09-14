@@ -106,10 +106,13 @@ could sign anything at all from their own wallet and have a route mark a debt pa
 
 **Pregenerated wallets replace the holding-wallet sweep.** Tagging a handle that
 has never signed in creates a Privy user keyed `custom_auth: "x:alice"` with an
-embedded wallet inside it (`lib/wallet-resolve.ts`). When Alice signs in and links
-a real account, that wallet appears in hers — same address, no sweep, and the
-`ponytail:` escrow-orphaning gap in `app/api/wallet/provision/route.ts` has nothing
-to orphan. Privy caps user creation at **240/minute**.
+embedded wallet inside it (`lib/wallet-resolve.ts`). That wallet does **not**
+join Alice's account when she signs in: Privy does not merge a `custom_auth`
+account with a later email or social login, and the SDK has no link method — see
+"The handle escrow" below, and `lib/privy-wallet.ts` `pregenerateWallet` for the
+measurement. The settle rail escrows against the handle instead, so a stranger's
+IOU no longer lands in one of these; the bill rails still mint them. Privy caps
+user creation at **240/minute**.
 
 **The setup ceremony and the export tab disappear.** Both are Splitsy's own
 machinery for a wallet Splitsy minted, and there is no such wallet here. The
@@ -312,6 +315,114 @@ Arc mainnet is not live for either stack: see
 `docs/superpowers/specs/2026-09-01-privy-wallet-stack-design.md` "Deliberately
 deferred". Handing `splitsy.xyz` to the Privy stack is Task 8 of
 `docs/superpowers/plans/2026-09-01-privy-wallet-stack.md` and has not happened.
+
+---
+
+## The handle escrow
+
+`HandleEscrow` is another shared contract, deployed by
+`npm run deploy:arc:handle-escrow`. It holds USDC for someone who has no wallet
+yet. Both settle rails deposit into it when the recipient has never signed in,
+and the first sign-in as that handle releases the money to the wallet they
+actually sign in with. The design, including what it deliberately does not fix,
+is `docs/superpowers/specs/2026-09-13-handle-escrow-design.md`.
+
+**Three variables, and only one of them is a client value.**
+`NEXT_PUBLIC_HANDLE_ESCROW_ADDRESS` is the deployed escrow both settle rails
+name — the browser's deposit rail and the route that records it. Unset means
+REFUSE, never "escrow somewhere else": `isHandleEscrowConfigured()`
+(`lib/arc-read.ts:496` server-side, `lib/bill-split-contracts.ts:990` in the
+browser) is checked before either rail spends anything.
+`ESCROW_ATTESTER_ADDRESS` is read only by the deploy script
+(`scripts/deploy-handle-escrow.ts:4`), which refuses to deploy without it — the
+attester cannot be corrected later, so a wrong one here is a contract that can
+never release anything. The script prints the address to copy into
+`NEXT_PUBLIC_HANDLE_ESCROW_ADDRESS`.
+`ESCROW_ATTESTER_PRIVATE_KEY` is used in process by `lib/escrow-release.ts:88`
+to sign an EIP-712 `Release(id, to, deadline)` and is then dropped — it never
+has to be a transaction sender, which is the point of the permissionless
+`release` entry point.
+
+**The attester is immutable in the deployed contract.** There is no setter and
+no owner (`contracts/HandleEscrow.sol:87-88`). Rotating the key is not a
+variable change: it needs a redeploy, and until then any deposit already held
+is releasable only by the old key. If the key is compromised, the recovery path
+is that depositors take their money back with `reclaim` — unconditional,
+available any time before a release, callable only by the depositor — and the
+contract is redeployed under a new attester. That only works because reclaim is
+unconditional; the two decisions hold each other up.
+
+**The releaser wallet needs USDC, and not for the amount being released.**
+Releases are relayed by `getOrCreateWallet("splitsy", "escrow-releaser")`
+(`lib/escrow-release.ts:133`), and Arc charges gas in USDC. If it runs dry,
+releases stall **silently**: deposits stay safe and reclaimable, the login still
+succeeds, and money simply stops arriving — nothing surfaces an error to the
+user. The wallet is created lazily at the first relay, so before that it has no
+address to look up:
+
+- **Privy stack** — its address is a row in `privy_wallets` (`namespace =
+  'splitsy'`, `key = 'escrow-releaser'`).
+- **Circle stack** — keyed by `refId = "splitsy:escrow-releaser"`
+  (`lib/circle-dcw.ts:208`).
+
+Fund it the way the other server wallets are funded, from
+https://faucet.circle.com. Two log lines mean "the money did not move, and the
+login still succeeded" — both are non-fatal by design, because a release runs
+inside a login and must cost the user nothing:
+
+```
+Escrow release for <provider>:<handle> failed for deposit <id> (login continues):
+Escrow release pass for <provider>:<handle> failed (login continues, user <id>):
+```
+
+**A reclaimed deposit's index row stays `status = 'open'` forever.** The table's
+check constraint has only `open` and `released` (`schema-escrow-deposits.sql:24`)
+and nothing watches for `Reclaimed`, so a deposit its sender has taken back
+still looks open to `getOpenDeposits` and every later sign-in retries it. Each
+attempt reverts `NoSuchDeposit` and lands as the first log line above. That is
+the design working, not breakage: the row is an index of what is worth trying,
+never an authority on whether money may move, and the contract is the authority.
+Do not read the table as tracking reclaims — it does not.
+
+**`NEXT_PUBLIC_HANDLE_ESCROW_ADDRESS` is inlined at build time, and the two rails
+must agree on it.** As with the banner above, a value present at build is
+hard-coded into both the browser bundle and the server chunk, so within one build
+they cannot disagree — and a saved variable with no rebuild changes **neither**
+side. Two ways the disagreement the recording route guards against still happens:
+
+- **A client running an older build.** A tab left open across a redeploy, or a
+  cached chunk, still names the escrow its own build saw. The deposit lands
+  there, and the current server records only its own escrow and answers
+  `{ "error": "That isn't this deployment's escrow." }`
+  (`app/api/escrow/deposits/route.ts:53-54`), so the money sits on chain with no
+  index row — reclaimable by its sender and by nobody else.
+- **The variable unset at build time.** Then the reference survives in the server
+  chunk as a live read while the browser is frozen on the zero address, so the
+  browser rail refuses every escrow (`isHandleEscrowConfigured()` is false there)
+  while the server considers itself configured. Setting the variable afterwards
+  does nothing in the browser, so the rails stay split until a rebuild.
+
+**Set it before the build and redeploy to change it.** Same rule, same reason, as
+the banner section above.
+
+**What is still broken after this plan.** Bills and recurring tabs still bind a
+stranger's share to a pre-minted address (`pregenerateWallet`,
+`defaultMintPending`, `pending_wallets`), so when that person signs in with a
+different wallet the chain still reads them as not a participant — the answer is
+literally "You're not a participant on this bill."
+(`app/api/onchain-bills/[billId]/pay/route.ts:54`). No money is stranded there,
+and it is not repairable after creation: participants are set only in
+`createBill`, and `participantList` is written once and never edited
+(`contracts/BillSplitRegistry.sol:340`, read back at `:666`). Fixing it is §3 of
+the design doc, and §3 is blocked on an unanswered product decision — whether an
+on-chain bill's `totalOwed` excludes the stranger's share, or on-chain creation
+waits until every participant has a wallet. Until that is answered, the bill rail
+behaves exactly as it did before this plan.
+
+**The 3.11 USDC already stranded is unrecoverable.** It sits in three
+user-owned wallets the server gets 401 on for every signing path, and the Privy
+Node SDK has no method to link them to the accounts their owners actually sign in
+with. Testnet; re-send after the fix.
 
 ---
 

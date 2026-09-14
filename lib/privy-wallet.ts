@@ -829,7 +829,10 @@ export const walletSpec = (namespace: string, idempotencyKey: string) => ({
   idempotency_key: idempotencyKey,
 });
 
-// A wallet for someone who has not arrived yet — THEIRS from creation.
+// A wallet for someone who has not arrived — AND, AS MEASURED, MAY NEVER BE ABLE
+// TO. Kept only for the bill routes, which still need an address for a stranger;
+// the settle rail escrows against the handle instead (lib/wallet-resolve.ts,
+// and the design doc named below).
 //
 // The problem this solves is old: money needs an address the moment a bill tags
 // @alice, and no key of Alice's can exist before she has ever signed in. The
@@ -837,23 +840,50 @@ export const walletSpec = (namespace: string, idempotencyKey: string) => ({
 // when she turned up — two addresses, a sweep that can fail, and a window in
 // which her money sat in our wallet. Privy's answer is to create the PRIVY USER
 // at the same time: the wallet is attached to an account keyed by a string only
-// we know, and when Alice signs in and links a real account to it, the wallet
-// "appears" in hers. Same address throughout, no sweep, no holding.
+// we know, and it belongs to that account from creation.
 //
-// So the escrow-orphaning gap app/api/wallet/provision/route.ts marks `ponytail:`
-// does not exist on this path — the address a bill binds a debt to IS the user's
-// wallet, and there is nothing left to orphan.
+// WHAT THIS COMMENT USED TO CLAIM, AND WHY IT WAS WRONG. It said the wallet
+// "appears" in Alice's account "when Alice signs in and links a real account to
+// it." NOTHING PERFORMS THAT LINK AND NOTHING CAN. A pre-mint is a `custom_auth`
+// account; a later email or social login is a different account of a different
+// type, and Privy does not treat them as the same person. Measured on Preview
+// 2026-09-13: one handle, pre-mint user `uhcr6ber15wc93hex5mqrabt` at
+// `0x767C0d…1C76`, real login user `ixejhxkci1dswp709vy728z2` at `0x867aB1…3700`.
+// The SDK cannot close that gap afterwards either — it exposes `create`,
+// `delete`, `unlinkLinkedAccount` and the `getBy*` lookups, but NO LINK METHOD
+// (`node_modules/@privy-io/node/resources/users/users.d.ts:20-240`). Identity
+// must be present at creation or never. 3.11 USDC went to addresses like these
+// and is unrecoverable. The full record is
+// docs/superpowers/specs/2026-09-13-handle-escrow-design.md ("Root cause").
+//
+// SO THE ESCROW-ORPHANING GAP app/api/wallet/provision/route.ts marks `ponytail:`
+// IS HERE, NOT ABSENT FROM HERE. The address a bill binds a debt to is one its
+// owner cannot reach, so the position is orphaned at birth — and a bill sends
+// nothing to that address, so there is no balance for a sweep to carry across.
+// It reads as "You're not a participant on this bill." (spec, "Two bugs, not
+// one").
+//
+// THE SETTLE RAIL NO LONGER USES THIS FUNCTION. It asks
+// lookupParticipantAddress (lib/wallet-resolve.ts) and, when that answers null,
+// deposits into HandleEscrow against the handle instead of inventing an address.
+// The bill and recurring rails still come through here and still bind a
+// stranger's share to a dead address — that is spec §3, not yet built. Deleting
+// this function is the last step of §3.
 //
 // KEYED ON THE HANDLE, deliberately, because at tagging time the handle is the
 // only thing known about this person. custom_auth is Privy's arbitrary-id slot
 // and takes it verbatim; the "<provider>:<handle>" shape matches the refId
-// convention the rest of the wallet code uses.
+// convention the rest of the wallet code uses. One consequence, measured in the
+// spec: the pre-mint is keyed to ONE identifier, so @dani on X and dani@work.com
+// are two users and two wallets that never merge.
 //
 // NO OWNER QUORUM AND NO ADDITIONAL SIGNER. An embedded wallet is controlled by
 // the Privy user it belongs to, so naming our quorum would be reintroducing the
-// custody this replaces. That is also why the row this produces is recorded as
-// claimed from the first moment (app/api/auth/privy/route.ts): the server cannot
-// sign for it and must not try.
+// custody this replaces. It is also why the stranded money above is
+// unrecoverable rather than merely stuck: the server gets 401 on every signing
+// path. That is why the row this produces is recorded as claimed from the first
+// moment (app/api/auth/privy/route.ts): the server cannot sign for it and must
+// not try.
 export async function pregenerateWallet(customUserId: string): Promise<ProviderWallet> {
   const user = await privy()
     .users()
