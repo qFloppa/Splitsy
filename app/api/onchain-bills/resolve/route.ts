@@ -44,13 +44,22 @@ export async function POST(request: Request) {
       // Read-only, so unlike resolveParticipants' deliberately sequential walk
       // there is no race to mint the same handle twice — these can all go at once.
       const resolved = await Promise.all(
-        clean.map(async (row) => ({
-          provider: row.provider,
-          // Normalized, exactly as the minting path returns it: one route, one
-          // handle contract, so a caller keying a map by handle can't drift.
-          handle: normalizePendingHandle(row.handle),
-          address: await lookupParticipantAddress(row.provider, row.handle),
-        })),
+        clean.map(async (row) => {
+          // Normalize ONCE and look up the same string we report. validHandle
+          // trims before matching, so " alice " reaches here untrimmed, and
+          // getUserByProviderHandle does not trim — the raw form would miss a
+          // real user's row, answer null, and escrow money away from someone who
+          // already has a wallet. getPendingWallet normalizes internally, so the
+          // miss would land only on the user half and look like "never signed in".
+          const handle = normalizePendingHandle(row.handle);
+          return {
+            provider: row.provider,
+            // Normalized, exactly as the minting path returns it: one route, one
+            // handle contract, so a caller keying a map by handle can't drift.
+            handle,
+            address: await lookupParticipantAddress(row.provider, handle),
+          };
+        }),
       );
       return Response.json({ resolved });
     }

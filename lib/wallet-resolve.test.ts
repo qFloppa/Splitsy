@@ -66,6 +66,17 @@ test("lookup finds a real user's wallet", async () => {
   assert.equal(address, "0xUSER");
 });
 
+test("lookup falls back to a pending wallet", async () => {
+  // Still not null: a handle that already has a pending wallet must resolve to
+  // it, or the settle rail would escrow for someone it can already pay.
+  const address = await lookupParticipantAddress("email", "dani@example.com", {
+    getUserByProviderHandle: async () => null,
+    getPendingWallet: async () => ({ wallet_address: ADDR_PENDING }),
+    mintPending: async () => { throw new Error("must not mint"); },
+  });
+  assert.equal(address, ADDR_PENDING);
+});
+
 test("lookup answers null for someone who has never signed in", async () => {
   // The whole point: no wallet is minted, so no money can be sent to an address
   // its supposed owner cannot reach.
