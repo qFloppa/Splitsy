@@ -327,6 +327,28 @@ and the first sign-in as that handle releases the money to the wallet they
 actually sign in with. The design, including what it deliberately does not fix,
 is `docs/superpowers/specs/2026-09-13-handle-escrow-design.md`.
 
+**Deployed on Arc Testnet, 2026-09-14:**
+
+```
+HandleEscrow  0x9820f2889710a2a5190187993c31ff1d4f15efa5
+attester      0xEE42a492B183CdFf04439F2Cb6A9c49F857F70AC   immutable
+usdc          0x3600000000000000000000000000000000000000   immutable
+```
+
+Verified at deploy time: both EIP-712 hashes recomputed from
+`lib/handle-escrow.ts` match the contract (`RELEASE_TYPEHASH` `0xf49662…71a5c`,
+`DOMAIN_SEPARATOR` `0x307213…4e135`), and a deposit→release and a
+deposit→reclaim both settled on chain. **Deposit ids 1 and 2 belong to that
+smoke test**, and **ids 3 and 4 to the relay probe** of 2026-09-15 that ran a
+real release through `releaseEscrowForHandle` on each stack. None of the four
+has an `escrow_deposits` row, which is correct — nothing indexed them.
+`nextDepositId` is 5.
+
+On this deployment the attester key is also the deployer key. That is against
+the plan's advice (it should be a fresh key holding nothing) and was a deliberate
+call for a testnet run: if the key leaks, the deployer's balance goes with it.
+Changing the attester means redeploying — there is no setter.
+
 **Three variables, and only one of them is a client value.**
 `NEXT_PUBLIC_HANDLE_ESCROW_ADDRESS` is the deployed escrow both settle rails
 name: the server rail, which spends the signed-in user's USDC and writes its own
@@ -347,7 +369,7 @@ has to be a transaction sender, which is the point of the permissionless
 `release` entry point.
 
 **The attester is immutable in the deployed contract.** There is no setter and
-no owner (`contracts/HandleEscrow.sol:87-88`). Rotating the key is not a
+no owner (`contracts/HandleEscrow.sol:88-90`). Rotating the key is not a
 variable change: it needs a redeploy, and until then any deposit already held
 is releasable only by the old key. If the key is compromised, the recovery path
 is that depositors take their money back with `reclaim` — unconditional,
@@ -357,21 +379,42 @@ unconditional; the two decisions hold each other up.
 
 **The releaser wallet needs USDC, and not for the amount being released.**
 Releases are relayed by `getOrCreateWallet("splitsy", "escrow-releaser")`
-(`lib/escrow-release.ts:133`), and Arc charges gas in USDC. If it runs dry,
+(`lib/escrow-release.ts`), and Arc charges gas in USDC. If it runs dry,
 releases stall **silently**: deposits stay safe and reclaimable, the login still
 succeeds, and money simply stops arriving — nothing surfaces an error to the
-user. The wallet is created lazily at the first relay, so before that it has no
-address to look up:
+user.
+
+**Each stack has its OWN releaser** — same namespace and key, different backend,
+different address. Funding the wrong one is indistinguishable from funding none,
+so both were funded with 5 USDC on 2026-09-15, from the deployer rather than the
+faucet:
+
+```
+privy    0xc910B8E376d19e653e7096913c1EBbe238086191   5 USDC   walletId k88pecv1wzywd2l9waxjolpp
+circle   0xdbcd0e96649257eb224bcd6954d49069624f70ac   5 USDC
+```
+
+**How much a release actually costs, measured on 2026-09-15 rather than
+assumed.** One real release through `releaseEscrowForHandle` on each stack: the
+Privy releaser went 5000000 → 4998596 units (**0.001404 USDC**), and the Circle
+releaser went 5000000 → 5000000 (**nothing**). A Privy wallet is an EOA and pays
+its own gas; Circle's gas station covers the SCA's. So at this rate 5 USDC is on
+the order of three thousand releases on Privy and does not deplete at all on
+Circle — but that is one transaction, not a guarantee, and no code detects the
+difference, so keep both funded. The failure it would otherwise cause is the
+silent one described above.
+
+To look one up later:
 
 - **Privy stack** — its address is a row in `privy_wallets` (`namespace =
   'splitsy'`, `key = 'escrow-releaser'`).
 - **Circle stack** — keyed by `refId = "splitsy:escrow-releaser"`
   (`lib/circle-dcw.ts:208`).
 
-Fund it the way the other server wallets are funded, from
-https://faucet.circle.com. Two log lines mean "the money did not move, and the
-login still succeeded" — both are non-fatal by design, because a release runs
-inside a login and must cost the user nothing:
+Top it up the way the other server wallets are funded — an ERC-20 `transfer`
+from the deployer, or https://faucet.circle.com. Two log lines mean "the money
+did not move, and the login still succeeded" — both are non-fatal by design,
+because a release runs inside a login and must cost the user nothing:
 
 ```
 Escrow release for <provider>:<handle> failed for deposit <id> (login continues):
@@ -401,7 +444,7 @@ side. Two ways the disagreement the recording route guards against still happens
   cached chunk, still names the escrow its own build saw. The deposit lands
   there, and the current server records only its own escrow and answers
   `{ "error": "That isn't this deployment's escrow." }`
-  (`app/api/escrow/deposits/route.ts:53-54`), so the money sits on chain with no
+  (`app/api/escrow/deposits/route.ts:54`), so the money sits on chain with no
   index row — reclaimable by its sender and by nobody else.
 - **The variable unset at build time.** Then the reference survives in the server
   chunk as a live read while the browser is frozen on the zero address, so the
