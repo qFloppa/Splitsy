@@ -39,4 +39,22 @@ export default defineConfig({
       accounts: [configVariable("DEPLOYER_PRIVATE_KEY")],
     },
   },
+  // Arc is not in hardhat-verify's built-in chain list, so the explorer has to be
+  // named here or `hardhat verify` has nowhere to send the source. Arcscan is
+  // Blockscout, which takes no API key.
+  chainDescriptors: {
+    5042002: {
+      name: "Arc Testnet",
+      blockExplorers: {
+        blockscout: {
+          name: "Arcscan",
+          url: "https://testnet.arcscan.app",
+          apiUrl: "https://testnet.arcscan.app/api",
+        },
+      },
+    },
+  },
+  verify: {
+    blockscout: { enabled: true },
+  },
 });

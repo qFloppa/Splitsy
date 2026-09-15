@@ -335,6 +335,28 @@ attester      0xEE42a492B183CdFf04439F2Cb6A9c49F857F70AC   immutable
 usdc          0x3600000000000000000000000000000000000000   immutable
 ```
 
+**Source verified on Arcscan, 2026-09-15** —
+https://testnet.arcscan.app/address/0x9820f2889710a2a5190187993c31ff1d4f15efa5
+— a full match against `v0.8.36+commit.8a079791`, `cancun`, optimizer **off**,
+which is the `default` solidity profile in `hardhat.config.ts` rather than
+`production`. That is what `npm run deploy:arc:handle-escrow` uses, since it
+passes no `--build-profile`; verifying against `production` would not have
+matched. Arcscan is Blockscout and wants no API key, but Arc is not in
+hardhat-verify's built-in chain list, so the explorer is named by the
+`chainDescriptors` entry for 5042002 in `hardhat.config.ts`. Re-run for any
+contract with:
+
+```bash
+node --env-file=.env.local ./node_modules/hardhat/dist/src/cli.js verify \
+  --network arcTestnet <address> <constructor args…>
+```
+
+Verification fell back to the **full solc input** — the minimal one was
+rejected — so the explorer also lists the test and mock contracts from the same
+compilation unit (`HandleEscrow.t.sol`, `MockUSDC.sol`, `Test.sol`). Cosmetic;
+the match is still full, and the constructor arguments read back as the usdc and
+attester addresses above, in that order.
+
 Verified at deploy time: both EIP-712 hashes recomputed from
 `lib/handle-escrow.ts` match the contract (`RELEASE_TYPEHASH` `0xf49662…71a5c`,
 `DOMAIN_SEPARATOR` `0x307213…4e135`), and a deposit→release and a
