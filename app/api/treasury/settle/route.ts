@@ -23,7 +23,8 @@ import { after } from "next/server";
 import { getSessionUser } from "@/lib/session";
 import { verifyWalletUnlock, WALLET_UNLOCK_COOKIE } from "@/lib/session-core";
 import { encodeApprove, encodeExecuteBatch, encodeSettle } from "@/lib/registry-calldata";
-import { executeContractOnArc, InsufficientFundsError } from "@/lib/circle-dcw";
+import { userSignedLeg, type UserSignedBody } from "@/lib/user-signed";
+import { executeContract, InsufficientFundsError, walletProviderName } from "@/lib/wallet-provider";
 import {
   REGISTRY_ADDRESS,
   getBillIdsForParticipantOnchain,
@@ -45,6 +46,27 @@ const usdc = (v: bigint) => (Number(v) / 1e6).toString();
 export async function POST(request: Request) {
   const user = await getSessionUser();
   if (!user) return Response.json({ error: "Not signed in" }, { status: 401 });
+
+  // The whole route is ONE executeBatch sent to the wallet's own address, which
+  // only a Circle SCA can execute. The Privy stack's wallets are EOAs — and an
+  // EOA does not revert on calldata it cannot run, it IGNORES it. Measured on
+  // Arc rather than reasoned about: tx
+  // 0x5870092926417f148363962be768594b7e555bfd7d7f6e8d82f1547b00dadf95 sent 324
+  // bytes of executeBatch calldata to a Privy wallet's own address and came back
+  // status success, 25290 gas, no logs, with the batch's one approve leg simply
+  // not done. receiptToState reads that as "COMPLETE", so without this refusal
+  // the route would answer {ok: true} naming every leg as settled and then queue
+  // ERC-8004 payment feedback for debts nobody paid, off money that never moved.
+  //
+  // Refused here, ahead of the unlock prompt and every chain read: a silent
+  // success is not something a later check can undo, and there is no point
+  // asking someone for their PIN to authorise a transaction we must refuse.
+  if (walletProviderName() === "privy") {
+    return Response.json(
+      { error: "Settle net is only available on the Circle wallet stack" },
+      { status: 503 },
+    );
+  }
 
   const secret = process.env.SESSION_SECRET ?? "";
   const unlockToken = (await cookies()).get(WALLET_UNLOCK_COOKIE)?.value ?? "";
@@ -150,7 +172,22 @@ export async function POST(request: Request) {
   //    executeBatch lives on an SCA account).
   let tx: { txHash: string | null };
   try {
-    tx = await executeContractOnArc(walletId, wallet, encodeExecuteBatch(calls));
+    const data = encodeExecuteBatch(calls);
+    // A claimed wallet signs its own settlement. The batch is assembled from
+    // chain reads above on both passes, and the context carries a digest of the
+    // legs — a settlement is many calls in one transaction, so binding only the
+    // wallet would let a ticket for one plan relay against a different one.
+    const signed = await userSignedLeg({
+      body: (body ?? null) as UserSignedBody | null,
+      walletId,
+      userId: user.id,
+      to: wallet,
+      data,
+      context: `settle:${calls.length}:${total.toString()}`,
+    });
+    if (signed && "response" in signed) return signed.response;
+
+    tx = signed ? signed.tx : await executeContract(walletId, wallet, data);
   } catch (err) {
     if (err instanceof InsufficientFundsError) {
       return Response.json({ error: "insufficient_funds" }, { status: 402 });

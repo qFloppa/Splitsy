@@ -11,6 +11,8 @@ interface Vm {
 
   function prank(address caller) external;
 
+  function sign(uint256 privateKey, bytes32 digest) external pure returns (uint8 v, bytes32 r, bytes32 s);
+
   function warp(uint256 timestamp) external;
 }
 

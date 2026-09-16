@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { decideDunning, NUDGE_WINDOW_SECONDS, type DunningInput } from "./dunning.ts";
+import { decideDunning, NUDGE_WINDOW_SECONDS, type DunningAction, type DunningInput } from "./dunning.ts";
 
 const DUE = 1_800_000_000; // an arbitrary fixed Unix second — never Date.now()
 const DAY = 86_400;
@@ -96,4 +96,56 @@ test("never returns an amount for a non-collect action", () => {
     const d = decideDunning(input(), now);
     if (d.action !== "collect") assert.equal(d.amount, 0n);
   }
+});
+
+// A creditor who took sole ownership of their wallet cannot be pulled from by a
+// cron: collectDebt is splitter-only (BillSplitRegistry.sol:431 reverts
+// NotSplitter for anyone else), the splitter IS the creditor, and the server holds
+// no key to their wallet. The rung is unavailable rather than postponed.
+test("a claimed creditor escalates instead of collecting", () => {
+  const input = {
+    dueDate: 1000,
+    remaining: 5_000_000n,
+    hasMandate: true,
+    collectible: 5_000_000n,
+    alreadyLogged: [] as DunningAction[],
+  };
+  // The same inputs still collect for a custodial creditor.
+  assert.equal(decideDunning(input, 2000).action, "collect");
+  // And drop one rung for a claimed one, rather than returning an action whose
+  // transaction would revert after the caller has burned the action slot.
+  const claimed = decideDunning({ ...input, canPull: false }, 2000);
+  assert.equal(claimed.action, "escalate");
+  assert.equal(claimed.reason, "creditor_self_custody");
+  assert.equal(claimed.amount, 0n);
+});
+
+// Absent means true, so every existing caller keeps pulling.
+test("canPull defaults to allowed when the field is absent", () => {
+  const input = {
+    dueDate: 1000,
+    remaining: 5_000_000n,
+    hasMandate: true,
+    collectible: 5_000_000n,
+    alreadyLogged: [] as DunningAction[],
+  };
+  assert.equal(decideDunning(input, 2000).action, "collect");
+  assert.equal(decideDunning({ ...input, canPull: true }, 2000).action, "collect");
+});
+
+// The nudge rung is untouched: a claimed creditor still warns before the due date,
+// because that costs no signature at all.
+test("a claimed creditor still nudges before the due date", () => {
+  const decision = decideDunning(
+    {
+      dueDate: 1_000_000,
+      remaining: 5_000_000n,
+      hasMandate: true,
+      collectible: 5_000_000n,
+      alreadyLogged: [],
+      canPull: false,
+    },
+    1_000_000 - 86_400,
+  );
+  assert.equal(decision.action, "nudge");
 });

@@ -4,6 +4,7 @@ import * as Dialog from "@radix-ui/react-dialog";
 import confetti from "canvas-confetti";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { billUnitsToUsdc } from "@/lib/bill-split-contracts";
+import { typableAmount } from "@/lib/iou";
 import {
   buildSettleItems,
   clearsSection,
@@ -149,13 +150,14 @@ export default function SettleDeck({
     return () => observer.disconnect();
   }, [items]);
 
-  // The settled section stays on the deck through the advance and for the rest of
-  // the session. Unmounting it the instant the payment lands would pull the snap
-  // point out from under the user's thumb mid-scroll, and the registry refresh
-  // that follows drops the debt entirely — so the card is captured here, at the
-  // index it holds, and put back by withHeldSections. Marking it inside the
-  // timeout (rather than on the success render) is also what keeps this out of
-  // the synchronous-setState-in-an-effect trap.
+  // The settled section stays on the deck, under the user, for the rest of the
+  // session — paying does NOT advance the deck. Unmounting it the instant the
+  // payment lands would pull the snap point out from under the user's thumb
+  // mid-scroll, and the registry refresh that follows drops the debt entirely —
+  // so the card is captured here, at the index it holds, and put back by
+  // withHeldSections. Marking it inside the timeout (rather than on the success
+  // render) is also what keeps this out of the synchronous-setState-in-an-effect
+  // trap.
   useEffect(() => {
     if (progressFlow?.status !== "success" || !progressFlow.subjectKey) return;
     const key = progressFlow.subjectKey;
@@ -167,16 +169,10 @@ export default function SettleDeck({
     if (!clearsSection(item, progressFlow)) return;
     const timer = setTimeout(() => {
       setSettled((current) => (current.some((entry) => entry.item.id === key) ? current : [...current, { index, item }]));
-      // The next section *below* this one — querying the deck for the first
-      // undimmed section walks back up to the top of the list instead.
-      const sections = Array.from(deckRef.current?.querySelectorAll("[data-id]") ?? []);
-      const from = sections.findIndex((section) => section.getAttribute("data-id") === key);
-      const next = sections.slice(from + 1).find((section) => section.getAttribute("data-state") !== "settled");
-      next?.scrollIntoView({ behavior: "smooth", block: "start" });
     }, 1200);
     return () => clearTimeout(timer);
     // items is deliberately out: the refresh replaces it mid-timeout, and a
-    // re-run would cancel the advance it is meant to trigger.
+    // re-run would cancel the hold it is meant to record.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [progressFlow?.status, progressFlow?.subjectKey]);
 
@@ -486,6 +482,11 @@ function WalletDebtBody({
                 className="settle-amount"
                 inputMode="decimal"
                 onChange={(event) =>
+                  // Gated live with the app's one amount rule (lib/iou.ts), the
+                  // same one the IOU composer and every poster figure use. type
+                  // ="number" narrows a keyboard but still accepts "1e5", a
+                  // second sign, and decimals past the two this deck can show.
+                  typableAmount(event.target.value) &&
                   deck.setPartialPayments({ ...deck.partialPayments, [item.id]: event.target.value })
                 }
                 type="number"
@@ -641,7 +642,10 @@ function ClaimBody({
                 aria-label={`Amount to collect from bill ${debt.billId.toString()}`}
                 className="settle-amount"
                 inputMode="decimal"
-                onChange={(event) => deck.setClaimAmounts({ ...deck.claimAmounts, [item.id]: event.target.value })}
+                onChange={(event) =>
+                  typableAmount(event.target.value) &&
+                  deck.setClaimAmounts({ ...deck.claimAmounts, [item.id]: event.target.value })
+                }
                 type="number"
                 value={deck.claimAmounts[item.id] ?? claimableLabel}
               />
@@ -764,12 +768,17 @@ function VerifiedSheetBody({
   }
 
   const verified = status === "verified";
+  // No receipt by design (see BillVerification's AuditState) — so the receipt
+  // line is dropped and what was committed is named as what an IOU actually has.
+  const iou = audit.state === "iou";
   return (
     <div style={{ display: "grid", gap: "0.9rem", marginTop: "1.2rem" }}>
       <p className="settle-meta" style={verified ? undefined : { color: "var(--warning-text)" }}>
-        {verified
-          ? "Genuine bill on Arc — the merchant, total, and split shown here are exactly what the creator committed, and can’t have been edited since."
-          : "The details don’t match what was committed on Arc. Don’t pay until the creator re-checks this bill."}
+        {!verified
+          ? "The details don’t match what was committed on Arc. Don’t pay until the creator re-checks this bill."
+          : iou
+            ? "Genuine IOU on Arc — the amount and who owes it are exactly what the creator committed, and can’t have been edited since."
+            : "Genuine bill on Arc — the merchant, total, and split shown here are exactly what the creator committed, and can’t have been edited since."}
       </p>
 
       {verified && dueDate ? (
@@ -778,7 +787,7 @@ function VerifiedSheetBody({
         </p>
       ) : null}
 
-      {verified ? (
+      {verified && !iou ? (
         <p className="settle-meta" style={audit.state === "altered" ? { color: "var(--warning-text)" } : undefined}>
           {audit.state === "checking"
             ? "Checking the total against the receipt…"

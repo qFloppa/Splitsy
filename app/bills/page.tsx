@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import { typableAmount } from "@/lib/iou";
 import type { IdentityProvider } from "@/lib/types";
 import { providerDisplay } from "@/lib/provider-display";
 
@@ -159,7 +160,12 @@ export default function BillsPage() {
               placeholder="USDC"
               inputMode="decimal"
               value={row.amount}
-              onChange={(e) => setRows((rs) => rs.map((r, j) => (j === i ? { ...r, amount: e.target.value } : r)))}
+              // Gated live with the app's one amount rule (lib/iou.ts). This
+              // field took any string at all and handed it to the split maths.
+              onChange={(e) =>
+                typableAmount(e.target.value) &&
+                setRows((rs) => rs.map((r, j) => (j === i ? { ...r, amount: e.target.value } : r)))
+              }
               style={{ ...inputStyle, flex: 1 }}
             />
           </div>

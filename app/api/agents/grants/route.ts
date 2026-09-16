@@ -24,14 +24,14 @@
 // rather than tighten them, and TIGHTENING must never be harder than loosening.
 import { getProvenWalletAccount, getSessionUser } from "@/lib/session";
 import { getAutopayGrant, listAutopayLog, upsertAutopayGrant } from "@/lib/agents-repo";
-import type { AutopayGrant } from "@/lib/autopay";
+import { defaultMoneyMode, type AutopayGrant } from "@/lib/autopay";
 import {
   getAutopayMandateOnchain,
   getUsdcAllowanceOnchain,
   isMandateConfigured,
   MANDATE_ADDRESS,
 } from "@/lib/arc-read";
-import { executeContractOnArc, InsufficientFundsError } from "@/lib/circle-dcw";
+import { executeContract, InsufficientFundsError, walletProviderName } from "@/lib/wallet-provider";
 import { encodeApprove, encodeExecuteBatch, encodeRevokeMandate, encodeSetMandate } from "@/lib/registry-calldata";
 import { getSettler, isSettlerConfigured } from "@/lib/settler";
 
@@ -135,7 +135,7 @@ export async function GET(request: Request) {
   //     from the old flow governs nothing. Reading `enabled` off the chain here
   //     would show Idle for an account whose agent is settling bills, and show
   //     ceilings that nothing is checking against.
-  const funded = (rules?.moneyMode ?? "mandate") === "funded";
+  const funded = (rules?.moneyMode ?? defaultMoneyMode(walletProviderName())) === "funded";
   const chainCaps = !funded && dcwFacts?.enabled ? dcwFacts : null;
 
   const grant: AutopayGrant & { requireBillReview: boolean } = {
@@ -182,7 +182,7 @@ export async function GET(request: Request) {
     // mandate.
     agentAddress: (await resolveAgentAddress().catch(() => null))?.toLowerCase() ?? null,
     // Where BILL money comes from. Not a chain fact — it lives only here.
-    moneyMode: rules?.moneyMode ?? "mandate",
+    moneyMode: rules?.moneyMode ?? defaultMoneyMode(walletProviderName()),
     onchain,
   });
 }
@@ -226,10 +226,10 @@ export async function PUT(request: Request) {
 
   const enabled = raw.enabled === true;
 
-  // Anything that is not exactly 'funded' reads as 'mandate' — the mode where
-  // the CHAIN enforces the caps. A typo must never move someone into the mode
-  // where only this server says no.
-  const moneyMode = raw.moneyMode === "funded" ? "funded" : "mandate";
+  // Anything that is not exactly 'funded' reads as the stack's default — mandate
+  // on circle, where the chain enforces the caps, and funded on privy, whose EOA
+  // wallets cannot execute the approve+setMandate batch at all.
+  const moneyMode = raw.moneyMode === "funded" ? "funded" : defaultMoneyMode(walletProviderName());
 
   // Read before write: debtor_address is not in the upsert payload, but the row
   // type requires it, and a settings save must never disturb the link.
@@ -305,6 +305,15 @@ export async function PUT(request: Request) {
 // Writes the chain only when the on-chain half actually differs from what is
 // already there. Returns the tx hash, or null when nothing needed signing —
 // which is the common case, because the settings panel saves on every blur.
+//
+// NOT MIGRATED TO USER SIGNING, because neither executeContract below is
+// reachable on the Privy stack. The arming path throws outright at :363 — it
+// needs an SCA's executeBatch and these wallets are EOAs — and both paths are
+// behind isMandateConfigured(), which is false wherever
+// NEXT_PUBLIC_AUTOPAY_MANDATE_ADDRESS is unset, as it is on the Privy
+// deployment (docs/deployments.md). Adding a prepare/sign/relay branch here
+// would be code no request can enter, and it would have to be maintained as if
+// it worked. Revisit together with the mandate feature itself.
 async function syncMandateOnchain(
   user: { circle_wallet_id: string | null; wallet_address: string | null },
   next: { enabled: boolean; maxPerBillUsdc: number; maxPerDayUsdc: number; trustedCreators: string[] },
@@ -324,7 +333,7 @@ async function syncMandateOnchain(
     // Already off. Revoking again is harmless on the contract but would cost a
     // transaction to prove nothing changed.
     if (!current) return null;
-    const tx = await executeContractOnArc(user.circle_wallet_id, MANDATE_ADDRESS, encodeRevokeMandate());
+    const tx = await executeContract(user.circle_wallet_id, MANDATE_ADDRESS, encodeRevokeMandate());
     return tx.txHash;
   }
 
@@ -349,12 +358,27 @@ async function syncMandateOnchain(
   // landing without the other is a state the user never asked for. Re-approving
   // on every real change is also the top-up path — an allowance spent down over
   // a week is replenished by the next Save rather than silently running dry.
+  //
+  // SCA-only, and unreachable on the Privy stack twice over: moneyMode is always
+  // 'funded' there, so the PUT hands this `enabled: false` and the revoke branch
+  // above has already returned, and NEXT_PUBLIC_AUTOPAY_MANDATE_ADDRESS is unset
+  // so :312 returned before that. Guarded anyway, because the thing that goes
+  // wrong if either of those ever changes is not a revert. An EOA IGNORES
+  // calldata it cannot run and the transaction SUCCEEDS (measured: tx
+  // 0x5870…dadf95, status success, 25290 gas, nothing done), so this would hand
+  // back a tx hash for a mandate that was never written and the panel would show
+  // autopay armed. Throwing puts it in the PUT's 502 — "your rules were saved,
+  // but the on-chain mandate did not update" — which is the honest answer.
+  if (walletProviderName() === "privy") {
+    throw new Error("arming a mandate needs a smart contract wallet, and this deployment's wallets are EOAs");
+  }
+
   const data = encodeExecuteBatch([
     { to: ARC_USDC_ADDRESS, data: encodeApprove(MANDATE_ADDRESS, maxPerDay * APPROVAL_DAYS) },
     { to: MANDATE_ADDRESS, data: encodeSetMandate(agent, maxPerBill, maxPerDay, creators) },
   ]);
 
-  const tx = await executeContractOnArc(user.circle_wallet_id, wallet, data);
+  const tx = await executeContract(user.circle_wallet_id, wallet, data);
   return tx.txHash;
 }
 

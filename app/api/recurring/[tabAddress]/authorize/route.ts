@@ -2,7 +2,8 @@ import { cookies } from "next/headers";
 import { getSessionUser } from "@/lib/session";
 import { verifyWalletUnlock, WALLET_UNLOCK_COOKIE } from "@/lib/session-core";
 import { encodeApprove } from "@/lib/registry-calldata";
-import { executeContractOnArc, InsufficientFundsError } from "@/lib/circle-dcw";
+import { userSignedLeg, type UserSignedBody } from "@/lib/user-signed";
+import { executeContract, InsufficientFundsError } from "@/lib/wallet-provider";
 import { verifyFactoryTab, getTabMemberStandingOnchain } from "@/lib/recurring-read";
 
 export const runtime = "nodejs";
@@ -36,7 +37,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ tab
   const { tabAddress } = await params;
   if (!isAddress(tabAddress)) return Response.json({ error: "bad tab address" }, { status: 400 });
 
-  const body = (await request.json().catch(() => ({}))) as { revoke?: unknown };
+  const body = (await request.json().catch(() => ({}))) as { revoke?: unknown } & UserSignedBody;
   const revoke = body?.revoke === true;
 
   // Only ever act on a tab OUR factory deployed — never an arbitrary contract.
@@ -57,7 +58,21 @@ export async function POST(request: Request, { params }: { params: Promise<{ tab
   }
 
   try {
-    const tx = await executeContractOnArc(user.circle_wallet_id, ARC_USDC_ADDRESS, encodeApprove(tabAddress, amount));
+    const data = encodeApprove(tabAddress, amount);
+    // A claimed wallet signs for itself. The amount is recomputed from chain
+    // standing on both passes, and the tab address is in the context because
+    // approve() calldata differs only by that address and the amount.
+    const signed = await userSignedLeg({
+      body,
+      walletId: user.circle_wallet_id,
+      userId: user.id,
+      to: ARC_USDC_ADDRESS,
+      data,
+      context: `tab-authorize:${tabAddress.toLowerCase()}:${amount.toString()}`,
+    });
+    if (signed && "response" in signed) return signed.response;
+
+    const tx = signed ? signed.tx : await executeContract(user.circle_wallet_id, ARC_USDC_ADDRESS, data);
     return Response.json({ ok: true, txHash: tx.txHash });
   } catch (err) {
     if (err instanceof InsufficientFundsError) return Response.json({ error: "insufficient_funds" }, { status: 402 });

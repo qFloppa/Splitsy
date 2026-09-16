@@ -45,6 +45,7 @@ import { arcWalletClient } from "@/lib/wagmi";
 import { assertReceiptSuccess } from "@/lib/bill-split-contracts";
 import { ARC_USDC_ADDRESS, publicClient, usdcAbi } from "@/lib/recurring-contracts";
 import { buildLinkMessage, buildSigninMessage, SESSION_ENDED_EVENT } from "@/lib/agent-link";
+import { payErrorMessage, walletPost } from "./signed-send";
 // Type-only, so nothing from the decision core is bundled into this client
 // component — it is imported to keep REASONS below exhaustive, not to run.
 import type { AutopayDecision } from "@/lib/autopay";
@@ -478,19 +479,21 @@ export default function SettlementAgentsPanel({ onState }: { onState?: (state: A
         // receipt is checked — same helper as every other write on this page.
         assertReceiptSuccess(await publicClient.waitForTransactionReceipt({ hash }), "Funding your agent");
       } else {
-        const res = await fetch("/api/wallet/send", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ to, amount }),
-        });
-        const body = await res.json().catch(() => ({}));
-        if (!res.ok) {
+        // walletPost, not a plain POST, and this was the LAST call site still
+        // asking the server to sign. /api/wallet/send has been user-signed since
+        // the wallet panel's send tab moved onto it, so funding an agent from a
+        // wallet Splitsy holds no key to got the route's refusal verbatim —
+        // "This wallet is yours — enter your export password to sign this send."
+        // — which is true, unactionable, and names a password that does not exist
+        // on the Privy-UI stack. Now it signs the same way every other spend does.
+        const outcome = await walletPost("/api/wallet/send", { to, amount });
+        if (!outcome.ok) {
           return fail(
-            body.error === "locked"
+            outcome.locked
               ? "Unlock your Splitsy wallet with your PIN first — open it from the button at the bottom right."
-              : body.error === "insufficient_funds"
+              : outcome.error === "insufficient_funds"
                 ? "Your Splitsy wallet doesn't hold that much USDC."
-                : (body.error ?? "Could not fund your agent."),
+                : payErrorMessage(outcome.error) || "Could not fund your agent.",
           );
         }
       }

@@ -1,4 +1,5 @@
 import { getSessionUser } from "@/lib/session";
+import { getSlotWalletForUser } from "@/lib/pending-wallets-repo";
 import {
   getBillIdsForSplitterOnchain,
   getBillIdsForParticipantOnchain,
@@ -26,10 +27,17 @@ const ADDR_RE = /^0x[a-fA-F0-9]{40}$/;
 // address(es) to scope to: a non-custodial user has no social session, and a
 // dual-identity user's browser-wallet bills would otherwise be invisible. The
 // session wallet is only a fallback when the client sends no address.
-function parseWallets(url: URL, sessionWallet: string | null): `0x${string}`[] {
+//
+// `extra` carries addresses the SERVER knows about and the client cannot be asked
+// to supply — today that is the user's slot, the address a bill named as their
+// debtor if they were tagged before they joined. It is always included, never
+// only-as-fallback: a client that sends its own wallets must not thereby drop the
+// debts recorded against its slot.
+function parseWallets(url: URL, sessionWallet: string | null, extra: string[] = []): `0x${string}`[] {
   const raw = (url.searchParams.get("wallets") ?? "").split(",");
   const fromQuery = raw.map((w) => w.trim().toLowerCase()).filter((w) => ADDR_RE.test(w));
-  const all = fromQuery.length > 0 ? fromQuery : sessionWallet ? [sessionWallet.toLowerCase()] : [];
+  const base = fromQuery.length > 0 ? fromQuery : sessionWallet ? [sessionWallet.toLowerCase()] : [];
+  const all = [...base, ...extra.map((w) => w.trim().toLowerCase()).filter((w) => ADDR_RE.test(w))];
   return [...new Set(all)] as `0x${string}`[];
 }
 
@@ -44,7 +52,8 @@ export async function GET(request: Request) {
   }
 
   const user = await getSessionUser();
-  const wallets = parseWallets(url, user?.wallet_address ?? null);
+  const slot = user ? await getSlotWalletForUser(user).catch(() => null) : null;
+  const wallets = parseWallets(url, user?.wallet_address ?? null, slot ? [slot.wallet_address] : []);
   if (wallets.length === 0) {
     // No social session AND no wallet supplied → nothing to scope to.
     return Response.json({ error: "No wallet to report on" }, { status: 400 });

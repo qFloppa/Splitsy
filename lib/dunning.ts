@@ -19,6 +19,14 @@ export type DunningInput = {
   hasMandate: boolean; // the debtor's per-bill collectMandate
   collectible: bigint; // what collectDebt would actually move, read from chain
   alreadyLogged: DunningAction[]; // actions already recorded for this (bill, debtor)
+  // Whether the CREDITOR's wallet can still be signed for by the server. False
+  // once they take sole ownership of it (privy_wallets.claimed_at), because
+  // collectDebt is splitter-only — BillSplitRegistry.sol:431 reverts NotSplitter
+  // for anyone else — and a cron has no way to ask an absent creditor to sign.
+  //
+  // Defaults to TRUE when absent so every existing caller and test keeps its
+  // behaviour; only a claimed creditor loses the rung.
+  canPull?: boolean;
 };
 
 export type DunningDecision = {
@@ -43,7 +51,13 @@ export function decideDunning(input: DunningInput, now: number): DunningDecision
     return { action: "nudge", amount: 0n, reason: "due_soon" };
   }
 
-  if (input.hasMandate && input.collectible > 0n) {
+  // A CLAIMED creditor cannot pull. collectDebt is splitter-only, the splitter is
+  // the creditor, and the server holds no key to their wallet — so the pull is
+  // not "skipped for now", it is unavailable, and this falls through to the rung
+  // below. Checked BEFORE the mandate so a claimed creditor with a perfectly good
+  // mandate still escalates rather than returning an action that would revert
+  // after the caller has already burned the action slot.
+  if (input.canPull !== false && input.hasMandate && input.collectible > 0n) {
     // Append-only: a partial collection can legitimately repeat as the debtor
     // tops up, so an earlier 'collect' is not a reason to stop.
     return { action: "collect", amount: input.collectible, reason: "mandate_and_funds" };
@@ -51,11 +65,12 @@ export function decideDunning(input: DunningInput, now: number): DunningDecision
 
   if (input.alreadyLogged.includes("escalate")) return nothing("already_escalated");
 
-  // Either no mandate at all, or one we cannot draw on. Both end at the same
-  // rung — the difference is only in what we tell the creditor.
+  // Either no mandate at all, one we cannot draw on, or a creditor who now holds
+  // their own key. All three end at the same rung — the difference is only in
+  // what we tell the creditor.
   return {
     action: "escalate",
     amount: 0n,
-    reason: input.hasMandate ? "no_funds" : "no_mandate",
+    reason: input.canPull === false ? "creditor_self_custody" : input.hasMandate ? "no_funds" : "no_mandate",
   };
 }

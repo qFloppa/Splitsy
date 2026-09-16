@@ -17,7 +17,8 @@ import {
   getParticipantsOnchain,
   REGISTRY_ADDRESS,
 } from "@/lib/arc-read";
-import { executeContractOnArc, InsufficientFundsError } from "@/lib/circle-dcw";
+import { userSignedLeg, type UserSignedBody } from "@/lib/user-signed";
+import { executeContract, InsufficientFundsError } from "@/lib/wallet-provider";
 import { encodeAuthorizeCollect, encodeRevokeCollect } from "@/lib/registry-calldata";
 import { getSessionUser } from "@/lib/session";
 import { getUsersByWallets } from "@/lib/users-repo";
@@ -81,7 +82,7 @@ export async function POST(request: Request) {
   }
 
   const body: unknown = await request.json().catch(() => null);
-  const raw = (body ?? {}) as { billId?: unknown; authorized?: unknown };
+  const raw = (body ?? {}) as { billId?: unknown; authorized?: unknown } & UserSignedBody;
   if (!/^\d+$/.test(String(raw.billId))) {
     return Response.json({ error: "Expected { billId, authorized }." }, { status: 400 });
   }
@@ -94,7 +95,20 @@ export async function POST(request: Request) {
   const data = authorized ? encodeAuthorizeCollect(billId) : encodeRevokeCollect(billId);
 
   try {
-    const tx = await executeContractOnArc(user.circle_wallet_id, REGISTRY_ADDRESS, data);
+    // A claimed wallet signs for itself. Both the bill id and the DIRECTION are in
+    // the context: authorize and revoke are different calldata for the same bill,
+    // so without it a ticket prepared to revoke could be relayed as an authorize.
+    const signed = await userSignedLeg({
+      body: raw,
+      walletId: user.circle_wallet_id,
+      userId: user.id,
+      to: REGISTRY_ADDRESS,
+      data,
+      context: `mandate:${billId}:${authorized ? "on" : "off"}`,
+    });
+    if (signed && "response" in signed) return signed.response;
+
+    const tx = signed ? signed.tx : await executeContract(user.circle_wallet_id, REGISTRY_ADDRESS, data);
     return Response.json({ ok: true, authorized, txHash: tx.txHash });
   } catch (err) {
     if (err instanceof InsufficientFundsError) {

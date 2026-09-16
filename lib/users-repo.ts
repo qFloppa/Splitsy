@@ -46,7 +46,11 @@ export async function setUserWallet(id: string, walletAddress: string, circleWal
   const client = requireClient();
   const { error } = await client
     .from("users")
-    .update({ wallet_address: walletAddress, circle_wallet_id: circleWalletId })
+    // LOWERCASED, matching setUserAgentWallet (:72) and the lookup in
+    // getUsersByWallets (:133). Privy hands back a CHECKSUMMED address and this
+    // used to store it verbatim, so a Privy pay wallet never resolved to a handle
+    // and the comment at :127 claiming every wallet_address is lowercase was false.
+    .update({ wallet_address: walletAddress.toLowerCase(), circle_wallet_id: circleWalletId })
     .eq("id", id);
   if (error) {
     throw new Error(`Failed to set wallet: ${error.message}`);
@@ -86,6 +90,25 @@ export async function setUserPin(id: string, pinHash: string): Promise<void> {
 
 // Find a user by (provider, handle) — handle normalized like bills-repo. Used by
 // address resolution to reuse an existing person's wallet before pre-minting.
+//
+// CASE-INSENSITIVE ON THE COLUMN TOO, not just on the argument. This lowercased
+// the caller's handle and then compared it with `=` against a column written
+// VERBATIM from the provider (upsertUserFromProvider stores profile.handle as it
+// arrives, and X hands back "qFloppa"), so every handle with a capital letter in
+// it missed its own row: tagging @qFloppa on a bill pre-minted a second wallet
+// instead of resolving to theirs, and a Privy login would have created a second
+// account for them. A handle is case-insensitive at X, Discord and in an email
+// address, so matching it that way is the rule, not a loosening.
+//
+// The escape is what keeps ilike a comparison rather than a pattern: `_` matches
+// any single character, and an email-namespace handle really can contain one.
+//
+// OLDEST ROW WINS, and the limit is what makes that safe to widen to. Matching
+// case-insensitively can now see TWO rows where `=` saw one — a handle whose
+// duplicate this very bug allowed to be created — and .maybeSingle() answers a
+// second row with a throw, which would break bill tagging and reputation lookup
+// as well as login. Ordered and limited instead: the answer is the account that
+// existed first, which is the one holding the history.
 export async function getUserByProviderHandle(
   provider: AccountProvider,
   handle: string,
@@ -95,9 +118,30 @@ export async function getUserByProviderHandle(
     .from("users")
     .select()
     .eq("provider", provider)
-    .eq("handle", handle.replace(/^@/, "").toLowerCase())
+    .ilike("handle", handle.replace(/^@/, "").replace(/[\\%_]/g, "\\$&"))
+    .order("created_at", { ascending: true })
+    .limit(1)
     .maybeSingle();
   if (error) throw new Error(`Failed to read user by handle: ${error.message}`);
+  return (data as AppUser) ?? null;
+}
+
+// Find a user by the key they are actually stored under. The other half of what
+// lib/privy-identity.ts needs: a Privy login tries this first and the handle
+// lookup above only as a fallback, so a provider id that DOES match lands on the
+// row directly and a renamed handle still finds its owner.
+export async function getUserByProviderUserId(
+  provider: AccountProvider,
+  providerUserId: string,
+): Promise<AppUser | null> {
+  const client = requireClient();
+  const { data, error } = await client
+    .from("users")
+    .select()
+    .eq("provider", provider)
+    .eq("provider_user_id", providerUserId)
+    .maybeSingle();
+  if (error) throw new Error(`Failed to read user by provider id: ${error.message}`);
   return (data as AppUser) ?? null;
 }
 
@@ -125,7 +169,7 @@ export async function getUsersByWallets(
   if (!client) return result;
 
   // Lowercase .in() is safe: every wallet_address originates from Circle DCW
-  // (getOrCreateArcWallet -> setUserWallet, directly or via pending_wallets),
+  // (getOrCreateWallet -> setUserWallet, directly or via pending_wallets),
   // which returns lowercase hex — verified against all existing rows.
   const { data, error } = await client
     .from("users")

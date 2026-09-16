@@ -15,10 +15,18 @@ import {
   type WalletClient,
 } from "viem";
 import { arcTestnet } from "viem/chains";
+import { HANDLE_ESCROW_ABI } from "@/lib/handle-escrow";
 import { ARC_USDC_ADDRESS, publicClient, usdcAbi } from "@/lib/recurring-contracts";
 
 export const BILL_SPLIT_REGISTRY_ADDRESS = (
   process.env.NEXT_PUBLIC_BILL_SPLIT_REGISTRY_ADDRESS ?? "0x0000000000000000000000000000000000000000"
+) as `0x${string}`;
+
+// Where an IOU goes when its recipient has no wallet to receive it. Unset is not
+// a fallback: the rails refuse to settle rather than transfer to an address
+// nobody holds — see isHandleEscrowConfigured.
+export const HANDLE_ESCROW_ADDRESS = (
+  process.env.NEXT_PUBLIC_HANDLE_ESCROW_ADDRESS ?? "0x0000000000000000000000000000000000000000"
 ) as `0x${string}`;
 
 export const ARC_MEMO_ADDRESS = "0x5294E9927c3306DcBaDb03fe70b92e01cCede505" as const;
@@ -411,6 +419,69 @@ export async function approveBillRegistry({ walletClient, account, amount }: Bil
   });
 
   return assertReceiptSuccess(await publicClient.waitForTransactionReceipt({ hash }), "USDC approval");
+}
+
+// The escrow's half of the same approve-then-spend pair, for an IOU whose
+// recipient has no wallet to transfer to. Deliberately a copy of the shape above
+// rather than a parameterised "approve any spender": the two spenders are
+// different contracts with different failure stories, and one helper taking an
+// address would let a caller approve anything at all.
+export async function approveHandleEscrow({ walletClient, account, amount }: BillSplitWallet & { amount: bigint }) {
+  ensureHandleEscrowConfigured();
+  await assertUsdcBalance(account, amount);
+
+  const hash = await walletClient.writeContract({
+    address: ARC_USDC_ADDRESS,
+    abi: usdcAbi,
+    functionName: "approve",
+    args: [HANDLE_ESCROW_ADDRESS, amount],
+    account,
+    chain: arcTestnet,
+  });
+
+  return assertReceiptSuccess(await publicClient.waitForTransactionReceipt({ hash }), "USDC approval");
+}
+
+// Put the money aside, and hand back the id it landed under.
+//
+// THE ID IS THE POINT. It is the only handle on this deposit afterwards — a
+// release names it, a reclaim names it — and `deposit()`'s return value does not
+// survive being sent as a transaction, so the Deposited event is where it has to
+// be read from. Same trick as parseBillCreated.
+//
+// IT DOES NOT THROW ONCE THE TRANSACTION IS OUT. Every other helper here treats
+// a receipt problem as a failure, because every other call they make is safe to
+// repeat — `deposit` is create-style, so a caller that retried would put a
+// SECOND pile of money in escrow. So the only throw after writeContract is a
+// PROVEN revert, where the chain has said nothing moved; a receipt we could not
+// read, or an event we could not find, comes back as `depositId: null` and the
+// caller has to tell the user rather than offer them a retry.
+export async function depositToHandleEscrow({
+  walletClient,
+  account,
+  handleHash,
+  amount,
+}: BillSplitWallet & { handleHash: `0x${string}`; amount: bigint }) {
+  ensureHandleEscrowConfigured();
+
+  const hash = await walletClient.writeContract({
+    address: HANDLE_ESCROW_ADDRESS,
+    abi: HANDLE_ESCROW_ABI,
+    functionName: "deposit",
+    args: [handleHash, amount],
+    account,
+    chain: arcTestnet,
+  });
+
+  const receipt = await publicClient.waitForTransactionReceipt({ hash }).catch(() => null);
+  // A reverted receipt is the one PROVEN failure: no funds moved, so a retry is
+  // safe and the caller should be allowed one. Worded like assertReceiptSuccess,
+  // which this cannot use because it needs the null-tolerant shape.
+  if (receipt && receipt.status !== "success") {
+    throw new Error("Escrow deposit failed: the transaction reverted on Arc and no funds were moved.");
+  }
+
+  return { hash, depositId: receipt ? parseDeposited(receipt) : null };
 }
 
 // A plain USDC transfer on Arc, signed in the user's own wallet — the browser
@@ -916,9 +987,19 @@ export function isBillRegistryConfigured() {
   return BILL_SPLIT_REGISTRY_ADDRESS !== "0x0000000000000000000000000000000000000000";
 }
 
+export function isHandleEscrowConfigured() {
+  return HANDLE_ESCROW_ADDRESS !== "0x0000000000000000000000000000000000000000";
+}
+
 function ensureRegistryConfigured() {
   if (!isBillRegistryConfigured()) {
     throw new Error("Bill split registry is not configured. Set NEXT_PUBLIC_BILL_SPLIT_REGISTRY_ADDRESS.");
+  }
+}
+
+function ensureHandleEscrowConfigured() {
+  if (!isHandleEscrowConfigured()) {
+    throw new Error("Handle escrow is not configured. Set NEXT_PUBLIC_HANDLE_ESCROW_ADDRESS.");
   }
 }
 
@@ -939,6 +1020,23 @@ function parseBillCreated(receipt: TransactionReceipt) {
           totalOwed: decoded.args.totalOwed,
         };
       }
+    } catch {
+      continue;
+    }
+  }
+
+  return null;
+}
+
+// Filtered by the emitting address before decoding: a deposit transaction also
+// carries USDC's own Transfer, and an escrow abi that happened to read some
+// other contract's log would name an id that means nothing here.
+function parseDeposited(receipt: TransactionReceipt): bigint | null {
+  for (const log of receipt.logs) {
+    if (log.address.toLowerCase() !== HANDLE_ESCROW_ADDRESS.toLowerCase()) continue;
+    try {
+      const decoded = decodeEventLog({ abi: HANDLE_ESCROW_ABI, data: log.data, topics: log.topics });
+      if (decoded.eventName === "Deposited") return decoded.args.id;
     } catch {
       continue;
     }

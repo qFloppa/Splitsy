@@ -20,9 +20,9 @@
 // Run: npm run agents:setup
 import { formatUnits } from "viem";
 import { getUsdcBalanceOnchain } from "../lib/arc-read.ts";
-import { getOrCreateArcWallet } from "../lib/circle-dcw.ts";
 import { ensureServiceAgentIdentity, SERVICE_AGENTS } from "../lib/erc8004.ts";
 import { getAgentByWallet } from "../lib/reputation-repo.ts";
+import { getOrCreateWallet } from "../lib/wallet-provider.ts";
 
 // Registering costs one transaction. Well under this, but a wallet reading zero
 // cannot pay gas at all and the mint fails in a way that looks like a bug.
@@ -33,7 +33,7 @@ let failed = false;
 for (const { refId, agentType } of SERVICE_AGENTS) {
   console.log(`\n--- splitsy:${refId} (${agentType})`);
   try {
-    const wallet = await getOrCreateArcWallet("splitsy", refId);
+    const wallet = await getOrCreateWallet("splitsy", refId);
     if (!wallet) {
       console.log("  Circle is not configured — skipping.");
       failed = true;

@@ -5,13 +5,43 @@ import { ArrowUpRight, Check, Loader2, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { waitForCircleTxUrl } from "@/lib/arc-explorer";
 import { readArcUsdcBalance, billUnitsToUsdc } from "@/lib/bill-split-contracts";
+import { parseAmount, typableAmount } from "@/lib/iou";
 import { providerDisplay } from "@/lib/provider-display";
 import type { AccountProvider } from "@/lib/types";
+import ExportTab, { WalletMore } from "./ExportTab";
 import { ProviderIcon } from "./ProviderTag";
+import { privyLogout } from "./privy-signer";
+import { signedSend, walletPost, type SignedSendResult } from "./signed-send";
 
-type Me = { id: string; provider?: AccountProvider | null; handle: string; name: string | null; avatarUrl: string | null; walletAddress: string | null };
-type Tab = "info" | "send" | "receive" | "history";
+type Me = { id: string; provider?: AccountProvider | null; providerUserId?: string | null; handle: string; name: string | null; avatarUrl: string | null; walletAddress: string | null; custodian?: "Circle" | "Privy" };
+type Tab = "info" | "send" | "receive" | "history" | "export";
 
+// What GET /api/wallet/export answers, read here for a second purpose: the SEND
+// tab needs the wallet id, the app id and the recorded owner key to build and sign
+// an authorization payload. Deliberately the same shape app/ExportTab.tsx declares,
+// because it is the same route — only `state === "enabled"` matters to this file,
+// and anything else leaves sending exactly as it was.
+type ExportStatus = {
+  state: "not_enabled" | "enabled" | "needs_restore";
+  walletId: string;
+  appId: string;
+  address: string;
+  exportOwnerKey: string | null;
+  claimed?: boolean;
+  // 'passkey+password' means the daily unlock is a biometric and the password is
+  // only the recovery path — so the send tab must offer the passkey first rather
+  // than asking for a password the user may never have typed since claiming.
+  ownerKind?: string | null;
+  passkeyCredentialId?: string | null;
+  // The salt both unlock paths derive with. Server-supplied because a provisioned
+  // wallet was salted before it had an address (lib/export-crypto.ts:accountSalt).
+  ownerSalt: string;
+};
+
+// `export` is NOT in this list. It is appended per-render below, only on the
+// Privy stack: a Circle wallet's key cannot be exported, so the route answers
+// 404 and the tab's whole content would be the words "Export is not available
+// on this wallet stack." A tab that can only say that should not be a tab.
 const TABS: { id: Tab; label: string }[] = [
   { id: "info", label: "wallet" },
   { id: "send", label: "send" },
@@ -58,6 +88,10 @@ function Label({ children }: { children: React.ReactNode }) {
 
 export default function XAuthControl() {
   const [me, setMe] = useState<Me | null>(null);
+  // Whether Privy's own UI is what this deployment asks users to approve in. From
+  // the server (WALLET_UI, via /api/me) rather than from a NEXT_PUBLIC copy, so
+  // the panel and the routes can never disagree about which world they are in.
+  const [privyUi, setPrivyUi] = useState(false);
   const [loading, setLoading] = useState(true);
   const [open, setOpen] = useState(false);
   const [balance, setBalance] = useState<string | null>(null);
@@ -75,6 +109,11 @@ export default function XAuthControl() {
   // hand at all.
   const dragControls = useDragControls();
 
+  // The wallet just came into existence. Patched into `me` rather than refetched
+  // so the panel switches from the setup ceremony to the real thing on the same
+  // tick — /api/me would say the same, one round trip later.
+  const onWalletReady = (address: string) => setMe((current) => (current ? { ...current, walletAddress: address } : current));
+
   // It claims role="dialog", so Escape has to close it — a panel that says it is
   // a dialog and then swallows the one key every dialog answers to is worse than
   // one that never said so.
@@ -89,8 +128,11 @@ export default function XAuthControl() {
     let active = true;
     fetch("/api/me")
       .then((r) => r.json())
-      .then((data: { user: Me | null }) => {
-        if (active) setMe(data.user);
+      .then((data: { user: Me | null; walletUi?: string }) => {
+        if (active) {
+          setMe(data.user);
+          setPrivyUi(data.walletUi === "privy");
+        }
       })
       .catch(() => {
         if (active) setMe(null);
@@ -251,7 +293,24 @@ export default function XAuthControl() {
             >
               <span className="settle-label">wallet</span>
               <span className="wallet-grip-end">
-                <form action="/api/auth/logout" method="post">
+                {/* SIGNING OUT HAS TO END BOTH SESSIONS. Splitsy's cookie is only
+                    half of it on the Privy stack — leave the Privy login standing
+                    and the bridge hands the user straight back a session on the
+                    next page load, so "sign out" would visibly do nothing. The
+                    form still does the real work; this only clears Privy first. */}
+                <form
+                  action="/api/auth/logout"
+                  method="post"
+                  onSubmit={
+                    privyUi
+                      ? (e) => {
+                          e.preventDefault();
+                          const form = e.currentTarget;
+                          void privyLogout().finally(() => form.submit());
+                        }
+                      : undefined
+                  }
+                >
                   <button type="submit" className="iou-provider">
                     sign out
                   </button>
@@ -282,6 +341,19 @@ export default function XAuthControl() {
                 />
               ) : hasPin === true && unlocked === false ? (
                 <UnlockGate onUnlocked={() => setUnlocked(true)} />
+              ) : !me.walletAddress && me.custodian === "Privy" && !privyUi ? (
+                // AFTER the PIN gates, because provisioning requires the unlock
+                // cookie. Privy only: /api/wallet/provision answers 404 on the
+                // Circle stack, where the wallet is minted at login because its
+                // keys were never the user's to hold.
+                //
+                // AND NOT WHEN PRIVY'S UI IS ON. There is no ceremony to run
+                // there: the wallet is Privy's embedded one, created at login and
+                // recorded by /api/auth/privy, so a password-and-passkey form
+                // would be asking the user to make keys for a wallet that already
+                // has one. A wallet that is briefly missing falls through to the
+                // info tab, which says it is being created.
+                <WalletSetupGate me={me} onDone={onWalletReady} />
               ) : (
                 <>
                   {/* The figure, once. It used to be printed twice — a caption
@@ -301,7 +373,13 @@ export default function XAuthControl() {
                   </div>
 
                   <div className="wallet-tabs">
-                    {TABS.map((t) => (
+                    {/* The export tab exists on both Privy paths, but it is not
+                        the same tab. Splitsy's ceremony (ExportTab) is for a
+                        wallet Splitsy minted and holds a signer on; an embedded
+                        wallet's key lives in Privy's iframe and comes out through
+                        Privy's own modal. Same word, different mechanism, so the
+                        body branches rather than the tab list. */}
+                    {(me.custodian === "Privy" ? [...TABS, { id: "export" as Tab, label: "export" }] : TABS).map((t) => (
                       <button
                         key={t.id}
                         type="button"
@@ -318,7 +396,7 @@ export default function XAuthControl() {
                     {tab === "info" ? (
                       <>
                         <p className="wallet-note">
-                          A Circle wallet on <b>Arc Testnet</b>, tied to <OwnHandle me={me} />. Pay and get paid in
+                          A Splitsy wallet on <b>Arc Testnet</b>, tied to <OwnHandle me={me} />. Pay and get paid in
                           USDC — no crypto setup needed.
                         </p>
                         {me.walletAddress ? (
@@ -330,6 +408,56 @@ export default function XAuthControl() {
                               </button>
                             </div>
                             <p className="wallet-proof">{me.walletAddress}</p>
+                            {me.custodian === "Privy" ? (
+                              <>
+                                {/* SAYS ONLY WHAT THIS TAB CAN KNOW. It used to
+                                    assert "Splitsy can also export this wallet's
+                                    private key itself — set an export password",
+                                    which is now false for most wallets: one minted
+                                    by /api/wallet/provision is born owned by its
+                                    user, and Splitsy is neither its owner nor a
+                                    signer. The claim is state-dependent and this
+                                    tab holds no claim state, so it stops making it
+                                    — the export tab has the row and already says
+                                    the true version of it, in both directions.
+
+                                    With Privy's UI on there IS no such state to
+                                    be unsure about: an embedded wallet is the
+                                    user's from creation, Splitsy holds no key and
+                                    there is no export tab to point at. So this
+                                    says the simpler, stronger thing — and says it
+                                    only because the flag makes it true. */}
+                                {privyUi ? (
+                                  <p className="wallet-note">
+                                    The key lives with Privy, under your login — Splitsy cannot move this
+                                    money, and every payment asks you to approve it first. Take the key
+                                    with you from the <b>export</b> tab.
+                                  </p>
+                                ) : (
+                                  <p className="wallet-note">
+                                    <b>Held by Privy</b>, the custodian. Who can move this money —
+                                    you, Splitsy, or both — is in the <b>export</b> tab.
+                                  </p>
+                                )}
+                                <WalletMore label="about Privy">
+                                  <p className="wallet-note">
+                                    A SOC&nbsp;2–audited custody provider, independently reviewed by
+                                    Cure53, Zellic and Doyensec, with a public bug bounty and keys
+                                    that are encrypted and segmented so no single party holds a whole
+                                    key.{" "}
+                                    <a
+                                      href="https://privy.io/security"
+                                      target="_blank"
+                                      rel="noreferrer"
+                                      className="wallet-handle"
+                                      aria-label="privy.io/security (opens in a new tab)"
+                                    >
+                                      privy.io/security
+                                    </a>
+                                  </p>
+                                </WalletMore>
+                              </>
+                            ) : null}
                             <a
                               href="https://faucet.circle.com"
                               target="_blank"
@@ -345,9 +473,15 @@ export default function XAuthControl() {
                         )}
                       </>
                     ) : tab === "send" ? (
-                      <SendTab balance={balance} onSent={refreshBalanceAfterSend} />
+                      <SendTab balance={balance} onSent={refreshBalanceAfterSend} walletAddress={me.walletAddress} privyUi={privyUi} />
                     ) : tab === "receive" ? (
                       <ReceiveTab address={me.walletAddress} copied={copied} onCopy={copyAddress} />
+                    ) : tab === "export" && me.walletAddress ? (
+                      privyUi ? (
+                        <PrivyExportTab address={me.walletAddress} />
+                      ) : (
+                        <ExportTab address={me.walletAddress} handle={me.handle} />
+                      )
                     ) : (
                       <HistoryTab />
                     )}
@@ -451,6 +585,149 @@ function SetPinGate({ onDone }: { onDone: () => void }) {
   );
 }
 
+// FIRST-VISIT gate: the wallet does not exist yet, and the keys that will own it
+// have to be made here, in this tab, before it is minted.
+//
+// "SET UP YOUR WALLET", NOT "TAKE OWNERSHIP". Nothing is being handed over — there
+// is no custodial wallet to hand over, because none has been minted. The claim
+// copy in ExportTab still says what it says, and should: those wallets really were
+// ours first. This one never is.
+//
+// Rendered as the panel's WHOLE CONTENT, like the PIN gates above it, because
+// there is nothing else true to show: no balance, no address, no send form. It
+// comes after those gates because provisioning needs the unlock cookie — the keys
+// minted here own the wallet forever, and a hijacked session must not plant one.
+function WalletSetupGate({ me, onDone }: { me: Me; onDone: (address: string) => void }) {
+  const [password, setPassword] = useState("");
+  const [confirm, setConfirm] = useState("");
+  const [usePasskey, setUsePasskey] = useState(true);
+  const [canPasskey, setCanPasskey] = useState<boolean | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+  const [note, setNote] = useState<string | null>(null);
+
+  useEffect(() => {
+    import("@/lib/passkey-owner")
+      .then((m) => m.prfSupported())
+      .then(setCanPasskey)
+      .catch(() => setCanPasskey(false));
+  }, []);
+
+  async function setup() {
+    setMessage(null);
+    const crypto = await import("@/lib/export-crypto");
+    if (password.length < crypto.MIN_PASSWORD_LENGTH) {
+      return setMessage(`Use at least ${crypto.MIN_PASSWORD_LENGTH} characters.`);
+    }
+    if (password !== confirm) return setMessage("The passwords don't match — try again.");
+    if (!me.provider || !me.providerUserId) {
+      return setMessage("Could not read your account — reload and try again.");
+    }
+
+    setBusy(true);
+    try {
+      const { provisionWallet } = await import("./wallet-setup");
+      const result = await provisionWallet({
+        provider: me.provider,
+        providerUserId: me.providerUserId,
+        password,
+        handle: me.handle,
+        usePasskey: usePasskey && canPasskey === true,
+      });
+      setPassword("");
+      setConfirm("");
+      if (!result.ok) {
+        setMessage(result.error);
+        return;
+      }
+      // Money someone sent this handle before they had an account. Reported even
+      // on success: the wallet works either way, but a failed sweep means funds
+      // have not moved and the user is the only one who can decide that matters.
+      if (result.sweepError) {
+        setNote(`Your wallet is ready, but money sent to you before you joined has not moved yet: ${result.sweepError}`);
+      }
+      onDone(result.address);
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "Could not set up your wallet.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="wallet-band">
+      <Label>set up your wallet</Label>
+      <p className="wallet-note">
+        Created here, in this browser, owned by a key only you hold.{" "}
+        <b>Splitsy never holds it</b> — not now, not later.
+      </p>
+      <p className="wallet-note" data-tone="warn">
+        The catch: lose your unlocks and nobody can recover this wallet, including us.
+      </p>
+
+      {canPasskey === true ? (
+        <label className="wallet-note wallet-line">
+          <input type="checkbox" checked={usePasskey} onChange={(e) => setUsePasskey(e.target.checked)} />
+          Unlock with Face&nbsp;ID / Touch&nbsp;ID, and keep the password below as recovery.
+        </label>
+      ) : null}
+
+      <p className="wallet-note">
+        {usePasskey && canPasskey === true
+          ? "Your recovery password, for a lost or replaced device. Twice, to confirm."
+          : "Your wallet password — the only thing that can sign or export this wallet. Twice, to confirm."}
+      </p>
+      <div className="wallet-line" data-pin>
+        <input
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          type="password"
+          autoComplete="new-password"
+          autoFocus
+          aria-label="Wallet password"
+          placeholder="at least 12 characters"
+        />
+      </div>
+      <div className="wallet-line" data-pin>
+        <input
+          value={confirm}
+          onChange={(e) => setConfirm(e.target.value)}
+          type="password"
+          autoComplete="new-password"
+          aria-label="Confirm wallet password"
+          placeholder="again"
+          onKeyDown={(e) => e.key === "Enter" && !busy && setup()}
+        />
+      </div>
+      {confirm.length > 0 && password !== confirm ? (
+        <p className="wallet-note" data-tone="warn">
+          The passwords don&apos;t match yet.
+        </p>
+      ) : null}
+
+      <button type="button" onClick={setup} disabled={busy} className="settle-action">
+        {busy ? "setting up…" : "set up your wallet"} ›
+      </button>
+      {busy ? (
+        <p className="wallet-note" role="status">
+          Making your key, then minting the wallet under it. Two steps, a few seconds — don&apos;t
+          close this panel.
+        </p>
+      ) : null}
+      {message ? (
+        <p className="wallet-note" data-tone="warn" role="status">
+          {message}
+        </p>
+      ) : null}
+      {note ? (
+        <p className="wallet-note" data-tone="warn" role="status">
+          {note}
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
 // Opening-the-panel gate: when a PIN exists but the 5-minute unlock window has
 // lapsed, the wallet unlocks here before anything else — so Pay/Claim buttons
 // elsewhere in the app work right after closing the panel, and the Send tab
@@ -513,6 +790,66 @@ function UnlockGate({ onUnlocked }: { onUnlocked: () => void }) {
   );
 }
 
+// The export tab for an EMBEDDED wallet, which is a different thing from
+// app/ExportTab.tsx even though it wears the same word.
+//
+// Splitsy's ceremony exists because Splitsy minted the wallet and held a signer
+// on it: it hands ownership over, records a public key, and proves an export
+// against it. None of that applies here — this wallet was never Splitsy's, so
+// there is nothing to hand over and no password of ours to derive. The key is in
+// Privy's iframe, on Privy's domain, and Privy's own modal is the only thing that
+// can show it. This screen is therefore a sentence and a button.
+//
+// Deliberately not hidden. Being able to walk away with the key is most of what
+// "your wallet" means, and an earlier pass dropped the tab entirely on this path
+// — which quietly removed a capability the user had rather than replacing it.
+function PrivyExportTab({ address }: { address: string }) {
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+
+  async function open() {
+    setMessage(null);
+    setBusy(true);
+    try {
+      const { privyExportWallet } = await import("./privy-signer");
+      await privyExportWallet(address);
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "Could not open the export window.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div>
+      <Label>export your key</Label>
+      <p className="wallet-note">
+        This wallet is <b>yours</b>. Its key is held by Privy under your login — Splitsy has never
+        had a copy and cannot make one — and you can take it out and use it in any other wallet.
+      </p>
+      <p className="wallet-note" data-tone="warn">
+        The key is shown in Privy&apos;s own window, not this one. Anyone who gets it can spend
+        this wallet, so copy it somewhere only you can read.
+      </p>
+      <button type="button" onClick={open} disabled={busy} className="settle-action">
+        {busy ? "…" : "show my key"} ›
+      </button>
+      <WalletMore label="why a separate window">
+        <p className="wallet-note">
+          Privy renders the key in a frame served from its own domain, so this page cannot read
+          it even in principle. That is the point: an app that could show you your key could also
+          keep it.
+        </p>
+      </WalletMore>
+      {message ? (
+        <p className="wallet-note" data-tone="warn" role="status">
+          {message}
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
 function ReceiveTab({ address, copied, onCopy }: { address: string | null; copied: boolean; onCopy: () => void }) {
   if (!address) return <p className="wallet-note">Your wallet is being created — refresh in a moment.</p>;
   return (
@@ -533,7 +870,7 @@ function ReceiveTab({ address, copied, onCopy }: { address: string | null; copie
 
 type SendPhase = "form" | "sending" | "done" | "error";
 
-function SendTab({ balance, onSent }: { balance: string | null; onSent: () => void }) {
+function SendTab({ balance, onSent, walletAddress, privyUi }: { balance: string | null; onSent: () => void; walletAddress: string | null; privyUi: boolean }) {
   const [unlocked, setUnlocked] = useState(false);
   const [to, setTo] = useState("");
   const [amount, setAmount] = useState("");
@@ -541,6 +878,14 @@ function SendTab({ balance, onSent }: { balance: string | null; onSent: () => vo
   const [phase, setPhase] = useState<SendPhase>("form");
   const [message, setMessage] = useState<string | null>(null);
   const [sentTxUrl, setSentTxUrl] = useState<string | null>(null);
+  const [signedBy, setSignedBy] = useState<"you" | "splitsy" | null>(null);
+  // Non-null only when this wallet has export enabled AND the owner key is not yet
+  // held for this session — the password is derived once and then the field is
+  // hidden. See app/session-owner-key.ts for why the key is not React state.
+  const [exportStatus, setExportStatus] = useState<ExportStatus | null>(null);
+  const [ownerPassword, setOwnerPassword] = useState("");
+  const [ownerKey, setOwnerKey] = useState<Uint8Array | null>(null);
+  const [unlockingPasskey, setUnlockingPasskey] = useState(false);
 
   // A PIN always exists by the time this tab renders (the panel gates on it), so
   // we only need the current unlock state — sending still requires unlocking.
@@ -550,6 +895,25 @@ function SendTab({ balance, onSent }: { balance: string | null; onSent: () => vo
       .then((d: { unlocked: boolean }) => setUnlocked(d.unlocked))
       .catch(() => {});
   }, []);
+
+  // Whether this user can sign for themselves. A 404 is the Circle stack (the route
+  // does not exist as a capability there) and any other failure leaves the send
+  // working the old way, so this never surfaces an error — it only decides whether
+  // to offer the stronger path.
+  useEffect(() => {
+    if (!walletAddress) return;
+    fetch("/api/wallet/export")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d: ExportStatus | null) => {
+        if (d?.state !== "enabled") return;
+        setExportStatus(d);
+        // Already derived earlier this session: skip the prompt entirely. Read from
+        // the module, not from state, because a tab switch unmounts this component
+        // and remounts it with fresh state.
+        void import("./session-owner-key").then((m) => setOwnerKey(m.ownerKeyFor(d.address)));
+      })
+      .catch(() => {});
+  }, [walletAddress]);
 
   async function unlock() {
     setMessage(null);
@@ -564,41 +928,141 @@ function SendTab({ balance, onSent }: { balance: string | null; onSent: () => vo
     setUnlocked(true);
   }
 
+  // Unlock with the PASSKEY. One biometric per tab, then sends are signed without
+  // any further prompt — the key is cached exactly as the password-derived one is.
+  //
+  // FALLS BACK RATHER THAN FAILING. A passkey can be unavailable for reasons that
+  // are nobody's fault: a different device, a browser without PRF, a user who
+  // dismisses the prompt. The recovery password still signs — that is the whole
+  // point of the two-key quorum — so the error names it instead of dead-ending.
+  async function unlockWithPasskey() {
+    if (!exportStatus) return;
+    setMessage(null);
+    setUnlockingPasskey(true);
+    try {
+      const [passkey, crypto, session] = await Promise.all([
+        import("@/lib/passkey-owner"),
+        import("@/lib/export-crypto"),
+        import("./session-owner-key"),
+      ]);
+      const secret = await passkey.passkeyOwnerSecret(exportStatus.ownerSalt, exportStatus.passkeyCredentialId);
+      const key = crypto.ownerSecretFromPrf(secret);
+      // The same local pre-check the password path runs: if this key is not the
+      // recorded owner, fail HERE rather than at a 401 from Privy.
+      if (exportStatus.exportOwnerKey && (await crypto.ownerPublicKeySpki(key)) !== exportStatus.exportOwnerKey) {
+        setMessage("That passkey doesn't match this wallet. Use your recovery password below.");
+        return;
+      }
+      session.rememberOwnerKey(exportStatus.address, key);
+      setOwnerKey(key);
+    } catch (err) {
+      setMessage(
+        `${err instanceof Error ? err.message : "Could not use your passkey."} You can use your recovery password instead.`,
+      );
+    } finally {
+      setUnlockingPasskey(false);
+    }
+  }
+
+  // Derive the owner key from the export password, once per session. The ~1s PBKDF2
+  // is the price of the key never being held longer than the tab; it is paid here
+  // rather than per send, which is the trade recorded in app/session-owner-key.ts.
+  async function deriveOwnerKey() {
+    if (!exportStatus) return;
+    setMessage(null);
+    try {
+      const crypto = await import("@/lib/export-crypto");
+      const key = await crypto.deriveOwnerSecretKey(ownerPassword, exportStatus.ownerSalt);
+      const publicKey = await crypto.ownerPublicKeySpki(key);
+      // The local pre-check, same one ExportTab runs: a mistyped password fails
+      // HERE, with no request made. Possible only because the PUBLIC half of the
+      // credential is recorded server-side.
+      //
+      // SKIPPED for a passkey wallet: exportOwnerKey records the PASSKEY's public
+      // half, so a correct recovery password would not match it and would be
+      // rejected here — which is exactly when the user needs it to work. Privy is
+      // the real gate either way, and it accepts either quorum member.
+      if (
+        exportStatus.ownerKind !== "passkey+password" &&
+        exportStatus.exportOwnerKey &&
+        exportStatus.exportOwnerKey !== publicKey
+      ) {
+        setMessage("That password doesn't match this wallet's export credential.");
+        return;
+      }
+      const session = await import("./session-owner-key");
+      session.rememberOwnerKey(exportStatus.address, key);
+      setOwnerKey(key);
+      setOwnerPassword("");
+    } catch {
+      setMessage("Could not derive your key from that password. Please try again.");
+    }
+  }
+
   async function send() {
     setPhase("sending");
     setMessage(null);
     try {
-      const res = await fetch("/api/wallet/send", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ to, amount: Number(amount) }),
-      });
-      const data = await res.json();
-      if (res.status === 403) {
+      // Holding the owner key is what makes this a USER-signed send. Without it —
+      // no export password set, or the Circle stack, or the derivation skipped —
+      // this falls through to the server-signed path, unchanged.
+      //
+      // signedSend is the shared prepare/sign/relay round trip (app/signed-send.ts),
+      // the same one the debt and bill panels use. It reads the key from the session
+      // module rather than taking it as an argument, so nothing here holds it.
+      //
+      // WITH PRIVY'S UI ON, THIS TAB USES walletPost LIKE EVERY OTHER SURFACE.
+      // It is the one spending screen that still called signedSend directly — a
+      // leftover from being the first one written — and on this stack that would
+      // have sent it down the server-signed path to a 409, because exportStatus
+      // is null for an embedded wallet and there is no export password to derive.
+      const outcome = privyUi
+        ? await walletPost("/api/wallet/send", { to, amount: Number(amount) })
+        : ownerKey && exportStatus
+          ? await signedSend("/api/wallet/send", exportStatus.address, { to, amount: Number(amount) })
+          : await sendSignedBySplitsy();
+
+      if (outcome.ok === false && outcome.locked) {
         setUnlocked(false);
         setPhase("form");
         setMessage("Wallet locked — enter your PIN.");
         return;
       }
-      if (!res.ok) {
-        setMessage(data.error ?? "Send failed.");
+      if (!outcome.ok) {
+        setMessage(outcome.error === "unlock_owner_key" ? "Enter your export password to sign this send." : outcome.error);
         setPhase("error");
         return;
       }
+      setSignedBy(outcome.data.signedBy === "you" ? "you" : "splitsy");
       setPhase("done");
       setTo("");
       setAmount("");
       onSent();
       // The on-chain hash lands a few seconds after Circle accepts the tx; poll
       // the history endpoint to surface an explorer link once it's available.
-      if (data.txId) {
-        const url = await waitForCircleTxUrl(data.txId);
+      if (typeof outcome.data.txId === "string") {
+        const url = await waitForCircleTxUrl(outcome.data.txId);
         if (url) setSentTxUrl(url);
       }
     } catch {
       setMessage("Network error — please try again.");
       setPhase("error");
     }
+  }
+
+  // The unchanged path: ask the server to sign and send with its own quorum. Every
+  // user whose wallet is still custodial takes this one. Shaped like signedSend's
+  // result so the handling above is one branch rather than two.
+  async function sendSignedBySplitsy(): Promise<SignedSendResult> {
+    const res = await fetch("/api/wallet/send", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ to, amount: Number(amount) }),
+    });
+    const body = await res.json().catch(() => ({}));
+    return res.ok
+      ? { ok: true, data: body }
+      : { ok: false, error: body.error ?? "Send failed.", status: res.status, locked: res.status === 403 };
   }
 
   if (!unlocked) {
@@ -639,6 +1103,28 @@ function SendTab({ balance, onSent }: { balance: string | null; onSent: () => vo
             <Check strokeWidth={3} />
           </span>
         </p>
+        {/* WHICH SIGNER, out loud. A user who set an export password did so to stop
+            Splitsy moving their money, and a silent fallback to the server-signed
+            path would leave that unverifiable by the person it is for.
+
+            THREE STATES, NOT TWO. "Set an export password" is the wrong advice for
+            someone who already has one — exportStatus is non-null exactly when a
+            key is recorded (the effect above keeps only state: "enabled"), and
+            then the fallback means the key was not unlocked this session, not that
+            it is missing. That case also implies the wallet is unclaimed: a claimed
+            one makes userMustSign true and the route refuses to sign rather than
+            falling back, so reaching here at all means our signer is still on it. */}
+        {signedBy ? (
+          <p className="wallet-note">
+            {privyUi
+              ? "Approved by you in Privy — Splitsy holds no key to this wallet and could not have sent it."
+              : signedBy === "you"
+                ? "Signed by your export password — Splitsy did not authorise this transfer."
+                : exportStatus
+                  ? "Signed by Splitsy — its signer is still on this wallet. Enter your export password in the export tab to sign your own sends."
+                  : "Signed by Splitsy. Set an export password to sign your own sends."}
+          </p>
+        ) : null}
         {sentTxUrl ? (
           <a href={sentTxUrl} target="_blank" rel="noreferrer" className="settle-trigger wallet-out">
             view transaction
@@ -663,6 +1149,14 @@ function SendTab({ balance, onSent }: { balance: string | null; onSent: () => vo
     );
   }
 
+  // A send from a wallet whose export password is set must NOT silently fall back to
+  // the server-signed path — the panel now tells the user their sends are signed by
+  // them, and a fallback would make that claim false in exactly the case the user
+  // cares about. So while the key is missing, sending waits for the password. A user
+  // who does not want to enter it can still send from any other client; what they
+  // cannot do is have Splitsy quietly sign on their behalf after they opted out.
+  const needsOwnerKey = Boolean(exportStatus && !ownerKey);
+
   return (
     <div>
       <div className="iou-rail">
@@ -680,15 +1174,70 @@ function SendTab({ balance, onSent }: { balance: string | null; onSent: () => vo
       <div className="wallet-line" data-figure>
         <input
           value={amount}
-          onChange={(e) => setAmount(e.target.value)}
+          // GATED LIVE, with the app's own rule. This field took any string at
+          // all — letters, several dots, an essay — and the first thing that
+          // noticed was Number(amount) becoming NaN somewhere past the PIN gate.
+          // typableAmount (lib/iou.ts) is the same gate the IOU composer and
+          // every poster figure already use: dollars, two decimals, seven
+          // figures, and it REFUSES the keystroke rather than rewriting the value
+          // under the caret. One rule for every amount in the product.
+          onChange={(e) => typableAmount(e.target.value) && setAmount(e.target.value)}
           inputMode="decimal"
           aria-label="Amount in USDC"
           placeholder="0.00"
         />
         <Unit />
       </div>
-      <button type="button" onClick={send} disabled={phase === "sending" || !to || !amount} className="settle-action">
-        {phase === "sending" ? "…" : "send"} ›
+      {/* The one-time prompt that buys user-signed sends. Shown only when this
+          wallet has export enabled and the key is not already held for the session
+          — so it appears once, not per send. */}
+      {exportStatus && !ownerKey ? (
+        <>
+          {exportStatus.ownerKind === "passkey+password" ? (
+            <>
+              <p className="wallet-note">
+                This wallet is yours — unlock it with your <b>passkey</b> to sign this send. Once per
+                tab, then sends go through without asking again.
+              </p>
+              <button
+                type="button"
+                onClick={unlockWithPasskey}
+                disabled={unlockingPasskey}
+                className="settle-action"
+              >
+                {unlockingPasskey ? "…" : "unlock with passkey"} ›
+              </button>
+              <p className="wallet-note">Lost the device that holds it? Use your recovery password.</p>
+            </>
+          ) : (
+            <p className="wallet-note">
+              This wallet has an export password, so you can sign this send yourself instead of
+              asking Splitsy to. Enter it once — it stays for this tab only.
+            </p>
+          )}
+          <div className="wallet-line">
+            <input
+              value={ownerPassword}
+              onChange={(e) => setOwnerPassword(e.target.value)}
+              type="password"
+              autoComplete="off"
+              aria-label={exportStatus.ownerKind === "passkey+password" ? "Recovery password" : "Export password"}
+              placeholder={exportStatus.ownerKind === "passkey+password" ? "recovery password" : "export password"}
+              onKeyDown={(e) => e.key === "Enter" && ownerPassword && !phase.startsWith("sending") && deriveOwnerKey()}
+            />
+          </div>
+          <button
+            type="button"
+            onClick={deriveOwnerKey}
+            disabled={!ownerPassword}
+            className="settle-action"
+          >
+            sign my sends ›
+          </button>
+        </>
+      ) : null}
+      <button type="button" onClick={send} disabled={phase === "sending" || !to || parseAmount(amount) === null || needsOwnerKey} className="settle-action">
+        {phase === "sending" ? "…" : ownerKey ? "sign & send" : "send"} ›
       </button>
       {message ? (
         <p className="wallet-note" data-tone="warn" role="status">
@@ -703,19 +1252,34 @@ type WalletTx = { id: string; direction: "in" | "out"; amount: string; address: 
 
 function HistoryTab() {
   const [txs, setTxs] = useState<WalletTx[] | null>(null);
+  // Told apart from "none yet", because the two need different words and the user
+  // can act on one of them. See the catch in app/api/wallet/transactions.
+  const [unreadable, setUnreadable] = useState(false);
   const [explorer, setExplorer] = useState("https://testnet.arcscan.app");
 
   useEffect(() => {
     fetch("/api/wallet/transactions")
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error("auth"))))
-      .then((d: { transactions: WalletTx[]; explorer?: string }) => {
+      .then((d: { transactions: WalletTx[]; explorer?: string; unreadable?: boolean }) => {
         setTxs(d.transactions);
+        setUnreadable(d.unreadable === true);
         if (d.explorer) setExplorer(d.explorer);
       })
-      .catch(() => setTxs([]));
+      .catch(() => {
+        setTxs([]);
+        setUnreadable(true);
+      });
   }, []);
 
   if (txs === null) return <p className="wallet-note">Reading the chain…</p>;
+  if (unreadable) {
+    return (
+      <p className="wallet-note" data-tone="warn" role="status">
+        Couldn&apos;t read the chain just now, so this list may be incomplete — your balance and
+        your money are unaffected. Try again in a moment.
+      </p>
+    );
+  }
   if (txs.length === 0) return <p className="wallet-note">No transactions yet.</p>;
 
   return (

@@ -77,11 +77,11 @@ import {
 } from "@/lib/autopay";
 import { REVIEW_UNAVAILABLE, type ReviewInput, type ReviewVerdict } from "@/lib/autopay-review";
 import {
-  executeContractOnArc,
-  getOrCreateArcWallet,
+  executeContract,
+  getOrCreateWallet,
   InsufficientFundsError,
   isBroadcast,
-} from "@/lib/circle-dcw";
+} from "@/lib/wallet-provider";
 import {
   AGENTIC_COMMERCE_ADDRESS,
   COMPLETE_REASON,
@@ -310,6 +310,17 @@ async function settleOne(input: {
   // Mandate mode reads the day's spend from the contract's own token bucket, so
   // the figure the agent reasons about is the figure that will bind it. Funded
   // mode has no bucket — the log is the only record.
+  //
+  // Still the only record on the Privy stack, where the enclave policy
+  // (PRIVY_AGENT_POLICY_ID) holds the PER-TRANSACTION cap and nothing more.
+  // Privy's API can express a rolling daily total — an Aggregation over a
+  // rolling window, read by a policy condition — but @privy-io/node 0.34.0
+  // cannot reach it: its Aggregations resource is an empty class and PrivyClient
+  // exposes no aggregations() method, so one has to be created from the
+  // dashboard or raw REST. Until then this sum is the daily cap, and only the
+  // per-bill cap is enforced anywhere but here.
+  // ponytail: daily cap stays server-side on both stacks; upgrade path is a
+  // Privy aggregation once the SDK exposes one.
   const spentTodayUsdc =
     mode === "funded"
       ? await sumAutopaySpentTodayUsdc(userId)
@@ -548,7 +559,7 @@ async function runJob(input: {
   const { agent, settler, billId, debtor, progress } = input;
   // Its absence is the same fact as a missing Settler — a role in the ceremony
   // has no wallet — so it gets the same slug rather than the vaguer 'job_failed'.
-  const auditor = await getOrCreateArcWallet("splitsy", "auditor");
+  const auditor = await getOrCreateWallet("splitsy", "auditor");
   if (!auditor) throw new WalletUnavailableError("the Auditor wallet is unavailable");
 
   const expiredAt = BigInt(Math.floor(Date.now() / 1000)) + JOB_TTL_SECONDS;
@@ -557,7 +568,7 @@ async function runJob(input: {
   // 1. createJob — the user's agent is the client.
   let jobId: bigint;
   try {
-    const created = await executeContractOnArc(
+    const created = await executeContract(
       agent.walletId,
       AGENTIC_COMMERCE_ADDRESS,
       encodeCreateJob(settler, auditor.address as `0x${string}`, expiredAt, description),
@@ -592,7 +603,7 @@ async function runJob(input: {
   // 3. fund — the fee into escrow, preceded by the lazy approval.
   try {
     await ensureAgentAllowance(agent, AGENTIC_COMMERCE_ADDRESS, FEE_UNITS, CEREMONY_POLL_MS);
-    await executeContractOnArc(agent.walletId, AGENTIC_COMMERCE_ADDRESS, encodeFund(jobId), CEREMONY_POLL_MS);
+    await executeContract(agent.walletId, AGENTIC_COMMERCE_ADDRESS, encodeFund(jobId), CEREMONY_POLL_MS);
   } catch (err) {
     if (err instanceof InsufficientFundsError) throw err;
     throw new JobError("fund", err);
@@ -616,7 +627,7 @@ async function runJob(input: {
     // the user rather than to their agent.
     await ensureAgentAllowance(agent, REGISTRY_ADDRESS, input.amount, CEREMONY_POLL_MS);
     try {
-      const tx = await executeContractOnArc(
+      const tx = await executeContract(
         agent.walletId,
         REGISTRY_ADDRESS,
         encodePayDebtFor(billId, debtor, input.amount),
@@ -671,7 +682,7 @@ async function runJob(input: {
     if (!settled.exists || settled.paid < settled.owed) {
       throw new Error(`registry still shows ${settled.paid} paid of ${settled.owed} owed`);
     }
-    await executeContractOnArc(
+    await executeContract(
       auditor.walletId,
       AGENTIC_COMMERCE_ADDRESS,
       encodeComplete(jobId, COMPLETE_REASON),

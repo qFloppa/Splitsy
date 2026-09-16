@@ -246,6 +246,37 @@ body {
   background: var(--background);
   color: var(--foreground);
   font-family: var(--font-hanken), "Hanken Grotesk", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+
+  /* ── Privy's modal, wearing Splitsy's palette ──────────────────────────────
+     Privy generates its whole palette from appearance.theme — which is handed
+     Splitsy's own surface colour, not the word 'dark' (app/WagmiProviders.tsx) —
+     and injects it on :root. These are the few it cannot derive from a single
+     background: the brand accent, the semantic colours, and the corner radius.
+
+     ON <body>, NOT :root, and that is load-bearing rather than tidy. Privy's own
+     declarations land on :root, so a :root rule here would be a coin toss on
+     stylesheet order; body sets them one level nearer the modal, which portals
+     into body, and custom properties resolve from the nearest ancestor that
+     declares them. It also means both themes are covered by these same lines,
+     because every value is a token that already follows [data-theme].
+
+     The hovers, borders and icon greys are deliberately LEFT to Privy. They are
+     derived from the background it was given, so they stay internally consistent
+     — overriding a background without its matching hover is how a themed widget
+     ends up with a grey wash over a navy sheet. */
+  --privy-color-accent: var(--accent);
+  --privy-color-accent-light: var(--accent-soft);
+  --privy-color-accent-dark: var(--accent-strong);
+  --privy-color-success: var(--success);
+  --privy-color-success-light: var(--success-soft);
+  --privy-color-error: var(--danger-text);
+  --privy-color-warn: var(--warning-text);
+  --privy-link-navigation-color: var(--accent);
+  --privy-border-radius-xs: 4px;
+  --privy-border-radius-sm: calc(var(--radius) - 4px);
+  --privy-border-radius-md: calc(var(--radius) - 2px);
+  --privy-border-radius-mdlg: var(--radius);
+  --privy-border-radius-lg: calc(var(--radius) + 4px);
 }
 
 button,
@@ -253,7 +284,6 @@ input,
 select {
   font: inherit;
 }
-
 button {
   cursor: pointer;
 }
@@ -8230,6 +8260,50 @@ mark.doc-mark {
 .wallet-note > b { font-weight: 400; color: var(--pay-poster-fg); }
 
 .wallet-note[data-tone="warn"] { color: var(--warning-text); }
+
+/* A 64-character private key in a 352px column. .wallet-proof already wraps it
+   (overflow-wrap: anywhere) and sets the mono face; what it does not do is let a
+   copy take the whole key in one gesture, or print it at full contrast — it dims
+   an address you glance at, and this is the one string a user may transcribe. */
+.wallet-export-key {
+  user-select: all;
+  color: var(--pay-poster-fg);
+}
+
+/* The verified tick after enabling. .wallet-note only carries a "warn" tone
+   today; .wallet-figure's "ok" is the colour this borrows. */
+.wallet-note[data-tone="ok"] { color: var(--success); }
+
+/* Long custody copy, folded away. See app/ExportTab.tsx:WalletMore for why it is
+   a <details> and not a tooltip. Styled as a dotted-underlined line rather than a
+   chip: it sits between paragraphs of .wallet-note and should read as one of
+   them that happens to open, not as a control competing with .settle-action.
+
+   list-style AND the webkit pseudo, for the same reason .job-trail-summary needs
+   both — the engines drop the default triangle differently, and one alone leaves
+   a stray marker. */
+.wallet-more { margin-top: 0.5rem; }
+
+.wallet-more > summary {
+  cursor: pointer;
+  list-style: none;
+  font-size: 0.82rem;
+  line-height: 1.55;
+  color: var(--pay-poster-fg);
+  text-decoration: underline dotted;
+  text-underline-offset: 3px;
+}
+
+.wallet-more > summary::-webkit-details-marker { display: none; }
+
+.wallet-more > summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* The first paragraph inside carries .wallet-note's own top margin, so the
+   summary needs none of its own when open. */
+.wallet-more[open] > summary { margin-bottom: 0; }
 
 /* The verb, at panel scale. Everything else about it — the receded rest colour
    that still clears 4.5:1, the tracking, the borderlessness — is .settle-action's

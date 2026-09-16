@@ -1,8 +1,10 @@
-// Server-side (Node runtime) reads of BillSplitRegistry. Mirrors the publicClient
-// pattern in app/api/onchain-bills/preimage/route.ts. Kept separate from the
-// "use client" lib/bill-split-contracts.ts so server routes never pull client code.
+// Server-side (Node runtime) reads of BillSplitRegistry and HandleEscrow. Mirrors
+// the publicClient pattern in app/api/onchain-bills/preimage/route.ts. Kept
+// separate from the "use client" lib/bill-split-contracts.ts so server routes
+// never pull client code.
 import { createPublicClient, decodeEventLog, formatUnits, http, parseAbiItem } from "viem";
 import { arcTestnet } from "viem/chains";
+import { HANDLE_ESCROW_ABI } from "./handle-escrow.ts";
 
 export const REGISTRY_ADDRESS = (process.env.NEXT_PUBLIC_BILL_SPLIT_REGISTRY_ADDRESS ??
   "0x0000000000000000000000000000000000000000") as `0x${string}`;
@@ -478,4 +480,85 @@ export async function readUsdcMovedInTx(
     }
   }
   return { sent, received };
+}
+
+// ── HandleEscrow ─────────────────────────────────────────────────────────────
+// Where an IOU goes when its recipient has no wallet to receive it. Server-side
+// twin of the HANDLE_ESCROW_ADDRESS in lib/bill-split-contracts.ts — same env
+// var, two constants, because that file is "use client" and must not be imported
+// here. Exactly the split REGISTRY_ADDRESS already lives on.
+
+export const HANDLE_ESCROW_ADDRESS = (process.env.NEXT_PUBLIC_HANDLE_ESCROW_ADDRESS ??
+  ZERO_ADDRESS) as `0x${string}`;
+
+// Unset means REFUSE, never "escrow somewhere else". Both settle routes check
+// this before they spend anything.
+export function isHandleEscrowConfigured() {
+  return HANDLE_ESCROW_ADDRESS !== ZERO_ADDRESS;
+}
+
+/**
+ * One deposit as the contract holds it.
+ *
+ * `amount === 0n` is the contract's own "no such deposit" — both exits `delete`
+ * the struct, so released and reclaimed deposits read as zero too. Callers treat
+ * that as absent rather than as a deposit of nothing.
+ *
+ * `escrowAddress` defaults to this deployment's escrow, which is what the
+ * recording route wants — it refuses any other address before it gets here. The
+ * release path passes the ROW'S OWN address instead: ids restart at 1 in every
+ * deployment, so reading id 3 at the wrong escrow answers about somebody else's
+ * money.
+ */
+export async function getEscrowDepositOnchain(id: bigint, escrowAddress: `0x${string}` = HANDLE_ESCROW_ADDRESS) {
+  const r = await publicClient.readContract({
+    address: escrowAddress,
+    abi: HANDLE_ESCROW_ABI,
+    functionName: "deposits",
+    args: [id],
+  });
+  return { depositor: r[0], handleHash: r[1], amount: r[2] };
+}
+
+/**
+ * The deposit a transaction created, read out of its own `Deposited` event.
+ *
+ * `deposit()` returns the id, but a return value does not survive being sent as
+ * a transaction — so the event is the only place it exists off the caller's
+ * stack. Filtered by the emitting address first: the same transaction also
+ * carries USDC's `Transfer`, which this abi cannot read anyway, and a log from
+ * any other contract has no business naming our deposit ids.
+ *
+ * `depositor` and `amount` come back with it because they are CHAIN FACTS from
+ * the same log — the caller writing an index row needs exactly those two and
+ * must not take either from a request body.
+ *
+ * null for every kind of "could not establish it" — an unmined hash, a reverted
+ * transaction, no event.
+ */
+export async function getDepositedFromTx(
+  txHash: string | null,
+): Promise<{ id: bigint; depositor: `0x${string}`; amount: bigint } | null> {
+  if (!txHash || !/^0x[0-9a-fA-F]{64}$/.test(txHash)) return null;
+  // Both signing paths already waited for settlement before handing the hash
+  // over, so this is normally one call. The short wait is for the Circle backend,
+  // which reports a hash as soon as it has one — and the whole request is inside
+  // a serverless timeout, so it cannot be a generous one.
+  const receipt = await publicClient
+    .waitForTransactionReceipt({ hash: txHash as `0x${string}`, timeout: 5_000, pollingInterval: 1_000 })
+    .catch(() => null);
+  if (!receipt || receipt.status !== "success") return null;
+
+  for (const log of receipt.logs) {
+    if (log.address.toLowerCase() !== HANDLE_ESCROW_ADDRESS.toLowerCase()) continue;
+    try {
+      const ev = decodeEventLog({ abi: HANDLE_ESCROW_ABI, data: log.data, topics: log.topics });
+      if (ev.eventName === "Deposited") {
+        return { id: ev.args.id, depositor: ev.args.depositor, amount: ev.args.amount };
+      }
+    } catch {
+      continue;
+    }
+  }
+  return null;
 }

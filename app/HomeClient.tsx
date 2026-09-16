@@ -33,6 +33,7 @@ import DashboardPanel from "./DashboardPanel";
 import IouClient from "./IouClient";
 import AgentEconomyPanel from "./AgentEconomyPanel";
 import { gatewayReceiptUrl } from "./JobTrail";
+import { payErrorMessage, walletPost } from "./signed-send";
 import SettlementAgentsPanel, { AGENT_STEPS, type AgentTabState } from "./SettlementAgentsPanel";
 import { HistoryCard, PaidBillStamp } from "./HistoryCard";
 import { PosterCell, PosterFact, PosterHero, PosterValue, SectionHead, legendOf, type Step } from "./SpecCard";
@@ -374,6 +375,10 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
   // kept so the split form can reject the creator tagging themselves.
   const [me, setMe] = useState<{
     walletAddress: string | null;
+    // The address a bill named as this person's debtor slot if they were tagged
+    // before they ever signed in. Read alongside walletAddress by
+    // refreshBillRegistry — a debt recorded against it is theirs.
+    slotAddress: string | null;
     provider: IdentityProvider | null;
     handle: string | null;
   } | null>(null);
@@ -432,6 +437,10 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
   const recurringActingAccount = (recurringWallet?.account ?? me?.walletAddress ?? null) as `0x${string}` | null;
   const recurringViaServer = !recurringWallet && Boolean(me?.walletAddress);
   const socialWalletAddress = (me?.walletAddress ?? null) as `0x${string}` | null;
+  // Read as a second social address, never as the primary one: it holds no balance
+  // and signs nothing, so it must not reach registryReadAddress or the balance
+  // display. It exists only so bills that name it as the debtor show up.
+  const slotWalletAddress = (me?.slotAddress ?? null) as `0x${string}` | null;
   // The browser wallet the split form would sign with: the built app wallet, or
   // the raw wagmi connection while the app wallet is still being (re)built.
   const connectedWalletAccount = (billWallet?.account ?? address ?? null) as `0x${string}` | null;
@@ -449,7 +458,7 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
   useEffect(() => {
     if (registryReadAddress) void refreshBillRegistry(registryReadAddress);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [registryReadAddress, socialWalletAddress]);
+  }, [registryReadAddress, socialWalletAddress, slotWalletAddress]);
 
   // Load recurring tabs when the social (DCW) identity becomes available — even
   // if a browser wallet is already connected, since its earlier sweep ran before
@@ -909,14 +918,22 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
   // primary address whose balance feeds the legacy single-balance display.
   async function refreshBillRegistry(account: `0x${string}` | undefined = registryReadAddress ?? undefined) {
     const social = socialWalletAddress;
+    const slot = slotWalletAddress;
     const seen = new Set<string>();
     const targets: { account: `0x${string}`; via: "wallet" | "social" }[] = [];
-    for (const candidate of [account, billWallet?.account, social]) {
+    for (const candidate of [account, billWallet?.account, social, slot]) {
       if (!candidate) continue;
       const key = candidate.toLowerCase();
       if (seen.has(key)) continue;
       seen.add(key);
-      targets.push({ account: candidate, via: social && key === social.toLowerCase() ? "social" : "wallet" });
+      // The SLOT is tagged "social" so its rows act through the server, which is
+      // the only thing that can settle them: paying one is payDebtFor from the
+      // user's own wallet, and refunding one is relayed out of the slot itself.
+      // Tagged "wallet" the deck would try to sign payDebt from the browser wallet,
+      // which is not the participant and would revert.
+      const isSlot = Boolean(slot) && key === slot!.toLowerCase();
+      const isSocial = isSlot || (social ? key === social.toLowerCase() : false);
+      targets.push({ account: candidate, via: isSocial ? "social" : "wallet" });
     }
     if (targets.length === 0) {
       return;
@@ -1417,13 +1434,15 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
         delete next[key];
         return next;
       });
-      const res = await fetch(`/api/debts/${debt.id}/pay`, { method: "POST" });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        const message =
-          data.error === "insufficient_funds"
-            ? "Your wallet needs more test USDC to cover this."
-            : (data.error ?? "Payment failed.");
+      // A CLAIMED wallet signs its own payment: the server has no key for it, so
+      // this becomes prepare → sign here → relay. walletPost makes that choice from
+      // the wallet's own state rather than from anything this panel knows, and both
+      // paths reduce to the same {ok, error} shape so the handling below is one
+      // branch, not two.
+      const outcome = await walletPost(`/api/debts/${debt.id}/pay`);
+
+      if (!outcome.ok) {
+        const message = payErrorMessage(outcome.error);
         setBillState("error");
         failFlow(message);
         setDebtMessages((current) => ({ ...current, [key]: { tone: "error", message } }));
@@ -1467,12 +1486,9 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
           delete next[debtKey];
           return next;
         });
-        const res = await fetch(`/api/onchain-bills/${debt.billId}/pay`, { method: "POST" });
-        const data = await res.json().catch(() => ({}));
-        if (!res.ok) {
-          const message = data.error === "insufficient_funds"
-            ? "Your wallet needs more test USDC."
-            : (data.error ?? "Payment failed.");
+        const outcome = await walletPost(`/api/onchain-bills/${debt.billId}/pay`);
+        if (!outcome.ok) {
+          const message = payErrorMessage(outcome.error);
           setBillState("error");
           failFlow(message);
           setDebtMessages((current) => ({
@@ -1589,10 +1605,9 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
       }
       try {
         setBillState("working");
-        const res = await fetch(`/api/onchain-bills/${debt.billId}/refund`, { method: "POST" });
-        const data = await res.json().catch(() => ({}));
-        if (!res.ok) {
-          fail(data.error ?? "Refund failed.");
+        const outcome = await walletPost(`/api/onchain-bills/${debt.billId}/refund`);
+        if (!outcome.ok) {
+          fail(payErrorMessage(outcome.error));
           return;
         }
         succeed();
@@ -1913,14 +1928,14 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
       try {
         setBillState("working");
         setDebtMessages((current) => ({ ...current, [debtKey]: { tone: "neutral", message: "Claiming paid funds." } }));
-        const res = await fetch(`/api/onchain-bills/${debt.billId}/claim`, { method: "POST" });
-        const data = await res.json().catch(() => ({}));
-        if (!res.ok) {
+        const outcome = await walletPost(`/api/onchain-bills/${debt.billId}/claim`);
+        if (!outcome.ok) {
+          const message = payErrorMessage(outcome.error);
           setBillState("error");
-          failFlow(data.error ?? "Claim failed.");
+          failFlow(message);
           setDebtMessages((current) => ({
             ...current,
-            [debtKey]: { tone: "error", message: data.error ?? "Claim failed." },
+            [debtKey]: { tone: "error", message },
           }));
           return;
         }
@@ -2374,20 +2389,15 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
     body: Record<string, unknown>,
     successMessage: string,
   ): Promise<boolean> {
-    const res = await fetch(path, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) {
+    // walletPost, so all three recurring actions (authorize, revoke, claim) route
+    // through the same decision about who holds the key. They share this helper,
+    // which is why wiring the user-signed path is one change here rather than three
+    // at the call sites — and why none of them can drift from the others.
+    const outcome = await walletPost(path, body);
+    if (!outcome.ok) {
       setRecurringState("error");
       setRecurringMessage(
-        data.error === "insufficient_funds"
-          ? "Your wallet needs more test USDC to cover the gas."
-          : data.error === "locked"
-            ? "Unlock your wallet, then try again."
-            : (data.error ?? "The action failed."),
+        outcome.error === "locked" ? "Unlock your wallet, then try again." : payErrorMessage(outcome.error),
       );
       return false;
     }

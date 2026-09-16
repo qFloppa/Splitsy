@@ -3,8 +3,20 @@ import { createHmac, timingSafeEqual } from "crypto";
 export const SESSION_COOKIE_NAME = "splitsy_session";
 export const SESSION_MAX_AGE = 2592000; // 30 days in seconds
 
-function sign(value: string, secret: string): string {
+// EXPORTED for lib/tx-ticket.ts, which needs the same primitive under its own
+// domain prefix. One implementation of the HMAC, not two — the cookies and the
+// transaction tickets must never disagree about what signing means.
+export function sign(value: string, secret: string): string {
   return createHmac("sha256", secret).update(value).digest("base64url");
+}
+
+// Constant-time compare of two base64url signatures. Length is checked first
+// because timingSafeEqual THROWS on a length mismatch rather than returning false.
+export function signaturesMatch(providedSig: string, expectedSig: string): boolean {
+  const provided = Buffer.from(providedSig);
+  const expected = Buffer.from(expectedSig);
+  if (provided.length !== expected.length) return false;
+  return timingSafeEqual(provided, expected);
 }
 
 // Token format: "<userId>.<base64url-hmac-of-userId>". The userId is opaque

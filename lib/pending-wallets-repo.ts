@@ -35,6 +35,29 @@ export async function getPendingWallet(
   return (data as PendingWallet) ?? null;
 }
 
+/**
+ * The SLOT belonging to a signed-in user, if one was minted before they arrived.
+ *
+ * A bill created while this person was a stranger names their slot as the debtor,
+ * NOT the wallet they later signed in with. So every path that answers "what do I
+ * owe?" has to look here as well as at `users.wallet_address`, or the debt is
+ * invisible — which is exactly the bug measured on bill 64 (2026-09-15).
+ *
+ * The whole row, not just the address: `circle_wallet_id` is what lets
+ * app/api/onchain-bills/[billId]/refund sign from the slot to unwind a failed
+ * all-or-nothing bill.
+ *
+ * Null for a wallet-only session. A raw address is not a handle, so it has no
+ * namespace a slot could ever have been minted in.
+ */
+export async function getSlotWalletForUser(user: {
+  provider: string;
+  handle: string | null;
+}): Promise<PendingWallet | null> {
+  if (user.provider === "wallet" || !user.handle) return null;
+  return getPendingWallet(user.provider as IdentityProvider, user.handle);
+}
+
 export async function insertPendingWallet(row: PendingWallet): Promise<void> {
   const client = requireClient();
   const { error } = await client.from("pending_wallets").upsert(

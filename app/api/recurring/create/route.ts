@@ -1,7 +1,8 @@
 import { getSessionUser } from "@/lib/session";
 import { resolveParticipants } from "@/lib/wallet-resolve";
 import { encodeCreateTab } from "@/lib/registry-calldata";
-import { executeContractOnArc, InsufficientFundsError } from "@/lib/circle-dcw";
+import { userSignedLeg, type UserSignedBody } from "@/lib/user-signed";
+import { executeContract, InsufficientFundsError } from "@/lib/wallet-provider";
 import {
   RECURRING_TAB_FACTORY_ADDRESS,
   getNextTabIdOnchain,
@@ -119,11 +120,21 @@ export async function POST(request: Request) {
 
   let txHash: string | null = null;
   try {
-    const tx = await executeContractOnArc(
-      user.circle_wallet_id,
-      RECURRING_TAB_FACTORY_ADDRESS,
-      encodeCreateTab(recipient, BigInt(intervalSeconds), BigInt(maxSettlements), members, fixedShares),
-    );
+    const data = encodeCreateTab(recipient, BigInt(intervalSeconds), BigInt(maxSettlements), members, fixedShares);
+    // A claimed wallet signs its own tab creation. The recipient and the member
+    // count go in the context, so a ticket prepared for one tab cannot create one
+    // with a different payee.
+    const signed = await userSignedLeg({
+      body: body as UserSignedBody | null,
+      walletId: user.circle_wallet_id,
+      userId: user.id,
+      to: RECURRING_TAB_FACTORY_ADDRESS,
+      data,
+      context: `tab-create:${recipient.toLowerCase()}:${members.length}`,
+    });
+    if (signed && "response" in signed) return signed.response;
+
+    const tx = signed ? signed.tx : await executeContract(user.circle_wallet_id, RECURRING_TAB_FACTORY_ADDRESS, data);
     txHash = tx.txHash;
   } catch (err) {
     if (err instanceof InsufficientFundsError) return Response.json({ error: "insufficient_funds" }, { status: 402 });

@@ -1,10 +1,16 @@
 import { formatUnits } from "viem";
 import { getSessionUser } from "@/lib/session";
-import { listWalletTransactions, type WalletTx } from "@/lib/circle-dcw";
+import { listTransactions, type WalletTx } from "@/lib/wallet-provider";
 import { readUsdcMovedInTx } from "@/lib/arc-read";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+// The chain walk is bounded to ~5s (lib/privy-wallet.ts:HISTORY_BUDGET_MS) and
+// enrich() adds a receipt read per zero-amount row on top. Asked for explicitly
+// so the platform's default 10s is not the thing deciding whether a wallet has a
+// history — the host caps this to whatever the plan allows, which is fine: the
+// budget inside is what actually guarantees an answer.
+export const maxDuration = 30;
 
 const EXPLORER = process.env.ARC_TESTNET_EXPLORER_URL ?? "https://testnet.arcscan.app";
 
@@ -44,10 +50,22 @@ export async function GET() {
   }
 
   try {
-    const txs = await listWalletTransactions(user.circle_wallet_id);
-    const transactions = await enrich(txs, user.wallet_address as `0x${string}`);
+    const wallet = user.wallet_address as `0x${string}`;
+    const txs = await listTransactions(user.circle_wallet_id, wallet);
+    const transactions = await enrich(txs, wallet);
     return Response.json({ transactions, explorer: EXPLORER });
   } catch {
-    return Response.json({ transactions: [] });
+    // A FAILED READ IS NOT AN EMPTY WALLET, and saying so cost a real debugging
+    // session: this returned a bare [] for any failure, so the panel rendered "No
+    // transactions yet" whether the wallet had never been used or the RPC had just
+    // refused. On the Privy stack the history IS the chain — ten getLogs chunk
+    // pairs per load against an endpoint that rate-limits bursts (-32005/-32011,
+    // see lib/privy-wallet.ts:listTransactions) — so the failure is ordinary
+    // enough that it must be told apart from the honest empty answer.
+    //
+    // Still a 200 with an empty list: the panel renders the same shape either way
+    // and only the message differs. What it must never do is claim a balance's
+    // history is empty on the strength of a read that did not happen.
+    return Response.json({ transactions: [], unreadable: true, explorer: EXPLORER });
   }
 }

@@ -4,17 +4,33 @@ import { verifyWalletUnlock, WALLET_UNLOCK_COOKIE } from "@/lib/session-core";
 import { isShareToken } from "@/lib/pay-link";
 import { getPreimageByShareToken } from "@/lib/onchain-bill-preimage-repo";
 import { encodeApprove, encodePayDebtFor } from "@/lib/registry-calldata";
-import { executeContractOnArc, InsufficientFundsError } from "@/lib/circle-dcw";
-import { REGISTRY_ADDRESS, getParticipantsOnchain, usdcShortfallMessage } from "@/lib/arc-read";
+import { prepareForUser, relayForUser, userMustSign, type UserSignedBody } from "@/lib/user-signed";
+import { executeContract, InsufficientFundsError } from "@/lib/wallet-provider";
+import {
+  REGISTRY_ADDRESS,
+  getParticipantsOnchain,
+  getUsdcAllowanceOnchain,
+  usdcShortfallMessage,
+} from "@/lib/arc-read";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 // 1 approval + up to MAX_ROWS legs, each polled sequentially by
-// executeContractOnArc. The default budget can kill this mid-batch AFTER money
+// executeContract. The default budget can kill this mid-batch AFTER money
 // has moved, returning no `results` at all. Mirrors app/api/agents/autopay.
 export const maxDuration = 300;
 
-const ARC_USDC_ADDRESS = process.env.ARC_TESTNET_USDC_ADDRESS ?? "0x3600000000000000000000000000000000000000";
+// Both executeContract calls below pass this explicitly rather than taking the
+// backend's default, because the two backends default differently and this route
+// is the one that budgeted for the longer wait. Circle already defaults to 60s
+// (lib/circle-dcw.ts:101), so naming it changes nothing on that stack; the Privy
+// backend defaults to 6s to survive Vercel's unraised budget elsewhere, and
+// inheriting that here would call a slow-but-successful leg indeterminate inside
+// a route that has 300s to spend — the mid-batch case the comment above names.
+const LEG_POLL_MS = 60_000;
+
+const ARC_USDC_ADDRESS = (process.env.ARC_TESTNET_USDC_ADDRESS ??
+  "0x3600000000000000000000000000000000000000") as `0x${string}`;
 const MAX_ROWS = 20;
 
 // POST /api/pay/<token>/social — cover other people's shares from the caller's
@@ -86,11 +102,80 @@ export async function POST(request: Request, ctx: RouteContext<"/api/pay/[token]
   const shortfall = await usdcShortfallMessage(user.wallet_address as `0x${string}`, total);
   if (shortfall) return Response.json({ error: shortfall }, { status: 402 });
 
+  // ── The user signs ──────────────────────────────────────────────────────────
+  // N+1 legs: one approve, then one payDebtFor per person. The chain sequences
+  // them, as it does for the two-leg bill payment — `legs` is recomputed from
+  // getParticipantsOnchain on every pass, so a leg that has already been paid
+  // drops out of the list by itself and the next unpaid one is simply the first
+  // one left. Nothing is tracked between requests.
+  if (await userMustSign(user.circle_wallet_id)) {
+    const signBody = (await request.json().catch(() => null)) as UserSignedBody | null;
+    const allowance = await getUsdcAllowanceOnchain(user.wallet_address as `0x${string}`, REGISTRY_ADDRESS);
+    const needsApproval = allowance < total;
+    const leg = legs[0];
+
+    const [to, data, context] = needsApproval
+      ? ([ARC_USDC_ADDRESS, encodeApprove(REGISTRY_ADDRESS, total), `social-approve:${billId}:${total.toString()}`] as const)
+      : ([
+          REGISTRY_ADDRESS,
+          encodePayDebtFor(billId, leg.address, leg.amount),
+          // The DEBTOR is in the context, because every leg is payDebtFor on the
+          // same bill from the same payer — only the person being paid for
+          // differs, and a ticket for one must not settle another.
+          `social-pay:${billId}:${leg.address.toLowerCase()}:${leg.amount.toString()}`,
+        ] as const);
+
+    if (signBody?.prepare === true) {
+      try {
+        return Response.json({
+          ...(await prepareForUser({ walletId: user.circle_wallet_id, userId: user.id, to, data, context })),
+          // legs + the approval if it is still outstanding. The browser loops
+          // until `more` is absent, so this is for display, not for control.
+          legsRemaining: legs.length + (needsApproval ? 1 : 0),
+        });
+      } catch (err) {
+        return Response.json({ error: err instanceof Error ? err.message : "Could not prepare this payment." }, { status: 502 });
+      }
+    }
+
+    if (signBody?.ticket !== undefined) {
+      try {
+        const relayed = await relayForUser({
+          ticket: signBody.ticket,
+          signature: signBody.signature,
+          signedTransaction: signBody.signedTransaction,
+          userId: user.id,
+          walletId: user.circle_wallet_id,
+          context,
+          pollMs: LEG_POLL_MS,
+        });
+        if ("error" in relayed) return Response.json({ error: relayed.error }, { status: relayed.status });
+        // More to do whenever this was the approval, or whenever another unpaid
+        // leg remains after this one.
+        const more = needsApproval || legs.length > 1;
+        return Response.json({
+          ok: true,
+          results: needsApproval ? [] : [{ address: leg.address, ok: true, txHash: relayed.tx.txHash ?? undefined }],
+          ...(more ? { more: true } : {}),
+        });
+      } catch (err) {
+        if (err instanceof InsufficientFundsError) return Response.json({ error: "insufficient_funds" }, { status: 402 });
+        return Response.json({ error: err instanceof Error ? err.message : "payment failed" }, { status: 502 });
+      }
+    }
+
+    return Response.json(
+      { error: "This wallet is yours — enter your export password to sign this payment." },
+      { status: 409 },
+    );
+  }
+
+  // ── The server signs, exactly as before ─────────────────────────────────────
   // One approval covering every leg, then one payDebtFor per person. The
   // registry has no batch pay-for-others: settle() batches, but its pay loop is
   // hardcoded to msg.sender's own debts (BillSplitRegistry.sol:589).
   try {
-    await executeContractOnArc(user.circle_wallet_id, ARC_USDC_ADDRESS, encodeApprove(REGISTRY_ADDRESS, total));
+    await executeContract(user.circle_wallet_id, ARC_USDC_ADDRESS, encodeApprove(REGISTRY_ADDRESS, total), LEG_POLL_MS);
   } catch (err) {
     if (err instanceof InsufficientFundsError) return Response.json({ error: "insufficient_funds" }, { status: 402 });
     return Response.json({ error: err instanceof Error ? err.message : "approval failed" }, { status: 502 });
@@ -102,10 +187,11 @@ export async function POST(request: Request, ctx: RouteContext<"/api/pay/[token]
   const results: { address: string; ok: boolean; txHash?: string; error?: string }[] = [];
   for (const leg of legs) {
     try {
-      const tx = await executeContractOnArc(
+      const tx = await executeContract(
         user.circle_wallet_id,
         REGISTRY_ADDRESS,
         encodePayDebtFor(billId, leg.address, leg.amount),
+        LEG_POLL_MS,
       );
       results.push({ address: leg.address, ok: true, txHash: tx.txHash ?? undefined });
     } catch (err) {

@@ -2,7 +2,10 @@ import { cookies } from "next/headers";
 import { getSessionUser } from "@/lib/session";
 import { verifyWalletUnlock, WALLET_UNLOCK_COOKIE } from "@/lib/session-core";
 import { encodeRefund } from "@/lib/registry-calldata";
-import { executeContractOnArc } from "@/lib/circle-dcw";
+import { getSlotWalletForUser } from "@/lib/pending-wallets-repo";
+import { refundSlotToOwner } from "@/lib/slot-refund";
+import { userSignedLeg, type UserSignedBody } from "@/lib/user-signed";
+import { executeContract } from "@/lib/wallet-provider";
 import { REGISTRY_ADDRESS, getBillOnchain, getParticipantOnchain } from "@/lib/arc-read";
 import { refundableNow } from "@/lib/treasury";
 
@@ -16,7 +19,7 @@ function isBillId(v: string): boolean {
 // The payer's exit from a failed all-or-nothing bill. The registry enforces every
 // precondition itself; the checks below exist only to turn a revert the user
 // cannot read into a sentence they can.
-export async function POST(_request: Request, { params }: { params: Promise<{ billId: string }> }) {
+export async function POST(request: Request, { params }: { params: Promise<{ billId: string }> }) {
   const user = await getSessionUser();
   if (!user) return Response.json({ error: "Not signed in" }, { status: 401 });
 
@@ -35,7 +38,22 @@ export async function POST(_request: Request, { params }: { params: Promise<{ bi
   const id = BigInt(billId);
   const bill = await getBillOnchain(id);
   const me = user.wallet_address as `0x${string}`;
-  const participant = await getParticipantOnchain(id, me);
+
+  // WHOSE CONTRIBUTION IS BEING REFUNDED — their own wallet's, or their slot's.
+  // A bill created before this person signed in names the slot as the participant,
+  // and refund() pays msg.sender, so their own wallet cannot call it. The slot is
+  // checked second so a debt they can refund directly is never shadowed by one they
+  // cannot.
+  let participant = await getParticipantOnchain(id, me);
+  let slot = null as Awaited<ReturnType<typeof getSlotWalletForUser>>;
+  if (!participant.exists) {
+    slot = await getSlotWalletForUser(user).catch(() => null);
+    if (slot) {
+      const slotPart = await getParticipantOnchain(id, slot.wallet_address as `0x${string}`);
+      if (slotPart.exists) participant = slotPart;
+      else slot = null;
+    }
+  }
 
   if (!participant.exists) {
     return Response.json({ error: "You're not on this bill." }, { status: 403 });
@@ -58,7 +76,38 @@ export async function POST(_request: Request, { params }: { params: Promise<{ bi
   }
 
   try {
-    const tx = await executeContractOnArc(user.circle_wallet_id, REGISTRY_ADDRESS, encodeRefund(id));
+    // A SLOT'S REFUND IS RELAYED, not signed by the user — they hold no key to the
+    // slot, so there is nothing for them to sign. The server calls refund from the
+    // slot and forwards the proceeds to the wallet they did sign in with. No
+    // prepare/ticket round trip, so this answers on the first call.
+    if (slot) {
+      const relayed = await refundSlotToOwner({ slot, billId: id, to: me });
+      return Response.json({
+        ok: true,
+        txHash: relayed.refundTxHash,
+        amount: refundable.toString(),
+        // What reached their own wallet, which is the figure that matters to them
+        // and is smaller than `amount` by the gas the slot had to keep.
+        forwardedUsdc: relayed.sweptUsdc,
+        forwardTxHash: relayed.sweepTxHash,
+      });
+    }
+
+    const data = encodeRefund(id);
+    // A claimed wallet signs for itself. `refundable` is computed from chain state
+    // on both passes above, so the relay cannot be handed a refund for a bill whose
+    // conditions no longer hold.
+    const signed = await userSignedLeg({
+      body: (await request.json().catch(() => null)) as UserSignedBody | null,
+      walletId: user.circle_wallet_id,
+      userId: user.id,
+      to: REGISTRY_ADDRESS,
+      data,
+      context: `bill-refund:${billId}`,
+    });
+    if (signed && "response" in signed) return signed.response;
+
+    const tx = signed ? signed.tx : await executeContract(user.circle_wallet_id, REGISTRY_ADDRESS, data);
     return Response.json({ ok: true, txHash: tx.txHash, amount: refundable.toString() });
   } catch (err) {
     return Response.json({ error: err instanceof Error ? err.message : "refund failed" }, { status: 502 });
