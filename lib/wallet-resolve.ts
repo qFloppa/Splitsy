@@ -18,39 +18,33 @@ export type ResolveDeps = {
 async function defaultMintPending(provider: IdentityProvider, handle: string): Promise<string> {
   // Lazy import: keeps the wallet backend's SDK out of this module's load-time
   // graph so unit tests (node --test) can import wallet-resolve.ts with stub deps.
-  const { getOrCreateWallet, walletProviderLabel, walletUiName } = await import("./wallet-provider.ts");
+  const { getOrCreateWallet, walletProviderLabel } = await import("./wallet-provider.ts");
   const norm = normalizePendingHandle(handle);
 
-  // ON THE PRIVY-UI STACK THIS PRE-MINT STRANDS THE MONEY — the same bug the
-  // holding-wallet sweep had, in a friendlier shape. It was written believing the
-  // wallet Privy keys on this handle "appears" in the tagged person's account when
-  // they sign in and link a real account, so there would be no holding address and
-  // no sweep. NOTHING PERFORMS THAT LINK AND NOTHING CAN: a pre-mint is a
-  // `custom_auth` account, a later email or social login is a DIFFERENT Privy user,
-  // and the SDK has no method to merge them (measured — lib/privy-wallet.ts
-  // pregenerateWallet, and docs/superpowers/specs/2026-09-13-handle-escrow-design.md).
-  // The settle rail no longer comes here; it escrows against the handle instead.
-  // The bill and recurring routes still do, and still strand, until spec §3.
+  // ONE PATH FOR BOTH STACKS, and the Privy branch that used to be here is why.
   //
-  // Gated on WALLET_UI rather than WALLET_PROVIDER because the handover only works
-  // if Privy is also the login — a wallet inside a Privy account is unreachable to
-  // someone who signs in through the app's own OAuth routes, and pregenerating one
-  // for them would strand the money rather than hold it.
-  if (walletUiName() === "privy") {
-    const { pregenerateWallet } = await import("./privy-wallet.ts");
-    const wallet = await pregenerateWallet(`${provider}:${norm}`);
-    await insertPendingWallet({
-      provider,
-      handle: norm,
-      wallet_address: wallet.address,
-      // The column name is legacy from the Circle era; on this stack it holds the
-      // Privy wallet id, exactly as users.circle_wallet_id does.
-      circle_wallet_id: wallet.walletId,
-    });
-    return wallet.address;
-  }
-
-  // Namespaced refId so a pre-mint can never collide with a real signin wallet
+  // It called pregenerateWallet, which minted the slot as a `custom_auth` Privy
+  // user with NO OWNER QUORUM AND NO ADDITIONAL SIGNER. That made the address
+  // unreachable by everyone at once: the tagged person never gets it (a later
+  // login is a different Privy user and the SDK has no link method) and the server
+  // gets 401 on every signing path. A bill against it recorded a debt its debtor
+  // could not see and nobody could unwind — measured on bill 64, 2026-09-15.
+  //
+  // getOrCreateWallet mints under Splitsy's key quorum (see walletSpec in
+  // lib/privy-wallet.ts), so the server CAN sign for a slot. That is what lets
+  // app/api/onchain-bills/[billId]/refund relay a failed escrow back to the
+  // person's real wallet, which is the one thing a slot address genuinely has to
+  // be able to do.
+  //
+  // WHAT THAT CONCEDES, SAID PLAINLY: a slot is a wallet Splitsy holds a key to,
+  // which the rest of this stack deliberately avoids. It is a bookkeeping address
+  // and not a user's wallet — bills send nothing to it, payments go to the
+  // registry via payDebtFor, and the person spends from their own wallet. The only
+  // money that ever rests here is a refund from a failed all-or-nothing bill,
+  // in transit, which the server forwards. The settle rail does NOT come here for
+  // exactly this reason: money it sends is trustless in HandleEscrow instead.
+  //
+  // Namespaced refId so a slot can never collide with a real signin wallet
   // ("<provider>:<providerUserId>"). Keyed by handle, not user id.
   const wallet = await getOrCreateWallet("prem", `${provider}:${norm}`);
   if (!wallet) throw new Error(`${walletProviderLabel()} is not configured — cannot pre-mint a wallet`);
@@ -58,6 +52,9 @@ async function defaultMintPending(provider: IdentityProvider, handle: string): P
     provider,
     handle: norm,
     wallet_address: wallet.address,
+    // The column name is legacy from the Circle era; on the Privy stack it holds
+    // the Privy wallet id, exactly as users.circle_wallet_id does. It is what the
+    // refund relay signs with.
     circle_wallet_id: wallet.walletId,
   });
   return wallet.address;
@@ -95,11 +92,30 @@ export async function resolveParticipantAddress(
  * The same walk as {@link resolveParticipantAddress}, stopping at "there is
  * nobody here" instead of minting.
  *
- * ADDITIVE ON PURPOSE. resolveParticipants is shared by the three bill and
- * recurring routes, which still need an address for every participant at
- * createBill time; changing its answer would break them. The settle rail is the
- * one that MOVES money, so it is the one that must not send to an address
- * nobody holds — it asks this instead and escrows when the answer is null.
+ * ADDITIVE ON PURPOSE. resolveParticipants is shared by the bill and recurring
+ * routes, which need an address for every participant at createBill time; changing
+ * its answer would break them. The settle rail is the one that MOVES money, so it
+ * asks this instead and escrows when the answer is null.
+ *
+ * WHY A SLOT IS NOT AN ANSWER HERE, even though the server can now sign for one.
+ *
+ * It is not that the address is unreachable — that was true of the old
+ * `custom_auth` pre-mints and is no longer true of anything this mints. It is that
+ * a slot is CUSTODIAL: Splitsy holds its key, so USDC sent there is money the
+ * recipient is trusting us to forward. HandleEscrow holds the same money with no
+ * such trust, releases it on the attester's signature at login, and lets the SENDER
+ * take it back with {reclaim} if the recipient never turns up. Strictly better on
+ * every axis, and already deployed — so the rail that moves money uses it.
+ *
+ * A BILL IS DIFFERENT, which is why resolveParticipantAddress still answers with a
+ * slot. Creating a bill sends nothing anywhere: it records who owes what, and the
+ * slot is the name that debt is filed under until its owner signs in. Nobody is
+ * trusting Splitsy with a balance, because there is no balance.
+ *
+ * Gated on the STACK because on Circle a pending wallet is not merely signable, it
+ * is adopted: finishProviderLogin makes it the user's own wallet at login
+ * (lib/oauth-callback.ts), so it really is their address and escrowing to a handle
+ * they can already be paid at would be the wrong answer there.
  */
 export async function lookupParticipantAddress(
   provider: IdentityProvider,
@@ -108,6 +124,11 @@ export async function lookupParticipantAddress(
 ): Promise<string | null> {
   const user = await deps.getUserByProviderHandle(provider, handle);
   if (user?.wallet_address) return user.wallet_address;
+
+  // Lazy import for the same reason defaultMintPending's is: keeps the wallet
+  // backend's SDK out of this module's load-time graph so node --test can import it.
+  const { walletUiName } = await import("./wallet-provider.ts");
+  if (walletUiName() === "privy") return null;
 
   const pending = await deps.getPendingWallet(provider, handle);
   return pending?.wallet_address ?? null;

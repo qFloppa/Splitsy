@@ -1,4 +1,5 @@
 import { getSessionUser } from "@/lib/session";
+import { getSlotWalletForUser } from "@/lib/pending-wallets-repo";
 import { walletProviderLabel, walletUiName } from "@/lib/wallet-provider";
 
 export const runtime = "nodejs";
@@ -14,6 +15,10 @@ export async function GET() {
   if (!user) {
     return Response.json({ user: null, walletUi });
   }
+  // The slot a bill named as the debtor if this person was tagged before they
+  // joined. Best-effort: a lookup failure costs the slot's debts a render, not the
+  // whole panel, and the next poll retries.
+  const slot = await getSlotWalletForUser(user).catch(() => null);
   return Response.json({
     walletUi,
     user: {
@@ -29,6 +34,11 @@ export async function GET() {
       name: user.name,
       avatarUrl: user.avatar_url,
       walletAddress: user.wallet_address,
+      // The address a bill used as their debtor slot BEFORE they signed in, or
+      // null when they were never tagged as a stranger. The settle deck reads the
+      // registry for this too — a debt recorded against it is theirs, and without
+      // this the deck asks only about walletAddress and finds nothing.
+      slotAddress: slot?.wallet_address ?? null,
       // Which custodian actually holds this wallet's keys. The panel says so out
       // loud (spec §5) and the two stacks have different answers, so it cannot be
       // a hard-coded string in the component.

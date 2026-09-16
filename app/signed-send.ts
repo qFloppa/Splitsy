@@ -66,6 +66,17 @@ export async function signedSend(
       return { ok: false, error: plan.error ?? "Could not prepare this payment.", status: prepared.status, locked: prepared.status === 403, data: plan };
     }
 
+    // A PREPARE THAT COMES BACK WITH NO TRANSACTION IS ALREADY DONE. A route that
+    // needs a signature answers prepareForUser's shape ({transaction, ticket, …});
+    // one that had nothing for this user to sign answers its ordinary success body.
+    //
+    // app/api/onchain-bills/[billId]/refund does exactly that for a SLOT debt: the
+    // refund has to be called by the slot, the user holds no key to it, so the
+    // server relays it and forwards the proceeds. Without this the loop hands
+    // `undefined` to the signer, reports "you did not approve this payment" for a
+    // refund that already succeeded, and invites a retry.
+    if (!plan.transaction) return { ok: true, data: plan };
+
     // The bytes Privy verifies. rpcRequestInput and canonicalPayload are the same
     // pair the export path uses — drift here is a 401 that says nothing about why,
     // which is why they have a golden test against the SDK's own formatter.
@@ -191,6 +202,10 @@ async function privySend(
     if (!prepared.ok) {
       return { ok: false, error: plan.error ?? "Could not prepare this payment.", status: prepared.status, locked: prepared.status === 403, data: plan };
     }
+
+    // Nothing to sign means the route already finished — see the same guard in
+    // signedSend above for which route does that and why.
+    if (!plan.transaction) return { ok: true, data: plan };
 
     let signedTransaction: string;
     try {

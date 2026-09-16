@@ -2,6 +2,7 @@ import { after } from "next/server";
 import { getSessionUser } from "@/lib/session";
 import { triggerAutopay } from "@/lib/autopay-trigger";
 import { resolveParticipants } from "@/lib/wallet-resolve";
+import { normalizePendingHandle } from "@/lib/pending-wallets-repo";
 import { billMetadataHash } from "@/lib/bill-metadata";
 import { encodeCreateBill } from "@/lib/registry-calldata";
 import { userSignedLeg, type UserSignedBody } from "@/lib/user-signed";
@@ -19,6 +20,10 @@ const PROVIDERS: IdentityProvider[] = ["x", "discord", "email"];
 const toUnits = (usd: number) => BigInt(Math.round(usd * 1e6));
 
 type InRow = { provider?: unknown; handle?: unknown; address?: unknown; label?: unknown; amountUsd?: unknown };
+
+type Slot =
+  | { kind: "social"; idx: number; amountUsd: number; label: string }
+  | { kind: "address"; address: `0x${string}`; amountUsd: number; label: string };
 
 export async function POST(request: Request) {
   const user = await getSessionUser();
@@ -60,8 +65,7 @@ export async function POST(request: Request) {
 
   // Split rows into social (need resolving) and raw-address, remembering order.
   const socialRows: { provider: IdentityProvider; handle: string }[] = [];
-  const slots: ({ kind: "social"; idx: number; amountUsd: number; label: string } |
-                { kind: "address"; address: `0x${string}`; amountUsd: number; label: string })[] = [];
+  const slots: Slot[] = [];
   let payerN = 0;
   for (const r of body.participants) {
     const amountUsd = typeof r.amountUsd === "number" ? r.amountUsd : 0;
@@ -71,7 +75,13 @@ export async function POST(request: Request) {
       const label = typeof r.label === "string" && r.label.trim() ? r.label.trim() : `Payer ${payerN}`;
       slots.push({ kind: "address", address: r.address as `0x${string}`, amountUsd, label });
     } else if (typeof r.provider === "string" && PROVIDERS.includes(r.provider as IdentityProvider) && typeof r.handle === "string") {
-      const norm = r.handle.replace(/^@/, "").toLowerCase();
+      // The shared normalizer, which TRIMS as well as stripping "@" and folding
+      // case. The inline version this replaced did not trim, so " alice " was
+      // looked up verbatim: getUserByProviderHandle does not trim either, so a
+      // real user's row was missed and their share went off-chain as if they had
+      // never signed in. HomeClient already trims, so this also stops the two
+      // paths deriving different labels — and the label is inside the hash.
+      const norm = normalizePendingHandle(r.handle);
       socialRows.push({ provider: r.provider as IdentityProvider, handle: norm });
       slots.push({ kind: "social", idx: socialRows.length - 1, amountUsd, label: `@${norm}` });
     } else {
@@ -80,6 +90,22 @@ export async function POST(request: Request) {
   }
   if (slots.length === 0) return Response.json({ error: "no participants with a positive share" }, { status: 400 });
 
+  // EVERY TAGGED PERSON GETS AN ON-CHAIN ADDRESS, including one who has never
+  // signed in. Theirs is a SLOT: a wallet pre-minted against their handle and
+  // recorded in pending_wallets, which the bill names as the debtor.
+  //
+  // A slot used to be unreachable by everyone — see the note in
+  // lib/wallet-resolve.ts for what changed and what it concedes. Now that the
+  // server can sign for one, a stranger's share is an ordinary participant, so it
+  // keeps every feature an address participant has: escrow, the due date, the
+  // public pay link, payDebtFor, collect mandates and reputation. Nothing about
+  // this bill is special-cased, which is the point — the alternative was an
+  // off-chain row that could carry none of them.
+  //
+  // Three routes find that person's slot again afterwards: /api/dashboard and
+  // /api/me include it in the addresses they read, [billId]/pay funds it with
+  // payDebtFor from the wallet they actually signed in with, and [billId]/refund
+  // relays a failed escrow out of it.
   let resolvedSocial;
   try {
     resolvedSocial = await resolveParticipants(socialRows);

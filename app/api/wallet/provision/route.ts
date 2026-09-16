@@ -9,7 +9,7 @@ import {
   usdcBalanceOf,
 } from "@/lib/privy-wallet";
 import { getPrivyWallet, insertPrivyWallet, setClaimed } from "@/lib/privy-wallets-repo";
-import { deletePendingWallet, getPendingWallet } from "@/lib/pending-wallets-repo";
+import { getPendingWallet } from "@/lib/pending-wallets-repo";
 import { getSessionUser } from "@/lib/session";
 import { verifyWalletUnlock, WALLET_UNLOCK_COOKIE } from "@/lib/session-core";
 import { setUserWallet } from "@/lib/users-repo";
@@ -196,18 +196,21 @@ export async function POST(request: Request) {
     //    them with no wallet at all over money that is still sitting safely where
     //    it was. Reported instead, and the pending row survives for a retry.
     //
-    //    ponytail: sweeps the USDC BALANCE and nothing else. An escrow position
-    //    bound to the holding address — a share this handle owes, or funds it can
-    //    claim, on an on-chain bill created before they signed in — stays bound to
-    //    an address their wallet is not, and every pay/claim/refund route reads the
-    //    chain by users.wallet_address (app/api/onchain-bills/[billId]/pay:53), so
-    //    it reads as "You're not a participant on this bill." The old login-time
-    //    ADOPTION had no such gap: the holding address simply became the user's
-    //    wallet, positions and all. That is not available any more — it is a wallet
-    //    we hold the key to — so closing this needs the route to SETTLE the holding
-    //    address before abandoning it (pay its debts from its own balance, claim
-    //    its claimable into the new wallet, then sweep the remainder). Reachable
-    //    only by a user tagged on an on-chain bill before their first visit.
+    //    ponytail: sweeps the USDC BALANCE and nothing else, and that is now all it
+    //    needs to do. It used to leave a gap: an on-chain position bound to the
+    //    holding address — a share this handle owes on a bill created before they
+    //    signed in — stayed bound to an address their wallet is not, and every
+    //    pay/claim/refund route read the chain by users.wallet_address alone, so it
+    //    answered "You're not a participant on this bill." Measured on bill 64,
+    //    2026-09-15.
+    //
+    //    That is closed elsewhere rather than here, and without settling anything:
+    //    the routes now ALSO read the holding address, via getSlotWalletForUser
+    //    (lib/pending-wallets-repo.ts). A debt filed under it is paid with
+    //    payDebtFor from the user's own wallet, and a failed all-or-nothing bill is
+    //    refunded out of it by lib/slot-refund.ts. So the address keeps its
+    //    positions and stays findable — which is why the pending row is no longer
+    //    deleted below.
     let swept: { amountUsdc: number; txHash: string | null } | null = null;
     let sweepError: string | null = null;
     const pending =
@@ -266,12 +269,22 @@ export async function POST(request: Request) {
     });
     await setUserWallet(user.id, address, walletId);
 
-    if (pending && !sweepError) {
-      await deletePendingWallet(pending.provider, pending.handle).catch(() => {
-        // Not fatal: the row is now an orphan pointing at a swept address, which
-        // resolveParticipantAddress will pass over because the user has a wallet.
-      });
-    }
+    // THE PENDING ROW IS KEPT, and that is a change from what this used to do.
+    //
+    // It was deleted here once the sweep had emptied the address, on the reasoning
+    // that an emptied holding wallet is an orphan. That reasoning missed what the
+    // `ponytail:` note above spells out: a bill created before this person signed in
+    // names the SLOT as its debtor, and that binding is on chain and permanent. The
+    // row is the only record of which slot belongs to which handle, so deleting it
+    // makes those debts unfindable — the settle deck, /api/dashboard,
+    // [billId]/pay and [billId]/refund all locate them through
+    // getSlotWalletForUser, which reads exactly this row.
+    //
+    // Nothing depends on it being gone. resolveParticipantAddress prefers
+    // users.wallet_address, so a kept row never diverts a new bill; the Circle
+    // adoption path in lib/oauth-callback.ts deletes its own row by that row's key
+    // and is unaffected; and this route is Privy-only.
+    void pending;
 
     return json({
       ok: true,

@@ -2,7 +2,8 @@ import { cookies } from "next/headers";
 import { after } from "next/server";
 import { getSessionUser } from "@/lib/session";
 import { verifyWalletUnlock, WALLET_UNLOCK_COOKIE } from "@/lib/session-core";
-import { encodeApprove, encodePayDebt } from "@/lib/registry-calldata";
+import { encodeApprove, encodePayDebt, encodePayDebtFor } from "@/lib/registry-calldata";
+import { getSlotWalletForUser } from "@/lib/pending-wallets-repo";
 import { prepareForUser, relayForUser, userMustSign, type UserSignedBody } from "@/lib/user-signed";
 import { executeContract, InsufficientFundsError } from "@/lib/wallet-provider";
 import {
@@ -49,11 +50,39 @@ export async function POST(request: Request, { params }: { params: Promise<{ bil
   const { billId } = await params;
   if (!isBillId(billId)) return Response.json({ error: "bad bill id" }, { status: 400 });
 
-  // Read the debt from chain — never trust a client amount.
-  const part = await getParticipantOnchain(BigInt(billId), user.wallet_address as `0x${string}`);
+  // WHICH ADDRESS OWES THIS BILL — their wallet, or the slot a bill named before
+  // they had one. Read from chain either way; never trust a client amount.
+  //
+  // The slot is checked only when the wallet is not a participant, so a user who
+  // owes the same bill from both cannot have the slot silently shadow the debt they
+  // can settle directly. Paying a slot's share is `payDebtFor(billId, slot, …)`:
+  // permissionless by design, funded by THIS wallet's USDC, and credited to the
+  // slot — so the approve leg, the balance check and the gas are all the user's own,
+  // and nothing has to be signed by an address nobody spends from.
+  const me = user.wallet_address as `0x${string}`;
+  let debtor = me;
+  let part = await getParticipantOnchain(BigInt(billId), me);
+  if (!part.exists) {
+    const slot = await getSlotWalletForUser(user).catch(() => null);
+    if (slot) {
+      const slotAddr = slot.wallet_address as `0x${string}`;
+      const slotPart = await getParticipantOnchain(BigInt(billId), slotAddr);
+      if (slotPart.exists) {
+        debtor = slotAddr;
+        part = slotPart;
+      }
+    }
+  }
   if (!part.exists) return Response.json({ error: "You're not a participant on this bill." }, { status: 403 });
   const remaining = part.owed - part.paid;
   if (remaining <= 0n) return Response.json({ error: "Already paid" }, { status: 409 });
+
+  // One encoder for both cases: paying your own share is just funding yourself, and
+  // payDebtFor credits `debtor` exactly as payDebt credits msg.sender. Keeping a
+  // single call shape means the leg logic, the ticket context and the server-signed
+  // path below cannot drift between a wallet debt and a slot debt.
+  const payCalldata = () =>
+    debtor === me ? encodePayDebt(BigInt(billId), remaining) : encodePayDebtFor(BigInt(billId), debtor, remaining);
 
   // Before spending gas on a payDebt that would revert with nothing to say for
   // itself. Sent as the message, not the "insufficient_funds" sentinel, because
@@ -84,12 +113,14 @@ export async function POST(request: Request, { params }: { params: Promise<{ bil
     const leg = allowance >= remaining ? "pay" : "approve";
     const [to, data] =
       leg === "pay"
-        ? ([REGISTRY_ADDRESS, encodePayDebt(BigInt(billId), remaining)] as const)
+        ? ([REGISTRY_ADDRESS, payCalldata()] as const)
         : ([ARC_USDC_ADDRESS, encodeApprove(REGISTRY_ADDRESS, remaining)] as const);
     // The leg is IN THE CONTEXT, so an approve ticket cannot be relayed as a
     // payDebt or the other way round — they are different calldata for the same
     // bill and the same user, which the other bindings would not separate.
-    const context = `bill-pay:${billId}:${remaining.toString()}:${leg}`;
+    // The DEBTOR is in the context too: a ticket prepared to fund a slot must not
+    // be relayable as a payment of the signer's own share, or the other way round.
+    const context = `bill-pay:${billId}:${debtor}:${remaining.toString()}:${leg}`;
 
     if (body?.prepare === true) {
       try {
@@ -143,7 +174,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ bil
   // approve(registry, remaining) then payDebt(billId, remaining), both from the DCW.
   try {
     await executeContract(user.circle_wallet_id, ARC_USDC_ADDRESS, encodeApprove(REGISTRY_ADDRESS, remaining));
-    const tx = await executeContract(user.circle_wallet_id, REGISTRY_ADDRESS, encodePayDebt(BigInt(billId), remaining));
+    const tx = await executeContract(user.circle_wallet_id, REGISTRY_ADDRESS, payCalldata());
     scoreAfterPayment(tx.txHash);
     return Response.json({ ok: true, txHash: tx.txHash });
   } catch (err) {
