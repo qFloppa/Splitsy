@@ -41,6 +41,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import { useAccount, useSignMessage } from "wagmi";
 import { createPublicClient, http } from "viem";
 import { arcTestnet } from "viem/chains";
+import { ARC_EXPLORER } from "@/lib/arc-explorer";
 import { arcWalletClient } from "@/lib/wagmi";
 import { assertReceiptSuccess } from "@/lib/bill-split-contracts";
 import { ARC_USDC_ADDRESS, publicClient, usdcAbi } from "@/lib/recurring-contracts";
@@ -53,7 +54,6 @@ import { encodeRevokeMandate } from "@/lib/registry-calldata";
 import { PosterCell, PosterFact, PosterValue, SectionHead, revealMotion, sectionMotion, type Step } from "./SpecCard";
 import JobTrail from "./JobTrail";
 
-const EXPLORER = "https://testnet.arcscan.app";
 
 // ERC-8004 IdentityRegistry, for the link to the agent's identity NFT. Display
 // only — nothing here signs against it.
@@ -828,7 +828,7 @@ export default function SettlementAgentsPanel({ onState }: { onState?: (state: A
               {agentWallet?.tokenId ? (
                 <a
                   className="iou-row-tx"
-                  href={`${EXPLORER}/token/${IDENTITY_REGISTRY_ADDRESS}/instance/${agentWallet.tokenId}`}
+                  href={`${ARC_EXPLORER}/token/${IDENTITY_REGISTRY_ADDRESS}/instance/${agentWallet.tokenId}`}
                   rel="noreferrer"
                   target="_blank"
                 >
@@ -894,7 +894,7 @@ export default function SettlementAgentsPanel({ onState }: { onState?: (state: A
             {agentWallet?.address ? (
               <a
                 className="iou-row-tx"
-                href={`${EXPLORER}/address/${agentWallet.address}`}
+                href={`${ARC_EXPLORER}/address/${agentWallet.address}`}
                 rel="noreferrer"
                 target="_blank"
               >
@@ -1010,7 +1010,7 @@ export default function SettlementAgentsPanel({ onState }: { onState?: (state: A
                       </span>
                       <a
                         className="iou-row-tx"
-                        href={`${EXPLORER}/address/${agentWallet.otherAgent.address}`}
+                        href={`${ARC_EXPLORER}/address/${agentWallet.otherAgent.address}`}
                         rel="noreferrer"
                         target="_blank"
                       >
@@ -1616,7 +1616,7 @@ export default function SettlementAgentsPanel({ onState }: { onState?: (state: A
                       {entry.txHash ? (
                         <a
                           className="iou-row-tx"
-                          href={`${EXPLORER}/tx/${entry.txHash}`}
+                          href={`${ARC_EXPLORER}/tx/${entry.txHash}`}
                           rel="noreferrer"
                           target="_blank"
                         >

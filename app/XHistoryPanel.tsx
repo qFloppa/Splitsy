@@ -2,7 +2,7 @@
 
 import { ExternalLink } from "lucide-react";
 import { useEffect, useState } from "react";
-import { looksLikeTxHash } from "@/lib/arc-explorer";
+import { ARC_EXPLORER, looksLikeTxHash } from "@/lib/arc-explorer";
 import { type ProviderPerson } from "@/lib/provider-display";
 import { ProviderTag } from "./ProviderTag";
 import { HistoryCard, PaidBillStamp } from "./HistoryCard";
@@ -44,7 +44,7 @@ export default function XHistoryPanel({ onCount }: { onCount?: (n: number) => vo
   const [paid, setPaid] = useState<IOwe[]>([]);
   const [created, setCreated] = useState<OwedToMe[]>([]);
   const [hashById, setHashById] = useState<Record<string, string>>({});
-  const [explorer, setExplorer] = useState("https://testnet.arcscan.app");
+  const [explorer, setExplorer] = useState(ARC_EXPLORER);
 
   useEffect(() => {
     let active = true;

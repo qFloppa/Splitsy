@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { ChevronDown } from "lucide-react";
+import { ARC_EXPLORER } from "@/lib/arc-explorer";
 import { PosterFact } from "./SpecCard";
 
 // The expandable half of a decision-log row: every transaction of the ERC-8183
@@ -18,7 +19,6 @@ import { PosterFact } from "./SpecCard";
 // app/SettlementAgentsPanel.tsx. The only state is the fetch, which happens once
 // on first open: this endpoint reads the chain twice, and a page with a dozen
 // settled bills must not do that a dozen times before anyone clicks.
-const EXPLORER = "https://testnet.arcscan.app";
 
 type Step = { step: string; blockNumber: number; txHash: string };
 
@@ -155,7 +155,7 @@ export default function JobTrail({
                 value={
                   <a
                     className="iou-row-tx"
-                    href={`${EXPLORER}/address/${detail.job?.[role]}`}
+                    href={`${ARC_EXPLORER}/address/${detail.job?.[role]}`}
                     rel="noreferrer"
                     target="_blank"
                   >
@@ -189,7 +189,7 @@ export default function JobTrail({
               </span>
               <a
                 className="iou-row-tx"
-                href={`${EXPLORER}/tx/${row.txHash}`}
+                href={`${ARC_EXPLORER}/tx/${row.txHash}`}
                 rel="noreferrer"
                 target="_blank"
               >

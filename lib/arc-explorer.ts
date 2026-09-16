@@ -1,9 +1,10 @@
-// Arc Testnet block explorer links, client-side.
+// Arc block explorer links, client-side.
 //
 // lib/circle-dcw.ts owns the same knowledge server-side but is server-only (it
 // pulls the Circle SDK and node:crypto), so a browser component can't import it.
+import { ARC } from "./arc-chain.ts";
 
-export const ARC_EXPLORER = "https://testnet.arcscan.app";
+export const ARC_EXPLORER = ARC.explorerUrl;
 
 export const explorerTxUrl = (hash: string) => `${ARC_EXPLORER}/tx/${hash}`;
 

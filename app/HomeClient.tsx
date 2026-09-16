@@ -37,6 +37,7 @@ import { payErrorMessage, walletPost } from "./signed-send";
 import SettlementAgentsPanel, { AGENT_STEPS, type AgentTabState } from "./SettlementAgentsPanel";
 import { HistoryCard, PaidBillStamp } from "./HistoryCard";
 import { PosterCell, PosterFact, PosterHero, PosterValue, SectionHead, legendOf, type Step } from "./SpecCard";
+import { ARC_EXPLORER } from "@/lib/arc-explorer";
 import { nextProvider, validHandle } from "@/lib/iou";
 import {
   bridgeSourceChains,
@@ -2861,7 +2862,7 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
                         decoration — same mono link the recurring posters use. */}
                     <a
                       className="iou-row-tx"
-                      href={`https://testnet.arcscan.app/address/${BILL_SPLIT_REGISTRY_ADDRESS}`}
+                      href={`${ARC_EXPLORER}/address/${BILL_SPLIT_REGISTRY_ADDRESS}`}
                       rel="noreferrer"
                       target="_blank"
                     >
@@ -3775,7 +3776,7 @@ function BillActivityDetail({ debt }: { debt: BillSplitDebt }) {
                   {data.createdTxHash ? (
                     <a
                       className="history-tx-link mt-1 inline-block"
-                      href={`https://testnet.arcscan.app/tx/${data.createdTxHash}`}
+                      href={`${ARC_EXPLORER}/tx/${data.createdTxHash}`}
                       rel="noreferrer"
                       target="_blank"
                     >
@@ -3789,7 +3790,7 @@ function BillActivityDetail({ debt }: { debt: BillSplitDebt }) {
                   <p className="history-detail-label">Splitter</p>
                   <a
                     className="history-tx-link mt-1 inline-block"
-                    href={`https://testnet.arcscan.app/address/${getAddress(debt.splitter)}`}
+                    href={`${ARC_EXPLORER}/address/${getAddress(debt.splitter)}`}
                     rel="noreferrer"
                     target="_blank"
                   >
@@ -3805,7 +3806,7 @@ function BillActivityDetail({ debt }: { debt: BillSplitDebt }) {
                     debtorWallets.map((address) => (
                       <a
                         className="history-tx-link"
-                        href={`https://testnet.arcscan.app/address/${address}`}
+                        href={`${ARC_EXPLORER}/address/${address}`}
                         key={address}
                         rel="noreferrer"
                         target="_blank"
@@ -3830,7 +3831,7 @@ function BillActivityDetail({ debt }: { debt: BillSplitDebt }) {
                           <span className="amount-text">${billUnitsToUsdc(payment.amount)}</span>
                           <span className="text-[var(--pay-poster-dim)]"> · {formatTimestamp(payment.timestamp)}</span>
                         </span>
-                        <a className="history-tx-link" href={`https://testnet.arcscan.app/tx/${payment.txHash}`} rel="noreferrer" target="_blank">
+                        <a className="history-tx-link" href={`${ARC_EXPLORER}/tx/${payment.txHash}`} rel="noreferrer" target="_blank">
                           tx
                         </a>
                       </li>
@@ -3851,7 +3852,7 @@ function BillActivityDetail({ debt }: { debt: BillSplitDebt }) {
                           <span className="amount-text">${billUnitsToUsdc(claim.amount)}</span> claimed
                           <span className="text-[var(--pay-poster-dim)]"> · {formatTimestamp(claim.timestamp)}</span>
                         </span>
-                        <a className="history-tx-link" href={`https://testnet.arcscan.app/tx/${claim.txHash}`} rel="noreferrer" target="_blank">
+                        <a className="history-tx-link" href={`${ARC_EXPLORER}/tx/${claim.txHash}`} rel="noreferrer" target="_blank">
                           tx
                         </a>
                       </li>
@@ -4436,7 +4437,7 @@ function RecurringWorkspace({
                       mono, dim, and openable. */}
                   <a
                     className="iou-row-tx"
-                    href={`https://testnet.arcscan.app/address/${tabState.address}`}
+                    href={`${ARC_EXPLORER}/address/${tabState.address}`}
                     rel="noreferrer"
                     target="_blank"
                   >
@@ -4873,7 +4874,7 @@ function RecurringWorkspace({
                         </span>
                         <a
                           className="iou-row-tx"
-                          href={`https://testnet.arcscan.app/tx/${event.txHash}`}
+                          href={`${ARC_EXPLORER}/tx/${event.txHash}`}
                           rel="noreferrer"
                           target="_blank"
                         >
@@ -5178,7 +5179,7 @@ function ScoutReceipt({ report }: { report: ScoutReport }) {
       <div className="bill-scout-body">
         <p>
           Agent{" "}
-          <a href={`https://testnet.arcscan.app/address/${agent.address}`} rel="noreferrer" target="_blank">
+          <a href={`${ARC_EXPLORER}/address/${agent.address}`} rel="noreferrer" target="_blank">
             {agent.address.slice(0, 6)}…{agent.address.slice(-4)}
           </a>
           {agent.tokenId ? ` · ERC-8004 #${agent.tokenId}` : ""}
@@ -5218,7 +5219,7 @@ function ScoutReceipt({ report }: { report: ScoutReport }) {
                     return (
                       <>
                         {" · "}
-                        <a href={`https://testnet.arcscan.app/tx/${hash}`} rel="noreferrer" target="_blank">
+                        <a href={`${ARC_EXPLORER}/tx/${hash}`} rel="noreferrer" target="_blank">
                           settled tx
                         </a>
                       </>

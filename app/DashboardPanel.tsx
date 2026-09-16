@@ -49,6 +49,7 @@ import {
   type TreasuryPlan,
   type TreasurySettleSelection,
 } from "@/lib/dashboard-types";
+import { ARC_EXPLORER } from "@/lib/arc-explorer";
 import { providerDisplay } from "@/lib/provider-display";
 import type { IdentityProvider } from "@/lib/types";
 import { ProviderIcon } from "./ProviderTag";
@@ -60,7 +61,6 @@ type RangeKey = "7d" | "30d" | "90d" | "all";
 // the social (custodial DCW) and non-custodial (browser) wallets.
 type Scope = "all" | "social" | "wallet";
 
-const EXPLORER = "https://testnet.arcscan.app";
 const RANGE_DAYS: Record<Exclude<RangeKey, "all">, number> = { "7d": 7, "30d": 30, "90d": 90 };
 const BUCKET_LABEL: Record<IdentityBucket, string> = {
   x: "X",
@@ -945,7 +945,7 @@ function BreakdownsSection({
                       {anonymous ? (
                         <a
                           className="bill-rank-address"
-                          href={`${EXPLORER}/address/${c.label}`}
+                          href={`${ARC_EXPLORER}/address/${c.label}`}
                           rel="noreferrer"
                           target="_blank"
                           title={c.label}
@@ -1478,7 +1478,7 @@ function TreasurySection({
                         {anonymous ? (
                           <a
                             className="bill-rank-address"
-                            href={`${EXPLORER}/address/${p.counterparty}`}
+                            href={`${ARC_EXPLORER}/address/${p.counterparty}`}
                             rel="noreferrer"
                             target="_blank"
                             title={p.counterparty}

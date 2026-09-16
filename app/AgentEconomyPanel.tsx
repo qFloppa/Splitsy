@@ -9,11 +9,11 @@
 import { useEffect, useState } from "react";
 import { ChevronDown } from "lucide-react";
 import { motion } from "framer-motion";
+import { ARC_EXPLORER } from "@/lib/arc-explorer";
 import { PosterFact, SectionHead } from "./SpecCard";
 import { AGENT_STEPS } from "./SettlementAgentsPanel";
 import { PaymentLink } from "./JobTrail";
 
-const EXPLORER = "https://testnet.arcscan.app";
 
 // The four ledger figures are optional because /api/scout/stats omits them
 // wholesale when there is no database to read them from. Absent means unknown,
@@ -117,7 +117,7 @@ export default function AgentEconomyPanel() {
             {stats.agent.address ? (
               <a
                 className="iou-row-tx"
-                href={`${EXPLORER}/address/${stats.agent.address}`}
+                href={`${ARC_EXPLORER}/address/${stats.agent.address}`}
                 rel="noreferrer"
                 target="_blank"
               >
@@ -184,7 +184,7 @@ export default function AgentEconomyPanel() {
                 {d.txHash ? (
                   <a
                     className="iou-row-tx"
-                    href={`${EXPLORER}/tx/${d.txHash}`}
+                    href={`${ARC_EXPLORER}/tx/${d.txHash}`}
                     rel="noreferrer"
                     target="_blank"
                   >
