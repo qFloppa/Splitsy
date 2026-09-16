@@ -56,7 +56,7 @@ export async function POST(request: Request, ctx: RouteContext<"/api/pay/[token]
   const { token } = await ctx.params;
   if (!isShareToken(token)) return Response.json({ error: "not_found" }, { status: 404 });
 
-  const body = (await request.json().catch(() => null)) as { debtors?: unknown } | null;
+  const body = (await request.json().catch(() => null)) as ({ debtors?: unknown } & UserSignedBody) | null;
   const requested = Array.isArray(body?.debtors) ? body.debtors : null;
   if (!requested || requested.length === 0) {
     return Response.json({ error: "Pick at least one person to cover." }, { status: 400 });
@@ -109,7 +109,7 @@ export async function POST(request: Request, ctx: RouteContext<"/api/pay/[token]
   // drops out of the list by itself and the next unpaid one is simply the first
   // one left. Nothing is tracked between requests.
   if (await userMustSign(user.circle_wallet_id)) {
-    const signBody = (await request.json().catch(() => null)) as UserSignedBody | null;
+    const signBody = body;
     const allowance = await getUsdcAllowanceOnchain(user.wallet_address as `0x${string}`, REGISTRY_ADDRESS);
     const needsApproval = allowance < total;
     const leg = legs[0];

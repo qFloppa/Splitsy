@@ -1177,40 +1177,34 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
       // on-chain commitment, so in practice only the creator can set one.
       const shareToken = publicPayLink ? newShareToken() : undefined;
 
-      // Social creator → server signs from their Circle DCW. Either it's the
-      // only identity they have, or they explicitly picked it over their
-      // connected browser wallet in the "Create as" control.
+      // The social wallet uses its configured signer, including Privy's prompt.
       if (createAsSocial && me?.walletAddress) {
         setBillMessage("Writing the split to Arc from your wallet…");
-        const res = await fetch("/api/onchain-bills/create", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            merchant: bill.merchant,
-            currency: bill.currency,
-            total: confirmedUsd,
-            participants: rows.map((p) => ({
-              provider: isAddr(p.walletAddress) ? undefined : rowProvider(p),
-              handle: isAddr(p.walletAddress) ? undefined : p.walletAddress.trim(),
-              address: isAddr(p.walletAddress) ? normalizeAddress(p.walletAddress) : undefined,
-              label: p.label,
-              amountUsd: p.amountUsd,
-            })),
-            receiptHash,
-            receiptImageBase64: receiptCommit ? bytesToBase64(receiptCommit.bytes) : undefined,
-            dueDate,
-            shareToken,
-            escrowUntilFull: Boolean(dueDate) && escrowUntilFull,
-          }),
+        const outcome = await walletPost("/api/onchain-bills/create", {
+          merchant: bill.merchant,
+          currency: bill.currency,
+          total: confirmedUsd,
+          participants: rows.map((p) => ({
+            provider: isAddr(p.walletAddress) ? undefined : rowProvider(p),
+            handle: isAddr(p.walletAddress) ? undefined : p.walletAddress.trim(),
+            address: isAddr(p.walletAddress) ? normalizeAddress(p.walletAddress) : undefined,
+            label: p.label,
+            amountUsd: p.amountUsd,
+          })),
+          receiptHash,
+          receiptImageBase64: receiptCommit ? bytesToBase64(receiptCommit.bytes) : undefined,
+          dueDate,
+          shareToken,
+          escrowUntilFull: Boolean(dueDate) && escrowUntilFull,
         });
-        const data = await res.json();
-        if (!res.ok) {
+        if (!outcome.ok) {
           setBillState("error");
-          setBillMessage(data.error === "insufficient_funds"
+          setBillMessage(outcome.error === "insufficient_funds"
             ? "Your wallet needs more test USDC to cover the gas for creating this bill."
-            : (data.error ?? "Could not create the bill."));
+            : payErrorMessage(outcome.error));
           return;
         }
+        const data = outcome.data;
         setBillState("success");
         // Prose only. The bill number is the confirmation poster's headline, so
         // repeating "Bill #N is live on Arc" here would set it twice.

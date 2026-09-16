@@ -13,6 +13,7 @@ import WalletMark from "@/app/WalletMark";
 import XAuthControl from "@/app/XAuthControl";
 import { Switch } from "@/app/SettlementAgentsPanel";
 import { ProviderIcon } from "@/app/ProviderTag";
+import { payErrorMessage, walletPost } from "@/app/signed-send";
 import type { AccountProvider } from "@/lib/types";
 import { useTheme } from "@/lib/use-theme";
 import { arcWalletClient, wagmiConfig } from "@/lib/wagmi";
@@ -359,7 +360,7 @@ export default function PayClient({ token }: { token: string }) {
     }
   }
 
-  // Splitsy wallet: the server signs. One request, per-row results back.
+  // The shared signer handles approval and each selected share in sequence.
   async function payWithSplitsyWallet() {
     const legs = bill!.rows.filter((r) => selected.has(r.address) && BigInt(r.remainingUnits) > 0n);
     if (legs.length === 0) return;
@@ -386,23 +387,20 @@ export default function PayClient({ token }: { token: string }) {
     setMessage("");
     setRowStates(Object.fromEntries(legs.map((l) => [l.address, { status: "pending" } as RowState])));
     try {
-      const res = await fetch(`/api/pay/${token}/social`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ debtors: legs.map((l) => l.address) }),
+      const outcome = await walletPost(`/api/pay/${token}/social`, {
+        debtors: legs.map((l) => l.address),
       });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
+      if (!outcome.ok) {
         setMessage(
-          data.error === "insufficient_funds"
-            ? "Your wallet needs more test USDC to cover this."
-            : data.error === "locked"
-              ? "Unlock your wallet (the wallet button in the bottom-right corner), then tap Pay again."
-              : (data.error ?? "Payment failed."),
+          outcome.error === "locked"
+            ? "Unlock your wallet (the wallet button in the bottom-right corner), then tap Pay again."
+            : payErrorMessage(outcome.error),
         );
         setRowStates({});
+        await load();
         return;
       }
+      const data = outcome.data;
       const results = (data.results ?? []) as { address: string; ok: boolean; txHash?: string; error?: string }[];
       const states: Record<string, RowState> = Object.fromEntries(
         results.map((r) => [
@@ -417,6 +415,7 @@ export default function PayClient({ token }: { token: string }) {
       // `pending` with nothing said, and threw past the `void` at the call site.
       setMessage(err instanceof Error ? err.message : "Payment failed.");
       setRowStates({});
+      await load().catch(() => null);
     } finally {
       setPaying(false);
     }
