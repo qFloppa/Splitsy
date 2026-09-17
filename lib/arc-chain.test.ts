@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { ARC_PROFILES, resolveArcProfile } from "./arc-chain.ts";
+import { ARC_PROFILES, forArcNetwork, resolveArcProfile } from "./arc-chain.ts";
 
 // The whole point of the module. Every one of these used to be a separate
 // `process.env.ARC_TESTNET_* ?? "<a testnet value>"` at 24 call sites, so a
@@ -85,4 +85,29 @@ test("a returned profile does not alias the shared table", () => {
 
   assert.equal(second.rpcUrl, ARC_PROFILES.mainnet.rpcUrl);
   assert.notEqual(first.rpcUrl, second.rpcUrl);
+});
+
+// The rule that makes "one variable flips the deployment" true: BOTH networks'
+// values can be configured at once, and the switch picks. The existing
+// unsuffixed variable is the testnet slot, so a testnet deployment needs nothing
+// renamed; a `_MAINNET` twin is added beside it.
+test("forArcNetwork picks the slot for the selected network", () => {
+  // Unset switch, so this process is testnet — the state of a clean checkout.
+  assert.equal(forArcNetwork("main-value", "test-value"), "test-value");
+});
+
+// The direction that matters. A mainnet deployment missing an address must get
+// nothing — which every consumer reads as the zero address and refuses on —
+// never the testnet address, which on chain 5042 is an address with no code.
+test("a mainnet deployment never falls back to the testnet slot", async () => {
+  process.env.NEXT_PUBLIC_ARC_NETWORK = "mainnet";
+  try {
+    const fresh = "./arc-chain.ts?mainnet-selected";
+    const reloaded = await import(fresh);
+    assert.equal(reloaded.ARC.network, "mainnet");
+    assert.equal(reloaded.forArcNetwork("main-value", "test-value"), "main-value");
+    assert.equal(reloaded.forArcNetwork(undefined, "test-value"), undefined);
+  } finally {
+    delete process.env.NEXT_PUBLIC_ARC_NETWORK;
+  }
 });

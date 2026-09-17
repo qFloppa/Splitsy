@@ -20,7 +20,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { ChangeEvent, DragEvent, FormEvent, ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { getAddress } from "viem";
-import { arcTestnet } from "viem/chains";
+import { ARC } from "@/lib/arc-chain";
 import { useAccount, useConnect, useDisconnect } from "wagmi";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { DiscordIcon, XIcon } from "@/components/landing/ProviderIcons";
@@ -844,7 +844,7 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
 
     try {
       if (!address) {
-        await connectAsync({ connector: activeConnector, chainId: arcTestnet.id });
+        await connectAsync({ connector: activeConnector, chainId: ARC.chainId });
       }
       const nextWalletClient = await arcWalletClient();
       const [bill, recurring] = await Promise.all([

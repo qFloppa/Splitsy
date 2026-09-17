@@ -40,7 +40,7 @@ import { ChevronDown } from "lucide-react";
 import { AnimatePresence, motion } from "framer-motion";
 import { useAccount, useSignMessage } from "wagmi";
 import { createPublicClient, http } from "viem";
-import { arcTestnet } from "viem/chains";
+import { ARC } from "@/lib/arc-chain";
 import { ARC_EXPLORER } from "@/lib/arc-explorer";
 import { arcWalletClient } from "@/lib/wagmi";
 import { assertReceiptSuccess } from "@/lib/bill-split-contracts";
@@ -473,7 +473,7 @@ export default function SettlementAgentsPanel({ onState }: { onState?: (state: A
           // amount like 2.0000001 would otherwise throw rather than send.
           args: [to as `0x${string}`, BigInt(Math.round(amount * 1e6))],
           account: connectedAddress,
-          chain: arcTestnet,
+          chain: ARC.chain,
         });
         // viem RESOLVES on a reverted transaction rather than throwing, so the
         // receipt is checked — same helper as every other write on this page.
@@ -640,12 +640,12 @@ export default function SettlementAgentsPanel({ onState }: { onState?: (state: A
     setSaving(true);
     try {
       const walletClient = await arcWalletClient();
-      const publicClient = createPublicClient({ chain: arcTestnet, transport: http() });
+      const publicClient = createPublicClient({ chain: ARC.chain, transport: http() });
       const hash = await walletClient.sendTransaction({
         to: mandateAddress as `0x${string}`,
         data: encodeRevokeMandate(),
         account: connectedAddress,
-        chain: arcTestnet,
+        chain: ARC.chain,
       });
       // viem RESOLVES waitForTransactionReceipt for a reverted transaction — it
       // does not throw — so the receipt has to be checked or a revert reads as

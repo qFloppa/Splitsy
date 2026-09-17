@@ -98,13 +98,45 @@ export function resolveArcProfile(network: string | undefined, rpcOverride?: str
   return { ...base, rpcUrl: rpcOverride || base.rpcUrl };
 }
 
-// Both reads are written as literals on purpose. Next replaces
-// `process.env.NEXT_PUBLIC_*` textually at BUILD time, so a dynamic read —
-// `env[key]`, a destructure — is never inlined and is undefined in the browser.
+// Which network, decided once, before anything derived from it is read.
+const selected = resolveArcProfile(process.env.NEXT_PUBLIC_ARC_NETWORK);
+
+/**
+ * Pick the value configured for the network this deployment is on.
+ *
+ * The convention every call site follows, and the reason it is shaped this way:
+ * the EXISTING unsuffixed variable is the TESTNET slot, and a new `_MAINNET`
+ * twin is the mainnet slot. So a testnet deployment needs no variable renamed to
+ * keep working, and a mainnet one is configured by adding rather than editing —
+ * which means both networks can be fully set up at once and the deployment
+ * switched between them by `NEXT_PUBLIC_ARC_NETWORK` alone.
+ *
+ * Mainnet NEVER falls back to the testnet slot. An address missing on mainnet
+ * resolves to the zero address, which every consumer already reads as "not
+ * configured" and refuses on. The alternative — quietly using the testnet
+ * address on chain 5042 — is the exact failure this whole module exists to stop.
+ *
+ * Both arguments must be written as literal `process.env.NEXT_PUBLIC_X` reads at
+ * the call site. Next inlines those textually at build time; a dynamic read is
+ * undefined in the browser.
+ */
+export function forArcNetwork<T>(mainnet: T, testnet: T): T {
+  return selected.network === "mainnet" ? mainnet : testnet;
+}
+
+// Written as literals on purpose, for the reason in forArcNetwork above.
 // ARC_RPC_URL is server-only and wins where it exists, so a keyed endpoint need
 // not be published into the client bundle; in the browser it is simply
 // undefined and the public one applies.
+//
+// A keyed endpoint is per-NETWORK, not per-deployment: pointing a mainnet build
+// at a testnet RPC does not fail, it reads testnet state and labels it chain
+// 5042. viem does not check. Hence a separate mainnet slot rather than one
+// shared variable.
 export const ARC = resolveArcProfile(
-  process.env.NEXT_PUBLIC_ARC_NETWORK,
-  process.env.ARC_RPC_URL || process.env.NEXT_PUBLIC_ARC_RPC_URL,
+  selected.network,
+  forArcNetwork(
+    process.env.ARC_RPC_URL_MAINNET || process.env.NEXT_PUBLIC_ARC_RPC_URL_MAINNET,
+    process.env.ARC_RPC_URL || process.env.NEXT_PUBLIC_ARC_RPC_URL,
+  ),
 );

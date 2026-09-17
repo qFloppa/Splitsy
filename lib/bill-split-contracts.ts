@@ -14,19 +14,25 @@ import {
   type TransactionReceipt,
   type WalletClient,
 } from "viem";
-import { arcTestnet } from "viem/chains";
 import { HANDLE_ESCROW_ABI } from "@/lib/handle-escrow";
+import { ARC, forArcNetwork } from "@/lib/arc-chain";
 import { ARC_USDC_ADDRESS, publicClient, usdcAbi } from "@/lib/recurring-contracts";
 
 export const BILL_SPLIT_REGISTRY_ADDRESS = (
-  process.env.NEXT_PUBLIC_BILL_SPLIT_REGISTRY_ADDRESS ?? "0x0000000000000000000000000000000000000000"
+  forArcNetwork(
+    process.env.NEXT_PUBLIC_BILL_SPLIT_REGISTRY_ADDRESS_MAINNET,
+    process.env.NEXT_PUBLIC_BILL_SPLIT_REGISTRY_ADDRESS,
+  ) ?? "0x0000000000000000000000000000000000000000"
 ) as `0x${string}`;
 
 // Where an IOU goes when its recipient has no wallet to receive it. Unset is not
 // a fallback: the rails refuse to settle rather than transfer to an address
 // nobody holds — see isHandleEscrowConfigured.
 export const HANDLE_ESCROW_ADDRESS = (
-  process.env.NEXT_PUBLIC_HANDLE_ESCROW_ADDRESS ?? "0x0000000000000000000000000000000000000000"
+  forArcNetwork(
+    process.env.NEXT_PUBLIC_HANDLE_ESCROW_ADDRESS_MAINNET,
+    process.env.NEXT_PUBLIC_HANDLE_ESCROW_ADDRESS,
+  ) ?? "0x0000000000000000000000000000000000000000"
 ) as `0x${string}`;
 
 export const ARC_MEMO_ADDRESS = "0x5294E9927c3306DcBaDb03fe70b92e01cCede505" as const;
@@ -330,8 +336,8 @@ export async function createBillSplitWallet(walletClient: WalletClient): Promise
     throw new Error("Wallet did not return an account.");
   }
 
-  if (walletClient.chain?.id !== arcTestnet.id) {
-    await walletClient.switchChain({ id: arcTestnet.id });
+  if (walletClient.chain?.id !== ARC.chainId) {
+    await walletClient.switchChain({ id: ARC.chainId });
   }
 
   return { account: getAddress(account) as `0x${string}`, walletClient };
@@ -340,8 +346,8 @@ export async function createBillSplitWallet(walletClient: WalletClient): Promise
 export async function ensureBillSplitWalletOnArc({ walletClient }: BillSplitWallet) {
   const chainId = await walletClient.getChainId();
 
-  if (chainId !== arcTestnet.id) {
-    await walletClient.switchChain({ id: arcTestnet.id });
+  if (chainId !== ARC.chainId) {
+    await walletClient.switchChain({ id: ARC.chainId });
   }
 }
 
@@ -368,7 +374,7 @@ export async function createBillSplit({
     functionName: "createBill",
     args: [metadataHash, participants, owedAmounts, dueDate, escrowUntilFull],
     account,
-    chain: arcTestnet,
+    chain: ARC.chain,
   });
   const receipt = assertReceiptSuccess(await publicClient.waitForTransactionReceipt({ hash }), "Bill creation");
   const created = parseBillCreated(receipt);
@@ -415,7 +421,7 @@ export async function approveBillRegistry({ walletClient, account, amount }: Bil
     functionName: "approve",
     args: [BILL_SPLIT_REGISTRY_ADDRESS, amount],
     account,
-    chain: arcTestnet,
+    chain: ARC.chain,
   });
 
   return assertReceiptSuccess(await publicClient.waitForTransactionReceipt({ hash }), "USDC approval");
@@ -436,7 +442,7 @@ export async function approveHandleEscrow({ walletClient, account, amount }: Bil
     functionName: "approve",
     args: [HANDLE_ESCROW_ADDRESS, amount],
     account,
-    chain: arcTestnet,
+    chain: ARC.chain,
   });
 
   return assertReceiptSuccess(await publicClient.waitForTransactionReceipt({ hash }), "USDC approval");
@@ -470,7 +476,7 @@ export async function depositToHandleEscrow({
     functionName: "deposit",
     args: [handleHash, amount],
     account,
-    chain: arcTestnet,
+    chain: ARC.chain,
   });
 
   const receipt = await publicClient.waitForTransactionReceipt({ hash }).catch(() => null);
@@ -502,7 +508,7 @@ export async function transferArcUsdc({
     functionName: "transfer",
     args: [to, amount],
     account,
-    chain: arcTestnet,
+    chain: ARC.chain,
   });
 
   return assertReceiptSuccess(await publicClient.waitForTransactionReceipt({ hash }), "USDC transfer");
@@ -525,7 +531,7 @@ export async function payBillDebt({
     functionName: "payDebt",
     args: [billId, amount],
     account,
-    chain: arcTestnet,
+    chain: ARC.chain,
   });
 
   return assertReceiptSuccess(await publicClient.waitForTransactionReceipt({ hash }), "Payment");
@@ -556,7 +562,7 @@ export async function payBillDebtWithMemo({
     functionName: "memo",
     args: [BILL_SPLIT_REGISTRY_ADDRESS, data, memoId, memoData],
     account,
-    chain: arcTestnet,
+    chain: ARC.chain,
   });
 
   return assertReceiptSuccess(await publicClient.waitForTransactionReceipt({ hash }), "Payment");
@@ -593,7 +599,7 @@ export async function payBillDebtFor({
     functionName: "payDebtFor",
     args: [billId, debtor, amount],
     account,
-    chain: arcTestnet,
+    chain: ARC.chain,
   });
 
   return assertReceiptSuccess(await publicClient.waitForTransactionReceipt({ hash }), "Payment");
@@ -616,7 +622,7 @@ export async function claimBillFunds({
     functionName: "claim",
     args: [billId, amount],
     account,
-    chain: arcTestnet,
+    chain: ARC.chain,
   });
 
   return assertReceiptSuccess(await publicClient.waitForTransactionReceipt({ hash }), "Claim");
@@ -638,7 +644,7 @@ export async function refundBillPayment({
     functionName: "refund",
     args: [billId],
     account,
-    chain: arcTestnet,
+    chain: ARC.chain,
   });
 
   return assertReceiptSuccess(await publicClient.waitForTransactionReceipt({ hash }), "Refund");
@@ -668,7 +674,7 @@ export async function settleBills({
     functionName: "settle",
     args: [claimBillIds, payBillIds, payAmounts],
     account,
-    chain: arcTestnet,
+    chain: ARC.chain,
   });
 
   return assertReceiptSuccess(await publicClient.waitForTransactionReceipt({ hash }), "Settlement");
@@ -694,7 +700,7 @@ export async function setBillCollectMandate({
     functionName: authorized ? "authorizeCollect" : "revokeCollect",
     args: [billId],
     account,
-    chain: arcTestnet,
+    chain: ARC.chain,
   });
 
   return assertReceiptSuccess(

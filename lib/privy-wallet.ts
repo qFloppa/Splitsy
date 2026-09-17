@@ -31,7 +31,7 @@ import {
   parseUnits,
   recoverTransactionAddress,
 } from "viem";
-import { arcTestnet } from "viem/chains";
+import { ARC } from "./arc-chain.ts";
 import { getPrivyWallet, insertPrivyWallet } from "./privy-wallets-repo.ts";
 import {
   InsufficientFundsError,
@@ -76,7 +76,7 @@ function authorizationContext(): { authorization_private_keys: string[] } {
   return { authorization_private_keys: [key] };
 }
 
-const publicClient = createPublicClient({ chain: arcTestnet, transport: http(ARC_RPC) });
+const publicClient = createPublicClient({ chain: ARC.chain, transport: http(ARC_RPC) });
 
 export function receiptToState(status: "success" | "reverted"): "COMPLETE" | "FAILED" {
   return status === "success" ? "COMPLETE" : "FAILED";
@@ -245,7 +245,7 @@ async function prepareTransfer(from: `0x${string}`, to: `0x${string}`, data: `0x
       to,
       data,
       nonce: numberToHex(tx.nonce),
-      chain_id: arcTestnet.id,
+      chain_id: ARC.chainId,
       type: 2,
       gas_limit: numberToHex(tx.gas),
       max_fee_per_gas: numberToHex(tx.maxFeePerGas),
