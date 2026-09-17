@@ -173,7 +173,7 @@ function paymentSummary(url: string, plan: PreparedPlan): { description: string;
 // The same three steps as signedSend, with the middle one moved into Privy's UI.
 //
 // THE SERVER'S PREPARE STEP IS REUSED VERBATIM, and that is deliberate rather
-// than incidental: the nonce and the gas are chain reads, and ARC_TESTNET_RPC may
+// than incidental: the nonce and the gas are chain reads, and ARC_RPC may
 // be a keyed endpoint that has no business reaching a browser. So the server goes
 // on building the transaction and broadcasting it — only the SIGNATURE moved,
 // from lib/export-crypto to Privy's own prompt. The server re-checks that the

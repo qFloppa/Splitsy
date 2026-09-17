@@ -62,7 +62,7 @@ import {
   recoverTransactionAddress,
 } from "viem";
 import { arcTestnet } from "viem/chains";
-import { ARC_TESTNET_RPC, ARC_TESTNET_USDC } from "../lib/x402/constants.ts";
+import { ARC_RPC, ARC_USDC } from "../lib/x402/constants.ts";
 
 const appId = process.env.PRIVY_APP_ID ?? "";
 const appSecret = process.env.PRIVY_APP_SECRET ?? "";
@@ -80,7 +80,7 @@ const authorizationKey = process.env.PRIVY_AUTHORIZATION_PRIVATE_KEY;
 const authorizationContext = authorizationKey ? { authorization_private_keys: [authorizationKey] } : undefined;
 
 const privy = new PrivyClient({ appId, appSecret });
-const publicClient = createPublicClient({ chain: arcTestnet, transport: http(ARC_TESTNET_RPC) });
+const publicClient = createPublicClient({ chain: arcTestnet, transport: http(ARC_RPC) });
 
 // Validate the money arguments before touching the network, and never let a typo
 // arrive as a bare BigInt SyntaxError. getAddress rejects anything that is not 20
@@ -154,7 +154,7 @@ if (!wallet.id) {
 const [gas, usdc] = await Promise.all([
   publicClient.getBalance({ address: wallet.address as `0x${string}` }),
   publicClient.readContract({
-    address: ARC_TESTNET_USDC,
+    address: ARC_USDC,
     abi: erc20Abi,
     functionName: "balanceOf",
     args: [wallet.address as `0x${string}`],
@@ -177,7 +177,7 @@ if (!amount || !recipient) {
 const data = encodeFunctionData({ abi: erc20Abi, functionName: "transfer", args: [recipient, parseUnits(amount, 6)] });
 const prepared = await publicClient.prepareTransactionRequest({
   account: getAddress(wallet.address),
-  to: ARC_TESTNET_USDC,
+  to: ARC_USDC,
   data,
   type: "eip1559",
 });
@@ -188,7 +188,7 @@ const { signed_transaction } = await privy
   .signTransaction(wallet.id, {
     params: {
       transaction: {
-        to: ARC_TESTNET_USDC,
+        to: ARC_USDC,
         data,
         nonce: numberToHex(prepared.nonce),
         chain_id: arcTestnet.id,

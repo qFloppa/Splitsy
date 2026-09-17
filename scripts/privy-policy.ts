@@ -38,7 +38,7 @@ import { PrivyClient } from "@privy-io/node";
 import { erc20Abi, numberToHex, parseUnits } from "viem";
 import { arcTestnet } from "viem/chains";
 import { REGISTRY_CALL_ABI } from "../lib/registry-calldata.ts";
-import { ARC_TESTNET_USDC } from "../lib/x402/constants.ts";
+import { ARC_USDC } from "../lib/x402/constants.ts";
 
 const appId = process.env.PRIVY_APP_ID ?? "";
 const appSecret = process.env.PRIVY_APP_SECRET ?? "";
@@ -90,7 +90,7 @@ const policy = await privy.policies().create({
         // Pinned to the USDC contract because the cap is denominated in USDC's 6
         // decimals: an 18-decimal token's transfer would be measured against a
         // ceiling that is not its own.
-        { field_source: "ethereum_transaction", field: "to", operator: "eq", value: ARC_TESTNET_USDC },
+        { field_source: "ethereum_transaction", field: "to", operator: "eq", value: ARC_USDC },
         { field_source: "ethereum_calldata", field: "transfer.amount", operator: "gt", value: cap, abi: erc20Abi },
       ],
     },

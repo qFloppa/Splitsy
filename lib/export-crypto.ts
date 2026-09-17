@@ -70,7 +70,7 @@ export function exportRequestInput(walletId: string, appId: string, recipientPub
 // and Splitsy's additional-signer spend is left for what nobody is present for.
 //
 // `transaction` IS OPAQUE HERE ON PURPOSE. The server builds it — the nonce and the
-// gas are chain reads, and ARC_TESTNET_RPC may be a keyed endpoint that must not
+// gas are chain reads, and ARC_RPC may be a keyed endpoint that must not
 // reach a browser — and it is relayed back verbatim. Typing it as anything richer
 // would invite this side to reshape a field, and a single re-serialised number is a
 // different canonical payload and therefore a 401. The browser's job is to sign

@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { ChevronDown } from "lucide-react";
+import { ARC } from "@/lib/arc-chain";
 import { ARC_EXPLORER } from "@/lib/arc-explorer";
 import { PosterFact } from "./SpecCard";
 
@@ -233,7 +234,7 @@ export default function JobTrail({
 // lib/x402/constants.ts; this one is here so a client component can build the
 // link without pulling that module's server env reads into the browser bundle.
 export function gatewayReceiptUrl(transferId: string) {
-  return `https://gateway-api-testnet.circle.com/v1/x402/transfers/${transferId}`;
+  return `${ARC.gatewayApiUrl}/x402/transfers/${transferId}`;
 }
 
 // Exported because the Scout ledger links the same way. The id is only ever null

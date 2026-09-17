@@ -13,7 +13,7 @@ import { GatewayClient } from "@circle-fin/x402-batching/client";
 import { createPublicClient, createWalletClient, http, type TransactionReceipt } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { arcTestnet } from "viem/chains";
-import { ARC_TESTNET_RPC } from "./x402/constants.ts";
+import { ARC_RPC } from "./x402/constants.ts";
 
 // The cache outlives any change to SETTLER_PRIVATE_KEY: once built it is never
 // invalidated, so a process that rotates the key mid-life keeps the old account.
@@ -43,13 +43,13 @@ export function getSettler() {
   // rate-limits mid-deposit, on a read the caller never made.
   cached = {
     account,
-    gateway: new GatewayClient({ chain: "arcTestnet", privateKey, rpcUrl: ARC_TESTNET_RPC }),
+    gateway: new GatewayClient({ chain: "arcTestnet", privateKey, rpcUrl: ARC_RPC }),
     address: account.address,
   };
   return cached;
 }
 
-const publicClient = createPublicClient({ chain: arcTestnet, transport: http(ARC_TESTNET_RPC) });
+const publicClient = createPublicClient({ chain: arcTestnet, transport: http(ARC_RPC) });
 
 // One contract write, waited to a receipt. Throws on revert rather than
 // returning a hash the caller would go on to treat as a settlement — an
@@ -71,7 +71,7 @@ const publicClient = createPublicClient({ chain: arcTestnet, transport: http(ARC
 // ponytail: viem re-fetches the nonce per send, so two overlapping settlements can claim the same one — wrap the account in viem's createNonceManager if deliveries ever run concurrently
 export async function settlerWrite(to: `0x${string}`, data: `0x${string}`, timeout = 60_000): Promise<`0x${string}`> {
   const { account } = getSettler();
-  const wallet = createWalletClient({ account, chain: arcTestnet, transport: http(ARC_TESTNET_RPC) });
+  const wallet = createWalletClient({ account, chain: arcTestnet, transport: http(ARC_RPC) });
   const hash = await wallet.sendTransaction({ to, data });
   let receipt: TransactionReceipt | undefined;
   try {
