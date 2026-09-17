@@ -1,30 +1,21 @@
 import { network } from "hardhat";
+import { ARC } from "../lib/arc-chain.ts";
 
-const usdcAddress = process.env.ARC_TESTNET_USDC_ADDRESS;
-
-if (!usdcAddress) {
-  throw new Error("Missing ARC_TESTNET_USDC_ADDRESS in .env.local");
-}
-
-if (!/^0x[a-fA-F0-9]{40}$/.test(usdcAddress)) {
-  throw new Error("ARC_TESTNET_USDC_ADDRESS must be a 0x-prefixed EVM address.");
-}
-
-const { viem } = await network.create({
-  network: "arcTestnet",
-  chainType: "l1",
-});
+// The chain comes from `--network`, not from a literal in here: a script that
+// pins its own network deploys to testnet however you invoke it. USDC and the
+// explorer come from the profile (lib/arc-chain.ts), so neither is retyped.
+const { viem, networkName } = await network.create({ chainType: "l1" });
 
 const [deployer] = await viem.getWalletClients();
 
-console.log("Deploying BillSplitRegistry to Arc Testnet");
+console.log(`Deploying BillSplitRegistry to ${networkName}`);
 console.log("Deployer:", deployer.account.address);
-console.log("USDC ERC-20 interface:", usdcAddress);
+console.log("USDC ERC-20 interface:", ARC.usdcAddress);
 
-const registry = await viem.deployContract("BillSplitRegistry", [usdcAddress as `0x${string}`]);
+const registry = await viem.deployContract("BillSplitRegistry", [ARC.usdcAddress]);
 
 console.log("BillSplitRegistry deployed:", registry.address);
-console.log(`Arcscan: https://testnet.arcscan.app/address/${registry.address}`);
+console.log(`Explorer: ${ARC.explorerUrl}/address/${registry.address}`);
 
 // Bill ids restart at 1 in every deployment, so the OLD address has to stay
 // readable or history becomes ambiguous. Print both moves together — swapping

@@ -24,22 +24,57 @@ this repo asserts it is in place.
 
 ## Which is which
 
-| | splitsy.xyz (Production) | privy.splitsy.xyz (Preview) |
+Two hosts, one Vercel project, one repo. `privy.splitsy.xyz` is **retired**; the
+preview host is `testnet.splitsy.xyz`, a Preview branch domain on a long-lived
+`testnet` branch that is only ever fast-forwarded from `main`:
+
+```bash
+git push origin main:testnet
+```
+
+| | splitsy.xyz (Production, mainnet) | testnet.splitsy.xyz (Preview, testnet) |
 |---|---|---|
-| Branch | `main` | `privy-wallet-stack` |
-| `WALLET_PROVIDER` | unset → `circle` | `privy` |
-| `WALLET_UI` | unset → the app's own screens | `privy` (opt in per deploy) |
-| `WALLET_CLAIM_ENABLED` | unset → off | unset → off (opt in per deploy) |
-| Wallets | Circle DCW, SCA | Privy embedded, EOA |
-| Network | Arc Testnet (5042002) | Arc Testnet (5042002) |
-| Database | `mhm233's Project` | `splitsy-test` (`hdyioojrozodmutpldsu`) |
+| Branch | `main` | `testnet` |
+| `NEXT_PUBLIC_ARC_NETWORK` | `mainnet` | unset → testnet |
+| Chain | Arc 5042 | Arc Testnet 5042002 |
+| RPC | `rpc.mainnet.arc.io` | `rpc.testnet.arc.network` |
+| Explorer | `explorer.arc.io` | `testnet.arcscan.app` |
+| `WALLET_PROVIDER` | `privy` | `privy` |
+| `WALLET_UI` | `privy` | `privy` |
+| `WALLET_CLAIM_ENABLED` | unset → off | unset → off |
+| Wallets | Privy embedded, EOA | Privy embedded, EOA |
+| Database | new Supabase, clean | `splitsy-test` (`hdyioojrozodmutpldsu`) |
+| Enclave policy | new, chain 5042 | existing |
+| ERC-8004 / AgenticCommerce | unset → **off** until Circle deploys | set |
+| Vercel crons | run | **do not run** |
 | Autopay money-mode default | `mandate` | `funded` |
-| Agent spend cap | `decideAutopay` only | `decideAutopay` + a Privy enclave policy |
 | Settle net | works | **refused, 503** |
 | Arming an on-chain mandate | works | **throws** |
-| Mandate address env | whatever Production holds | **must not inherit it** |
-| Circle env vars | set | absent |
-| Banner | none | "Privy stack — Arc Testnet" |
+| Banner (`NEXT_PUBLIC_STACK_LABEL`) | unset | "Arc Testnet — no real funds" |
+
+**The mainnet column is the intended arrangement, not a live one.** Nothing in
+this repo asserts it, and the apex has not been flipped: that is steps 3 and 4 of
+`docs/superpowers/specs/2026-09-16-arc-mainnet-migration-design.md`. With
+`NEXT_PUBLIC_ARC_NETWORK` unset — which is every environment today — every chain
+value is the testnet one, exactly as it was before the switch existed.
+
+**`NEXT_PUBLIC_ARC_NETWORK` is the only Arc switch**, and it has the same
+exact-match rule as `WALLET_PROVIDER`: only the literal string `mainnet` selects
+mainnet, so a typo, a capitalised value or an unset variable all land on testnet,
+where being wrong is free (`resolveArcProfile()`, `lib/arc-chain.ts`). Chain id,
+RPC, explorer, USDC and the two Gateway addresses all follow from it and are no
+longer settable one by one. Being `NEXT_PUBLIC_*`, it is inlined at **build**
+time — changing it needs a redeploy, not just a saved variable (see "The banner"
+below).
+
+**Vercel runs crons only on Production**, so the testnet host never fires
+`/api/recurring/settle` or `/api/agents/dunning` — both of which spend money.
+That falls out of the branch-domain arrangement rather than from a checkbox
+anybody has to remember; two separate Vercel projects would have run both jobs
+twice a day against the same rows.
+
+**Vercel Deployment Protection must be OFF for the branch domain**, or
+`testnet.splitsy.xyz` answers with an auth wall instead of the app.
 
 That money-mode row is the server's answer for a save that does not name a mode
 (`defaultMoneyMode()`, `lib/autopay.ts:175`), not what accounts are on. The

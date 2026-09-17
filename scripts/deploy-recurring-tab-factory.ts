@@ -1,27 +1,17 @@
 import { network } from "hardhat";
+import { ARC } from "../lib/arc-chain.ts";
 
-const usdcAddress = process.env.ARC_TESTNET_USDC_ADDRESS;
-
-if (!usdcAddress) {
-  throw new Error("Missing ARC_TESTNET_USDC_ADDRESS in .env.local");
-}
-
-if (!/^0x[a-fA-F0-9]{40}$/.test(usdcAddress)) {
-  throw new Error("ARC_TESTNET_USDC_ADDRESS must be a 0x-prefixed EVM address.");
-}
-
-const { viem } = await network.create({
-  network: "arcTestnet",
-  chainType: "l1",
-});
+// The chain comes from `--network`; USDC and the explorer come from the profile
+// (lib/arc-chain.ts). See scripts/deploy-bill-split-registry.ts.
+const { viem, networkName } = await network.create({ chainType: "l1" });
 
 const [deployer] = await viem.getWalletClients();
 
-console.log("Deploying RecurringTabFactory to Arc Testnet");
+console.log(`Deploying RecurringTabFactory to ${networkName}`);
 console.log("Deployer:", deployer.account.address);
-console.log("USDC ERC-20 interface:", usdcAddress);
+console.log("USDC ERC-20 interface:", ARC.usdcAddress);
 
-const factory = await viem.deployContract("RecurringTabFactory", [usdcAddress as `0x${string}`]);
+const factory = await viem.deployContract("RecurringTabFactory", [ARC.usdcAddress]);
 
 console.log("RecurringTabFactory deployed:", factory.address);
-console.log(`Arcscan: https://testnet.arcscan.app/address/${factory.address}`);
+console.log(`Explorer: ${ARC.explorerUrl}/address/${factory.address}`);
