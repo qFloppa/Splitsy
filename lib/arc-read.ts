@@ -3,7 +3,7 @@
 // separate from the "use client" lib/bill-split-contracts.ts so server routes
 // never pull client code.
 import { createPublicClient, decodeEventLog, formatUnits, http, parseAbiItem } from "viem";
-import { arcTestnet } from "viem/chains";
+import { ARC } from "./arc-chain.ts";
 import { HANDLE_ESCROW_ABI } from "./handle-escrow.ts";
 
 export const REGISTRY_ADDRESS = (process.env.NEXT_PUBLIC_BILL_SPLIT_REGISTRY_ADDRESS ??
@@ -104,14 +104,14 @@ const READ_ABI = [
 ] as const;
 
 const publicClient = createPublicClient({
-  chain: arcTestnet,
+  chain: ARC.chain,
   // batch: coalesce the many concurrent eth_calls the dashboard fires (getBill +
   // per-participant getParticipant, fanned out via Promise.all) into batched
   // JSON-RPC POSTs — far fewer round trips. batchSize 3 because drpc's free plan
   // hard-rejects batches of >3 with HTTP 500 ("Batch of more than 3 requests are
   // not allowed on free plan"); a multi-wallet dashboard load (21 bills) packed
   // one oversized batch and 500'd every time. 3 is the cap it accepts.
-  transport: http(process.env.NEXT_PUBLIC_ARC_TESTNET_RPC_URL ?? "https://rpc.testnet.arc.network", {
+  transport: http(ARC.rpcUrl, {
     batch: { batchSize: 3 },
   }),
 });
@@ -250,7 +250,7 @@ export async function getMandateSpendableOnchain(billId: bigint, debtor: `0x${st
 // "insufficient funds" has to be established up front or not at all.
 export async function getUsdcBalanceOnchain(addr: `0x${string}`): Promise<bigint> {
   return publicClient.readContract({
-    address: (process.env.ARC_TESTNET_USDC_ADDRESS ?? "0x3600000000000000000000000000000000000000") as `0x${string}`,
+    address: ARC.usdcAddress,
     abi: [parseAbiItem("function balanceOf(address owner) view returns (uint256)")],
     functionName: "balanceOf",
     args: [addr],
@@ -286,7 +286,7 @@ export async function usdcShortfallMessage(addr: `0x${string}`, needed: bigint):
 // one bound the user can withdraw without touching this app.
 export async function getUsdcAllowanceOnchain(owner: `0x${string}`, spender: `0x${string}`): Promise<bigint> {
   return publicClient.readContract({
-    address: (process.env.ARC_TESTNET_USDC_ADDRESS ?? "0x3600000000000000000000000000000000000000") as `0x${string}`,
+    address: ARC.usdcAddress,
     abi: [parseAbiItem("function allowance(address owner, address spender) view returns (uint256)")],
     functionName: "allowance",
     args: [owner, spender],
@@ -452,8 +452,7 @@ export async function getBillIdsForParticipantOnchain(addr: `0x${string}`): Prom
   });
 }
 
-const ARC_USDC_ADDRESS = (process.env.ARC_TESTNET_USDC_ADDRESS ??
-  "0x3600000000000000000000000000000000000000") as `0x${string}`;
+const ARC_USDC_ADDRESS = ARC.usdcAddress;
 
 const TRANSFER_EVENT = parseAbiItem("event Transfer(address indexed from, address indexed to, uint256 value)");
 
