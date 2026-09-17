@@ -60,9 +60,14 @@ import { executeContract, getOrCreateWallet, walletProviderLabel } from "./walle
 // Same rule as AGENTIC_COMMERCE_ADDRESS in lib/erc8183.ts:21.
 const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
 
-export const IDENTITY_REGISTRY = (process.env.ERC8004_IDENTITY_REGISTRY ??
+// `||` and not `??`, deliberately: a variable present-but-BLANK must read as
+// unset too. Vercel will not save an empty value, so an operator who wants
+// reputation off either deletes the variable or types something into it — and
+// `??` would let `""` through, making isReputationConfigured() answer true for
+// an address that is the empty string.
+export const IDENTITY_REGISTRY = (process.env.ERC8004_IDENTITY_REGISTRY ||
   ZERO_ADDRESS) as `0x${string}`;
-export const REPUTATION_REGISTRY = (process.env.ERC8004_REPUTATION_REGISTRY ??
+export const REPUTATION_REGISTRY = (process.env.ERC8004_REPUTATION_REGISTRY ||
   ZERO_ADDRESS) as `0x${string}`;
 
 export function isReputationConfigured() {

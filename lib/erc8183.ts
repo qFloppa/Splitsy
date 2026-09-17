@@ -18,7 +18,9 @@ const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000" as const;
 
 // Unset means "no job market configured", which reads as autopay OFF — never as
 // "settle without the job". Same rule as MANDATE_ADDRESS in lib/arc-read.ts.
-export const AGENTIC_COMMERCE_ADDRESS = (process.env.NEXT_PUBLIC_AGENTIC_COMMERCE_ADDRESS ??
+// `||` and not `??`: a present-but-blank variable must read as unset too. See
+// the same note on IDENTITY_REGISTRY in lib/erc8004.ts.
+export const AGENTIC_COMMERCE_ADDRESS = (process.env.NEXT_PUBLIC_AGENTIC_COMMERCE_ADDRESS ||
   ZERO_ADDRESS) as `0x${string}`;
 
 export function isJobsConfigured() {
