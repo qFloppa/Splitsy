@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { initiateDeveloperControlledWalletsClient } from "@circle-fin/developer-controlled-wallets";
+import { ARC } from "./arc-chain.ts";
 import {
   InsufficientFundsError,
   type ProviderWallet,
@@ -31,7 +32,7 @@ function getConfig(): { client: Client; walletSetId: string } | null {
   return { client: cachedClient, walletSetId };
 }
 
-const ARC_USDC_ADDRESS = process.env.ARC_TESTNET_USDC_ADDRESS ?? "0x3600000000000000000000000000000000000000";
+const ARC_USDC_ADDRESS = ARC.usdcAddress;
 
 // Transfer USDC on Arc Testnet from a DCW to any address. The wallet pays its
 // own gas (USDC on Arc) at the MEDIUM fee level.
