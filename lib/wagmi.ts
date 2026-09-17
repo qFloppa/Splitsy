@@ -4,7 +4,6 @@ import { http } from "wagmi";
 import { getWalletClient, switchChain } from "wagmi/actions";
 import {
   arbitrumSepolia,
-  arcTestnet,
   avalancheFuji,
   baseSepolia,
   optimismSepolia,
@@ -12,8 +11,9 @@ import {
   sepolia,
 } from "viem/chains";
 import { getDefaultConfig } from "@rainbow-me/rainbowkit";
+import { ARC } from "./arc-chain.ts";
 
-// Arc Testnet stays first so it remains the default/initial chain, but every
+// Arc stays first so it remains the default/initial chain, but every
 // chain the app can bridge from must be registered too — otherwise RainbowKit
 // flags the wallet as "Wrong network" when a user is connected to, say, Base
 // Sepolia before bridging. Keep this list in sync with `bridgeSourceChains` in
@@ -21,9 +21,9 @@ import { getDefaultConfig } from "@rainbow-me/rainbowkit";
 export const wagmiConfig = getDefaultConfig({
   appName: "Splitsy",
   projectId: process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID ?? "",
-  chains: [arcTestnet, baseSepolia, sepolia, arbitrumSepolia, optimismSepolia, avalancheFuji, polygonAmoy],
+  chains: [ARC.chain, baseSepolia, sepolia, arbitrumSepolia, optimismSepolia, avalancheFuji, polygonAmoy],
   transports: {
-    [arcTestnet.id]: http(process.env.NEXT_PUBLIC_ARC_TESTNET_RPC_URL ?? "https://rpc.testnet.arc.network"),
+    [ARC.chainId]: http(ARC.rpcUrl),
     [baseSepolia.id]: http(),
     [sepolia.id]: http(),
     [arbitrumSepolia.id]: http(),
@@ -48,6 +48,6 @@ export const wagmiConfig = getDefaultConfig({
 // already on is a no-op that resolves, so a guard would only buy a `getChainId`
 // round-trip and a second way to be wrong.
 export async function arcWalletClient() {
-  await switchChain(wagmiConfig, { chainId: arcTestnet.id });
-  return getWalletClient(wagmiConfig, { chainId: arcTestnet.id });
+  await switchChain(wagmiConfig, { chainId: ARC.chainId });
+  return getWalletClient(wagmiConfig, { chainId: ARC.chainId });
 }

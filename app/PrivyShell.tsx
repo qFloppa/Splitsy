@@ -15,7 +15,7 @@
 // app/layout.tsx). Off, none of this is even fetched.
 import { getEmbeddedConnectedWallet, PrivyProvider, useExportWallet, usePrivy, useSignTransaction, useWallets } from "@privy-io/react-auth";
 import { useEffect, useRef, useState } from "react";
-import { arcTestnet } from "viem/chains";
+import { ARC } from "@/lib/arc-chain";
 import { forgetSigner, markPrivyUi, rememberAuth, rememberSigner, toPrivyTransaction } from "./privy-signer";
 
 // Which theme the app is currently in, for the one consumer that cannot read CSS:
@@ -204,8 +204,8 @@ export default function PrivyShell({ appId, nonce }: { appId: string; nonce?: st
         loginMethods: ["twitter", "discord", "google", "email"],
         // Arc only. Every write this app makes lands on Arc, and Privy throws on
         // a chain outside this list rather than signing for the wrong one.
-        supportedChains: [arcTestnet],
-        defaultChain: arcTestnet,
+        supportedChains: [ARC.chain],
+        defaultChain: ARC.chain,
         embeddedWallets: {
           // Everyone gets one at login, which is what makes the pay wallet exist
           // with no setup ceremony at all. 'users-without-wallets' rather than

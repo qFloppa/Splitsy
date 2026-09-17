@@ -51,8 +51,9 @@ test("the repo has sources to check, so a broken walk can't pass as a clean resu
 
 test("nothing asks wagmi for an Arc wallet client without switching to Arc first", () => {
   // Matches getWalletClient(...) whose options mention Arc's chain id — by the
-  // arcTestnet.id reference or the literal — across line breaks.
-  const pattern = /getWalletClient\s*\([^)]*chainId\s*:\s*(arcTestnet\.id|5042002)/s;
+  // current spelling ARC.chainId, the older arcTestnet.id reference, or either
+  // network's literal — across line breaks.
+  const pattern = /getWalletClient\s*\([^)]*chainId\s*:\s*(arcTestnet\.id|ARC\.chainId|5042002|5042)/s;
   // lib/wagmi.ts is the one legitimate caller: it is where the switch happens.
   // The next test is what holds it to that.
   const home = join("lib", "wagmi.ts");
