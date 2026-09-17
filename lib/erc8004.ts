@@ -31,7 +31,7 @@
 // registry address is part of the preimage because bill ids restart at 1 on
 // every redeploy — without it, v2's bill #1 and v1's bill #1 hash identically.
 import { createPublicClient, decodeEventLog, encodeFunctionData, http, keccak256, toHex } from "viem";
-import { ARC } from "./arc-chain.ts";
+import { ARC, forArcNetwork } from "./arc-chain.ts";
 import { getParticipantOnchain, REGISTRY_ADDRESS } from "./arc-read.ts";
 import { getOnchainBillPreimage } from "./onchain-bill-preimage-repo.ts";
 import { RECURRING_TAB_FACTORY_ADDRESS } from "./recurring-read.ts";
@@ -48,14 +48,28 @@ import {
 import { scorePaymentTiming } from "./reputation-score.ts";
 import { executeContract, getOrCreateWallet, walletProviderLabel } from "./wallet-provider.ts";
 
-// ERC-8004 registries. Unset means "no reputation configured", which reads as
-// reputation OFF — never as "use some other network's registry".
+// ERC-8004 registries, per network. Unset means "no reputation configured",
+// which reads as reputation OFF — never as "use some other network's registry".
 //
-// These used to default to Arc TESTNET's predeploys. On mainnet those addresses
-// hold no code, so an unconfigured mainnet deployment did not skip reputation,
-// it called nothing and failed in a way that looked like a bug. Circle has not
-// deployed ERC-8004 to Arc mainnet yet and intends to; when they do, setting
-// these two variables turns the feature on with no code change.
+// These used to default to Arc TESTNET's predeploys unconditionally. On mainnet
+// those addresses hold no code, so an unconfigured mainnet deployment did not
+// skip reputation, it called nothing and failed in a way that looked like a bug.
+//
+// Arc mainnet now HAS both, verified on chain 2026-09-17 against
+// rpc.mainnet.arc.io (chain id 0x13b2): 130 bytes of code at each, the same size
+// as testnet's, and IdentityRegistry.name() answers "AgentIdentity". The
+// addresses are in .env.example, one per network, ready to paste.
+//
+// STILL OPT-IN, and not defaulted to those addresses, even though they are Arc
+// predeploys rather than anything Splitsy deploys. Reason: this feature MINTS
+// NFTs and writes feedback from the registrar and validator wallets, and on
+// mainnet that is real gas out of real wallets on the first bill anybody pays.
+// A default would switch that on for whoever flips the network switch without
+// having funded those wallets. Being explicit costs one variable per network,
+// once.
+//
+// ValidationRegistry is deliberately absent: nothing in this codebase reads one,
+// so its absence on Arc mainnet costs nothing.
 //
 // Same rule as AGENTIC_COMMERCE_ADDRESS in lib/erc8183.ts:21.
 const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
@@ -65,10 +79,14 @@ const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
 // reputation off either deletes the variable or types something into it — and
 // `??` would let `""` through, making isReputationConfigured() answer true for
 // an address that is the empty string.
-export const IDENTITY_REGISTRY = (process.env.ERC8004_IDENTITY_REGISTRY ||
-  ZERO_ADDRESS) as `0x${string}`;
-export const REPUTATION_REGISTRY = (process.env.ERC8004_REPUTATION_REGISTRY ||
-  ZERO_ADDRESS) as `0x${string}`;
+export const IDENTITY_REGISTRY = (forArcNetwork(
+  process.env.ERC8004_IDENTITY_REGISTRY_MAINNET,
+  process.env.ERC8004_IDENTITY_REGISTRY,
+) || ZERO_ADDRESS) as `0x${string}`;
+export const REPUTATION_REGISTRY = (forArcNetwork(
+  process.env.ERC8004_REPUTATION_REGISTRY_MAINNET,
+  process.env.ERC8004_REPUTATION_REGISTRY,
+) || ZERO_ADDRESS) as `0x${string}`;
 
 export function isReputationConfigured() {
   return IDENTITY_REGISTRY !== ZERO_ADDRESS && REPUTATION_REGISTRY !== ZERO_ADDRESS;

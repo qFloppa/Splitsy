@@ -11,7 +11,7 @@
 // Isomorphic and side-effect free at import, like lib/registry-calldata.ts:
 // the encoders are pure so a Circle DCW, a raw EOA, or a test can all use them.
 import { createPublicClient, decodeEventLog, encodeFunctionData, http, keccak256, toHex } from "viem";
-import { arcTestnet } from "viem/chains";
+import { ARC } from "./arc-chain.ts";
 import { ARC_RPC } from "./x402/constants.ts";
 
 const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000" as const;
@@ -269,7 +269,7 @@ export function stepsFromLogs(jobId: bigint, logs: readonly RawLog[]): JobStep[]
     .map(({ step, blockNumber, txHash }) => ({ step, blockNumber, txHash }));
 }
 
-const publicClient = createPublicClient({ chain: arcTestnet, transport: http(ARC_RPC) });
+const publicClient = createPublicClient({ chain: ARC.chain, transport: http(ARC_RPC) });
 
 // How far either side of the settlement to look. The whole ceremony spans about
 // 60 blocks; 2000 is ~17 minutes at Arc's block time, which covers a run that

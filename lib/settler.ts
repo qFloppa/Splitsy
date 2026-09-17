@@ -12,15 +12,15 @@
 import { GatewayClient } from "@circle-fin/x402-batching/client";
 import { createPublicClient, createWalletClient, http, type TransactionReceipt } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
-import { arcTestnet } from "viem/chains";
+import { ARC } from "./arc-chain.ts";
 import { ARC_RPC } from "./x402/constants.ts";
 
 // The cache outlives any change to SETTLER_PRIVATE_KEY: once built it is never
 // invalidated, so a process that rotates the key mid-life keeps the old account.
 // Fine for a server that reads its key once at boot; a test toggling the env var
 // must not expect getSettler() to follow it.
-let cached: { account: ReturnType<typeof privateKeyToAccount>; gateway: GatewayClient; address: `0x${string}` } | null =
-  null;
+let cached: { account: ReturnType<typeof privateKeyToAccount>; address: `0x${string}` } | null = null;
+let cachedGateway: GatewayClient | null = null;
 
 // Read at call time, never at module load: an unset key must fail the one
 // request that needs it, not crash every route that imports this file.
@@ -37,19 +37,51 @@ export function getSettler() {
   if (!isSettlerConfigured()) {
     throw new Error("Missing or malformed SETTLER_PRIVATE_KEY — run npm run settler:setup");
   }
-  const privateKey = process.env.SETTLER_PRIVATE_KEY as `0x${string}`;
-  const account = privateKeyToAccount(privateKey);
-  // rpcUrl or the SDK builds its own client against the public node and
-  // rate-limits mid-deposit, on a read the caller never made.
-  cached = {
-    account,
-    gateway: new GatewayClient({ chain: "arcTestnet", privateKey, rpcUrl: ARC_RPC }),
-    address: account.address,
-  };
+  const account = privateKeyToAccount(process.env.SETTLER_PRIVATE_KEY as `0x${string}`);
+  cached = { account, address: account.address };
   return cached;
 }
 
-const publicClient = createPublicClient({ chain: arcTestnet, transport: http(ARC_RPC) });
+/**
+ * The x402 batching client. SEPARATE from getSettler() on purpose, because it is
+ * the only half of this agent that Arc mainnet cannot serve.
+ *
+ * `chain` below is the SDK's own registry key, not viem's, and
+ * @circle-fin/x402-batching ships exactly one Arc entry — `arcTestnet`. Its
+ * GATEWAY_DOMAINS table lists mainnet chains (base, arbitrum, …) and no `arc`,
+ * so there is nothing to name here for chain 5042. Left unguarded, a mainnet
+ * deployment would sign and batch its nanopayments on TESTNET while every other
+ * rail spent real money, and the settler's income would accrue somewhere the app
+ * never reads.
+ *
+ * The refusal is scoped to the Gateway client and NOT to getSettler(), because
+ * the settler's other two jobs work perfectly well on mainnet: it signs contract
+ * writes through viem (settlerWrite below), and its address is what a mandate
+ * names. Throwing for all three would take mandate-mode settlement down on
+ * mainnet over a nanopayment SDK gap.
+ */
+export function getSettlerGateway(): GatewayClient {
+  if (cachedGateway) return cachedGateway;
+  // Same key gate, same message — reached through getSettler() rather than
+  // repeated, so there is one place that decides what a bad key reads as.
+  getSettler();
+  if (ARC.network === "mainnet") {
+    throw new Error(
+      "x402 batching has no Arc mainnet chain in @circle-fin/x402-batching — " +
+        "the settler cannot buy reviews on mainnet until the SDK ships one.",
+    );
+  }
+  // rpcUrl or the SDK builds its own client against the public node and
+  // rate-limits mid-deposit, on a read the caller never made.
+  cachedGateway = new GatewayClient({
+    chain: "arcTestnet",
+    privateKey: process.env.SETTLER_PRIVATE_KEY as `0x${string}`,
+    rpcUrl: ARC_RPC,
+  });
+  return cachedGateway;
+}
+
+const publicClient = createPublicClient({ chain: ARC.chain, transport: http(ARC_RPC) });
 
 // One contract write, waited to a receipt. Throws on revert rather than
 // returning a hash the caller would go on to treat as a settlement — an
@@ -71,7 +103,7 @@ const publicClient = createPublicClient({ chain: arcTestnet, transport: http(ARC
 // ponytail: viem re-fetches the nonce per send, so two overlapping settlements can claim the same one — wrap the account in viem's createNonceManager if deliveries ever run concurrently
 export async function settlerWrite(to: `0x${string}`, data: `0x${string}`, timeout = 60_000): Promise<`0x${string}`> {
   const { account } = getSettler();
-  const wallet = createWalletClient({ account, chain: arcTestnet, transport: http(ARC_RPC) });
+  const wallet = createWalletClient({ account, chain: ARC.chain, transport: http(ARC_RPC) });
   const hash = await wallet.sendTransaction({ to, data });
   let receipt: TransactionReceipt | undefined;
   try {
@@ -135,7 +167,7 @@ const DEPOSIT_AMOUNT = process.env.SETTLER_DEPOSIT_AMOUNT ?? "0.5";
 // declined" would otherwise hide.
 export async function ensureSettlerGatewayBalance(minAtomic: bigint = REDEPOSIT_THRESHOLD): Promise<void> {
   try {
-    const { gateway } = getSettler();
+    const gateway = getSettlerGateway();
     const balances = await gateway.getBalances();
     if (balances.gateway.available < minAtomic) {
       await gateway.deposit(DEPOSIT_AMOUNT);

@@ -1,5 +1,5 @@
 import { after } from "next/server";
-import { getScout } from "./wallet.ts";
+import { getScout, getScoutGateway } from "./wallet.ts";
 import type { ScanDeps } from "./scan.ts";
 import { parseReceipt } from "../ocr-core.ts";
 import { sumSpentTodayUsd, recordPayment } from "../x402/payments-repo.ts";
@@ -13,7 +13,8 @@ export const DAILY_CAP_USD = Number(process.env.SCOUT_DAILY_CAP_USDC ?? "1");
 // it makes a real 402 round-trip against this app rather than calling in-process.
 // That round-trip is the point: it is the same path an external agent would take.
 export function buildScoutDeps(baseUrl: string): ScanDeps & { address: `0x${string}` } {
-  const { gateway, address } = getScout();
+  const gateway = getScoutGateway();
+  const { address } = getScout();
 
   return {
     address,
