@@ -53,6 +53,13 @@ test("Discord maps to provider 'discord' keyed on the discord subject", () => {
   });
 });
 
+// Privy hands back `name#discriminator`; Discord's own API and therefore every
+// tagged row (bill_debts, escrow_deposits, pending_wallets) hold the bare name.
+test("Discord drops Privy's discriminator so the handle matches what bills tag", () => {
+  assert.equal(privyProfile([discord("1042943132188286976", "back_room#0")])?.handle, "back_room");
+  assert.equal(privyProfile([discord("4412", "floppa#1234")])?.handle, "floppa");
+});
+
 // The one the plan calls out by name: google_oauth.subject is a Google `sub`, and
 // keying on it would fork every Google user away from the email-keyed row the
 // OAuth callback wrote (app/api/auth/google/callback/route.ts:138).
