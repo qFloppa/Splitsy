@@ -81,7 +81,17 @@ export function privyProfile(accounts: readonly PrivyLinkedAccount[]): PrivyProf
   }
   for (const a of accounts) {
     if (a.type === "discord_oauth" && a.subject && a.username) {
-      return { provider: "discord", providerUserId: a.subject, handle: a.username, name: null, avatarUrl: null };
+      // DISCRIMINATOR STRIPPED, because Privy is the only source that carries one.
+      // Privy reports discord_oauth.username as `name#discriminator` — "back_room#0"
+      // for a post-migration Discord account — while Discord's own /users/@me says
+      // "back_room", which is what app/api/auth/discord/callback stores and what
+      // every tag is normalized to (bill_debts.debtor_handle, escrow_deposits.handle,
+      // pending_wallets.handle). Keeping Privy's form forked the account: a login
+      // landed on a row no debt, escrow release or pre-minted wallet could match,
+      // and the only symptom was a balance of zero. A Discord username cannot
+      // contain '#', so this cannot eat a real one.
+      const handle = a.username.replace(/#\d+$/, "");
+      return { provider: "discord", providerUserId: a.subject, handle, name: null, avatarUrl: null };
     }
   }
   for (const a of accounts) {
