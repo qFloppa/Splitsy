@@ -2,11 +2,16 @@
 // Mirrors lib/arc-read.ts: kept separate from the "use client"
 // lib/recurring-contracts.ts so server routes never pull client code.
 import { createPublicClient, decodeEventLog, http } from "viem";
-import { arcTestnet } from "viem/chains";
+import { ARC, forArcNetwork } from "./arc-chain.ts";
 
 export const RECURRING_TAB_FACTORY_ADDRESS = (
-  process.env.NEXT_PUBLIC_RECURRING_TAB_FACTORY_ADDRESS ??
-  "0x6c4d980f7a9250e3892a3541b5a62420b628f3c1"
+  forArcNetwork(
+    process.env.NEXT_PUBLIC_RECURRING_TAB_FACTORY_ADDRESS_MAINNET,
+    // ponytail: the literal is a STALE testnet factory, not the one .env.example
+    // names — kept only so an existing testnet deploy with the variable unset
+    // behaves exactly as it did. Delete it once the variable is set everywhere.
+    process.env.NEXT_PUBLIC_RECURRING_TAB_FACTORY_ADDRESS ?? "0x6c4d980f7a9250e3892a3541b5a62420b628f3c1",
+  ) ?? "0x0000000000000000000000000000000000000000"
 ) as `0x${string}`;
 
 const FACTORY_READ_ABI = [
@@ -98,13 +103,13 @@ export const MEMBER_SETTLED_ABI = [
 ] as const;
 
 const publicClient = createPublicClient({
-  chain: arcTestnet,
+  chain: ARC.chain,
   // batch: coalesce concurrent eth_calls (the per-tab recipient/claimable reads
   // fanned out via Promise.all in listRecipientTabsOnchain) into batched
   // JSON-RPC POSTs. Complements multicall, which batches within a single tab.
   // batchSize 3: drpc's free plan rejects batches of >3 with HTTP 500 (see
   // arc-read.ts) — many tabs would otherwise overflow one batch.
-  transport: http(process.env.NEXT_PUBLIC_ARC_TESTNET_RPC_URL ?? "https://rpc.testnet.arc.network", {
+  transport: http(ARC.rpcUrl, {
     batch: { batchSize: 3 },
   }),
 });

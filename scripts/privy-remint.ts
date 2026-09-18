@@ -25,7 +25,7 @@ import { createPublicClient, erc20Abi, formatUnits, getAddress, http } from "vie
 import { arcTestnet } from "viem/chains";
 import { backend, getWalletOwnerId } from "../lib/privy-wallet.ts";
 import { createSupabaseServerClient } from "../lib/supabase.ts";
-import { ARC_TESTNET_RPC, ARC_TESTNET_USDC } from "../lib/x402/constants.ts";
+import { ARC_RPC, ARC_USDC } from "../lib/x402/constants.ts";
 
 const commit = process.argv.includes("--commit");
 // --dry-run is the documented default, so it has to mean something when it is
@@ -61,13 +61,13 @@ if (!supabase) throw new Error("Supabase is not configured");
 // app/api/wallet/export/route.ts:141.
 const quorum = process.env.PRIVY_KEY_QUORUM_ID?.trim();
 if (!quorum) throw new Error("PRIVY_KEY_QUORUM_ID is not set");
-const publicClient = createPublicClient({ chain: arcTestnet, transport: http(ARC_TESTNET_RPC) });
+const publicClient = createPublicClient({ chain: arcTestnet, transport: http(ARC_RPC) });
 
 // Raw integer micros. The zero/nonzero test guarding the deletes has to be exact,
 // so it reads this directly rather than balanceOf's display float.
 const microsOf = (address: string) =>
   publicClient.readContract({
-    address: ARC_TESTNET_USDC,
+    address: ARC_USDC,
     abi: erc20Abi,
     functionName: "balanceOf",
     args: [getAddress(address)],

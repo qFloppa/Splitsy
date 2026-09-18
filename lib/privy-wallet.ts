@@ -31,7 +31,7 @@ import {
   parseUnits,
   recoverTransactionAddress,
 } from "viem";
-import { arcTestnet } from "viem/chains";
+import { ARC } from "./arc-chain.ts";
 import { getPrivyWallet, insertPrivyWallet } from "./privy-wallets-repo.ts";
 import {
   InsufficientFundsError,
@@ -42,7 +42,7 @@ import {
   type WalletBackend,
   type WalletTx,
 } from "./wallet-provider.ts";
-import { ARC_TESTNET_RPC, ARC_TESTNET_USDC } from "./x402/constants.ts";
+import { ARC_RPC, ARC_USDC } from "./x402/constants.ts";
 
 let cached: PrivyClient | null = null;
 function privy(): PrivyClient {
@@ -76,7 +76,7 @@ function authorizationContext(): { authorization_private_keys: string[] } {
   return { authorization_private_keys: [key] };
 }
 
-const publicClient = createPublicClient({ chain: arcTestnet, transport: http(ARC_TESTNET_RPC) });
+const publicClient = createPublicClient({ chain: ARC.chain, transport: http(ARC_RPC) });
 
 export function receiptToState(status: "success" | "reverted"): "COMPLETE" | "FAILED" {
   return status === "success" ? "COMPLETE" : "FAILED";
@@ -245,7 +245,7 @@ async function prepareTransfer(from: `0x${string}`, to: `0x${string}`, data: `0x
       to,
       data,
       nonce: numberToHex(tx.nonce),
-      chain_id: arcTestnet.id,
+      chain_id: ARC.chainId,
       type: 2,
       gas_limit: numberToHex(tx.gas),
       max_fee_per_gas: numberToHex(tx.maxFeePerGas),
@@ -602,7 +602,7 @@ export async function sendUserSigned(
 // Privy produced the transaction signature; here Privy's own UI has already
 // prompted the user and handed back the signed transaction itself, so there is
 // nothing left to ask Privy for. Only the signing moved: the server still builds
-// the bytes (nonce and gas are chain reads, and ARC_TESTNET_RPC may be a keyed
+// the bytes (nonce and gas are chain reads, and ARC_RPC may be a keyed
 // endpoint that must not reach a browser) and still broadcasts them.
 
 // Whether the bytes the browser signed ARE the bytes this server prepared.
@@ -736,7 +736,7 @@ async function classifySendFailure(e: unknown): Promise<SendFailure> {
 
   // Matched on the full text above, reported without it: viem inlines the RPC URL,
   // and getUrl only strips basic-auth credentials, not a key in the path or query.
-  // ARC_TESTNET_RPC is env-driven precisely so it can be a keyed endpoint, and
+  // ARC_RPC is env-driven precisely so it can be a keyed endpoint, and
   // app/api/debts/[id]/pay/route.ts:114-117 hands this message to the caller.
   return { error: new Error(`Privy send failed: ${raw.replace(/\nURL: \S+/g, "")}`) };
 }
@@ -833,7 +833,7 @@ export const walletSpec = (namespace: string, idempotencyKey: string) => ({
 // "requested range too large") and caps one response at 20k logs, so a wallet's
 // history is a walk backwards in chunks and not a single call. Both limits
 // measured against https://rpc.testnet.arc.network; a keyed endpoint may be
-// looser, which is why ARC_TESTNET_RPC is read from the environment.
+// looser, which is why ARC_RPC is read from the environment.
 // ponytail: 200k blocks is ~1.5 days of Arc, i.e. "recent activity" rather than a
 // ledger, at 10 chunks x 2 calls per history load. Page further back from the
 // oldest row shown, or record our own sends, if the full history is ever needed.
@@ -1072,7 +1072,7 @@ const transferCalldata = (to: string, amountUsdc: string) =>
   });
 
 // The unsigned transaction a USER will authorize. Server-side because the nonce and
-// the gas are chain reads, and ARC_TESTNET_RPC is env-driven precisely so it can be
+// the gas are chain reads, and ARC_RPC is env-driven precisely so it can be
 // a keyed endpoint that never reaches a browser. The returned object is relayed back
 // verbatim, so it is untouched between here and the signature.
 export async function prepareUserSignedTransfer(
@@ -1082,7 +1082,7 @@ export async function prepareUserSignedTransfer(
 ): Promise<Prepared> {
   return prepareTransfer(
     getAddress((await privy().wallets().get(walletId)).address),
-    ARC_TESTNET_USDC,
+    ARC_USDC,
     transferCalldata(to, amountUsdc),
   );
 }
@@ -1164,7 +1164,7 @@ export function sweepAmountUsdc(balanceUsdc: number, reserve = GAS_RESERVE_USDC)
 // The USDC balance of an address, as a number of USDC.
 export async function usdcBalanceOf(address: string): Promise<number> {
   const micros = await publicClient.readContract({
-    address: ARC_TESTNET_USDC,
+    address: ARC_USDC,
     abi: erc20Abi,
     functionName: "balanceOf",
     args: [getAddress(address)],
@@ -1213,7 +1213,7 @@ export const backend: WalletBackend = {
   },
 
   transferUsdc(walletId, to, amountUsdc) {
-    return send(walletId, ARC_TESTNET_USDC, transferCalldata(to, amountUsdc));
+    return send(walletId, ARC_USDC, transferCalldata(to, amountUsdc));
   },
 
   executeContract: send,
@@ -1248,7 +1248,7 @@ export const backend: WalletBackend = {
     // its own, not provoking it is cheaper.
     for (let toBlock = head; toBlock > oldest; ) {
       const fromBlock = toBlock - LOG_CHUNK > oldest ? toBlock - LOG_CHUNK : oldest;
-      const window = { address: ARC_TESTNET_USDC, event: TRANSFER, fromBlock, toBlock, strict: true } as const;
+      const window = { address: ARC_USDC, event: TRANSFER, fromBlock, toBlock, strict: true } as const;
       const [out, incoming] = await Promise.all([
         publicClient.getLogs({ ...window, args: { from: self } }),
         publicClient.getLogs({ ...window, args: { to: self } }),

@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import gsap from "gsap";
 import { Check, ExternalLink, TriangleAlert } from "lucide-react";
 
+import { ARC_EXPLORER } from "@/lib/arc-explorer";
 import { resolveLedger, SCRIPTED_LEDGER, type LedgerTiles } from "@/lib/landing-ledger";
 
 import {
@@ -332,7 +333,7 @@ export function AgentStage() {
           {agent ? (
             <a
               className="bill-poster-fact inline-flex items-baseline gap-1 no-underline"
-              href={`https://testnet.arcscan.app/address/${agent.address}`}
+              href={`${ARC_EXPLORER}/address/${agent.address}`}
               rel="noreferrer"
               target="_blank"
             >

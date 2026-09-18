@@ -12,7 +12,7 @@ import {
 } from "@/lib/wallet-provider";
 import { verifyWalletUnlock, WALLET_UNLOCK_COOKIE } from "@/lib/session-core";
 import { encodeFunctionData, erc20Abi, getAddress, parseUnits } from "viem";
-import { ARC_TESTNET_USDC } from "@/lib/x402/constants";
+import { ARC_USDC } from "@/lib/x402/constants";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -112,7 +112,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
           await prepareForUser({
             walletId: user.circle_wallet_id,
             userId: user.id,
-            to: ARC_TESTNET_USDC,
+            to: ARC_USDC,
             data,
             // The debt id, so a ticket prepared for one debt cannot be relayed
             // while another is marked paid. This is the binding that a shared

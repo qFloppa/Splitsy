@@ -35,11 +35,12 @@ import {
 } from "@/lib/arc-read";
 import { recordPaidFeedbackSafely } from "@/lib/erc8004";
 import { claimableNow, shouldPayLeg } from "@/lib/treasury";
+import { ARC } from "@/lib/arc-chain";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const ARC_USDC_ADDRESS = process.env.ARC_TESTNET_USDC_ADDRESS ?? "0x3600000000000000000000000000000000000000";
+const ARC_USDC_ADDRESS = ARC.usdcAddress;
 
 const usdc = (v: bigint) => (Number(v) / 1e6).toString();
 

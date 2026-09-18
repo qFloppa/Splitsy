@@ -21,6 +21,7 @@ import {
   LOW_NATIVE_THRESHOLD,
   type PaymasterBridgeStep,
 } from "@/lib/paymaster-bridge";
+import { ARC } from "./arc-chain.ts";
 
 export { getNativeBalance, LOW_NATIVE_THRESHOLD };
 
@@ -48,7 +49,7 @@ export type BrowserWalletSession = {
   walletName: string;
 };
 
-const ARC_TESTNET_CHAIN_ID = 5042002;
+const ARC_CHAIN_ID = ARC.chainId;
 
 const supportedChains = [
   ArbitrumSepolia,
@@ -69,12 +70,12 @@ const supportedChains = [
 //
 // This hook is the one seam the adapter offers. Arc gets the endpoint the rest
 // of the app uses; every other chain keeps the SDK's default.
-const arcRpcUrl = process.env.NEXT_PUBLIC_ARC_TESTNET_RPC_URL ?? "https://rpc.testnet.arc.network";
+const arcRpcUrl = ARC.rpcUrl;
 
 const getPublicClient = ({ chain }: { chain: Chain }) =>
   createPublicClient({
     chain,
-    transport: chain.id === ARC_TESTNET_CHAIN_ID ? http(arcRpcUrl) : http(),
+    transport: chain.id === ARC_CHAIN_ID ? http(arcRpcUrl) : http(),
   }) as PublicClient;
 
 export async function createBrowserWalletSessionFromConnector({

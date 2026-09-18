@@ -11,17 +11,19 @@ import {
   type TransactionReceipt,
   type WalletClient,
 } from "viem";
-import { arcTestnet } from "viem/chains";
+import { ARC, forArcNetwork } from "./arc-chain.ts";
 
 export const RECURRING_TAB_FACTORY_ADDRESS = (
-  process.env.NEXT_PUBLIC_RECURRING_TAB_FACTORY_ADDRESS ??
-  "0x6c4d980f7a9250e3892a3541b5a62420b628f3c1"
+  forArcNetwork(
+    process.env.NEXT_PUBLIC_RECURRING_TAB_FACTORY_ADDRESS_MAINNET,
+    // ponytail: the literal is a STALE testnet factory, not the one .env.example
+    // names — kept only so an existing testnet deploy with the variable unset
+    // behaves exactly as it did. Delete it once the variable is set everywhere.
+    process.env.NEXT_PUBLIC_RECURRING_TAB_FACTORY_ADDRESS ?? "0x6c4d980f7a9250e3892a3541b5a62420b628f3c1",
+  ) ?? "0x0000000000000000000000000000000000000000"
 ) as `0x${string}`;
 
-export const ARC_USDC_ADDRESS = (
-  process.env.NEXT_PUBLIC_ARC_TESTNET_USDC_ADDRESS ??
-  "0x3600000000000000000000000000000000000000"
-) as `0x${string}`;
+export const ARC_USDC_ADDRESS = ARC.usdcAddress;
 
 export const recurringTabFactoryAbi = [
   {
@@ -218,8 +220,8 @@ export type RecurringWallet = {
 };
 
 export const publicClient = createPublicClient({
-  chain: arcTestnet,
-  transport: http(process.env.NEXT_PUBLIC_ARC_TESTNET_RPC_URL ?? "https://rpc.testnet.arc.network"),
+  chain: ARC.chain,
+  transport: http(ARC.rpcUrl),
 });
 
 export async function createRecurringWallet(walletClient: WalletClient) {
@@ -229,21 +231,22 @@ export async function createRecurringWallet(walletClient: WalletClient) {
     throw new Error("Wallet did not return an account.");
   }
 
-  if (walletClient.chain?.id !== arcTestnet.id) {
-    await walletClient.switchChain({ id: arcTestnet.id });
+  if (walletClient.chain?.id !== ARC.chainId) {
+    await walletClient.switchChain({ id: ARC.chainId });
   }
 
   return { account: getAddress(account) as `0x${string}`, walletClient };
 }
 
-// Recurring writes pin `chain: arcTestnet`, which makes viem throw if the wallet
-// is connected to another network. Switch to Arc Testnet first so creating a
-// tab, approving, revoking, or claiming works regardless of the active chain.
+// Recurring writes pin `chain: ARC.chain`, which makes viem throw if the wallet
+// is connected to another network. Switch to the configured Arc first so
+// creating a tab, approving, revoking, or claiming works regardless of the
+// active chain.
 export async function ensureRecurringWalletOnArc({ walletClient }: RecurringWallet) {
   const chainId = await walletClient.getChainId();
 
-  if (chainId !== arcTestnet.id) {
-    await walletClient.switchChain({ id: arcTestnet.id });
+  if (chainId !== ARC.chainId) {
+    await walletClient.switchChain({ id: ARC.chainId });
   }
 }
 
@@ -268,7 +271,7 @@ export async function createRecurringTab({
     functionName: "createTab",
     args: [recipient, intervalSeconds, maxSettlements, members, fixedShares],
     account,
-    chain: arcTestnet,
+    chain: ARC.chain,
   });
   const receipt = await publicClient.waitForTransactionReceipt({ hash });
   const created = parseTabCreated(receipt);
@@ -295,7 +298,7 @@ export async function approveUsdc({
     functionName: "approve",
     args: [spender, amount],
     account,
-    chain: arcTestnet,
+    chain: ARC.chain,
   });
 
   return publicClient.waitForTransactionReceipt({ hash });
@@ -325,7 +328,7 @@ export async function settleRecurringTab({
     abi: recurringTabAbi,
     functionName: "settleTab",
     account,
-    chain: arcTestnet,
+    chain: ARC.chain,
   });
 
   return publicClient.waitForTransactionReceipt({ hash });
@@ -343,7 +346,7 @@ export async function claimRecurringFunds({
     abi: recurringTabAbi,
     functionName: "claim",
     account,
-    chain: arcTestnet,
+    chain: ARC.chain,
   });
 
   return publicClient.waitForTransactionReceipt({ hash });

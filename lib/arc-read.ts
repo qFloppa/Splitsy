@@ -3,17 +3,24 @@
 // separate from the "use client" lib/bill-split-contracts.ts so server routes
 // never pull client code.
 import { createPublicClient, decodeEventLog, formatUnits, http, parseAbiItem } from "viem";
-import { arcTestnet } from "viem/chains";
+import { ARC, forArcNetwork } from "./arc-chain.ts";
 import { HANDLE_ESCROW_ABI } from "./handle-escrow.ts";
 
-export const REGISTRY_ADDRESS = (process.env.NEXT_PUBLIC_BILL_SPLIT_REGISTRY_ADDRESS ??
-  "0x0000000000000000000000000000000000000000") as `0x${string}`;
+export const REGISTRY_ADDRESS = (forArcNetwork(
+  process.env.NEXT_PUBLIC_BILL_SPLIT_REGISTRY_ADDRESS_MAINNET,
+  process.env.NEXT_PUBLIC_BILL_SPLIT_REGISTRY_ADDRESS,
+) ?? "0x0000000000000000000000000000000000000000") as `0x${string}`;
 
 // The v1 registry, kept readable so bill history survives the v2 redeploy. Bill
 // ids restart at 1 in v2, so a bare id is only meaningful next to the registry
 // it came from — that is also why reputation rows are keyed by both.
-export const REGISTRY_ADDRESS_V1 = (process.env.BILL_SPLIT_REGISTRY_ADDRESS_V1 ??
-  "0x0000000000000000000000000000000000000000") as `0x${string}`;
+//
+// Testnet-only in practice: a clean mainnet deployment has no v1 to read, which
+// is what leaving the mainnet slot unset says.
+export const REGISTRY_ADDRESS_V1 = (forArcNetwork(
+  process.env.BILL_SPLIT_REGISTRY_ADDRESS_V1_MAINNET,
+  process.env.BILL_SPLIT_REGISTRY_ADDRESS_V1,
+) ?? "0x0000000000000000000000000000000000000000") as `0x${string}`;
 
 export function isV1RegistryConfigured() {
   return REGISTRY_ADDRESS_V1 !== "0x0000000000000000000000000000000000000000";
@@ -22,8 +29,10 @@ export function isV1RegistryConfigured() {
 // AutopayMandate: the on-chain spending permission that sits in FRONT of the
 // registry. Unset means autopay simply has no on-chain grant to read, which
 // reads as "off" everywhere — never as "unlimited".
-export const MANDATE_ADDRESS = (process.env.NEXT_PUBLIC_AUTOPAY_MANDATE_ADDRESS ??
-  "0x0000000000000000000000000000000000000000") as `0x${string}`;
+export const MANDATE_ADDRESS = (forArcNetwork(
+  process.env.NEXT_PUBLIC_AUTOPAY_MANDATE_ADDRESS_MAINNET,
+  process.env.NEXT_PUBLIC_AUTOPAY_MANDATE_ADDRESS,
+) ?? "0x0000000000000000000000000000000000000000") as `0x${string}`;
 
 export function isMandateConfigured() {
   return MANDATE_ADDRESS !== "0x0000000000000000000000000000000000000000";
@@ -104,14 +113,14 @@ const READ_ABI = [
 ] as const;
 
 const publicClient = createPublicClient({
-  chain: arcTestnet,
+  chain: ARC.chain,
   // batch: coalesce the many concurrent eth_calls the dashboard fires (getBill +
   // per-participant getParticipant, fanned out via Promise.all) into batched
   // JSON-RPC POSTs — far fewer round trips. batchSize 3 because drpc's free plan
   // hard-rejects batches of >3 with HTTP 500 ("Batch of more than 3 requests are
   // not allowed on free plan"); a multi-wallet dashboard load (21 bills) packed
   // one oversized batch and 500'd every time. 3 is the cap it accepts.
-  transport: http(process.env.NEXT_PUBLIC_ARC_TESTNET_RPC_URL ?? "https://rpc.testnet.arc.network", {
+  transport: http(ARC.rpcUrl, {
     batch: { batchSize: 3 },
   }),
 });
@@ -250,7 +259,7 @@ export async function getMandateSpendableOnchain(billId: bigint, debtor: `0x${st
 // "insufficient funds" has to be established up front or not at all.
 export async function getUsdcBalanceOnchain(addr: `0x${string}`): Promise<bigint> {
   return publicClient.readContract({
-    address: (process.env.ARC_TESTNET_USDC_ADDRESS ?? "0x3600000000000000000000000000000000000000") as `0x${string}`,
+    address: ARC.usdcAddress,
     abi: [parseAbiItem("function balanceOf(address owner) view returns (uint256)")],
     functionName: "balanceOf",
     args: [addr],
@@ -286,7 +295,7 @@ export async function usdcShortfallMessage(addr: `0x${string}`, needed: bigint):
 // one bound the user can withdraw without touching this app.
 export async function getUsdcAllowanceOnchain(owner: `0x${string}`, spender: `0x${string}`): Promise<bigint> {
   return publicClient.readContract({
-    address: (process.env.ARC_TESTNET_USDC_ADDRESS ?? "0x3600000000000000000000000000000000000000") as `0x${string}`,
+    address: ARC.usdcAddress,
     abi: [parseAbiItem("function allowance(address owner, address spender) view returns (uint256)")],
     functionName: "allowance",
     args: [owner, spender],
@@ -452,8 +461,7 @@ export async function getBillIdsForParticipantOnchain(addr: `0x${string}`): Prom
   });
 }
 
-const ARC_USDC_ADDRESS = (process.env.ARC_TESTNET_USDC_ADDRESS ??
-  "0x3600000000000000000000000000000000000000") as `0x${string}`;
+const ARC_USDC_ADDRESS = ARC.usdcAddress;
 
 const TRANSFER_EVENT = parseAbiItem("event Transfer(address indexed from, address indexed to, uint256 value)");
 
@@ -488,8 +496,10 @@ export async function readUsdcMovedInTx(
 // var, two constants, because that file is "use client" and must not be imported
 // here. Exactly the split REGISTRY_ADDRESS already lives on.
 
-export const HANDLE_ESCROW_ADDRESS = (process.env.NEXT_PUBLIC_HANDLE_ESCROW_ADDRESS ??
-  ZERO_ADDRESS) as `0x${string}`;
+export const HANDLE_ESCROW_ADDRESS = (forArcNetwork(
+  process.env.NEXT_PUBLIC_HANDLE_ESCROW_ADDRESS_MAINNET,
+  process.env.NEXT_PUBLIC_HANDLE_ESCROW_ADDRESS,
+) ?? ZERO_ADDRESS) as `0x${string}`;
 
 // Unset means REFUSE, never "escrow somewhere else". Both settle routes check
 // this before they spend anything.

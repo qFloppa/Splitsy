@@ -34,12 +34,12 @@ import {
 import { executeContract, InsufficientFundsError, walletProviderName } from "@/lib/wallet-provider";
 import { encodeApprove, encodeExecuteBatch, encodeRevokeMandate, encodeSetMandate } from "@/lib/registry-calldata";
 import { getSettler, isSettlerConfigured } from "@/lib/settler";
+import { ARC } from "@/lib/arc-chain";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const ARC_USDC_ADDRESS = (process.env.ARC_TESTNET_USDC_ADDRESS ??
-  "0x3600000000000000000000000000000000000000") as `0x${string}`;
+const ARC_USDC_ADDRESS = ARC.usdcAddress;
 
 // The contract's own bound on the creator allowlist. Rejected here too so the
 // user gets a sentence instead of a revert.

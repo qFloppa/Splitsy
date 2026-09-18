@@ -25,6 +25,9 @@ function route({ allowance = 0n, mustSign = true, unlocked = true } = {}) {
     },
     "@/lib/session-core": { WALLET_UNLOCK_COOKIE: "unlock", verifyWalletUnlock: () => unlocked ? "payer" : null },
     "@/lib/pay-link": { isShareToken },
+    // The route approves USDC on whichever Arc it runs on; the profile is a
+    // constant to it, so the stub only has to carry the one field it reads.
+    "@/lib/arc-chain": { ARC: { usdcAddress: "0x3600000000000000000000000000000000000000" } },
     "@/lib/onchain-bill-preimage-repo": {
       getPreimageByShareToken: async () => ({ registryAddress: registry, billId: "7" }),
     },

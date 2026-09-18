@@ -24,22 +24,134 @@ this repo asserts it is in place.
 
 ## Which is which
 
-| | splitsy.xyz (Production) | privy.splitsy.xyz (Preview) |
+Two hosts, one Vercel project, one repo. `privy.splitsy.xyz` is **retired**; the
+preview host is `testnet.splitsy.xyz`, a Preview branch domain on a long-lived
+`testnet` branch that is only ever fast-forwarded from `main`:
+
+```bash
+git push origin main:testnet
+```
+
+| | splitsy.xyz (Production, mainnet) | testnet.splitsy.xyz (Preview, testnet) |
 |---|---|---|
-| Branch | `main` | `privy-wallet-stack` |
-| `WALLET_PROVIDER` | unset → `circle` | `privy` |
-| `WALLET_UI` | unset → the app's own screens | `privy` (opt in per deploy) |
-| `WALLET_CLAIM_ENABLED` | unset → off | unset → off (opt in per deploy) |
-| Wallets | Circle DCW, SCA | Privy embedded, EOA |
-| Network | Arc Testnet (5042002) | Arc Testnet (5042002) |
-| Database | `mhm233's Project` | `splitsy-test` (`hdyioojrozodmutpldsu`) |
+| Branch | `main` | `testnet` |
+| `NEXT_PUBLIC_ARC_NETWORK` | `mainnet` | unset → testnet |
+| Chain | Arc 5042 | Arc Testnet 5042002 |
+| RPC | `rpc.mainnet.arc.io` | `rpc.testnet.arc.network` |
+| Explorer | `explorer.arc.io` | `testnet.arcscan.app` |
+| `WALLET_PROVIDER` | `privy` | `privy` |
+| `WALLET_UI` | `privy` | `privy` |
+| `WALLET_CLAIM_ENABLED` | unset → off | unset → off |
+| Wallets | Privy embedded, EOA | Privy embedded, EOA |
+| Database | new Supabase, clean | `splitsy-test` (`hdyioojrozodmutpldsu`) |
+| Enclave policy | new, chain 5042 | existing |
+| ERC-8004 / AgenticCommerce | unset → **off** until Circle deploys | set |
+| Vercel crons | run | **do not run** |
 | Autopay money-mode default | `mandate` | `funded` |
-| Agent spend cap | `decideAutopay` only | `decideAutopay` + a Privy enclave policy |
 | Settle net | works | **refused, 503** |
 | Arming an on-chain mandate | works | **throws** |
-| Mandate address env | whatever Production holds | **must not inherit it** |
-| Circle env vars | set | absent |
-| Banner | none | "Privy stack — Arc Testnet" |
+| Banner (`NEXT_PUBLIC_STACK_LABEL`) | unset | "Arc Testnet — no real funds" |
+
+**The mainnet column is the intended arrangement, not a live one.** Nothing in
+this repo asserts it, and the apex has not been flipped: that is steps 3 and 4 of
+`docs/superpowers/specs/2026-09-16-arc-mainnet-migration-design.md`. With
+`NEXT_PUBLIC_ARC_NETWORK` unset — which is every environment today — every chain
+value is the testnet one, exactly as it was before the switch existed.
+
+**`NEXT_PUBLIC_ARC_NETWORK` is the only Arc switch**, and it has the same
+exact-match rule as `WALLET_PROVIDER`: only the literal string `mainnet` selects
+mainnet, so a typo, a capitalised value or an unset variable all land on testnet,
+where being wrong is free (`resolveArcProfile()`, `lib/arc-chain.ts`). Chain id,
+RPC, explorer, USDC and the two Gateway addresses all follow from it and are no
+longer settable one by one. Being `NEXT_PUBLIC_*`, it is inlined at **build**
+time — changing it needs a redeploy, not just a saved variable (see "The banner"
+below).
+
+**Vercel runs crons only on Production**, so the testnet host never fires
+`/api/recurring/settle` or `/api/agents/dunning` — both of which spend money.
+That falls out of the branch-domain arrangement rather than from a checkbox
+anybody has to remember; two separate Vercel projects would have run both jobs
+twice a day against the same rows.
+
+**Vercel Deployment Protection must be OFF for the branch domain**, or
+`testnet.splitsy.xyz` answers with an auth wall instead of the app.
+
+### Both networks configured at once, one variable to flip
+
+Deployment **addresses** are not properties of the chain, so they are not in
+`lib/arc-chain.ts`. They follow the same switch by a naming rule instead: the
+**unsuffixed variable is the testnet slot**, and a **`_MAINNET` twin** is the
+mainnet slot. `forArcNetwork()` picks between them.
+
+| Testnet slot (existing name) | Mainnet slot |
+|---|---|
+| `NEXT_PUBLIC_BILL_SPLIT_REGISTRY_ADDRESS` | `…_MAINNET` |
+| `NEXT_PUBLIC_RECURRING_TAB_FACTORY_ADDRESS` | `…_MAINNET` |
+| `NEXT_PUBLIC_HANDLE_ESCROW_ADDRESS` | `…_MAINNET` |
+| `NEXT_PUBLIC_AUTOPAY_MANDATE_ADDRESS` | `…_MAINNET` |
+| `BILL_SPLIT_REGISTRY_ADDRESS_V1` | `…_MAINNET` (testnet history; leave unset) |
+| `ARC_RPC_URL` / `NEXT_PUBLIC_ARC_RPC_URL` | `…_MAINNET` |
+
+So a testnet deployment needs nothing renamed, and mainnet is configured by
+**adding** variables rather than editing them. Both sets can sit there fully
+populated, and `NEXT_PUBLIC_ARC_NETWORK=mainnet` is the single change that makes
+the mainnet set live.
+
+**Mainnet never falls back to the testnet slot.** A `_MAINNET` address left
+unset resolves to the zero address, which every consumer already reads as "not
+configured" and refuses on (`isBillRegistryConfigured()`,
+`isHandleEscrowConfigured()`, `isMandateConfigured()`). The alternative — using a
+testnet address on chain 5042 — is an address with no code, and it fails in a way
+that reads as a bug rather than as missing configuration.
+
+**Still per-environment, not per-network:** the Supabase project, the Privy
+enclave policy (`PRIVY_AGENT_POLICY_ID`) and `SELLER_ADDRESS`. Those are not
+chain values and the switch does not touch them.
+
+### What Arc mainnet has, and what it does not
+
+Checked on chain 2026-09-17 against `rpc.mainnet.arc.io` (chain id `0x13b2`).
+
+**ERC-8004 is live on mainnet.** Both registries answer, with 130 bytes of code
+each — the same size as testnet's — and `IdentityRegistry.name()` returns
+`AgentIdentity`:
+
+```
+testnet  identity   0x8004A818BFB912233c491871b3d84c89A494BD9e
+         reputation 0x8004B663056A597Dffe9eCcC1965A193B7388713
+mainnet  identity   0x8004A169FB4a3325136EB29fA0ceB6D2e539a432
+         reputation 0x8004BAa17C55a88189AE136b182e5fdA19dE9b63
+```
+
+They follow the same slot rule — `ERC8004_IDENTITY_REGISTRY` for testnet,
+`…_MAINNET` for mainnet — and are **still opt-in rather than defaulted**, even
+though Circle deploys them and we do not. Turning reputation on mints NFTs and
+writes feedback from the registrar and validator wallets, which on mainnet is
+real gas from real wallets on the first bill anybody pays. Paste the addresses in
+once those wallets are funded.
+
+**ValidationRegistry is absent on mainnet and costs nothing** — no code in this
+repo reads one.
+
+**ERC-8183 AgenticCommerce is absent on mainnet.** So
+`NEXT_PUBLIC_AGENTIC_COMMERCE_ADDRESS` stays unset there, `isJobsConfigured()`
+is false, and the job-market half of autopay is off. Not an error — that is what
+"off" is designed to read as.
+
+**x402 batching cannot run on Arc mainnet at all, and this one is not a
+variable.** `@circle-fin/x402-batching` ships exactly one Arc entry,
+`arcTestnet`; its `GATEWAY_DOMAINS` table lists mainnet chains and no `arc`. So
+`getSettlerGateway()` (`lib/settler.ts`) and `getScoutGateway()`
+(`lib/scout/wallet.ts`) **throw** when the switch is `mainnet`, rather than
+batching real-money nanopayments on testnet. Scout is therefore off on mainnet,
+and the Settler cannot buy reviews.
+
+The refusal is scoped to the **Gateway client only**, not to `getSettler()` or
+`getScout()`. The Settler's other two jobs work on mainnet — it signs contract
+writes through viem (`settlerWrite`), and its address is what a mandate names —
+so mandate-mode settlement is unaffected. An earlier revision of this work
+refused all three and would have taken mandate-mode settlement down on mainnet
+over a nanopayment SDK gap.
 
 That money-mode row is the server's answer for a save that does not name a mode
 (`defaultMoneyMode()`, `lib/autopay.ts:175`), not what accounts are on. The

@@ -1,4 +1,5 @@
 import { initiateDeveloperControlledWalletsClient } from "@circle-fin/developer-controlled-wallets";
+import { ARC } from "./arc-chain.ts";
 
 type DcwClient = ReturnType<typeof initiateDeveloperControlledWalletsClient>;
 
@@ -30,8 +31,7 @@ export type GatewayPaymentResult = {
   error?: string;
 };
 
-const ARC_USDC_ADDRESS =
-  process.env.ARC_TESTNET_USDC_ADDRESS ?? "0x3600000000000000000000000000000000000000";
+const ARC_USDC_ADDRESS = ARC.usdcAddress;
 
 /**
  * Settle a bill share via Circle DCW — the server-side analogue to a Gateway

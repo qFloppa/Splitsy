@@ -12,6 +12,7 @@ import {
   getUsdcAllowanceOnchain,
   usdcShortfallMessage,
 } from "@/lib/arc-read";
+import { ARC } from "@/lib/arc-chain";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -29,8 +30,7 @@ export const maxDuration = 300;
 // a route that has 300s to spend — the mid-batch case the comment above names.
 const LEG_POLL_MS = 60_000;
 
-const ARC_USDC_ADDRESS = (process.env.ARC_TESTNET_USDC_ADDRESS ??
-  "0x3600000000000000000000000000000000000000") as `0x${string}`;
+const ARC_USDC_ADDRESS = ARC.usdcAddress;
 const MAX_ROWS = 20;
 
 // POST /api/pay/<token>/social — cover other people's shares from the caller's

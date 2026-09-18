@@ -13,12 +13,12 @@ import {
   usdcShortfallMessage,
 } from "@/lib/arc-read";
 import { recordPaidFeedbackSafely } from "@/lib/erc8004";
+import { ARC } from "@/lib/arc-chain";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const ARC_USDC_ADDRESS = (process.env.ARC_TESTNET_USDC_ADDRESS ??
-  "0x3600000000000000000000000000000000000000") as `0x${string}`;
+const ARC_USDC_ADDRESS = ARC.usdcAddress;
 
 function isBillId(v: string): boolean {
   return /^[0-9]+$/.test(v);

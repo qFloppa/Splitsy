@@ -11,14 +11,16 @@
 // Isomorphic and side-effect free at import, like lib/registry-calldata.ts:
 // the encoders are pure so a Circle DCW, a raw EOA, or a test can all use them.
 import { createPublicClient, decodeEventLog, encodeFunctionData, http, keccak256, toHex } from "viem";
-import { arcTestnet } from "viem/chains";
-import { ARC_TESTNET_RPC } from "./x402/constants.ts";
+import { ARC } from "./arc-chain.ts";
+import { ARC_RPC } from "./x402/constants.ts";
 
 const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000" as const;
 
 // Unset means "no job market configured", which reads as autopay OFF — never as
 // "settle without the job". Same rule as MANDATE_ADDRESS in lib/arc-read.ts.
-export const AGENTIC_COMMERCE_ADDRESS = (process.env.NEXT_PUBLIC_AGENTIC_COMMERCE_ADDRESS ??
+// `||` and not `??`: a present-but-blank variable must read as unset too. See
+// the same note on IDENTITY_REGISTRY in lib/erc8004.ts.
+export const AGENTIC_COMMERCE_ADDRESS = (process.env.NEXT_PUBLIC_AGENTIC_COMMERCE_ADDRESS ||
   ZERO_ADDRESS) as `0x${string}`;
 
 export function isJobsConfigured() {
@@ -267,7 +269,7 @@ export function stepsFromLogs(jobId: bigint, logs: readonly RawLog[]): JobStep[]
     .map(({ step, blockNumber, txHash }) => ({ step, blockNumber, txHash }));
 }
 
-const publicClient = createPublicClient({ chain: arcTestnet, transport: http(ARC_TESTNET_RPC) });
+const publicClient = createPublicClient({ chain: ARC.chain, transport: http(ARC_RPC) });
 
 // How far either side of the settlement to look. The whole ceremony spans about
 // 60 blocks; 2000 is ~17 minutes at Arc's block time, which covers a run that
