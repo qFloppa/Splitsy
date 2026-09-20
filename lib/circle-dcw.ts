@@ -34,7 +34,7 @@ function getConfig(): { client: Client; walletSetId: string } | null {
 
 const ARC_USDC_ADDRESS = ARC.usdcAddress;
 
-// Transfer USDC on Arc Testnet from a DCW to any address. The wallet pays its
+// Transfer USDC on Arc from a DCW to any address. The wallet pays its
 // own gas (USDC on Arc) at the MEDIUM fee level.
 // ponytail: no Gas Station paymaster — add a policy + sponsor gas if we want
 // truly gasless payments; for now the debtor's wallet needs a little USDC for gas.
@@ -55,12 +55,12 @@ export async function transferUsdcOnArc(
 
   let res;
   try {
-    // ponytail: cast the whole input — SDK 9.2.0's transfer union types lag the API
-    // (ARC-TESTNET missing) and mis-discriminate the walletId+tokenAddress branch.
-    // Shape verified against Circle's createTransaction docs.
+    // ponytail: cast the whole input — the SDK mis-discriminates the
+    // walletId+tokenAddress branch. Shape verified against Circle's
+    // createTransaction docs.
     res = await config.client.createTransaction({
       walletId: fromWalletId,
-      blockchain: "ARC-TESTNET",
+      blockchain: ARC.dcwBlockchain,
       tokenAddress: ARC_USDC_ADDRESS,
       amount: [String(amountUsdc)], // Supabase returns numeric as a JS number; Circle wants a string
       destinationAddress: toAddress,
@@ -106,13 +106,14 @@ export async function executeContractOnArc(
 
   let created;
   try {
-    // Cast the input for the same reason transferUsdcOnArc does: SDK 9.2.0's
-    // union types lag the API and omit ARC-TESTNET.
+    // ponytail: cast the whole input — the SDK's union mis-discriminates the
+    // walletId branch, typing `blockchain` as undefined there. 10.8.0 fixed the
+    // missing Arc entry but not this. Shape verified against Circle's docs.
     created = await config.client.createContractExecutionTransaction({
       walletId,
       contractAddress,
       callData,
-      blockchain: "ARC-TESTNET",
+      blockchain: ARC.dcwBlockchain,
       fee: { type: "level", config: { feeLevel: "MEDIUM" } },
       idempotencyKey: randomUUID(),
     } as unknown as Parameters<typeof config.client.createContractExecutionTransaction>[0]);
@@ -207,12 +208,12 @@ export async function getOrCreateArcWallet(
   const { client, walletSetId } = config;
 
   const refId = `${provider}:${providerUserId}`;
-  const existing = await client.listWallets({ refId, blockchain: "ARC-TESTNET" });
+  const existing = await client.listWallets({ refId, blockchain: ARC.dcwBlockchain });
   const found = existing.data?.wallets?.[0];
   if (found) return { address: found.address, walletId: found.id };
 
   const created = await client.createWallets({
-    blockchains: ["ARC-TESTNET"],
+    blockchains: [ARC.dcwBlockchain],
     accountType: "SCA",
     count: 1,
     walletSetId,

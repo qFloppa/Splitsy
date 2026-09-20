@@ -7,7 +7,7 @@ let _client: DcwClient | null = null;
 
 // Returns the DCW client configured for Gateway-style transfers.
 // We reuse Circle's DCW SDK — server-side Gateway settlement for the hackathon
-// MVP uses the same ARC-TESTNET transfer path as the autopay agent. A full
+// MVP uses the same Arc transfer path as the autopay agent. A full
 // client-driven Gateway flow would need a browser wallet + signature; this is
 // the server-settled path.
 export function getGatewayClient(): DcwClient {
@@ -36,7 +36,7 @@ const ARC_USDC_ADDRESS = ARC.usdcAddress;
 /**
  * Settle a bill share via Circle DCW — the server-side analogue to a Gateway
  * cross-chain transfer. For the hackathon MVP, the "source chain" annotation
- * is recorded in the response but the actual settlement lands on Arc Testnet.
+ * is recorded in the response but the actual settlement lands on Arc.
  */
 export async function payViaGateway(input: {
   fromWalletId: string; // Circle DCW wallet funding the transfer
@@ -50,16 +50,17 @@ export async function payViaGateway(input: {
     // Convert 6-decimal units → human USDC string
     const amountUsdc = (Number(input.amount) / 1_000_000).toFixed(6);
 
-    // ponytail: cast the whole input — SDK 9.2.0's transfer union types lag the API
-    // (ARC-TESTNET missing). Shape verified against Circle's createTransaction docs.
+    // ponytail: cast the whole input — the SDK mis-discriminates the
+    // walletId+tokenAddress branch. Shape verified against Circle's
+    // createTransaction docs.
     const res = await client.createTransaction({
       walletId: input.fromWalletId,
-      blockchain: "ARC-TESTNET",
+      blockchain: ARC.dcwBlockchain,
       tokenAddress: ARC_USDC_ADDRESS,
       amount: [amountUsdc],
       destinationAddress: input.recipientAddress,
       fee: { type: "level", config: { feeLevel: "MEDIUM" } },
-    } as any);
+    } as unknown as Parameters<typeof client.createTransaction>[0]);
 
     const txId = res.data?.id ?? "unknown";
     return { success: true, transaction: txId };

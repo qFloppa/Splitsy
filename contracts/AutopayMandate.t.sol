@@ -16,6 +16,7 @@ contract AutopayMandateTest is Test {
   uint96 private constant MAX_PER_BILL = 25e6;
   uint128 private constant MAX_PER_DAY = 30e6;
 
+  address private attester = address(0xA77E57);
   address private splitter = address(0x5157);
   address private otherSplitter = address(0x5158);
   address private alice = address(0xA11CE);
@@ -30,7 +31,7 @@ contract AutopayMandateTest is Test {
 
   function setUp() public {
     usdc = new MockUSDC();
-    registry = new BillSplitRegistry(address(usdc));
+    registry = new BillSplitRegistry(address(usdc), attester);
     mandate = new AutopayMandate(address(registry), address(usdc));
 
     usdc.mint(alice, 1000e6);

@@ -11,12 +11,13 @@ contract AuditProbeTest is Test {
   address private attacker = address(0xA77ACC);
   address private alt = address(0xA17);      // attacker's own second wallet
   address private victim = address(0x1C71);
+  address private attester = address(0xA77E57);
 
   event DebtPaid(uint256 indexed billId, address indexed payer, uint256 amount, uint256 paidTotal, uint256 owedTotal);
 
   function setUp() public {
     usdc = new MockUSDC();
-    registry = new BillSplitRegistry(address(usdc));
+    registry = new BillSplitRegistry(address(usdc), attester);
     usdc.mint(attacker, 1_000e6);
     vm.prank(attacker);
     usdc.approve(address(registry), type(uint256).max);

@@ -18,25 +18,22 @@ export function getScout() {
 }
 
 /**
- * Scout's Gateway client. Split from getScout() for the same reason, and with
- * the same SDK gap, as getSettlerGateway() in lib/settler.ts: there is no Arc
- * mainnet chain in @circle-fin/x402-batching, so this refuses rather than
- * batching real-money nanopayments on testnet. The address alone still reads on
- * mainnet, which is all /api/scout/stats wants.
+ * Scout's Gateway client. Split from getScout() for the same reason as
+ * getSettlerGateway() in lib/settler.ts: the address alone still reads without
+ * it, which is all /api/scout/stats wants.
+ *
+ * Both functions used to refuse on mainnet — @circle-fin/x402-batching shipped
+ * no Arc mainnet chain, so scanning there would have batched real-money
+ * nanopayments onto testnet. 3.5.0 added `arc`, so the chain now follows the
+ * deployment.
  */
 export function getScoutGateway(): GatewayClient {
   if (cachedGateway) return cachedGateway;
   getScout();
-  if (ARC.network === "mainnet") {
-    throw new Error(
-      "x402 batching has no Arc mainnet chain in @circle-fin/x402-batching — " +
-        "Scout cannot scan on mainnet until the SDK ships one.",
-    );
-  }
   // rpcUrl or the SDK builds its own client against the public node, which
   // rate-limits: a top-up then fails on an allowance read nothing here made.
   cachedGateway = new GatewayClient({
-    chain: "arcTestnet",
+    chain: ARC.x402Chain,
     privateKey: process.env.SCOUT_PRIVATE_KEY as `0x${string}`,
     rpcUrl: ARC_RPC,
   });

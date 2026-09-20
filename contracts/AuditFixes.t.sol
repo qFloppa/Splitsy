@@ -17,13 +17,14 @@ contract AuditFixesTest is Test {
   address private splitter = address(0x5157);
   address private alice = address(0xA11CE);
   address private stranger = address(0xBAD);
+  address private attester = address(0xA77E57);
 
   MockUSDC private usdc;
   BillSplitRegistry private registry;
 
   function setUp() public {
     usdc = new MockUSDC();
-    registry = new BillSplitRegistry(address(usdc));
+    registry = new BillSplitRegistry(address(usdc), attester);
 
     usdc.mint(alice, 1_000e6);
     vm.prank(alice);
@@ -37,7 +38,7 @@ contract AuditFixesTest is Test {
   /// check the registry would credit a debt that no token ever moved.
   function testTransferToCodelessTokenReverts() public {
     address ghost = address(0xDEAD);
-    BillSplitRegistry ghostRegistry = new BillSplitRegistry(ghost);
+    BillSplitRegistry ghostRegistry = new BillSplitRegistry(ghost, attester);
 
     vm.prank(splitter);
     uint256 billId = ghostRegistry.createBill(bytes32("ghost"), _one(alice), _one(10e6), 0, false);
@@ -207,7 +208,7 @@ contract AuditFixesTest is Test {
     returns (BillSplitRegistry reg, uint256 billId)
   {
     OddReturnUSDC token = new OddReturnUSDC(mode, bombWords);
-    reg = new BillSplitRegistry(address(token));
+    reg = new BillSplitRegistry(address(token), attester);
 
     token.mint(alice, 1_000e6);
     vm.prank(alice);

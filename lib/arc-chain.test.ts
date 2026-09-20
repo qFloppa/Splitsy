@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { CHAIN_CONFIGS, GATEWAY_DOMAINS } from "@circle-fin/x402-batching/client";
 import { ARC_PROFILES, forArcNetwork, resolveArcProfile } from "./arc-chain.ts";
 
 // The whole point of the module. Every one of these used to be a separate
@@ -46,6 +47,46 @@ test("USDC shares an address across networks but Gateway does not", () => {
   assert.notEqual(ARC_PROFILES.mainnet.gatewayWallet, ARC_PROFILES.testnet.gatewayWallet);
   assert.notEqual(ARC_PROFILES.mainnet.gatewayMinter, ARC_PROFILES.testnet.gatewayMinter);
   assert.notEqual(ARC_PROFILES.mainnet.gatewayApiUrl, ARC_PROFILES.testnet.gatewayApiUrl);
+});
+
+// Circle spells the same network two different ways across two SDKs, and both
+// spellings are wire values whose wrong answer is silent rather than loud: a
+// mainnet deployment naming "ARC-TESTNET" moves a user's money on the wrong
+// chain, and one naming "arcTestnet" batches real nanopayments onto testnet.
+// So assert they never cross, not merely that each profile has them.
+test("each profile names itself the same way in both Circle SDKs", () => {
+  assert.equal(ARC_PROFILES.mainnet.dcwBlockchain, "ARC");
+  assert.equal(ARC_PROFILES.mainnet.x402Chain, "arc");
+  assert.equal(ARC_PROFILES.testnet.dcwBlockchain, "ARC-TESTNET");
+  assert.equal(ARC_PROFILES.testnet.x402Chain, "arcTestnet");
+
+  for (const profile of Object.values(ARC_PROFILES)) {
+    const isTestnet = profile.network === "testnet";
+    assert.equal(profile.dcwBlockchain.endsWith("-TESTNET"), isTestnet);
+    assert.equal(profile.x402Chain.endsWith("Testnet"), isTestnet);
+  }
+});
+
+// The claim the x402 half of mainnet rests on. `x402Chain` is a key into the
+// SDK's own registry, so a wrong or dropped one does not fail the build — it
+// throws inside the GatewayClient constructor on the first nanopayment. Arc
+// mainnet only arrived in @circle-fin/x402-batching 3.5.0, so this also fails
+// loudly if that dependency is ever rolled back under us.
+//
+// Checking the addresses rather than just the key's existence makes this a
+// second source for the Gateway pair above: they are money-moving contracts we
+// hardcode, and Circle ships its own copy of the same values.
+test("the x402 SDK knows each profile's chain, at the addresses we claim", () => {
+  for (const profile of Object.values(ARC_PROFILES)) {
+    const config = CHAIN_CONFIGS[profile.x402Chain];
+    assert.ok(config, `@circle-fin/x402-batching has no chain "${profile.x402Chain}"`);
+    assert.equal(config.chain.id, profile.chainId);
+    assert.equal(config.gatewayWallet.toLowerCase(), profile.gatewayWallet.toLowerCase());
+    assert.equal(config.gatewayMinter.toLowerCase(), profile.gatewayMinter.toLowerCase());
+    assert.equal(config.usdc.toLowerCase(), profile.usdcAddress.toLowerCase());
+    // Arc is domain 26 on both networks — the one value that does not vary.
+    assert.equal(GATEWAY_DOMAINS[profile.x402Chain], 26);
+  }
 });
 
 test("mainnet carries the addresses verified on chain 2026-09-16", () => {

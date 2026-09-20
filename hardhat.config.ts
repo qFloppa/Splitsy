@@ -6,24 +6,34 @@ export default defineConfig({
   solidity: {
     profiles: {
       default: {
-        version: "0.8.36",
-        // Pinned: Arc runs the Cancun instruction set. 0.8.30+ defaults to
-        // `prague`, which would emit opcodes the chain may not accept.
-        settings: {
-          evmVersion: "cancun",
-        },
+        // Two versions, not one: HandleEscrow pins 0.8.37 after its audit,
+        // every other contract pins 0.8.36. The shared files it imports are
+        // `^0.8.36` so each unit resolves to its own contract's version.
+        //
+        // `settings` is PER COMPILER here. A profile-level `settings` beside a
+        // `compilers` list is accepted and then ignored — the build info comes
+        // back with no evmVersion at all, which is the prague default this
+        // pin exists to prevent.
+        compilers: [
+          // Pinned: Arc runs the Cancun instruction set. 0.8.30+ defaults to
+          // `prague`, which would emit opcodes the chain may not accept.
+          { version: "0.8.36", settings: { evmVersion: "cancun" } },
+          { version: "0.8.37", settings: { evmVersion: "cancun" } },
+        ],
       },
       production: {
-        version: "0.8.36",
-        // Pinned: Arc runs the Cancun instruction set. 0.8.30+ defaults to
-        // `prague`, which would emit opcodes the chain may not accept.
-        settings: {
-          evmVersion: "cancun",
-          optimizer: {
-            enabled: true,
-            runs: 200,
+        compilers: [
+          // Pinned: Arc runs the Cancun instruction set. 0.8.30+ defaults to
+          // `prague`, which would emit opcodes the chain may not accept.
+          {
+            version: "0.8.36",
+            settings: { evmVersion: "cancun", optimizer: { enabled: true, runs: 200 } },
           },
-        },
+          {
+            version: "0.8.37",
+            settings: { evmVersion: "cancun", optimizer: { enabled: true, runs: 200 } },
+          },
+        ],
       },
     },
   },

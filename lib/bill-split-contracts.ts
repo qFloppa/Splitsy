@@ -283,6 +283,40 @@ export const billSplitRegistryAbi = [
     inputs: [{ internalType: "address", name: "splitter", type: "address" }],
     outputs: [{ internalType: "uint256[]", name: "", type: "uint256[]" }],
   },
+  {
+    type: "function",
+    name: "refundSlot",
+    stateMutability: "nonpayable",
+    inputs: [
+      { internalType: "uint256", name: "billId", type: "uint256" },
+      { internalType: "address", name: "slot", type: "address" },
+      { internalType: "address", name: "to", type: "address" },
+      { internalType: "uint256", name: "deadline", type: "uint256" },
+      { internalType: "bytes", name: "signature", type: "bytes" },
+    ],
+    outputs: [],
+  },
+  {
+    type: "function",
+    name: "DOMAIN_SEPARATOR",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ internalType: "bytes32", name: "", type: "bytes32" }],
+  },
+  {
+    type: "function",
+    name: "REFUND_SLOT_TYPEHASH",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ internalType: "bytes32", name: "", type: "bytes32" }],
+  },
+  {
+    type: "function",
+    name: "attester",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ internalType: "address", name: "", type: "address" }],
+  },
 ] as const;
 
 export type BillSplitWallet = {

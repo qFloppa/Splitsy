@@ -43,38 +43,29 @@ export function getSettler() {
 }
 
 /**
- * The x402 batching client. SEPARATE from getSettler() on purpose, because it is
- * the only half of this agent that Arc mainnet cannot serve.
+ * The x402 batching client. SEPARATE from getSettler() on purpose: the account
+ * is needed by every path this agent has, the Gateway client only by the one
+ * that buys reviews, so a missing SDK chain must not take mandate settlement
+ * down with it.
  *
- * `chain` below is the SDK's own registry key, not viem's, and
- * @circle-fin/x402-batching ships exactly one Arc entry — `arcTestnet`. Its
- * GATEWAY_DOMAINS table lists mainnet chains (base, arbitrum, …) and no `arc`,
- * so there is nothing to name here for chain 5042. Left unguarded, a mainnet
- * deployment would sign and batch its nanopayments on TESTNET while every other
- * rail spent real money, and the settler's income would accrue somewhere the app
- * never reads.
- *
- * The refusal is scoped to the Gateway client and NOT to getSettler(), because
- * the settler's other two jobs work perfectly well on mainnet: it signs contract
- * writes through viem (settlerWrite below), and its address is what a mandate
- * names. Throwing for all three would take mandate-mode settlement down on
- * mainnet over a nanopayment SDK gap.
+ * `chain` below is the SDK's own registry key, not viem's, which is why it comes
+ * off the profile rather than from ARC.chain. Until @circle-fin/x402-batching
+ * 3.5.0 the SDK shipped exactly one Arc entry — `arcTestnet` — and this function
+ * refused outright on mainnet, because signing nanopayments on TESTNET while
+ * every other rail spent real money would accrue the settler's income somewhere
+ * the app never reads. 3.5.0 added `arc` (GATEWAY_DOMAINS.arc = 26) with the
+ * mainnet GatewayWallet and GatewayMinter, so the refusal is gone and the chain
+ * follows the deployment like everything else.
  */
 export function getSettlerGateway(): GatewayClient {
   if (cachedGateway) return cachedGateway;
   // Same key gate, same message — reached through getSettler() rather than
   // repeated, so there is one place that decides what a bad key reads as.
   getSettler();
-  if (ARC.network === "mainnet") {
-    throw new Error(
-      "x402 batching has no Arc mainnet chain in @circle-fin/x402-batching — " +
-        "the settler cannot buy reviews on mainnet until the SDK ships one.",
-    );
-  }
   // rpcUrl or the SDK builds its own client against the public node and
   // rate-limits mid-deposit, on a read the caller never made.
   cachedGateway = new GatewayClient({
-    chain: "arcTestnet",
+    chain: ARC.x402Chain,
     privateKey: process.env.SETTLER_PRIVATE_KEY as `0x${string}`,
     rpcUrl: ARC_RPC,
   });

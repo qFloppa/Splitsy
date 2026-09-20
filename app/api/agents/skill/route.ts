@@ -6,6 +6,7 @@
 // environment-dependent, and a skill file naming a stale contract is worse than
 // no skill file at all.
 import { isMandateConfigured, MANDATE_ADDRESS } from "@/lib/arc-read";
+import { ARC, forArcNetwork } from "@/lib/arc-chain";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -31,7 +32,7 @@ The contract enforces those caps itself. You cannot exceed them; a call that
 would will revert. Your job is the judgment the contract cannot make.
 
 - Mandate contract: \`${MANDATE_ADDRESS}\`
-- Chain: \`ARC-TESTNET\`
+- Chain: \`${ARC.dcwBlockchain}\`
 
 ## 1. Find work
 
@@ -69,7 +70,7 @@ Refuse when the bill does not hold up. Worth checking:
 \`\`\`bash
 circle wallet execute "payFor(uint256,address)" <billId> <theUsersWalletAddress> \\
   --contract ${MANDATE_ADDRESS} \\
-  --chain ARC-TESTNET \\
+  --chain ${ARC.dcwBlockchain} \\
   --address <yourAgentWalletAddress>
 \`\`\`
 
@@ -80,14 +81,15 @@ at another bill's money.
 If the wallet has no gas, run:
 
 \`\`\`bash
-circle wallet fund --address <yourAgentWalletAddress> --chain ARC-TESTNET
+circle wallet fund --address <yourAgentWalletAddress> --chain ${ARC.dcwBlockchain}
 \`\`\`
 
 ## What binds you
 
-\`circle wallet limit\` policies are **mainnet-only**, so on Arc Testnet Circle-side
-spend policy is not in play. The mandate contract is the only thing enforcing
-your limits — which is the stronger claim anyway: the caps are on chain, public,
+${forArcNetwork(
+  "`circle wallet limit` policies are available on Arc mainnet, so Circle-side\nspend policy may apply to you as well — but do not rely on it, and do not treat\nits absence as permission. The mandate contract is the binding constraint",
+  "`circle wallet limit` policies are **mainnet-only**, so on Arc Testnet Circle-side\nspend policy is not in play. The mandate contract is the only thing enforcing\nyour limits",
+)} — which is the stronger claim anyway: the caps are on chain, public,
 and revocable by the user at any moment with \`revokeMandate()\`, whether or not
 Splitsy's servers are reachable.
 `;

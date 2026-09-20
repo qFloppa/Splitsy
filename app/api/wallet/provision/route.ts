@@ -208,9 +208,10 @@ export async function POST(request: Request) {
     //    the routes now ALSO read the holding address, via getSlotWalletForUser
     //    (lib/pending-wallets-repo.ts). A debt filed under it is paid with
     //    payDebtFor from the user's own wallet, and a failed all-or-nothing bill is
-    //    refunded out of it by lib/slot-refund.ts. So the address keeps its
-    //    positions and stays findable — which is why the pending row is no longer
-    //    deleted below.
+    //    refunded out of it by the registry's attester-signed refundSlot, which
+    //    pays the user's real wallet directly and so leaves nothing to sweep. So
+    //    the address keeps its positions and stays findable — which is why the
+    //    pending row is no longer deleted below.
     let swept: { amountUsdc: number; txHash: string | null } | null = null;
     let sweepError: string | null = null;
     const pending =
@@ -224,6 +225,13 @@ export async function POST(request: Request) {
         // sweepAmountUsdc leaves the reserve behind and answers 0 for dust.
         const amount = sweepAmountUsdc(await usdcBalanceOf(pending.wallet_address));
         if (amount > 0) {
+          // A row with no wallet id is not signable, so there is no sweep to
+          // make. Unreachable for a real pre-mint — the id is what made it one —
+          // but reported rather than skipped, because the alternative is telling
+          // someone their money moved when nothing did.
+          if (!pending.circle_wallet_id) {
+            throw new Error("That address holds USDC but has no wallet to sign with — contact support.");
+          }
           const tx = await transferUsdc(pending.circle_wallet_id, address, amount.toFixed(6));
           swept = { amountUsdc: amount, txHash: tx.txHash };
         }

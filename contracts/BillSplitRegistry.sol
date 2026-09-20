@@ -121,6 +121,14 @@ contract BillSplitRegistry is ReentrancyGuard {
   error TooManyParticipants(uint256 provided, uint256 maximum);
   /// @notice Thrown when an action references a bill that does not exist.
   error UnknownBill(uint256 billId);
+  /// @notice Thrown when a refund is attempted on a participant who paid nothing.
+  error NothingToRefund(uint256 billId, address participant);
+  /// @notice Thrown when refund conditions (escrowed, short, past due) are not met.
+  error RefundConditionsNotMet(uint256 billId);
+  /// @notice Thrown when a signature deadline has passed.
+  error SignatureExpired(uint256 deadline);
+  /// @notice Thrown when signature verification fails.
+  error InvalidSignature();
 
   /// @notice Emitted once at deployment, recording the token this registry is bound to.
   /// @dev `usdc` is immutable, so this is the only time it is ever set.
@@ -220,6 +228,20 @@ contract BillSplitRegistry is ReentrancyGuard {
   ///      the reentrancy surface that introduces.
   IERC20 public immutable usdc;
 
+  /// @notice Address authorized to sign refundSlot calls.
+  /// @dev Same party that signs HandleEscrow.release. A leaked key can misdirect
+  ///      refunds, but cannot pay a non-participant.
+  address public immutable attester;
+
+  /// @notice EIP-712 domain separator for refundSlot signatures.
+  /// @dev Distinct from HandleEscrow's domain so a redeploy cannot replay old signatures.
+  bytes32 public immutable DOMAIN_SEPARATOR;
+
+  /// @notice EIP-712 typehash for RefundSlot messages.
+  bytes32 public constant REFUND_SLOT_TYPEHASH = keccak256(
+    "RefundSlot(uint256 billId,address slot,address to,uint256 deadline)"
+  );
+
   /// @notice Identifier that will be assigned to the next created bill.
   uint256 public nextBillId = 1;
 
@@ -238,12 +260,25 @@ contract BillSplitRegistry is ReentrancyGuard {
   /// @notice Binds this registry to the USDC token it will custody.
   /// @dev The token address is immutable; there is no setter and no upgrade path.
   /// @param usdc_ Address of the USDC token contract; must be non-zero.
-  constructor(address usdc_) {
+  /// @param attester_ Address authorized to sign refundSlot calls; must be non-zero.
+  constructor(address usdc_, address attester_) {
     if (usdc_ == address(0)) {
+      revert InvalidConfiguration();
+    }
+    if (attester_ == address(0)) {
       revert InvalidConfiguration();
     }
 
     usdc = IERC20(usdc_);
+    attester = attester_;
+
+    DOMAIN_SEPARATOR = keccak256(abi.encode(
+      keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"),
+      keccak256("Splitsy BillSplit"),
+      keccak256("1"),
+      block.chainid,
+      address(this)
+    ));
 
     emit RegistryDeployed(usdc_);
   }
@@ -524,6 +559,52 @@ contract BillSplitRegistry is ReentrancyGuard {
     emit DebtRefunded(billId, msg.sender, amount, 0, participant.owed);
 
     usdc.safeTransfer(msg.sender, amount);
+  }
+
+  /// @notice Refund a slot participant's payment when a bill has failed.
+  /// @dev Permissionless relay authorized by the attester's EIP-712 signature.
+  ///      The signature binds `to`, so a stolen attester key can misdirect one
+  ///      refund but can never pay a non-participant. Same concession
+  ///      HandleEscrow.release already documents.
+  /// @param billId The bill to refund from.
+  /// @param slot The slot participant's address (derived from their handle).
+  /// @param to The address to send the refund to (the user's real wallet).
+  /// @param deadline Signature expiry (block.timestamp).
+  /// @param signature EIP-712 signature from the attester.
+  function refundSlot(
+    uint256 billId,
+    address slot,
+    address to,
+    uint256 deadline,
+    bytes calldata signature
+  ) external nonReentrant {
+    // slither-disable-next-line timestamp
+    if (block.timestamp > deadline) revert SignatureExpired(deadline);
+
+    _requireAttester(
+      keccak256(
+        abi.encodePacked(
+          "\x19\x01", DOMAIN_SEPARATOR, keccak256(abi.encode(REFUND_SLOT_TYPEHASH, billId, slot, to, deadline))
+        )
+      ),
+      signature
+    );
+
+    // Refund the slot's payment, but send it to `to` instead of to `slot`.
+    Bill storage bill = _billOrRevert(billId);
+    Participant storage participant = _participants[billId][slot];
+
+    if (!participant.exists) revert NotParticipant(billId, slot);
+    if (participant.paid == 0) revert NothingToRefund(billId, slot);
+    if (!_canRefund(bill)) revert RefundConditionsNotMet(billId);
+
+    uint256 amount = participant.paid;
+    participant.paid = 0;
+    bill.totalPaid -= amount;
+
+    emit DebtRefunded(billId, slot, amount, 0, participant.owed);
+
+    usdc.safeTransfer(to, amount);
   }
 
   /// @notice Claims every listed bill then pays every listed debt, in one call.
@@ -875,6 +956,40 @@ contract BillSplitRegistry is ReentrancyGuard {
   /// @return escrowed True while claims must be refused.
   function _isEscrowed(Bill storage bill) private view returns (bool escrowed) {
     escrowed = bill.escrowUntilFull && bill.totalPaid < bill.totalOwed;
+  }
+
+  /// @notice Returns whether a bill can be refunded.
+  /// @dev Extracted from refund() so refundSlot can reuse the same checks.
+  /// @param bill The bill to check.
+  /// @return canRefund True if refund conditions are met.
+  function _canRefund(Bill storage bill) private view returns (bool canRefund) {
+    canRefund = bill.escrowUntilFull && _isDue(bill) && bill.totalPaid < bill.totalOwed;
+  }
+
+  /// @notice Reverts unless `signature` is the attester's over `digest`.
+  /// @dev Split out of {refundSlot} so its locals stay off that function's
+  ///      stack. Rejects high-`s` signatures, which would let a third party
+  ///      mint a second valid signature for a message the attester already
+  ///      signed — harmless for a one-shot refund, but the same guard
+  ///      {HandleEscrow.release} carries and there is no reason to differ.
+  /// @param digest The EIP-712 digest the signature must cover.
+  /// @param signature 65-byte `(r, s, v)` signature.
+  function _requireAttester(bytes32 digest, bytes calldata signature) private view {
+    bytes32 r;
+    bytes32 s;
+    uint8 v;
+    assembly {
+      r := calldataload(signature.offset)
+      s := calldataload(add(signature.offset, 32))
+      v := byte(0, calldataload(add(signature.offset, 64)))
+    }
+
+    if (uint256(s) > uint256(0x7fffffffffffffffffffffffffffffff5d576e7357a4501ddfe92f46681b20a0)) {
+      revert InvalidSignature();
+    }
+
+    address signer = ecrecover(digest, v, r, s);
+    if (signer == address(0) || signer != attester) revert InvalidSignature();
   }
 
   /// @notice Loads a bill, rejecting identifiers that were never created.

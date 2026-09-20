@@ -8,10 +8,10 @@
 //
 // Run: npm run scout:setup
 import { createWalletClient, createPublicClient, http, formatUnits, erc20Abi } from "viem";
-import { arcTestnet } from "viem/chains";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import { GatewayClient } from "@circle-fin/x402-batching/client";
 import { ARC_RPC, ARC_IDENTITY_REGISTRY, ARC_USDC } from "../lib/x402/constants.ts";
+import { ARC } from "../lib/arc-chain.ts";
 
 const REGISTER_ABI = [
   {
@@ -33,7 +33,7 @@ if (!process.env.SCOUT_PRIVATE_KEY) {
 }
 console.log("Scout address:", account.address);
 
-const publicClient = createPublicClient({ chain: arcTestnet, transport: http(ARC_RPC) });
+const publicClient = createPublicClient({ chain: ARC.chain, transport: http(ARC_RPC) });
 
 // On Arc, USDC is the gas token, so one balance covers both fees and payments.
 const [gas, usdc] = await Promise.all([
@@ -54,7 +54,7 @@ if (gas === 0n) {
   process.exit(0);
 }
 
-const wallet = createWalletClient({ account, chain: arcTestnet, transport: http(ARC_RPC) });
+const wallet = createWalletClient({ account, chain: ARC.chain, transport: http(ARC_RPC) });
 
 // --- ERC-8004 identity -------------------------------------------------------
 if (process.env.SCOUT_ERC8004_TOKEN_ID) {
@@ -88,7 +88,7 @@ if (process.env.SCOUT_ERC8004_TOKEN_ID) {
 }
 
 // --- Circle Gateway deposit --------------------------------------------------
-const gateway = new GatewayClient({ chain: "arcTestnet", privateKey, rpcUrl: ARC_RPC });
+const gateway = new GatewayClient({ chain: ARC.x402Chain, privateKey, rpcUrl: ARC_RPC });
 const before = await gateway.getBalances();
 console.log("Gateway available:", before.gateway.formattedAvailable, "USDC");
 

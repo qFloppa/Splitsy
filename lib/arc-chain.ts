@@ -50,6 +50,19 @@ export type ArcProfile = {
   gatewayApiUrl: string;
   /** eip155:<chainId>, the form Privy and x402 both want. */
   caip2: string;
+  /**
+   * Circle's own name for this network, in two SDKs that each spell it
+   * differently and neither of which spells it the way viem does.
+   *
+   * They live here rather than at the call sites because they are properties of
+   * WHICH ARC THIS IS, exactly like chainId — and because both are the kind of
+   * value whose wrong answer is silent. `dcwBlockchain` is a wire string sent to
+   * Circle's custody API; naming testnet there while every other rail is on
+   * mainnet does not error, it moves the user's money on the wrong chain.
+   */
+  dcwBlockchain: "ARC" | "ARC-TESTNET";
+  /** The key into @circle-fin/x402-batching's own chain registry. */
+  x402Chain: "arc" | "arcTestnet";
 };
 
 export const ARC_PROFILES: Record<ArcNetwork, ArcProfile> = {
@@ -66,6 +79,8 @@ export const ARC_PROFILES: Record<ArcNetwork, ArcProfile> = {
     gatewayMinter: "0x2222222d7164433c4C09B0b0D809a9b52C04C205",
     gatewayApiUrl: "https://gateway-api.circle.com/v1",
     caip2: "eip155:5042",
+    dcwBlockchain: "ARC",
+    x402Chain: "arc",
   },
   testnet: {
     network: "testnet",
@@ -78,6 +93,8 @@ export const ARC_PROFILES: Record<ArcNetwork, ArcProfile> = {
     gatewayMinter: "0x0022222ABE238Cc2C7Bb1f21003F0a260052475B",
     gatewayApiUrl: "https://gateway-api-testnet.circle.com/v1",
     caip2: "eip155:5042002",
+    dcwBlockchain: "ARC-TESTNET",
+    x402Chain: "arcTestnet",
   },
 };
 

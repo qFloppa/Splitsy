@@ -15,6 +15,13 @@ contract BillSplitRegistryTest is Test {
   uint256 private constant BOB_OWED = 18e6;
   uint256 private constant DUE_IN = 7 days;
 
+  // Anvil's first two keys; the attester must be a real signer, since the
+  // refundSlot tests check `ecrecover` against it.
+  uint256 private constant ATTESTER_KEY = 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80;
+  address private constant ATTESTER = 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266;
+  address private constant SLOT = address(0x5107);
+  address private constant ROOT = address(0x0075); // a second deployment, for the wrong-domain test
+
   address private splitter = address(0x5157);
   address private alice = address(0xA11CE);
   address private bob = address(0xB0B);
@@ -22,6 +29,9 @@ contract BillSplitRegistryTest is Test {
 
   MockUSDC private usdc;
   BillSplitRegistry private registry;
+  /// @dev Unused as a registry; exists only to give the wrong-domain test a
+  ///      second verifyingContract to sign against.
+  BillSplitRegistry private root;
 
   /// @dev Local mirrors of the registry's events so {vm.expectEmit} has a shape
   ///      to match against; the cheatcode compares topics and data, not the
@@ -37,7 +47,12 @@ contract BillSplitRegistryTest is Test {
 
   function setUp() public {
     usdc = new MockUSDC();
-    registry = new BillSplitRegistry(address(usdc));
+    registry = new BillSplitRegistry(address(usdc), ATTESTER);
+    root = new BillSplitRegistry(address(usdc), ATTESTER);
+
+    // The wrong-domain test signs for `root` but submits to `registry`, and the
+    // addresses must actually differ or the two derive the same domain.
+    assertTrue(address(registry) != address(root));
 
     _fundAndApprove(alice, 100e6);
     _fundAndApprove(bob, 100e6);
@@ -851,7 +866,7 @@ contract BillSplitRegistryTest is Test {
   ///      non-fee-on-transfer token, so this state is unreachable in production.
   function testFeeOnTransferTokenBreaksAccountingDocumented() public {
     FeeOnTransferUSDC leaky = new FeeOnTransferUSDC(1e6);
-    BillSplitRegistry reg = new BillSplitRegistry(address(leaky));
+    BillSplitRegistry reg = new BillSplitRegistry(address(leaky), ATTESTER);
 
     leaky.mint(alice, 100e6);
     vm.prank(alice);
@@ -980,7 +995,7 @@ contract BillSplitRegistryTest is Test {
     returns (MaliciousUSDC evil, BillSplitRegistry reg, uint256 billId)
   {
     evil = new MaliciousUSDC();
-    reg = new BillSplitRegistry(address(evil));
+    reg = new BillSplitRegistry(address(evil), ATTESTER);
 
     evil.mint(alice, 100e6);
     evil.mint(stranger, 100e6);
@@ -1100,5 +1115,328 @@ contract BillSplitRegistryTest is Test {
 
     vm.prank(account);
     usdc.approve(address(registry), type(uint256).max);
+  }
+
+  // --- refundSlot -----------------------------------------------------------
+
+  /// @dev Independent protocol encoding, same as HandleEscrowSecurity: sign
+  ///      without reading the contract's own DOMAIN_SEPARATOR or TYPEHASH, so a
+  ///      typo in either constant fails here rather than agreeing with itself.
+  function _slotSignature(
+    address target,
+    uint256 chainId,
+    uint256 billId,
+    address slot,
+    address to,
+    uint256 deadline
+  ) private pure returns (bytes memory) {
+    bytes32 domain = keccak256(abi.encode(
+      keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"),
+      keccak256("Splitsy BillSplit"),
+      keccak256("1"),
+      chainId,
+      target
+    ));
+    bytes32 message = keccak256(abi.encode(
+      keccak256("RefundSlot(uint256 billId,address slot,address to,uint256 deadline)"), billId, slot, to, deadline
+    ));
+    (uint8 v, bytes32 r, bytes32 s) = vm.sign(ATTESTER_KEY, keccak256(abi.encodePacked("\x19\x01", domain, message)));
+    return abi.encodePacked(r, s, v);
+  }
+
+  function _signSlot(uint256 billId, address slot, address to, uint256 deadline) private view returns (bytes memory) {
+    return _slotSignature(address(registry), block.chainid, billId, slot, to, deadline);
+  }
+
+  /// @dev A failed escrowed bill: two participants, only the slot paid, past due.
+  ///      Deliberately two — a one-participant bill that gets paid in full has
+  ///      SUCCEEDED, and neither refund path acts on a bill that reached its line.
+  function _failedSlotBill() private returns (uint256 billId) {
+    address[] memory members = new address[](2);
+    members[0] = SLOT;
+    members[1] = bob;
+    uint256[] memory amounts = new uint256[](2);
+    amounts[0] = ALICE_OWED;
+    amounts[1] = BOB_OWED;
+
+    vm.prank(splitter);
+    billId = registry.createBill(bytes32("slot"), members, amounts, _due(), true);
+
+    vm.prank(alice);
+    registry.payDebtFor(billId, SLOT, ALICE_OWED);
+
+    vm.warp(block.timestamp + DUE_IN + 1);
+  }
+
+  function testRefundSlotHappyPath() public {
+    uint256 billId = _failedSlotBill();
+    uint256 deadline = block.timestamp + 1 hours;
+
+    uint256 before = usdc.balanceOf(alice);
+
+    // Called by a stranger: the relay is permissionless, the signature is what
+    // authorizes it.
+    vm.prank(stranger);
+    registry.refundSlot(billId, SLOT, alice, deadline, _signSlot(billId, SLOT, alice, deadline));
+
+    assertEq(usdc.balanceOf(alice), before + ALICE_OWED, "funds reach `to`, not the keyless slot");
+    assertEq(usdc.balanceOf(SLOT), 0, "nothing stranded at the slot");
+
+    (uint256 owed, uint256 paid, bool exists) = registry.getParticipant(billId, SLOT);
+    assertEq(paid, 0, "slot's credit cleared");
+    assertEq(owed, ALICE_OWED, "still a participant, still owes");
+    assertTrue(exists, "membership is unchanged by a refund");
+
+    (,,, uint256 totalPaid,,,,) = registry.getBill(billId);
+    assertEq(totalPaid, 0, "bill total reduced");
+  }
+
+  function testRefundSlotRevertsOnWrongSigner() public {
+    uint256 billId = _failedSlotBill();
+    uint256 deadline = block.timestamp + 1 hours;
+
+    // Signed by a key that is not the attester.
+    bytes32 domain = keccak256(abi.encode(
+      keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"),
+      keccak256("Splitsy BillSplit"), keccak256("1"), block.chainid, address(registry)
+    ));
+    bytes32 message = keccak256(abi.encode(
+      keccak256("RefundSlot(uint256 billId,address slot,address to,uint256 deadline)"), billId, SLOT, alice, deadline
+    ));
+    (uint8 v, bytes32 r, bytes32 s) =
+      vm.sign(0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d, keccak256(abi.encodePacked("\x19\x01", domain, message)));
+
+    vm.prank(stranger);
+    vm.expectRevert(BillSplitRegistry.InvalidSignature.selector);
+    registry.refundSlot(billId, SLOT, alice, deadline, abi.encodePacked(r, s, v));
+  }
+
+  function testRefundSlotRevertsOnWrongDomain() public {
+    uint256 billId = _failedSlotBill();
+    uint256 deadline = block.timestamp + 1 hours;
+
+    // Valid attester signature, but over another deployment's domain: a
+    // signature must not be portable between contracts.
+    bytes memory sig = _slotSignature(address(root), block.chainid, billId, SLOT, alice, deadline);
+
+    vm.prank(stranger);
+    vm.expectRevert(BillSplitRegistry.InvalidSignature.selector);
+    registry.refundSlot(billId, SLOT, alice, deadline, sig);
+  }
+
+  function testRefundSlotRevertsOnWrongChain() public {
+    uint256 billId = _failedSlotBill();
+    uint256 deadline = block.timestamp + 1 hours;
+
+    bytes memory sig = _slotSignature(address(registry), block.chainid + 1, billId, SLOT, alice, deadline);
+
+    vm.prank(stranger);
+    vm.expectRevert(BillSplitRegistry.InvalidSignature.selector);
+    registry.refundSlot(billId, SLOT, alice, deadline, sig);
+  }
+
+  /// @dev The signature covers `to`, so it cannot be redirected even by whoever
+  ///      relays it.
+  function testRefundSlotPaysOnlyTheSignedRecipient() public {
+    uint256 billId = _failedSlotBill();
+    uint256 deadline = block.timestamp + 1 hours;
+
+    bytes memory sig = _signSlot(billId, SLOT, alice, deadline);
+
+    vm.prank(stranger);
+    vm.expectRevert(BillSplitRegistry.InvalidSignature.selector);
+    registry.refundSlot(billId, SLOT, stranger, deadline, sig);
+  }
+
+  function testRefundSlotRevertsWhenBillIsFull() public {
+    vm.prank(splitter);
+    uint256 billId = registry.createBill(
+      bytes32("full"), _participants(), _amounts(), _due(), true
+    );
+
+    vm.prank(alice);
+    registry.payDebt(billId, ALICE_OWED);
+    vm.prank(bob);
+    registry.payDebt(billId, BOB_OWED);
+
+    vm.warp(block.timestamp + DUE_IN + 1);
+
+    uint256 deadline = block.timestamp + 1 hours;
+    vm.prank(stranger);
+    vm.expectRevert(abi.encodeWithSelector(BillSplitRegistry.RefundConditionsNotMet.selector, billId));
+    registry.refundSlot(billId, alice, alice, deadline, _signSlot(billId, alice, alice, deadline));
+  }
+
+  function testRefundSlotRevertsBeforeDueDate() public {
+    vm.prank(splitter);
+    uint256 billId = registry.createBill(
+      bytes32("pending"), _oneParticipant(SLOT, ALICE_OWED), _oneAmount(ALICE_OWED), _due(), true
+    );
+
+    vm.prank(alice);
+    registry.payDebtFor(billId, SLOT, ALICE_OWED);
+
+    uint256 deadline = block.timestamp + 1 hours;
+    vm.prank(stranger);
+    vm.expectRevert(abi.encodeWithSelector(BillSplitRegistry.RefundConditionsNotMet.selector, billId));
+    registry.refundSlot(billId, SLOT, alice, deadline, _signSlot(billId, SLOT, alice, deadline));
+  }
+
+  function testRefundSlotRevertsOnNonEscrowBill() public {
+    vm.prank(splitter);
+    uint256 billId = registry.createBill(
+      bytes32("plain"), _oneParticipant(SLOT, ALICE_OWED), _oneAmount(ALICE_OWED), _due(), false
+    );
+
+    vm.prank(alice);
+    registry.payDebtFor(billId, SLOT, ALICE_OWED);
+
+    vm.warp(block.timestamp + DUE_IN + 1);
+
+    uint256 deadline = block.timestamp + 1 hours;
+    vm.prank(stranger);
+    vm.expectRevert(abi.encodeWithSelector(BillSplitRegistry.RefundConditionsNotMet.selector, billId));
+    registry.refundSlot(billId, SLOT, alice, deadline, _signSlot(billId, SLOT, alice, deadline));
+  }
+
+  function testRefundSlotRevertsWhenSlotIsNotParticipant() public {
+    uint256 billId = _failedSlotBill();
+    uint256 deadline = block.timestamp + 1 hours;
+
+    vm.prank(stranger);
+    vm.expectRevert(abi.encodeWithSelector(BillSplitRegistry.NotParticipant.selector, billId, stranger));
+    registry.refundSlot(billId, stranger, alice, deadline, _signSlot(billId, stranger, alice, deadline));
+  }
+
+  function testRefundSlotRevertsWhenSlotPaidNothing() public {
+    vm.prank(splitter);
+    uint256 billId = registry.createBill(
+      bytes32("unpaid"), _participants(), _amounts(), _due(), true
+    );
+
+    vm.prank(alice);
+    registry.payDebt(billId, ALICE_OWED);
+
+    vm.warp(block.timestamp + DUE_IN + 1);
+
+    uint256 deadline = block.timestamp + 1 hours;
+    vm.prank(stranger);
+    vm.expectRevert(abi.encodeWithSelector(BillSplitRegistry.NothingToRefund.selector, billId, bob));
+    registry.refundSlot(billId, bob, alice, deadline, _signSlot(billId, bob, alice, deadline));
+  }
+
+  function testRefundSlotRevertsAfterSignatureDeadline() public {
+    uint256 billId = _failedSlotBill();
+    uint256 deadline = block.timestamp + 1 hours;
+    bytes memory sig = _signSlot(billId, SLOT, alice, deadline);
+
+    vm.warp(deadline + 1);
+
+    vm.prank(stranger);
+    vm.expectRevert(abi.encodeWithSelector(BillSplitRegistry.SignatureExpired.selector, deadline));
+    registry.refundSlot(billId, SLOT, alice, deadline, sig);
+  }
+
+  /// @dev At the deadline exactly, still valid — `>` not `>=`, matching the
+  ///      boundary HandleEscrow.release already tests.
+  function testRefundSlotAtDeadlineStillWorks() public {
+    uint256 billId = _failedSlotBill();
+    uint256 deadline = block.timestamp + 1 hours;
+    bytes memory sig = _signSlot(billId, SLOT, alice, deadline);
+
+    vm.warp(deadline);
+
+    vm.prank(stranger);
+    registry.refundSlot(billId, SLOT, alice, deadline, sig);
+
+    assertEq(usdc.balanceOf(SLOT), 0, "nothing stranded at the slot");
+  }
+
+  function testRefundSlotCannotRunTwice() public {
+    uint256 billId = _failedSlotBill();
+    uint256 deadline = block.timestamp + 1 hours;
+    bytes memory sig = _signSlot(billId, SLOT, alice, deadline);
+
+    vm.prank(stranger);
+    registry.refundSlot(billId, SLOT, alice, deadline, sig);
+
+    // Same signature, same bill: the credit is already zero.
+    vm.prank(stranger);
+    vm.expectRevert(abi.encodeWithSelector(BillSplitRegistry.NothingToRefund.selector, billId, SLOT));
+    registry.refundSlot(billId, SLOT, alice, deadline, sig);
+  }
+
+  /// @dev A real wallet's own {refund} is untouched by any of this. Two
+  ///      participants and one payer, so the bill actually failed.
+  function testRefundStillWorksForRealWallets() public {
+    vm.prank(splitter);
+    uint256 billId = registry.createBill(bytes32("real"), _participants(), _amounts(), _due(), true);
+
+    vm.prank(alice);
+    registry.payDebt(billId, ALICE_OWED);
+
+    vm.warp(block.timestamp + DUE_IN + 1);
+
+    vm.prank(alice);
+    registry.refund(billId);
+
+    (uint256 owed, uint256 paid, bool exists) = registry.getParticipant(billId, alice);
+    assertEq(paid, 0, "credit cleared");
+    assertEq(owed, ALICE_OWED, "share unchanged");
+    assertTrue(exists, "still a participant");
+  }
+
+  // Golden test: the derivation lib/handle-slot.ts performs must be the one
+  // Solidity would perform on the same string. A mismatch is silent until a
+  // real refund fails with NotParticipant.
+  //
+  // The registry itself never derives a slot — it takes one as a parameter, so
+  // there is no second normalizer to drift. What is pinned here is the FORMULA:
+  // keccak256 over the normalized "provider:handle" string, truncated to its
+  // low 160 bits. Worth pinning because the truncation end (low, not high) and
+  // the separator are exactly what a reimplementation gets wrong.
+  //
+  // What this does NOT cover: normalization. `provider.toLowerCase()` and
+  // strip-the-@ happen only in TS, and "x:alice" here is already in that form.
+  // A normalization bug would need a vector with uppercase or an @.
+  function testSlotDerivationMatchesTypeScript() public pure {
+    bytes32 hash = keccak256(bytes("x:alice"));
+    assertEq(address(uint160(uint256(hash))), 0xC9834a77DDbba5cd5dE18F51981dA02B790AeDed);
+  }
+
+  // The other two constants a TypeScript signature has to agree with. The slot
+  // vector above decides WHERE a debt is filed; these decide whether the
+  // signature authorizing its refund verifies at all. Both are pinned to values
+  // lib/handle-slot.ts produced, so a drift on either side fails here rather
+  // than as an InvalidSignature on someone's real refund.
+  function testRefundSlotTypehashMatchesTypeScript() public view {
+    assertTrue(
+      registry.REFUND_SLOT_TYPEHASH()
+        == 0x0839007c5ec3423006f0b25f02dc659006a7a827b441364dca638ef68b0c64de,
+      "typehash drifted from REFUND_SLOT_TYPES in lib/handle-slot.ts"
+    );
+  }
+
+  /// @dev The domain name is the other half, and it must NOT be HandleEscrow's:
+  ///      a shared separator would let a release signature verify as a refund.
+  function testDomainSeparatorDoesNotMatchHandleEscrow() public view {
+    assertTrue(
+      registry.DOMAIN_SEPARATOR() == _domain("Splitsy BillSplit", address(registry)),
+      "domain drifted from refundSlotDomain() in lib/handle-slot.ts"
+    );
+    assertTrue(
+      registry.DOMAIN_SEPARATOR() != _domain("Splitsy HandleEscrow", address(registry)),
+      "must not share HandleEscrow's domain"
+    );
+  }
+
+  function _domain(string memory name, address verifyingContract) private view returns (bytes32) {
+    return keccak256(abi.encode(
+      keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"),
+      keccak256(bytes(name)),
+      keccak256("1"),
+      block.chainid,
+      verifyingContract
+    ));
   }
 }

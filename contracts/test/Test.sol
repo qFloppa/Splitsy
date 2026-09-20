@@ -2,12 +2,20 @@
 pragma solidity ^0.8.36;
 
 interface Vm {
+  function addr(uint256 privateKey) external returns (address);
+
+  function chainId(uint256 newChainId) external;
+
+  function clearMockedCalls() external;
+
   function expectEmit(bool checkTopic1, bool checkTopic2, bool checkTopic3, bool checkData, address emitter)
     external;
 
   function expectRevert(bytes4 revertData) external;
 
   function expectRevert(bytes calldata revertData) external;
+
+  function mockCall(address target, bytes calldata data, bytes calldata returnData) external;
 
   function prank(address caller) external;
 
@@ -33,6 +41,10 @@ contract Test {
 
   function assertTrue(bool actual) internal pure {
     require(actual, "assertTrue");
+  }
+
+  function assertTrue(bool actual, string memory message) internal pure {
+    require(actual, message);
   }
 
   function assertFalse(bool actual) internal pure {

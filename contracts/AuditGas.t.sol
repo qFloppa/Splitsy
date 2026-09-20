@@ -8,12 +8,13 @@ import {Test} from "./test/Test.sol";
 contract AuditGasTest is Test {
   MockUSDC private usdc;
   BillSplitRegistry private registry;
+  address private attester = address(0xA77E57);
   address private splitter = address(0x5157);
   address private payer = address(0xBEEF);
 
   function setUp() public {
     usdc = new MockUSDC();
-    registry = new BillSplitRegistry(address(usdc));
+    registry = new BillSplitRegistry(address(usdc), attester);
     usdc.mint(splitter, 1_000_000e6);
     vm.prank(splitter);
     usdc.approve(address(registry), type(uint256).max);

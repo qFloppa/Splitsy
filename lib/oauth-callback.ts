@@ -147,7 +147,10 @@ export async function finishProviderLogin(params: {
       // on-chain bill: that DCW may already hold an escrow position, so it has to
       // become this user's wallet. Only mint fresh when there is none.
       const pending = provider === "wallet" ? null : await getPendingWallet(provider, appUser.handle);
-      if (pending) {
+      // The wallet id is what makes a row ADOPTABLE: Circle signs with it, so a
+      // row without one is an address this user could not spend from. Falls
+      // through to minting instead, which is the same answer as no row at all.
+      if (pending?.circle_wallet_id) {
         await setUserWallet(appUser.id, pending.wallet_address, pending.circle_wallet_id);
         // Deleted by the row's OWN key rather than the session's provider: the
         // row is what proves this was a taggable identity in the first place.
