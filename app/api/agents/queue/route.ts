@@ -22,6 +22,7 @@ import { getReputationSummaryForWallets } from "@/lib/reputation-repo";
 import { billMetadataHash } from "@/lib/bill-metadata";
 import { PRICES } from "@/lib/x402/pricing";
 import { withGateway } from "@/lib/x402/seller";
+import { ARC } from "@/lib/arc-chain";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -82,7 +83,7 @@ async function handler(request: Request) {
 
   return Response.json({
     mandateAddress: MANDATE_ADDRESS,
-    chain: "ARC-TESTNET",
+    chain: ARC.dcwBlockchain,
     mandate: {
       agent: mandate.agent,
       maxPerBillUsdc: Number(mandate.maxPerBill) / 1_000_000,

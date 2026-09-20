@@ -1,8 +1,8 @@
 import { BatchFacilitatorClient } from "@circle-fin/x402-batching/server";
 import {
-  ARC_TESTNET_NETWORK,
-  ARC_TESTNET_USDC,
-  ARC_TESTNET_GATEWAY_WALLET,
+  ARC_NETWORK,
+  ARC_USDC,
+  ARC_GATEWAY_WALLET,
   usdToAtomic,
 } from "./constants";
 import { recordPayment } from "./payments-repo";
@@ -34,12 +34,12 @@ function gatewayTerms(): Promise<GatewayTerms> {
   termsPromise ??= facilitator
     .getSupported()
     .then((supported) => {
-      const kind = supported.kinds.find((k) => k.network === ARC_TESTNET_NETWORK);
+      const kind = supported.kinds.find((k) => k.network === ARC_NETWORK);
       const extra = kind?.extra as
         | { verifyingContract?: string; minValiditySeconds?: number }
         | undefined;
       return {
-        verifyingContract: extra?.verifyingContract ?? ARC_TESTNET_GATEWAY_WALLET,
+        verifyingContract: extra?.verifyingContract ?? ARC_GATEWAY_WALLET,
         validitySeconds:
           (extra?.minValiditySeconds ?? FALLBACK_VALIDITY_SECONDS) + VALIDITY_MARGIN_SECONDS,
       };
@@ -48,7 +48,7 @@ function gatewayTerms(): Promise<GatewayTerms> {
       console.error("[x402] getSupported failed, using fallback terms:", error);
       termsPromise = null; // let the next request retry
       return {
-        verifyingContract: ARC_TESTNET_GATEWAY_WALLET,
+        verifyingContract: ARC_GATEWAY_WALLET,
         validitySeconds: FALLBACK_VALIDITY_SECONDS + VALIDITY_MARGIN_SECONDS,
       };
     });
@@ -58,8 +58,8 @@ function gatewayTerms(): Promise<GatewayTerms> {
 function requirementsFor(price: string, sellerAddress: string, terms: GatewayTerms) {
   return {
     scheme: "exact" as const,
-    network: ARC_TESTNET_NETWORK,
-    asset: ARC_TESTNET_USDC,
+    network: ARC_NETWORK,
+    asset: ARC_USDC,
     amount: usdToAtomic(price),
     payTo: sellerAddress,
     maxTimeoutSeconds: terms.validitySeconds,

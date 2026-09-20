@@ -1,22 +1,16 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import {
-  lookupParticipantAddress,
-  resolveParticipantAddress,
-  type ResolveDeps,
-} from "./wallet-resolve.ts";
+import { lookupParticipantAddress, resolveParticipantAddress, type ResolveDeps } from "./wallet-resolve.ts";
+import { slotForHandle } from "./handle-slot.ts";
 
 const ADDR_USER = "0x" + "11".repeat(20);
 const ADDR_PENDING = "0x" + "22".repeat(20);
-const ADDR_MINTED = "0x" + "33".repeat(20);
+const ADDR_SLOT = slotForHandle("x", "alice");
 
 test("prefers an existing user's wallet", async () => {
   const deps: ResolveDeps = {
     getUserByProviderHandle: async () => ({ wallet_address: ADDR_USER }) as never,
     getPendingWallet: async () => {
-      throw new Error("should not be called");
-    },
-    mintPending: async () => {
       throw new Error("should not be called");
     },
   };
@@ -27,41 +21,44 @@ test("falls back to a pending wallet", async () => {
   const deps: ResolveDeps = {
     getUserByProviderHandle: async () => null,
     getPendingWallet: async () => ({ wallet_address: ADDR_PENDING }) as never,
-    mintPending: async () => {
-      throw new Error("should not be called");
-    },
   };
   assert.equal(await resolveParticipantAddress("x", "alice", deps), ADDR_PENDING);
 });
 
-test("mints when neither exists", async () => {
-  let minted = false;
+test("derives a slot when neither exists", async () => {
+  // No wallet is minted. The address is a pure function of the handle, which is
+  // what makes the tagged stranger non-custodial: no key exists to hold.
   const deps: ResolveDeps = {
     getUserByProviderHandle: async () => null,
     getPendingWallet: async () => null,
-    mintPending: async () => {
-      minted = true;
-      return ADDR_MINTED;
-    },
   };
-  assert.equal(await resolveParticipantAddress("x", "alice", deps), ADDR_MINTED);
-  assert.equal(minted, true);
+  assert.equal(await resolveParticipantAddress("x", "alice", deps), ADDR_SLOT);
 });
 
-test("a user with no wallet_address yet falls through to pending/mint", async () => {
+test("a user with no wallet_address yet falls through to a slot", async () => {
   const deps: ResolveDeps = {
     getUserByProviderHandle: async () => ({ wallet_address: null }) as never,
     getPendingWallet: async () => null,
-    mintPending: async () => ADDR_MINTED,
   };
-  assert.equal(await resolveParticipantAddress("x", "alice", deps), ADDR_MINTED);
+  assert.equal(await resolveParticipantAddress("x", "alice", deps), ADDR_SLOT);
+});
+
+test("the same handle derives the same slot across calls", async () => {
+  // Idempotence is the property bills depend on: two tags of @alice must be one
+  // address, or the second bill files a debt against nobody.
+  const deps: ResolveDeps = {
+    getUserByProviderHandle: async () => null,
+    getPendingWallet: async () => null,
+  };
+  const first = await resolveParticipantAddress("x", "alice", deps);
+  const second = await resolveParticipantAddress("x", "alice", deps);
+  assert.equal(first, second);
 });
 
 test("lookup finds a real user's wallet", async () => {
   const address = await lookupParticipantAddress("email", "dani@example.com", {
     getUserByProviderHandle: async () => ({ wallet_address: "0xUSER" }),
     getPendingWallet: async () => null,
-    mintPending: async () => { throw new Error("must not mint"); },
   });
   assert.equal(address, "0xUSER");
 });
@@ -74,22 +71,22 @@ test("lookup falls back to a pending wallet on the Circle stack", async () => {
   const address = await lookupParticipantAddress("email", "dani@example.com", {
     getUserByProviderHandle: async () => null,
     getPendingWallet: async () => ({ wallet_address: ADDR_PENDING }),
-    mintPending: async () => { throw new Error("must not mint"); },
   });
   assert.equal(address, ADDR_PENDING);
 });
 
 test("lookup IGNORES a slot on the Privy stack", async () => {
-  // A slot IS signable there, but it is custodial — Splitsy holds its key. Money
-  // sent to one is money the recipient trusts us to forward, and HandleEscrow holds
-  // the same money with no such trust plus a reclaim for the sender. So the rail
-  // that moves money must not be handed a slot; the row is not even read.
+  // A slot is DERIVED, so nobody holds a key to it — money sent there is money
+  // nobody can ever move. HandleEscrow holds the same money with a release at
+  // login plus a reclaim for the sender, so the rail that moves money must not be
+  // handed a slot; the row is not even read.
   process.env.WALLET_UI = "privy";
   try {
     const address = await lookupParticipantAddress("email", "dani@example.com", {
       getUserByProviderHandle: async () => null,
-      getPendingWallet: async () => { throw new Error("must not read a pre-mint on this stack"); },
-      mintPending: async () => { throw new Error("must not mint"); },
+      getPendingWallet: async () => {
+        throw new Error("must not read a pre-mint on this stack");
+      },
     });
     assert.equal(address, null);
   } finally {
@@ -104,8 +101,9 @@ test("a real user's wallet still wins on the Privy stack", async () => {
   try {
     const address = await lookupParticipantAddress("email", "dani@example.com", {
       getUserByProviderHandle: async () => ({ wallet_address: ADDR_USER }),
-      getPendingWallet: async () => { throw new Error("should not be called"); },
-      mintPending: async () => { throw new Error("must not mint"); },
+      getPendingWallet: async () => {
+        throw new Error("should not be called");
+      },
     });
     assert.equal(address, ADDR_USER);
   } finally {
@@ -119,7 +117,6 @@ test("lookup answers null for someone who has never signed in", async () => {
   const address = await lookupParticipantAddress("email", "nobody@example.com", {
     getUserByProviderHandle: async () => null,
     getPendingWallet: async () => null,
-    mintPending: async () => { throw new Error("must not mint"); },
   });
   assert.equal(address, null);
 });

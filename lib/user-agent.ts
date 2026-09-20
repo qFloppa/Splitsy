@@ -12,6 +12,7 @@
 // also pays the bill share, and then its BALANCE is the cap: an agent holding
 // 5 USDC can never spend 6. That is a simpler and more honest ceiling than a
 // mandate, and it needs no contract.
+import { ARC } from "./arc-chain.ts";
 import { getUsdcAllowanceOnchain, getUsdcBalanceOnchain } from "./arc-read.ts";
 import { ensureAgent } from "./erc8004.ts";
 import { encodeApprove } from "./registry-calldata.ts";
@@ -20,8 +21,7 @@ import { executeContract, getOrCreateWallet } from "./wallet-provider.ts";
 
 export type UserAgent = { address: `0x${string}`; walletId: string };
 
-const ARC_USDC_ADDRESS = (process.env.ARC_TESTNET_USDC_ADDRESS ??
-  "0x3600000000000000000000000000000000000000") as `0x${string}`;
+const ARC_USDC_ADDRESS = ARC.usdcAddress;
 
 // Get-or-create, with the users row as a cache in front of Circle. Circle stays
 // authoritative — listWallets by refId is idempotent — but a page load should

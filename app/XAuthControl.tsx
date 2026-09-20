@@ -3,7 +3,7 @@
 import { AnimatePresence, motion, useDragControls } from "framer-motion";
 import { ArrowUpRight, Check, Loader2, X } from "lucide-react";
 import { useEffect, useState } from "react";
-import { waitForCircleTxUrl } from "@/lib/arc-explorer";
+import { ARC_EXPLORER, waitForCircleTxUrl } from "@/lib/arc-explorer";
 import { readArcUsdcBalance, billUnitsToUsdc } from "@/lib/bill-split-contracts";
 import { parseAmount, typableAmount } from "@/lib/iou";
 import { providerDisplay } from "@/lib/provider-display";
@@ -1255,7 +1255,7 @@ function HistoryTab() {
   // Told apart from "none yet", because the two need different words and the user
   // can act on one of them. See the catch in app/api/wallet/transactions.
   const [unreadable, setUnreadable] = useState(false);
-  const [explorer, setExplorer] = useState("https://testnet.arcscan.app");
+  const [explorer, setExplorer] = useState(ARC_EXPLORER);
 
   useEffect(() => {
     fetch("/api/wallet/transactions")

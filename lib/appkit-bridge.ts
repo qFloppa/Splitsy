@@ -2,12 +2,19 @@
 
 import { AppKit } from "@circle-fin/app-kit";
 import {
+  Arbitrum,
   ArbitrumSepolia,
+  Arc,
   ArcTestnet,
+  Avalanche,
   AvalancheFuji,
+  Base,
   BaseSepolia,
+  Ethereum,
   EthereumSepolia,
+  Optimism,
   OptimismSepolia,
+  Polygon,
   PolygonAmoy,
 } from "@circle-fin/app-kit/chains";
 import { createViemAdapterFromProvider, resolveChainIdentifier } from "@circle-fin/adapter-viem-v2";
@@ -21,26 +28,58 @@ import {
   LOW_NATIVE_THRESHOLD,
   type PaymasterBridgeStep,
 } from "@/lib/paymaster-bridge";
+import { ARC, forArcNetwork } from "./arc-chain.ts";
 
 export { getNativeBalance, LOW_NATIVE_THRESHOLD };
 
+// These ids are app-kit's own `Blockchain` enum values, not ours: they are
+// handed to resolveChainIdentifier() and to kit.bridge() verbatim. Both
+// networks' ids are in the union, but only one network's are ever offered —
+// bridgeSourceChains below picks the set, so a mainnet build can never present
+// a Sepolia the user cannot bridge from.
 export type BridgeSourceChain =
   | "Arbitrum_Sepolia"
   | "Avalanche_Fuji"
   | "Base_Sepolia"
   | "Ethereum_Sepolia"
   | "Optimism_Sepolia"
-  | "Polygon_Amoy_Testnet";
+  | "Polygon_Amoy_Testnet"
+  | "Arbitrum"
+  | "Avalanche"
+  | "Base"
+  | "Ethereum"
+  | "Optimism"
+  | "Polygon";
 type BrowserAdapter = Awaited<ReturnType<typeof createViemAdapterFromProvider>>;
 
-export const bridgeSourceChains: Array<{ id: BridgeSourceChain; label: string }> = [
-  { id: "Base_Sepolia", label: "Base Sepolia" },
-  { id: "Ethereum_Sepolia", label: "Ethereum Sepolia" },
-  { id: "Arbitrum_Sepolia", label: "Arbitrum Sepolia" },
-  { id: "Optimism_Sepolia", label: "Optimism Sepolia" },
-  { id: "Avalanche_Fuji", label: "Avalanche Fuji" },
-  { id: "Polygon_Amoy_Testnet", label: "Polygon Amoy" },
-];
+// Arc itself, in the two spellings this SDK wants: the enum id for kit.bridge
+// and resolveChainIdentifier, and the chain object for the CCTP provider.
+//
+// Every forArcNetwork call below needs its type argument spelled out. It infers
+// from the FIRST argument, and app-kit types each chain as its own literal, so
+// left to itself it decides the answer must be Arc mainnet and rejects the
+// testnet branch as a type error.
+const ARC_BLOCKCHAIN = forArcNetwork<"Arc" | "Arc_Testnet">("Arc", "Arc_Testnet");
+const ARC_CHAIN_DEF = forArcNetwork<AppKitChainDef>(Arc, ArcTestnet);
+
+export const bridgeSourceChains: Array<{ id: BridgeSourceChain; label: string }> = forArcNetwork(
+  [
+    { id: "Base", label: "Base" },
+    { id: "Ethereum", label: "Ethereum" },
+    { id: "Arbitrum", label: "Arbitrum" },
+    { id: "Optimism", label: "Optimism" },
+    { id: "Avalanche", label: "Avalanche" },
+    { id: "Polygon", label: "Polygon" },
+  ],
+  [
+    { id: "Base_Sepolia", label: "Base Sepolia" },
+    { id: "Ethereum_Sepolia", label: "Ethereum Sepolia" },
+    { id: "Arbitrum_Sepolia", label: "Arbitrum Sepolia" },
+    { id: "Optimism_Sepolia", label: "Optimism Sepolia" },
+    { id: "Avalanche_Fuji", label: "Avalanche Fuji" },
+    { id: "Polygon_Amoy_Testnet", label: "Polygon Amoy" },
+  ],
+);
 
 export type BrowserWalletSession = {
   adapter: BrowserAdapter;
@@ -48,9 +87,10 @@ export type BrowserWalletSession = {
   walletName: string;
 };
 
-const ARC_TESTNET_CHAIN_ID = 5042002;
+const ARC_CHAIN_ID = ARC.chainId;
 
-const supportedChains = [
+const SUPPORTED_CHAINS_MAINNET = [Arbitrum, Avalanche, Base, Ethereum, Optimism, Polygon, Arc];
+const SUPPORTED_CHAINS_TESTNET = [
   ArbitrumSepolia,
   AvalancheFuji,
   BaseSepolia,
@@ -59,9 +99,20 @@ const supportedChains = [
   PolygonAmoy,
   ArcTestnet,
 ];
+// The adapter wants `readonly ChainDefinition[]`, which app-kit does not export,
+// so name the union off the two lists instead — it then follows them if either
+// gains a chain.
+type AppKitChainDef =
+  | (typeof SUPPORTED_CHAINS_MAINNET)[number]
+  | (typeof SUPPORTED_CHAINS_TESTNET)[number];
+
+const supportedChains = forArcNetwork<AppKitChainDef[]>(
+  SUPPORTED_CHAINS_MAINNET,
+  SUPPORTED_CHAINS_TESTNET,
+);
 
 // The SDK's own Arc Testnet definition hardcodes an RPC endpoint that does not
-// answer, and it is not configurable: kit.bridge resolves "Arc_Testnet" from the
+// answer, and it is not configurable: kit.bridge resolves the Arc chain from the
 // SDK's registry, so overriding the chain we pass in capabilities changes
 // nothing. Every read the adapter makes on Arc then dies as "Network connection
 // failed for Arc Testnet" — including the mint receipt, which fails *after* the
@@ -69,12 +120,12 @@ const supportedChains = [
 //
 // This hook is the one seam the adapter offers. Arc gets the endpoint the rest
 // of the app uses; every other chain keeps the SDK's default.
-const arcRpcUrl = process.env.NEXT_PUBLIC_ARC_TESTNET_RPC_URL ?? "https://rpc.testnet.arc.network";
+const arcRpcUrl = ARC.rpcUrl;
 
 const getPublicClient = ({ chain }: { chain: Chain }) =>
   createPublicClient({
     chain,
-    transport: chain.id === ARC_TESTNET_CHAIN_ID ? http(arcRpcUrl) : http(),
+    transport: chain.id === ARC_CHAIN_ID ? http(arcRpcUrl) : http(),
   }) as PublicClient;
 
 export async function createBrowserWalletSessionFromConnector({
@@ -235,7 +286,7 @@ export async function bridgeUsdcToArc({
       from: { adapter: session.adapter, chain: sourceChain },
       to: {
         adapter: session.adapter,
-        chain: "Arc_Testnet",
+        chain: ARC_BLOCKCHAIN,
         recipientAddress,
       },
       amount,
@@ -256,6 +307,12 @@ const SOURCE_CHAIN_DEFS: Record<BridgeSourceChain, unknown> = {
   Ethereum_Sepolia: EthereumSepolia,
   Optimism_Sepolia: OptimismSepolia,
   Polygon_Amoy_Testnet: PolygonAmoy,
+  Arbitrum,
+  Avalanche,
+  Base,
+  Ethereum,
+  Optimism,
+  Polygon,
 };
 
 // 7702 auth + USDC permit both surface to the existing UI as the "approve"
@@ -305,14 +362,14 @@ export async function bridgeUsdcToArcWithPaymaster({
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- cross-package WalletContext structural types
   const source = { adapter: session.adapter, address: session.connectedAddress, chain: SOURCE_CHAIN_DEFS[sourceChain] } as any;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- cross-package DestinationWalletContext
-  const destination = { adapter: session.adapter, address: session.connectedAddress, chain: ArcTestnet, recipientAddress } as any;
+  const destination = { adapter: session.adapter, address: session.connectedAddress, chain: ARC_CHAIN_DEF, recipientAddress } as any;
 
   onStep?.({ method: "fetchAttestation", state: "pending" });
   const attestation = await cctp.fetchAttestation(source, txHash);
   onStep?.({ method: "fetchAttestation", state: "success" });
 
   onStep?.({ method: "mint", state: "pending" });
-  await session.adapter.ensureChain(resolveChainIdentifier("Arc_Testnet"));
+  await session.adapter.ensureChain(resolveChainIdentifier(ARC_BLOCKCHAIN));
   const prepared = await cctp.mint(source, destination, attestation);
   const mintTxHash = await prepared.execute();
   onStep?.({ method: "mint", state: "success", txHash: mintTxHash });

@@ -6,7 +6,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { useAccount } from "wagmi";
 import { getWalletClient, switchChain, writeContract, waitForTransactionReceipt } from "wagmi/actions";
-import { arcTestnet } from "viem/chains";
+import { ARC } from "@/lib/arc-chain";
 import { formatUnits } from "viem";
 import SignInMenu from "@/app/SignInMenu";
 import WalletMark from "@/app/WalletMark";
@@ -538,7 +538,7 @@ export default function PayClient({ token }: { token: string }) {
       }
 
       setMessage("Minting on Arc…");
-      await switchChain(wagmiConfig, { chainId: arcTestnet.id });
+      await switchChain(wagmiConfig, { chainId: ARC.chainId });
       const mintHash = await writeContract(wagmiConfig, transfer.mintData);
       await waitForTransactionReceipt(wagmiConfig, { hash: mintHash });
 

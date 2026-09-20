@@ -1,4 +1,5 @@
 import { formatUnits } from "viem";
+import { ARC } from "@/lib/arc-chain";
 import { getSessionUser } from "@/lib/session";
 import { listTransactions, type WalletTx } from "@/lib/wallet-provider";
 import { readUsdcMovedInTx } from "@/lib/arc-read";
@@ -12,7 +13,7 @@ export const dynamic = "force-dynamic";
 // budget inside is what actually guarantees an answer.
 export const maxDuration = 30;
 
-const EXPLORER = process.env.ARC_TESTNET_EXPLORER_URL ?? "https://testnet.arcscan.app";
+const EXPLORER = ARC.explorerUrl;
 
 // Circle reports contract executions (approve / payDebt / claim) with no
 // `amounts`, so those rows would render as $0 in the wallet history. For any

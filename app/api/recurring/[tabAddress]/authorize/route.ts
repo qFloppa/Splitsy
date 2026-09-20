@@ -5,12 +5,12 @@ import { encodeApprove } from "@/lib/registry-calldata";
 import { userSignedLeg, type UserSignedBody } from "@/lib/user-signed";
 import { executeContract, InsufficientFundsError } from "@/lib/wallet-provider";
 import { verifyFactoryTab, getTabMemberStandingOnchain } from "@/lib/recurring-read";
+import { ARC } from "@/lib/arc-chain";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const ARC_USDC_ADDRESS = (process.env.ARC_TESTNET_USDC_ADDRESS ??
-  "0x3600000000000000000000000000000000000000") as `0x${string}`;
+const ARC_USDC_ADDRESS = ARC.usdcAddress;
 
 function isAddress(v: string): v is `0x${string}` {
   return /^0x[a-fA-F0-9]{40}$/.test(v);

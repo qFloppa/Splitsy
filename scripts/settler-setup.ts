@@ -13,10 +13,10 @@
 //
 // Run: npm run settler:setup
 import { createWalletClient, createPublicClient, http, formatUnits, erc20Abi } from "viem";
-import { arcTestnet } from "viem/chains";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import { GatewayClient } from "@circle-fin/x402-batching/client";
-import { ARC_TESTNET_RPC, ARC_IDENTITY_REGISTRY, ARC_TESTNET_USDC } from "../lib/x402/constants.ts";
+import { ARC_RPC, ARC_IDENTITY_REGISTRY, ARC_USDC } from "../lib/x402/constants.ts";
+import { ARC } from "../lib/arc-chain.ts";
 
 const REGISTER_ABI = [
   {
@@ -38,7 +38,7 @@ if (!process.env.SETTLER_PRIVATE_KEY) {
 }
 console.log("Settler address:", account.address);
 
-const publicClient = createPublicClient({ chain: arcTestnet, transport: http(ARC_TESTNET_RPC) });
+const publicClient = createPublicClient({ chain: ARC.chain, transport: http(ARC_RPC) });
 
 // On Arc, USDC is the gas token. UNVERIFIED whether a raw EOA holding only
 // ERC-20 USDC and no native balance can pay gas (spec §12 Q4) — this print is
@@ -46,7 +46,7 @@ const publicClient = createPublicClient({ chain: arcTestnet, transport: http(ARC
 const [gas, usdc] = await Promise.all([
   publicClient.getBalance({ address: account.address }),
   publicClient.readContract({
-    address: ARC_TESTNET_USDC,
+    address: ARC_USDC,
     abi: erc20Abi,
     functionName: "balanceOf",
     args: [account.address],
@@ -75,7 +75,7 @@ if (gas === 0n && usdc > 0n) {
   console.log("\nNote: proceeding with SETTLER_FORCE on an entirely unfunded address. Expect the register tx to fail.");
 }
 
-const wallet = createWalletClient({ account, chain: arcTestnet, transport: http(ARC_TESTNET_RPC) });
+const wallet = createWalletClient({ account, chain: ARC.chain, transport: http(ARC_RPC) });
 
 // --- ERC-8004 identity -------------------------------------------------------
 // The env var is a hint, not the authority. Gating the mint on it alone means a
@@ -102,7 +102,7 @@ if (process.env.SETTLER_ERC8004_TOKEN_ID) {
 } else if (heldIdentities > 0n) {
   console.log(`\nThis address already holds ${heldIdentities} ERC-8004 identity NFT(s) — not minting another.`);
   console.log("Find its token id on Arcscan and set SETTLER_ERC8004_TOKEN_ID in .env.local:");
-  console.log(`https://testnet.arcscan.app/address/${account.address}`);
+  console.log(`${ARC.explorerUrl}/address/${account.address}`);
 } else {
   const metadataUri =
     process.env.SETTLER_METADATA_URI ??
@@ -132,7 +132,7 @@ if (process.env.SETTLER_ERC8004_TOKEN_ID) {
 }
 
 // --- Circle Gateway deposit --------------------------------------------------
-const gateway = new GatewayClient({ chain: "arcTestnet", privateKey, rpcUrl: ARC_TESTNET_RPC });
+const gateway = new GatewayClient({ chain: ARC.x402Chain, privateKey, rpcUrl: ARC_RPC });
 const before = await gateway.getBalances();
 console.log("Gateway available:", before.gateway.formattedAvailable, "USDC");
 

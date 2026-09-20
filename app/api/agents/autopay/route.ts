@@ -100,6 +100,7 @@ import { getReputationSummaryForWallets } from "@/lib/reputation-repo";
 import {
   ensureSettlerGatewayBalance,
   getSettler,
+  getSettlerGateway,
   isIndeterminate,
   isSettlerConfigured,
   settlerReceipt,
@@ -709,7 +710,7 @@ async function buyReview(baseUrl: string, body: ReviewInput, billRef: string): P
     // Swallows its own failures by design (lib/settler.ts), so there is nothing
     // here to catch: a failed top-up surfaces as the pay below declining.
     await ensureSettlerGatewayBalance();
-    const { gateway } = getSettler();
+    const gateway = getSettlerGateway();
     const result = await gateway.pay(`${baseUrl}/api/agents/review`, { method: "POST", body });
 
     // Recorded BEFORE the body is inspected, because by this line the money is

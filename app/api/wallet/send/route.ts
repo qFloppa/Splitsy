@@ -3,7 +3,7 @@ import { getSessionUser } from "@/lib/session";
 import { verifyWalletUnlock, WALLET_UNLOCK_COOKIE } from "@/lib/session-core";
 import { prepareForUser, relayForUser, userMustSign } from "@/lib/user-signed";
 import { InsufficientFundsError, transferUsdc, walletProviderName } from "@/lib/wallet-provider";
-import { ARC_TESTNET_USDC } from "@/lib/x402/constants";
+import { ARC_USDC } from "@/lib/x402/constants";
 import { encodeFunctionData, erc20Abi, getAddress, parseUnits } from "viem";
 
 export const runtime = "nodejs";
@@ -22,7 +22,7 @@ export const dynamic = "force-dynamic";
 //   {to, amount, ticket, signature} relays the bytes the TICKET carries.
 //
 // The two-round-trip shape is forced, not chosen: the nonce and the gas are chain
-// reads against an endpoint that may be keyed (ARC_TESTNET_RPC is env-driven for
+// reads against an endpoint that may be keyed (ARC_RPC is env-driven for
 // exactly that reason), so they cannot happen in a browser.
 //
 // THE TICKET REPLACED A RE-DERIVATION. This route used to verify a relayed
@@ -88,7 +88,7 @@ export async function POST(request: Request) {
   if (body?.prepare === true) {
     try {
       return Response.json(
-        await prepareForUser({ walletId: user.circle_wallet_id, userId: user.id, to: ARC_TESTNET_USDC, data, context }),
+        await prepareForUser({ walletId: user.circle_wallet_id, userId: user.id, to: ARC_USDC, data, context }),
       );
     } catch (err) {
       return Response.json({ error: err instanceof Error ? err.message : "Could not prepare the transfer" }, { status: 502 });

@@ -31,7 +31,7 @@
 // registry address is part of the preimage because bill ids restart at 1 on
 // every redeploy — without it, v2's bill #1 and v1's bill #1 hash identically.
 import { createPublicClient, decodeEventLog, encodeFunctionData, http, keccak256, toHex } from "viem";
-import { arcTestnet } from "viem/chains";
+import { ARC, forArcNetwork } from "./arc-chain.ts";
 import { getParticipantOnchain, REGISTRY_ADDRESS } from "./arc-read.ts";
 import { getOnchainBillPreimage } from "./onchain-bill-preimage-repo.ts";
 import { RECURRING_TAB_FACTORY_ADDRESS } from "./recurring-read.ts";
@@ -48,11 +48,49 @@ import {
 import { scorePaymentTiming } from "./reputation-score.ts";
 import { executeContract, getOrCreateWallet, walletProviderLabel } from "./wallet-provider.ts";
 
-// Arc Testnet ERC-8004 registries (docs.arc.io); env-overridable for redeploys.
-export const IDENTITY_REGISTRY = (process.env.ERC8004_IDENTITY_REGISTRY ??
-  "0x8004A818BFB912233c491871b3d84c89A494BD9e") as `0x${string}`;
-export const REPUTATION_REGISTRY = (process.env.ERC8004_REPUTATION_REGISTRY ??
-  "0x8004B663056A597Dffe9eCcC1965A193B7388713") as `0x${string}`;
+// ERC-8004 registries, per network. Unset means "no reputation configured",
+// which reads as reputation OFF — never as "use some other network's registry".
+//
+// These used to default to Arc TESTNET's predeploys unconditionally. On mainnet
+// those addresses hold no code, so an unconfigured mainnet deployment did not
+// skip reputation, it called nothing and failed in a way that looked like a bug.
+//
+// Arc mainnet now HAS both, verified on chain 2026-09-17 against
+// rpc.mainnet.arc.io (chain id 0x13b2): 130 bytes of code at each, the same size
+// as testnet's, and IdentityRegistry.name() answers "AgentIdentity". The
+// addresses are in .env.example, one per network, ready to paste.
+//
+// STILL OPT-IN, and not defaulted to those addresses, even though they are Arc
+// predeploys rather than anything Splitsy deploys. Reason: this feature MINTS
+// NFTs and writes feedback from the registrar and validator wallets, and on
+// mainnet that is real gas out of real wallets on the first bill anybody pays.
+// A default would switch that on for whoever flips the network switch without
+// having funded those wallets. Being explicit costs one variable per network,
+// once.
+//
+// ValidationRegistry is deliberately absent: nothing in this codebase reads one,
+// so its absence on Arc mainnet costs nothing.
+//
+// Same rule as AGENTIC_COMMERCE_ADDRESS in lib/erc8183.ts:21.
+const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
+
+// `||` and not `??`, deliberately: a variable present-but-BLANK must read as
+// unset too. Vercel will not save an empty value, so an operator who wants
+// reputation off either deletes the variable or types something into it — and
+// `??` would let `""` through, making isReputationConfigured() answer true for
+// an address that is the empty string.
+export const IDENTITY_REGISTRY = (forArcNetwork(
+  process.env.ERC8004_IDENTITY_REGISTRY_MAINNET,
+  process.env.ERC8004_IDENTITY_REGISTRY,
+) || ZERO_ADDRESS) as `0x${string}`;
+export const REPUTATION_REGISTRY = (forArcNetwork(
+  process.env.ERC8004_REPUTATION_REGISTRY_MAINNET,
+  process.env.ERC8004_REPUTATION_REGISTRY,
+) || ZERO_ADDRESS) as `0x${string}`;
+
+export function isReputationConfigured() {
+  return IDENTITY_REGISTRY !== ZERO_ADDRESS && REPUTATION_REGISTRY !== ZERO_ADDRESS;
+}
 
 const PINATA_JWT = process.env.PINATA_JWT ?? "";
 
@@ -173,8 +211,8 @@ export function parseDebtPaidLog(topics: string[], data: string): DebtPaidLog | 
 }
 
 const publicClient = createPublicClient({
-  chain: arcTestnet,
-  transport: http(process.env.NEXT_PUBLIC_ARC_TESTNET_RPC_URL ?? "https://rpc.testnet.arc.network"),
+  chain: ARC.chain,
+  transport: http(ARC.rpcUrl),
 });
 
 // The URI an image CID goes into the metadata as. Deliberately NOT ipfs:// when
@@ -471,6 +509,10 @@ export async function ensureAgent(
   minterAddress?: string,
   agentType: AgentType = "splitsy-payer",
 ): Promise<string> {
+  // Reputation off means no identity to mint. Not an error — an empty agentId is
+  // what "this deployment has no registry" looks like, and every caller already
+  // treats a missing identity as "settlement continues" (lib/user-agent.ts:163).
+  if (!isReputationConfigured()) return "";
   const existing = await getAgentByWallet(walletAddress);
   if (existing?.agent_id) return existing.agent_id;
 
@@ -575,7 +617,7 @@ export async function ensureAgent(
 // Best-effort in every direction. The instance may not be indexed for a moment
 // yet, hence the second attempt; an explorer that never answers must never fail
 // a registration, so nothing here throws.
-const EXPLORER_URL = process.env.ARC_TESTNET_EXPLORER_URL ?? "https://testnet.arcscan.app";
+const EXPLORER_URL = ARC.explorerUrl;
 
 async function requestExplorerMetadataRefetch(agentId: string): Promise<void> {
   const url = `${EXPLORER_URL}/api/v2/tokens/${IDENTITY_REGISTRY}/instances/${agentId}/refetch-metadata`;
@@ -694,6 +736,11 @@ async function commitFeedback(input: {
   paymentTxHash: string;
   ctx: ScoringContext;
 }): Promise<void> {
+  // The single funnel every recordPaidFeedback* export writes through, so one
+  // guard here turns reputation off for all of them rather than six that each
+  // have to remember. Returning is correct: an unconfigured feature is off, and
+  // a write to a registry that isn't there records nothing anyway.
+  if (!isReputationConfigured()) return;
   const { ctx } = input;
   // paidAt === 0 means the block read failed; grade as "no deadline" so a read
   // failure never costs the payer points.

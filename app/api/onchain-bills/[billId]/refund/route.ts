@@ -3,7 +3,7 @@ import { getSessionUser } from "@/lib/session";
 import { verifyWalletUnlock, WALLET_UNLOCK_COOKIE } from "@/lib/session-core";
 import { encodeRefund } from "@/lib/registry-calldata";
 import { getSlotWalletForUser } from "@/lib/pending-wallets-repo";
-import { refundSlotToOwner } from "@/lib/slot-refund";
+import { refundSlotToOwner } from "@/lib/refund-slot";
 import { userSignedLeg, type UserSignedBody } from "@/lib/user-signed";
 import { executeContract } from "@/lib/wallet-provider";
 import { REGISTRY_ADDRESS, getBillOnchain, getParticipantOnchain } from "@/lib/arc-read";
@@ -76,21 +76,19 @@ export async function POST(request: Request, { params }: { params: Promise<{ bil
   }
 
   try {
-    // A SLOT'S REFUND IS RELAYED, not signed by the user — they hold no key to the
-    // slot, so there is nothing for them to sign. The server calls refund from the
-    // slot and forwards the proceeds to the wallet they did sign in with. No
-    // prepare/ticket round trip, so this answers on the first call.
+    // A DERIVED SLOT'S REFUND GOES THROUGH THE REGISTRY, not the user. The slot has
+    // no key and never will, so there is nothing for them to sign; {refundSlot} is
+    // permissionless to call and authorized by an attester signature that binds
+    // the recipient, so the money lands on their real wallet in one transaction
+    // with nothing left behind at the slot.
     if (slot) {
-      const relayed = await refundSlotToOwner({ slot, billId: id, to: me });
-      return Response.json({
-        ok: true,
-        txHash: relayed.refundTxHash,
-        amount: refundable.toString(),
-        // What reached their own wallet, which is the figure that matters to them
-        // and is smaller than `amount` by the gas the slot had to keep.
-        forwardedUsdc: relayed.sweptUsdc,
-        forwardTxHash: relayed.sweepTxHash,
+      const { txHash } = await refundSlotToOwner({
+        registryAddress: REGISTRY_ADDRESS,
+        billId: id,
+        slot: slot.wallet_address,
+        to: me,
       });
+      return Response.json({ ok: true, txHash, amount: refundable.toString() });
     }
 
     const data = encodeRefund(id);

@@ -13,10 +13,11 @@
 // Machine-readable JSON is the primary format. A Circle-style skill Markdown
 // file for the autopay use-case lives at /api/agents/skill.
 import { PRICES, type PaidEndpoint } from "@/lib/x402/pricing";
+import { ARC } from "@/lib/arc-chain";
 import {
-  ARC_TESTNET_NETWORK,
-  ARC_TESTNET_USDC,
-  ARC_TESTNET_GATEWAY_WALLET,
+  ARC_NETWORK,
+  ARC_USDC,
+  ARC_GATEWAY_WALLET,
 } from "@/lib/x402/constants";
 
 export const runtime = "nodejs";
@@ -230,11 +231,13 @@ export async function GET(request: Request) {
       // That is Circle Gateway, not this endpoint. This catalog is the discovery
       // layer; Gateway is the settlement layer.
       facilitator: "Circle Gateway",
-      facilitatorUrl: "https://gateway-api-testnet.circle.com",
-      network: ARC_TESTNET_NETWORK,
-      asset: ARC_TESTNET_USDC,
+      // The bare host: the /v1 the profile carries is a path this field does not
+      // take, and the callers of this document append their own.
+      facilitatorUrl: new URL(ARC.gatewayApiUrl).origin,
+      network: ARC_NETWORK,
+      asset: ARC_USDC,
       // The verifying contract for Gateway-batched EIP-3009 authorisations.
-      gatewayWallet: ARC_TESTNET_GATEWAY_WALLET,
+      gatewayWallet: ARC_GATEWAY_WALLET,
       // Who receives payment for each call.
       seller: process.env.SELLER_ADDRESS ?? null,
       scheme: "exact",

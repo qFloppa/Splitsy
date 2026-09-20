@@ -1,30 +1,39 @@
 import { network } from "hardhat";
+import { ARC } from "../lib/arc-chain.ts";
 
-const usdcAddress = process.env.ARC_TESTNET_USDC_ADDRESS;
+// THE SAME ADDRESS HandleEscrow USES, read from the same variable. One key to
+// guard rather than two, and the refund relay signs with its private half
+// (REFUND_SLOT_ATTESTER_PRIVATE_KEY, lib/refund-slot.ts).
+//
+// Demanded rather than defaulted, for the reason scripts/deploy-handle-escrow.ts
+// spells out: the attester is immutable once deployed. A wrong or empty value
+// here is not a misconfiguration you can correct later — it is a registry whose
+// slot refunds can never be authorized, and the only exit is a redeploy.
+const attester = process.env.ESCROW_ATTESTER_ADDRESS;
 
-if (!usdcAddress) {
-  throw new Error("Missing ARC_TESTNET_USDC_ADDRESS in .env.local");
+if (!attester || !/^0x[a-fA-F0-9]{40}$/.test(attester)) {
+  throw new Error("Set ESCROW_ATTESTER_ADDRESS to the address whose key will sign slot refunds.");
 }
 
-if (!/^0x[a-fA-F0-9]{40}$/.test(usdcAddress)) {
-  throw new Error("ARC_TESTNET_USDC_ADDRESS must be a 0x-prefixed EVM address.");
-}
-
-const { viem } = await network.create({
-  network: "arcTestnet",
-  chainType: "l1",
-});
+// The chain comes from `--network`, not from a literal in here: a script that
+// pins its own network deploys to testnet however you invoke it. USDC and the
+// explorer come from the profile (lib/arc-chain.ts), so neither is retyped.
+const { viem, networkName } = await network.create({ chainType: "l1" });
 
 const [deployer] = await viem.getWalletClients();
 
-console.log("Deploying BillSplitRegistry to Arc Testnet");
+console.log(`Deploying BillSplitRegistry to ${networkName}`);
 console.log("Deployer:", deployer.account.address);
-console.log("USDC ERC-20 interface:", usdcAddress);
+console.log("USDC ERC-20 interface:", ARC.usdcAddress);
+console.log("Attester:", attester);
 
-const registry = await viem.deployContract("BillSplitRegistry", [usdcAddress as `0x${string}`]);
+const registry = await viem.deployContract("BillSplitRegistry", [
+  ARC.usdcAddress,
+  attester as `0x${string}`,
+]);
 
 console.log("BillSplitRegistry deployed:", registry.address);
-console.log(`Arcscan: https://testnet.arcscan.app/address/${registry.address}`);
+console.log(`Explorer: ${ARC.explorerUrl}/address/${registry.address}`);
 
 // Bill ids restart at 1 in every deployment, so the OLD address has to stay
 // readable or history becomes ambiguous. Print both moves together — swapping
@@ -38,3 +47,8 @@ if (previous && previous !== registry.address) {
 }
 console.log("  Then: run the registry re-key migration in schema-reputation.sql,");
 console.log("  and re-run scripts/circle-scp-monitor-setup.ts against the new address.");
+console.log("");
+console.log("  REFUND_SLOT_ATTESTER_PRIVATE_KEY must be the private half of the");
+console.log(`  attester above (${attester}) — the same key as`);
+console.log("  ESCROW_ATTESTER_PRIVATE_KEY. Without it, a slot's refund cannot be");
+console.log("  signed and money stays in the registry.");

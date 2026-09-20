@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity 0.8.36;
+pragma solidity 0.8.37;
 
 import {IERC20} from "./interfaces/IERC20.sol";
 import {SafeERC20} from "./libraries/SafeERC20.sol";
@@ -21,7 +21,8 @@ import {ReentrancyGuard} from "./security/ReentrancyGuard.sol";
 ///      an owner, and an owner is the privileged role this avoids. The recovery
 ///      story is {reclaim}: if the key leaks, depositors withdraw and this
 ///      contract is redeployed. That only works because reclaim is
-///      unconditional — the two decisions hold each other up.
+///      unconditional. Recovery is a race: a malicious release may confirm
+///      before the depositor's reclaim. There is no pause or key rotation.
 ///
 ///      THE ID IS THE NONCE. Both exits `delete` the deposit, so a replayed
 ///      signature finds nothing and reverts. One consequence, stated rather
@@ -104,10 +105,6 @@ contract HandleEscrow is ReentrancyGuard {
   /// @notice Deposits by identifier; a zero `amount` means "gone".
   mapping(uint256 id => Deposit deposit) public deposits;
 
-  /// @dev Built once at deployment. Binding chainid and this address is what
-  ///      stops a signature made for one deployment working on another.
-  bytes32 private immutable _domainSeparator;
-
   /// @notice Binds this escrow to its token and its attester.
   /// @param usdc_ The USDC token address; must be non-zero.
   /// @param attester_ The key that signs releases; must be non-zero.
@@ -117,7 +114,13 @@ contract HandleEscrow is ReentrancyGuard {
     }
     usdc = IERC20(usdc_);
     attester = attester_;
-    _domainSeparator = keccak256(
+  }
+
+  /// @notice The EIP-712 domain separator for this deployment and current chain.
+  /// @dev Rebuilt from the current chain ID so a chain-ID change invalidates
+  ///      authorizations from the old chain, including on a fork.
+  function DOMAIN_SEPARATOR() public view returns (bytes32) {
+    return keccak256(
       abi.encode(
         keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"),
         keccak256("Splitsy HandleEscrow"),
@@ -126,11 +129,6 @@ contract HandleEscrow is ReentrancyGuard {
         address(this)
       )
     );
-  }
-
-  /// @notice The EIP-712 domain separator for this deployment.
-  function DOMAIN_SEPARATOR() external view returns (bytes32) {
-    return _domainSeparator;
   }
 
   /// @notice Puts USDC aside for whoever proves they own `handleHash`.
@@ -177,7 +175,7 @@ contract HandleEscrow is ReentrancyGuard {
     }
 
     bytes32 structHash = keccak256(abi.encode(RELEASE_TYPEHASH, id, to, deadline));
-    bytes32 digest = keccak256(abi.encodePacked("\x19\x01", _domainSeparator, structHash));
+    bytes32 digest = keccak256(abi.encodePacked("\x19\x01", DOMAIN_SEPARATOR(), structHash));
     if (_recover(digest, signature) != attester) {
       revert BadSignature();
     }
@@ -191,7 +189,8 @@ contract HandleEscrow is ReentrancyGuard {
 
   /// @notice Takes a deposit back. Available any time before it is released.
   /// @dev Unconditional on purpose. Nothing is ever locked here, and this is
-  ///      the backstop if the attester key is ever compromised.
+  ///      available while the deposit is held. It cannot recover money already
+  ///      paid out by a compromised attester.
   /// @param id The deposit to take back.
   function reclaim(uint256 id) external nonReentrant {
     Deposit memory held = deposits[id];

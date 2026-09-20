@@ -2,6 +2,8 @@
 
 import { useState } from "react";
 import { ChevronDown } from "lucide-react";
+import { ARC } from "@/lib/arc-chain";
+import { ARC_EXPLORER } from "@/lib/arc-explorer";
 import { PosterFact } from "./SpecCard";
 
 // The expandable half of a decision-log row: every transaction of the ERC-8183
@@ -18,7 +20,6 @@ import { PosterFact } from "./SpecCard";
 // app/SettlementAgentsPanel.tsx. The only state is the fetch, which happens once
 // on first open: this endpoint reads the chain twice, and a page with a dozen
 // settled bills must not do that a dozen times before anyone clicks.
-const EXPLORER = "https://testnet.arcscan.app";
 
 type Step = { step: string; blockNumber: number; txHash: string };
 
@@ -155,7 +156,7 @@ export default function JobTrail({
                 value={
                   <a
                     className="iou-row-tx"
-                    href={`${EXPLORER}/address/${detail.job?.[role]}`}
+                    href={`${ARC_EXPLORER}/address/${detail.job?.[role]}`}
                     rel="noreferrer"
                     target="_blank"
                   >
@@ -189,7 +190,7 @@ export default function JobTrail({
               </span>
               <a
                 className="iou-row-tx"
-                href={`${EXPLORER}/tx/${row.txHash}`}
+                href={`${ARC_EXPLORER}/tx/${row.txHash}`}
                 rel="noreferrer"
                 target="_blank"
               >
@@ -233,7 +234,7 @@ export default function JobTrail({
 // lib/x402/constants.ts; this one is here so a client component can build the
 // link without pulling that module's server env reads into the browser bundle.
 export function gatewayReceiptUrl(transferId: string) {
-  return `https://gateway-api-testnet.circle.com/v1/x402/transfers/${transferId}`;
+  return `${ARC.gatewayApiUrl}/x402/transfers/${transferId}`;
 }
 
 // Exported because the Scout ledger links the same way. The id is only ever null

@@ -1,4 +1,4 @@
-import { getScout } from "@/lib/scout/wallet";
+import { getScoutGateway } from "@/lib/scout/wallet";
 
 export const runtime = "nodejs";
 
@@ -11,7 +11,7 @@ export async function GET(request: Request) {
   if (!id) return Response.json({ error: "id is required." }, { status: 400 });
 
   try {
-    const transfer = await getScout().gateway.getTransferById(id);
+    const transfer = await getScoutGateway().getTransferById(id);
     return Response.json({
       id: transfer.id,
       status: transfer.status,

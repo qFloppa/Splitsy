@@ -14,44 +14,85 @@ import {
   type EIP1193Provider,
 } from "viem";
 import {
+  arbitrum,
   arbitrumSepolia,
+  avalanche,
   avalancheFuji,
+  base,
   baseSepolia,
+  mainnet,
+  optimism,
   optimismSepolia,
+  polygon,
   polygonAmoy,
   sepolia,
 } from "viem/chains";
+import {
+  Arbitrum,
+  ArbitrumSepolia,
+  Avalanche,
+  AvalancheFuji,
+  Base,
+  BaseSepolia,
+  Ethereum,
+  EthereumSepolia,
+  Optimism,
+  OptimismSepolia,
+  Polygon,
+  PolygonAmoy,
+} from "@circle-fin/app-kit/chains";
 import {
   createBundlerClient,
   toSimple7702SmartAccount,
 } from "viem/account-abstraction";
 import type { BridgeSourceChain } from "@/lib/appkit-bridge";
+import { ARC, forArcNetwork } from "@/lib/arc-chain";
 
 // Circle Paymaster v0.8 — same address on every supported testnet.
+//
+// TESTNET ONLY, deliberately. Circle publishes no v0.8 paymaster at this address
+// on the mainnet source chains, and a paymaster address with no code does not
+// fail cleanly: the bundler rejects the UserOperation with an AA3x error after
+// the user has already signed both the 7702 authorization and the USDC permit.
+// So bridgeWithPaymaster refuses up front on mainnet instead (see below), and
+// the caller falls back to the normal bridge, which needs native gas.
 export const PAYMASTER_ADDRESS_V08 =
   "0x3BA9A96eE3eFf3A69E2B18886AcF52027EFF8966" as const;
 
-// CCTP v2 TokenMessengerV2 — same address on all supported testnets.
-export const TOKEN_MESSENGER_V2 =
-  "0x8FE6B999Dc680CcFDD5Bf7EB0974218be2542DAA" as const;
+// CCTP v2 TokenMessengerV2. One address per network family rather than per
+// chain — Circle deploys the same one across every supported testnet, and a
+// different same-everywhere one across mainnet. Both verified against
+// @circle-fin/app-kit's chain registry (`cctp.contracts.v2.tokenMessenger`).
+// Note v1's addresses DO vary per chain; these are the v2 ones.
+export const TOKEN_MESSENGER_V2 = forArcNetwork<`0x${string}`>(
+  "0x28b5a0e9C621a5BadaA536219b3a228C8168cf5d",
+  "0x8FE6B999Dc680CcFDD5Bf7EB0974218be2542DAA",
+);
 
-// Arc Testnet CCTP domain ID.
-export const ARC_TESTNET_DOMAIN = 26 as const;
+// Arc's CCTP domain ID — 26 on both networks, which is why this is not
+// per-network despite naming a chain.
+export const ARC_CCTP_DOMAIN = 26 as const;
 
 // Native balance (wei) below which we offer to pay bridge gas in USDC.
 // ~0.001 ETH — conservative floor covering a couple of source-chain txs.
 export const LOW_NATIVE_THRESHOLD = 1_000_000_000_000_000n; // 1e15
 
-const CHAIN_CONFIG: Record<
-  BridgeSourceChain,
-  { chain: Chain; usdcAddress: `0x${string}` }
-> = {
-  Base_Sepolia: { chain: baseSepolia, usdcAddress: "0x036CbD53842c5426634e7929541eC2318f3dCF7e" },
-  Ethereum_Sepolia: { chain: sepolia, usdcAddress: "0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238" },
-  Arbitrum_Sepolia: { chain: arbitrumSepolia, usdcAddress: "0x75faf114eafb1BDbe2F0316DF893fd58CE46AA4d" },
-  Optimism_Sepolia: { chain: optimismSepolia, usdcAddress: "0x5fd84259d66Cd46123540766Be93DFE6D43130D7" },
-  Avalanche_Fuji: { chain: avalancheFuji, usdcAddress: "0x5425890298aed601595a70AB815c96711a31Bc65" },
-  Polygon_Amoy_Testnet: { chain: polygonAmoy, usdcAddress: "0x41E94Eb019C0762f9Bfcf9Fb1E58725BfB0e7582" },
+// USDC comes off app-kit's chain registry rather than a table here. Every
+// address it lists for the six testnets matched the literals this used to
+// carry, and deriving them means the mainnet six cannot be typo'd in.
+const CHAIN_CONFIG: Record<BridgeSourceChain, { chain: Chain; usdcAddress: `0x${string}` }> = {
+  Base_Sepolia: { chain: baseSepolia, usdcAddress: BaseSepolia.usdcAddress },
+  Ethereum_Sepolia: { chain: sepolia, usdcAddress: EthereumSepolia.usdcAddress },
+  Arbitrum_Sepolia: { chain: arbitrumSepolia, usdcAddress: ArbitrumSepolia.usdcAddress },
+  Optimism_Sepolia: { chain: optimismSepolia, usdcAddress: OptimismSepolia.usdcAddress },
+  Avalanche_Fuji: { chain: avalancheFuji, usdcAddress: AvalancheFuji.usdcAddress },
+  Polygon_Amoy_Testnet: { chain: polygonAmoy, usdcAddress: PolygonAmoy.usdcAddress },
+  Base: { chain: base, usdcAddress: Base.usdcAddress },
+  Ethereum: { chain: mainnet, usdcAddress: Ethereum.usdcAddress },
+  Arbitrum: { chain: arbitrum, usdcAddress: Arbitrum.usdcAddress },
+  Optimism: { chain: optimism, usdcAddress: Optimism.usdcAddress },
+  Avalanche: { chain: avalanche, usdcAddress: Avalanche.usdcAddress },
+  Polygon: { chain: polygon, usdcAddress: Polygon.usdcAddress },
 };
 
 // Minimal EIP-2612 ABI for the permit path.
@@ -173,6 +214,16 @@ export async function bridgeWithPaymaster({
   recipientAddress: string;
   onStep?: (step: PaymasterBridgeStep) => void;
 }): Promise<{ txHash: string }> {
+  // Before anything is signed. See PAYMASTER_ADDRESS_V08: there is no verified
+  // v0.8 paymaster on the mainnet source chains, and failing here costs the user
+  // nothing, whereas failing at the bundler costs them two signatures first.
+  // Callers treat this like a low-native-balance miss and use the normal bridge.
+  if (ARC.network === "mainnet") {
+    throw new Error(
+      "Paying bridge gas in USDC is testnet-only — Circle Paymaster v0.8 is not " +
+        "verified on the mainnet source chains. Add native gas and bridge normally.",
+    );
+  }
   const { chain, usdcAddress } = CHAIN_CONFIG[sourceChain];
 
   const client = createPublicClient({ chain, transport: http() });
@@ -280,7 +331,7 @@ export async function bridgeWithPaymaster({
           functionName: "depositForBurn",
           args: [
             amount,
-            ARC_TESTNET_DOMAIN,
+            ARC_CCTP_DOMAIN,
             mintRecipient,
             usdcAddress,
             "0x0000000000000000000000000000000000000000000000000000000000000000",

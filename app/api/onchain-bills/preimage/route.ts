@@ -1,10 +1,10 @@
 import { after } from "next/server";
 import { createPublicClient, http } from "viem";
-import { arcTestnet } from "viem/chains";
 import { REGISTRY_ADDRESS } from "@/lib/arc-read";
 import { triggerAutopay } from "@/lib/autopay-trigger";
 import { getOnchainBillPreimage, publishOnchainBillPreimage } from "@/lib/onchain-bill-preimage-repo";
 import { isShareToken } from "@/lib/pay-link";
+import { ARC } from "@/lib/arc-chain";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -34,8 +34,8 @@ const getBillAbi = [
 ] as const;
 
 const publicClient = createPublicClient({
-  chain: arcTestnet,
-  transport: http(process.env.NEXT_PUBLIC_ARC_TESTNET_RPC_URL ?? "https://rpc.testnet.arc.network"),
+  chain: ARC.chain,
+  transport: http(ARC.rpcUrl),
 });
 
 function isAddress(value: unknown): value is string {

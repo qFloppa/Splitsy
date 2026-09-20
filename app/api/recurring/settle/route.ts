@@ -1,21 +1,25 @@
 import { createPublicClient, createWalletClient, http, type Hex } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
-import { arcTestnet } from "viem/chains";
 import {
   getTabAddressOnchain,
   getSettledMembersFromReceipt,
   getTabSettlementContext,
 } from "@/lib/recurring-read";
 import { recordRecurringPaidFeedbackSafely } from "@/lib/erc8004";
+import { ARC, forArcNetwork } from "@/lib/arc-chain";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const factoryAddress = (
-  process.env.NEXT_PUBLIC_RECURRING_TAB_FACTORY_ADDRESS ?? "0x6c4d980f7a9250e3892a3541b5a62420b628f3c1"
+  forArcNetwork(
+    process.env.NEXT_PUBLIC_RECURRING_TAB_FACTORY_ADDRESS_MAINNET,
+    // ponytail: stale testnet literal, kept for parity with lib/recurring-read.ts.
+    process.env.NEXT_PUBLIC_RECURRING_TAB_FACTORY_ADDRESS ?? "0x6c4d980f7a9250e3892a3541b5a62420b628f3c1",
+  ) ?? "0x0000000000000000000000000000000000000000"
 ) as `0x${string}`;
 
-const rpcUrl = process.env.ARC_TESTNET_RPC_URL ?? "https://rpc.testnet.arc.network";
+const rpcUrl = ARC.rpcUrl;
 
 const recurringTabFactoryAbi = [
   { type: "error", name: "AlreadySettledForPeriod", inputs: [] },
@@ -78,12 +82,12 @@ async function settleRecurringTabs(request: Request) {
 
   const account = privateKeyToAccount(privateKey);
   const publicClient = createPublicClient({
-    chain: arcTestnet,
+    chain: ARC.chain,
     transport: http(rpcUrl),
   });
   const walletClient = createWalletClient({
     account,
-    chain: arcTestnet,
+    chain: ARC.chain,
     transport: http(rpcUrl),
   });
 

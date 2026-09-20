@@ -2,6 +2,7 @@ import Link from "next/link";
 import { ArrowUpRight } from "lucide-react";
 import type { ReactNode } from "react";
 
+import { ARC_EXPLORER } from "@/lib/arc-explorer";
 import { Nav } from "@/components/landing/Nav";
 
 import { DocsRail } from "./DocsRail";
@@ -1064,7 +1065,7 @@ export default function DocsPage() {
                       title: "Find the feedback entry",
                       body: (
                         <>
-                          On <a href="https://testnet.arcscan.app">Arcscan</a>, open the ReputationRegistry address above and
+                          On <a href={ARC_EXPLORER}>Arcscan</a>, open the ReputationRegistry address above and
                           locate the <code>giveFeedback</code> transaction (the badge&apos;s data mirrors <code>feedback_tx</code>
                           per entry). Read the decoded inputs: agent id, score, timing tag, bill tag, and <code>feedbackHash</code>.
                         </>
@@ -1254,7 +1255,7 @@ export default function DocsPage() {
                   The <strong>Fund</strong> button sits next to the agent&apos;s balance on the settlement-agents panel.
                   Whichever route you use, it is an ordinary inbound USDC transfer on Arc Testnet — there is no special
                   deposit contract, and you can verify the balance yourself on{" "}
-                  <a href="https://testnet.arcscan.app">Arcscan</a>.
+                  <a href={ARC_EXPLORER}>Arcscan</a>.
                 </p>
                 <Table
                   head={["Route", "What happens", "What it needs"]}
@@ -1718,7 +1719,7 @@ export default function DocsPage() {
                   <code>register(metadataURI)</code>. That means the agent that scanned your receipt has a
                   publicly checkable identity: the scan result shows{" "}
                   <em>&quot;scanned by agent 0x… — see its onchain identity&quot;</em> and links straight to{" "}
-                  <a href="https://testnet.arcscan.app">Arcscan</a>.
+                  <a href={ARC_EXPLORER}>Arcscan</a>.
                 </p>
 
                 <Note title="A paid scan can never block your upload">

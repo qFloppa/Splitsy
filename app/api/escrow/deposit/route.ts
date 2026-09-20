@@ -20,12 +20,12 @@ import { verifyWalletUnlock, WALLET_UNLOCK_COOKIE } from "@/lib/session-core";
 import { prepareForUser, relayForUser, userMustSign, type UserSignedBody } from "@/lib/user-signed";
 import { executeContract, InsufficientFundsError, isBroadcast, broadcastTxHash } from "@/lib/wallet-provider";
 import type { IdentityProvider } from "@/lib/types";
+import { ARC } from "@/lib/arc-chain";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const ARC_USDC_ADDRESS = (process.env.ARC_TESTNET_USDC_ADDRESS ??
-  "0x3600000000000000000000000000000000000000") as `0x${string}`;
+const ARC_USDC_ADDRESS = ARC.usdcAddress;
 
 const PROVIDERS: IdentityProvider[] = ["x", "discord", "email"];
 

@@ -40,7 +40,8 @@ import { ChevronDown } from "lucide-react";
 import { AnimatePresence, motion } from "framer-motion";
 import { useAccount, useSignMessage } from "wagmi";
 import { createPublicClient, http } from "viem";
-import { arcTestnet } from "viem/chains";
+import { ARC } from "@/lib/arc-chain";
+import { ARC_EXPLORER } from "@/lib/arc-explorer";
 import { arcWalletClient } from "@/lib/wagmi";
 import { assertReceiptSuccess } from "@/lib/bill-split-contracts";
 import { ARC_USDC_ADDRESS, publicClient, usdcAbi } from "@/lib/recurring-contracts";
@@ -53,7 +54,6 @@ import { encodeRevokeMandate } from "@/lib/registry-calldata";
 import { PosterCell, PosterFact, PosterValue, SectionHead, revealMotion, sectionMotion, type Step } from "./SpecCard";
 import JobTrail from "./JobTrail";
 
-const EXPLORER = "https://testnet.arcscan.app";
 
 // ERC-8004 IdentityRegistry, for the link to the agent's identity NFT. Display
 // only — nothing here signs against it.
@@ -473,7 +473,7 @@ export default function SettlementAgentsPanel({ onState }: { onState?: (state: A
           // amount like 2.0000001 would otherwise throw rather than send.
           args: [to as `0x${string}`, BigInt(Math.round(amount * 1e6))],
           account: connectedAddress,
-          chain: arcTestnet,
+          chain: ARC.chain,
         });
         // viem RESOLVES on a reverted transaction rather than throwing, so the
         // receipt is checked — same helper as every other write on this page.
@@ -640,12 +640,12 @@ export default function SettlementAgentsPanel({ onState }: { onState?: (state: A
     setSaving(true);
     try {
       const walletClient = await arcWalletClient();
-      const publicClient = createPublicClient({ chain: arcTestnet, transport: http() });
+      const publicClient = createPublicClient({ chain: ARC.chain, transport: http() });
       const hash = await walletClient.sendTransaction({
         to: mandateAddress as `0x${string}`,
         data: encodeRevokeMandate(),
         account: connectedAddress,
-        chain: arcTestnet,
+        chain: ARC.chain,
       });
       // viem RESOLVES waitForTransactionReceipt for a reverted transaction — it
       // does not throw — so the receipt has to be checked or a revert reads as
@@ -828,7 +828,7 @@ export default function SettlementAgentsPanel({ onState }: { onState?: (state: A
               {agentWallet?.tokenId ? (
                 <a
                   className="iou-row-tx"
-                  href={`${EXPLORER}/token/${IDENTITY_REGISTRY_ADDRESS}/instance/${agentWallet.tokenId}`}
+                  href={`${ARC_EXPLORER}/token/${IDENTITY_REGISTRY_ADDRESS}/instance/${agentWallet.tokenId}`}
                   rel="noreferrer"
                   target="_blank"
                 >
@@ -894,7 +894,7 @@ export default function SettlementAgentsPanel({ onState }: { onState?: (state: A
             {agentWallet?.address ? (
               <a
                 className="iou-row-tx"
-                href={`${EXPLORER}/address/${agentWallet.address}`}
+                href={`${ARC_EXPLORER}/address/${agentWallet.address}`}
                 rel="noreferrer"
                 target="_blank"
               >
@@ -1010,7 +1010,7 @@ export default function SettlementAgentsPanel({ onState }: { onState?: (state: A
                       </span>
                       <a
                         className="iou-row-tx"
-                        href={`${EXPLORER}/address/${agentWallet.otherAgent.address}`}
+                        href={`${ARC_EXPLORER}/address/${agentWallet.otherAgent.address}`}
                         rel="noreferrer"
                         target="_blank"
                       >
@@ -1616,7 +1616,7 @@ export default function SettlementAgentsPanel({ onState }: { onState?: (state: A
                       {entry.txHash ? (
                         <a
                           className="iou-row-tx"
-                          href={`${EXPLORER}/tx/${entry.txHash}`}
+                          href={`${ARC_EXPLORER}/tx/${entry.txHash}`}
                           rel="noreferrer"
                           target="_blank"
                         >

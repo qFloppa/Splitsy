@@ -38,10 +38,14 @@
 // and same reason as lib/handle-escrow.ts and lib/wallet-resolve.ts.
 import { encodeRelease, releaseDomain, RELEASE_TYPES } from "./handle-escrow.ts";
 import type { IdentityProvider } from "./types";
+import { ARC } from "./arc-chain.ts";
 
-// Arc Testnet. Also what releaseDomain binds the signature to, so a signature
-// made for this deployment cannot be replayed against another chain.
-const ARC_TESTNET_CHAIN_ID = 5042002;
+// Whichever Arc this deployment is on. Also what releaseDomain binds the
+// signature to, so a signature made for this deployment cannot be replayed
+// against another chain — which now includes the other Arc. A release signed on
+// testnet is rejected by a mainnet escrow and vice versa, by the contract, not
+// by us.
+const ARC_CHAIN_ID = ARC.chainId;
 
 // Long enough to survive a slow block on Arc, short enough that a signature
 // leaked from a log dies quickly. The contract enforces the deadline, so a
@@ -101,7 +105,7 @@ async function signRelease(
     // separator, so signing against the wrong one yields a signature the contract
     // rejects — and the row is the only thing that knows which escrow a deposit
     // id belongs to, since ids restart at 1 in every deployment.
-    domain: releaseDomain(ARC_TESTNET_CHAIN_ID, escrowAddress as `0x${string}`),
+    domain: releaseDomain(ARC_CHAIN_ID, escrowAddress as `0x${string}`),
     types: RELEASE_TYPES,
     primaryType: "Release",
     message: { id: BigInt(depositId), to: to as `0x${string}`, deadline },
