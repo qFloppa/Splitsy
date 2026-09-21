@@ -84,6 +84,14 @@ export function retotalBill(previous: ParsedBill, edited: ParsedBill): ParsedBil
   return { ...edited, total: Math.max(0, Number(total.toFixed(2))) };
 }
 
+// An FX quote prices one amount in one currency, so only those two fields can
+// invalidate it. Everything else — the merchant is a label, nothing more — has
+// to leave the quote standing: dropping it would send a non-USD bill back to
+// its raw origin-currency figures the moment someone fixes a typo in the name.
+export function billFieldAffectsFx(field: keyof ParsedBill) {
+  return field === "currency" || field === "total";
+}
+
 export function equalSplit(totalUsd: number, participants: SplitParticipant[]) {
   if (participants.length === 0) {
     return [];

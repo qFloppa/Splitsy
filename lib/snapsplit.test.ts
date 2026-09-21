@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { billDiscount, normalizeParsedBill, retotalBill } from "./snapsplit.ts";
+import { billDiscount, billFieldAffectsFx, normalizeParsedBill, retotalBill } from "./snapsplit.ts";
 
 // A scanned bill whose total is $5 below its own breakdown: the receipt applied
 // a discount the OCR didn't itemize.
@@ -30,4 +30,12 @@ test("a total-only bill keeps its total when a component is filled in", () => {
 test("a discount larger than the remaining parts floors the total at zero", () => {
   const edited = retotalBill(discounted, { ...discounted, subtotal: 0, tax: 0, tip: 0 });
   assert.equal(edited.total, 0);
+});
+
+test("renaming the merchant leaves the FX quote standing", () => {
+  // The £ bill's converted amounts live in the quote. Typing a better name for
+  // the shop must not throw it away and drop every figure back to raw pounds.
+  assert.equal(billFieldAffectsFx("merchant"), false);
+  assert.equal(billFieldAffectsFx("currency"), true);
+  assert.equal(billFieldAffectsFx("total"), true);
 });

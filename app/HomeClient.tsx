@@ -93,6 +93,7 @@ import {
 } from "@/lib/recurring-contracts";
 import {
   billDiscount,
+  billFieldAffectsFx,
   emptyParsedBill,
   equalSplit,
   normalizeParsedBill,
@@ -752,7 +753,11 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
         [field]: field === "merchant" || field === "currency" ? value : Number(value),
       }),
     );
-    setFxQuote(null);
+    // Only the currency and the total invalidate the quote — renaming the
+    // merchant must not, or the bill's converted amounts would vanish with it.
+    if (billFieldAffectsFx(field)) {
+      setFxQuote(null);
+    }
   }
 
   function updateBillUsdField(field: keyof ParsedBill, value: string) {

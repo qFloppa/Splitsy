@@ -9,8 +9,10 @@
 // nothing. "No history" must therefore always display as neutral, never bad.
 //
 // Two payment paths earn reputation, both anchored to an on-chain DebtPaid:
-//   1. Circle DCW payers — the pay route calls recordPaidFeedback in after();
-//      the payer's own DCW signs the register() tx (it just paid, so it has gas).
+//   1. Server-signed payers — the pay route calls recordPaidFeedback in after().
+//      A Circle DCW signs its own register() tx (it just paid, so it has gas).
+//      A PRIVY EMBEDDED pay wallet cannot: it is the user's from creation and we
+//      hold no key, so recordPaidFeedback hands those to path 2's registrar.
 //   2. Browser/non-custodial payers — never touch the server, so a Circle SCP
 //      event monitor on BillSplitRegistry.DebtPaid POSTs to the webhook, which
 //      calls recordExternalPaidFeedback. Splitsy can't sign as their wallet, so
@@ -46,6 +48,7 @@ import {
   setFeedbackTx,
 } from "./reputation-repo.ts";
 import { scorePaymentTiming } from "./reputation-score.ts";
+import { userMustSign } from "./user-signed.ts";
 import { executeContract, getOrCreateWallet, walletProviderLabel } from "./wallet-provider.ts";
 
 // ERC-8004 registries, per network. Unset means "no reputation configured",
@@ -815,9 +818,25 @@ async function scorePaidInFull(input: {
 }
 
 // Record "paid_in_full" for a completed payDebt: register the payer's agent if
-// needed (their own DCW signs, since it just paid and holds gas), then score.
-// Idempotent per (payer, bill).
+// needed, then score. Idempotent per (payer, bill).
 export async function recordPaidFeedback(input: PaidFeedbackInput): Promise<void> {
+  // A PAY WALLET THE SERVER HOLDS NO KEY FOR CANNOT MINT ITS OWN IDENTITY, and
+  // that is now the normal case rather than the exotic one. A Circle DCW signs its
+  // own register() because it just paid and holds gas; a Privy EMBEDDED pay wallet
+  // is the user's from creation with no Splitsy signer, so the same call comes back
+  // 401 (NotOurWalletError) and recordPaidFeedbackSafely swallows it. Every social
+  // payment since the stack changed earned no NFT and said nothing about it.
+  //
+  // That is the browser payer's situation exactly — a payer who cannot sign for us
+  // — so take the browser payer's route: the REGISTRAR mints and transfers the NFT
+  // on. Decided here rather than in the callers (the onchain-bills pay route and
+  // app/api/treasury/settle) because both hand over a wallet id they do not own,
+  // and a guard in each is a guard the next caller forgets.
+  //
+  // userMustSign is the same predicate the pay route gates its signing flow on, so
+  // the two cannot disagree about who holds the key.
+  if (await userMustSign(input.payerWalletId)) return recordExternalPaidFeedback(input);
+
   if (await hasFeedbackForBill(input.payerAddress, REGISTRY_ADDRESS, input.billId)) return;
   const agentId = await ensureAgent(input.payerAddress, input.payerWalletId);
   await scorePaidInFull({
