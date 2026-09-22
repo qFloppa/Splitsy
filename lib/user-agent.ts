@@ -17,11 +17,34 @@ import { getUsdcAllowanceOnchain, getUsdcBalanceOnchain } from "./arc-read.ts";
 import { ensureAgent } from "./erc8004.ts";
 import { encodeApprove } from "./registry-calldata.ts";
 import { setUserAgentWallet } from "./users-repo.ts";
-import { executeContract, getOrCreateWallet } from "./wallet-provider.ts";
+import { executeContract, getOrCreateWallet, walletProviderName } from "./wallet-provider.ts";
 
 export type UserAgent = { address: `0x${string}`; walletId: string };
 
 const ARC_USDC_ADDRESS = ARC.usdcAddress;
+
+// Whether a cached wallet id was minted by the stack that is running now.
+//
+// users.agent_wallet_id is the only wallet id this app carries across a
+// WALLET_PROVIDER flip, and one database outlives that flip: rows written while
+// Circle held the wallets still name Circle wallets, and Privy answers
+// 404 "Wallet not found" to every one of them. That is not a slow failure — it
+// takes out createJob, the FIRST of the six transactions an autopay settlement
+// signs, and the ceremony is logged 'job_failed' with no job to point at.
+//
+// SHAPE is the discriminator, the same trick txFate uses on a settlement
+// reference (lib/wallet-provider.ts): a Circle wallet id is a UUID, a Privy one
+// is a 24-character cuid. Asked in ONE direction only — a UUID is not ours while
+// Privy is running — because circle→privy is the migration that happened. The
+// reverse would have to claim that everything which is not a UUID is a Privy id,
+// which is a rule about strings rather than about wallets.
+//
+// A false answer is cheap and self-healing: the caller re-derives the agent from
+// its refId and overwrites both columns. A false TRUE is the expensive one, and
+// it is the case this rules out.
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+export const walletIdIsOurs = (walletId: string): boolean =>
+  !(UUID.test(walletId) && walletProviderName() === "privy");
 
 // Get-or-create, with the users row as a cache in front of Circle. Circle stays
 // authoritative — listWallets by refId is idempotent — but a page load should
@@ -31,7 +54,7 @@ export async function getOrCreateUserAgent(user: {
   agent_wallet_address: string | null;
   agent_wallet_id: string | null;
 }): Promise<UserAgent | null> {
-  if (user.agent_wallet_address && user.agent_wallet_id) {
+  if (user.agent_wallet_address && user.agent_wallet_id && walletIdIsOurs(user.agent_wallet_id)) {
     return { address: user.agent_wallet_address as `0x${string}`, walletId: user.agent_wallet_id };
   }
 

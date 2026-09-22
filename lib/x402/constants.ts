@@ -15,6 +15,16 @@ export const ARC_GATEWAY_WALLET = ARC.gatewayWallet;
 export const ARC_RPC = ARC.rpcUrl;
 export const ARC_IDENTITY_REGISTRY = "0x8004A818BFB912233c491871b3d84c89A494BD9e" as const;
 
+// The facilitator's own base, without the /v1 the SDK appends itself.
+//
+// BatchFacilitatorClient defaults to gateway-api.circle.com — MAINNET — and a
+// mainnet facilitator does not know eip155:5042002, so it rejects every testnet
+// payment with `unsupported_network` at verify(). That default was harmless in
+// @circle-fin/x402-batching 2.x and is not in 3.x, which is the kind of silent
+// move this file exists to absorb: the facilitator is per-network, like every
+// address above it, so it reads off the profile rather than off the SDK.
+export const GATEWAY_API_ORIGIN = new URL(ARC.gatewayApiUrl).origin;
+
 // Circle's own record of one batched x402 payment: status, both addresses, the
 // amount, and the txHash of the batch that settled it on chain. Append the id
 // that settle() returned — the same string x402_payments.gateway_tx stores.

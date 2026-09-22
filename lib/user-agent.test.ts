@@ -16,7 +16,7 @@
 // network-bound and has no seam; those are not tested rather than mocked.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { agentToAdopt, getOrCreateUserAgent, wasAgentAdoptedFrom } from "./user-agent.ts";
+import { agentToAdopt, getOrCreateUserAgent, walletIdIsOurs, wasAgentAdoptedFrom } from "./user-agent.ts";
 
 const OFFLINE_VARS = ["CIRCLE_API_KEY", "CIRCLE_ENTITY_SECRET", "CIRCLE_WALLET_SET_ID", "WALLET_PROVIDER"] as const;
 const original = OFFLINE_VARS.map((k) => [k, process.env[k]] as const);
@@ -60,6 +60,28 @@ test("a half-written row falls through instead of returning a null walletId", as
 test("an empty row with Circle unconfigured is a null, not a throw", async () => {
   const agent = await getOrCreateUserAgent({ id: "user-4", agent_wallet_address: null, agent_wallet_id: null });
   assert.equal(agent, null);
+});
+
+// The cache is the one wallet id this app carries across a WALLET_PROVIDER flip,
+// and serving a Circle id to Privy cost bill 18 its settlement: Privy answers 404
+// to a UUID it never minted, so createJob — the first of the six transactions —
+// died and the row read 'job_failed'.
+//
+// Real ids on both sides: the Circle one is the agent that failed, the Privy one
+// is the Auditor's. A fixture like "wallet-1" is neither, and must stay servable.
+const CIRCLE_ID = "e9e6de01-fd78-585b-a3a1-8642b68f2b0b";
+const PRIVY_ID = "qrcxh4vkx47sr7qu4agebwux";
+
+test("a Circle wallet id is not served to the Privy stack", () => {
+  assert.equal(walletIdIsOurs(CIRCLE_ID), true, "the Circle stack minted it and can still sign for it");
+  process.env.WALLET_PROVIDER = "privy";
+  try {
+    assert.equal(walletIdIsOurs(CIRCLE_ID), false, "Privy 404s on a Circle id — re-derive instead of signing");
+    assert.equal(walletIdIsOurs(PRIVY_ID), true);
+    assert.equal(walletIdIsOurs("wallet-1"), true, "an id of neither shape is left alone");
+  } finally {
+    delete process.env.WALLET_PROVIDER;
+  }
 });
 
 // The merge decision. The linked wallet's agent always wins — it is the wallet

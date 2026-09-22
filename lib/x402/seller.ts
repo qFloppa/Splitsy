@@ -3,13 +3,14 @@ import {
   ARC_NETWORK,
   ARC_USDC,
   ARC_GATEWAY_WALLET,
+  GATEWAY_API_ORIGIN,
   usdToAtomic,
 } from "./constants";
 import { recordPayment } from "./payments-repo";
 
 // Circle Gateway is the facilitator: it verifies the EIP-3009 authorization and
 // batches settlement, so a $0.005 call costs the buyer no gas.
-const facilitator = new BatchFacilitatorClient();
+const facilitator = new BatchFacilitatorClient({ url: GATEWAY_API_ORIGIN });
 
 // Fallback terms, used only if the facilitator can't be reached. 604800s (7 days)
 // is Gateway's current minValiditySeconds for Arc — NOT the 345600 the SDK's own
@@ -130,6 +131,10 @@ export function withGateway(
       const payload = JSON.parse(Buffer.from(signature, "base64").toString("utf-8"));
       const verify = await facilitator.verify(payload, requirements);
       if (!verify.isValid) {
+        // The buyer's SDK only ever says "Payment verification failed", and the
+        // caller above it swallows the throw to serve an unpaid fallback. Without
+        // this line a facilitator-side refusal is invisible on both sides.
+        console.error("[x402] verify rejected:", endpoint, verify.invalidReason);
         return Response.json(
           { error: "Payment verification failed", reason: verify.invalidReason },
           { status: 402 },
