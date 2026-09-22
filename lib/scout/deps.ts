@@ -6,6 +6,16 @@ import { sumSpentTodayUsd, recordPayment } from "../x402/payments-repo.ts";
 
 export const DAILY_CAP_USD = Number(process.env.SCOUT_DAILY_CAP_USDC ?? "1");
 
+// What the most recent pay() attempt settled for, module-level because it has to
+// survive the throw.
+//
+// It must be filled by the SDK's response hook rather than read from `pay()`'s
+// return value: pay() throws BEFORE returning, so anything assigned after the
+// await never runs. The hook fires on the failure path too, and carries the
+// PAYMENT-RESPONSE header — the facilitator's own record of the charge — where
+// pay()'s thrown error carries only the upstream's message and no amount at all.
+let lastSettled: { amountUsd: number; tx: string | null } | null = null;
+
 // Binds Scout's decision loop to the real world: its Gateway wallet pays
 // Splitsy's own paywalled endpoints over HTTP, and the ledger records the spend.
 //
@@ -15,6 +25,19 @@ export const DAILY_CAP_USD = Number(process.env.SCOUT_DAILY_CAP_USDC ?? "1");
 export function buildScoutDeps(baseUrl: string): ScanDeps & { address: `0x${string}` } {
   const gateway = getScoutGateway();
   const { address } = getScout();
+
+  // Registered once per client. `settleResponse` is present only if the
+  // facilitator settled, which is what makes this a record of a charge rather
+  // than a guess — it is read straight from the PAYMENT-RESPONSE header. A hook
+  // must not throw: it runs inside pay()'s own body.
+  gateway.onPaymentResponse(async (context) => {
+    const transaction = context.settleResponse?.transaction;
+    if (!transaction) return;
+    lastSettled = {
+      amountUsd: Number(context.requirements.amount) / 1e6,
+      tx: transaction,
+    };
+  });
 
   return {
     address,
@@ -37,6 +60,9 @@ export function buildScoutDeps(baseUrl: string): ScanDeps & { address: `0x${stri
       );
     },
     pay: async (path, body) => {
+      // Cleared per attempt. Left stale, a successful pay whose *handler* then
+      // failed would re-bill the previous attempt's amount against the cap.
+      lastSettled = null;
       const result = await gateway.pay(`${baseUrl}${path}`, { method: "POST", body });
       return {
         // The SDK types the paid endpoint's JSON body as unknown; every caller
@@ -48,6 +74,11 @@ export function buildScoutDeps(baseUrl: string): ScanDeps & { address: `0x${stri
         tx: result.transaction || null,
       };
     },
+    // The payment behind the attempt that just threw, from the hook above.
+    // `amountUsd` is exact — it is the amount the seller asked for, which is
+    // what the facilitator settled — so it needs no rounding to match the `usd`
+    // price the ledger stores for this endpoint.
+    settledByFailedPay: () => lastSettled,
   };
 }
 

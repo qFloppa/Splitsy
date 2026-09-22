@@ -1,3 +1,5 @@
+import { fetchWithRetry } from "./retry.ts";
+
 export type FxQuote = { amountUsd: number; rate: number; source: string; asOf: string };
 
 // The FX lookup, extracted from /api/fx for the same reason as parseReceipt:
@@ -18,9 +20,13 @@ export async function quoteUsd(amount: number, fromCurrency?: string): Promise<F
     };
   }
 
-  const response = await fetch(`https://open.er-api.com/v6/latest/${encodeURIComponent(source)}`, {
-    cache: "no-store",
-  });
+  const response = await fetchWithRetry(
+    `https://open.er-api.com/v6/latest/${encodeURIComponent(source)}`,
+    {
+      cache: "no-store",
+    },
+    { attempts: 2, onRetryError: (message) => console.warn(`[fx] ${source} ${message}, retrying`) },
+  );
   const payload = await response.json();
   const rate = Number(payload?.rates?.USD);
 

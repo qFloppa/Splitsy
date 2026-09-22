@@ -1,4 +1,5 @@
-import { normalizeParsedBill, type ParsedBill } from "@/lib/snapsplit";
+import { normalizeParsedBill, type ParsedBill } from "./snapsplit.ts";
+import { fetchWithRetry, isTransientUpstream } from "./retry.ts";
 
 const DEFAULT_MODEL = process.env.RECEIPT_SCANNER_MODEL ?? "gemini-3.1-flash-lite";
 
@@ -29,7 +30,7 @@ export async function parseReceipt(
       : "If a field is missing, use 0 or an empty string and explain uncertainty in notes.",
   ].join(" ");
 
-  const response = await fetch(
+  const response = await fetchWithRetry(
     `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
     {
       method: "POST",
@@ -46,10 +47,24 @@ export async function parseReceipt(
         generationConfig: { responseMimeType: "application/json", temperature: 0 },
       }),
     },
+    {
+      // The upstream's own reason ("high demand") is the only thing that tells
+      // this apart from a real refusal, and it is gone once the retry runs.
+      onRetryError: (message) => console.warn(`[ocr] ${model} ${message}, retrying`),
+    },
   );
 
   const payload = await response.json();
-  if (!response.ok) throw new Error(payload?.error?.message ?? "Receipt scan failed.");
+  // An exhausted retry means the model is still busy. Say that, rather than the
+  // bare "Receipt scan failed." this used to fall through to — which read as
+  // something being wrong here and sent whoever hit it looking in this repo.
+  if (!response.ok) {
+    throw new Error(
+      isTransientUpstream(response.status)
+        ? `The receipt scanner is busy right now (HTTP ${response.status}). Try again in a moment.`
+        : payload?.error?.message ?? "Receipt scan failed.",
+    );
+  }
 
   const text = payload?.candidates?.[0]?.content?.parts
     ?.map((part: { text?: string }) => part.text ?? "")
