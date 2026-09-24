@@ -532,6 +532,16 @@ export default function SettlementAgentsPanel({ onState }: { onState?: (state: A
         fail(body.error ?? "Could not sign in with that wallet.");
         return;
       }
+      // Signed into the account that had already LINKED this wallet, because that
+      // is where its agent lives (see /api/auth/wallet). A different identity now
+      // holds the whole app — the header's chip, the bills tab and the wallet
+      // widget all read /api/me on mount — so this is the one outcome a panel
+      // re-read cannot cover. Same reload app/PrivyShell.tsx does on a session
+      // change, and for the same reason.
+      if (body.signedInAs) {
+        window.location.reload();
+        return;
+      }
       // Two outcomes from one route, told apart by whether there was a session to
       // keep: signed out, this signs you in; signed in socially, the account is
       // created and the cookie is left alone (see /api/auth/wallet). The server

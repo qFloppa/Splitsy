@@ -1363,7 +1363,7 @@ input[type="number"],
    lists a debt in: name on the left, value on the right, a hairline under each,
    nothing drawn around the group.
 
-   Two rows, not six. Arc's own predeploys, the mandate and AgenticCommerce are
+   Three rows, not six. Arc's own predeploys, the mandate and AgenticCommerce are
    real and the app uses them, but a footer is not a deployment manifest — the
    README is — and this band is the difference between a colophon and a config
    dump. */
@@ -1381,28 +1381,27 @@ input[type="number"],
   display: grid;
   /* Narrower than the other bands' gap on purpose: this one is what decides
      whether the columns fit, and every rem of it is 2rem off the width the
-     breakpoint below needs. */
+     three-across layout needs. */
   gap: 0 clamp(1rem, 0.7rem + 1.5vw, 2.5rem);
-  grid-template-columns: minmax(0, 1fr);
+  /* All three contracts on ONE line wherever three fit, and the floor is what
+     decides where that is rather than a breakpoint anybody has to keep in sync
+     with the row count. 17.5rem is measured: the widest row is
+     "RecurringTabFactory" beside a 15-character address, which needs ~268px, and
+     the extra ~12px is what keeps that name off a second line. Three of those
+     plus two gaps plus the measure's gutters lands at ~950px, so a laptop prints
+     the band as a single row and a phone stacks it.
+
+     auto-FIT, not auto-fill: with three items in room for four, auto-fill leaves
+     an empty fourth track and the rules stop short of the column's end. auto-fit
+     collapses it, so the three stretch to fill the measure. The one thing it
+     cannot avoid is the middle width — around 600–950px it chooses two columns
+     and the third row sits alone under the first. That is a hanging rule for one
+     row rather than for three, which is the trade this band is willing to make;
+     the alternative is stacking all three on every tablet. */
+  grid-template-columns: repeat(auto-fit, minmax(17.5rem, 1fr));
   margin: 0;
   padding: 0;
   list-style: none;
-}
-
-/* One row of two, declared rather than left to auto-fit, and both counts here
-   divide two exactly so neither can leave a rule hanging with nothing beside it.
-   (auto-fit with a 19rem floor chose three columns while there were five rows,
-   which is exactly that bug.)
-
-   640px is measured, not guessed: the widest row is "RecurringTabFactory" beside a
-   15-character address, which needs ~268px, and at 640 the measure gives each of
-   two columns ~280. It was 940 while this band had three columns; keeping that
-   number would have stacked two rows that fit side by side for another 300px of
-   viewport, and a stacked row costs the footer height on every route. */
-@media (min-width: 640px) {
-  .site-footer-ledger {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
 }
 
 /* .iou-row's grammar at footer scale. Its own size rather than that one's clamp:

@@ -81,8 +81,13 @@ What replaces it depends on the wallet type:
 
 | Wallet type | Settlement cost |
 |---|---|
-| Circle SCA (social login) | **1 atomic `executeBatch`** — all-or-nothing |
-| Browser EOA | 1 `approve` + 1 tx per pay leg + 1 tx per claim leg |
+| Circle DCW (social login, SCA) | **1 atomic `executeBatch`** — all-or-nothing |
+| Privy embedded wallet (social login, EOA) | 1 `approve` + 1 `settle` |
+| Browser EOA | 1 `approve` + 1 `settle` |
+
+Every EOA costs two transactions whatever the leg count, because `settle` carries
+every claim and every pay leg in one call. A selection with nothing to pay costs
+one — there is no approval to send.
 
 The UI derives the per-scope comparison from `payLegCount` and `claimLegCount`
 rather than storing a pre-computed netted count, because the scope selector
@@ -90,27 +95,42 @@ rather than storing a pre-computed netted count, because the scope selector
 
 ---
 
-## Settlement: Circle SCA Path (`app/api/treasury/settle`)
+## Settlement: Social Wallet Path (`app/api/treasury/settle`)
 
-Social-login wallets are provisioned as Circle **SCA** accounts
-(`accountType: "SCA"` in `lib/circle-dcw.ts`). SCA wallets support
-`executeBatch((address,uint256,bytes)[])` called **on the wallet's own address**
-— each tuple is `(target, nativeValue, calldata)`.
-
-The route:
+The route is the same on both wallet stacks up to the moment it sends. It:
 
 1. Verifies the PIN unlock cookie (`verifyWalletUnlock` + `WALLET_UNLOCK_COOKIE`).
 2. Re-reads every outstanding amount from chain (never trusts client-supplied
    amounts).
-3. Encodes one `approve` for the summed debt amount, one `payDebt` per owed
-   bill, and one `claim` per created bill with unclaimed funds — all via
+3. Encodes one `approve` for the summed debt amount and one
+   `settle(claimIds, payIds, amounts)` carrying every leg, via
    `lib/registry-calldata.ts`.
-4. Packs them into a single `executeBatch` call via `encodeExecuteBatch` from
-   `lib/registry-calldata.ts`.
-5. Submits via `executeContractOnArc` from `lib/circle-dcw.ts`.
+4. Refuses with 402 if the wallet cannot cover the total, counting claim
+   proceeds toward the budget because `settle` runs the claims first.
 
-Atomic means all-or-nothing: one reverting leg reverts the entire batch. No
-partial-failure reporting is needed on this path.
+Step 5 is the fork, and it is the only one:
+
+**Circle DCW.** Social-login wallets on this stack are Circle **SCA** accounts
+(`accountType: "SCA"` in `lib/circle-dcw.ts`). SCA wallets support
+`executeBatch((address,uint256,bytes)[])` called **on the wallet's own address**
+— each tuple is `(target, nativeValue, calldata)`. Both calls go out as one
+`executeBatch`. Atomic means all-or-nothing: one reverting leg reverts the whole
+batch, so no partial-failure reporting is needed.
+
+**Privy embedded wallet.** These are plain EOAs and cannot do that — an EOA does
+not revert on calldata it cannot run, it *succeeds and does nothing* (see
+`docs/deployments.md`). So the two calls go out as two transactions. Which one
+this request sends is read from chain, the same way
+`app/api/onchain-bills/[billId]/pay` picks its leg: an allowance already covering
+the total means the `approve` has mined and `settle` is next. The `approve` leg
+answers `{ok: true, more: true}` and `app/signed-send.ts` comes back for the
+second — the browser tracks no sequence, so a reload resumes wherever the chain
+actually is.
+
+Splitting the `approve` off does **not** split the settlement. `settle` is still
+one call carrying every claim and pay leg, claims first, so it reverts whole. An
+`approve` that lands without its `settle` leaves an unspent allowance, not a
+half-paid bill.
 
 ---
 

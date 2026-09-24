@@ -9,7 +9,7 @@ import { SECTIONS } from "./sections";
 //
 // /legal gets away with a contents poster you scroll past once, because nineteen
 // short clauses fit in about the distance a reader will hold in their head. This
-// document is sixteen sections and 1,600 lines, five of which are 60% of it —
+// document is eighteen sections and 2,500 lines, five of which are most of it —
 // autopay-agents alone is longer than the whole disclaimer. An index you passed
 // 900 lines ago is not an index, so this one comes with you.
 //
@@ -118,8 +118,8 @@ export function DocsRail() {
 
       <DocsSearchInput />
 
-      {/* An <ol> of <li>, not the bare stack of <a> the old sidebar was: sixteen
-          ordered destinations are a list, and the ordinal printed beside each one
+      {/* An <ol> of <li>, not the bare stack of <a> the old sidebar was: every
+          ordered destination is a list item, and the ordinal printed beside it
           only means anything if the order is real. role="list" survives
           list-style: none, which Safari otherwise takes as permission to drop the
           list semantics entirely.

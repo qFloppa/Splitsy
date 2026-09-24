@@ -38,11 +38,19 @@ const OUTLINE: { part: string; sections: DocSection[] }[] = [
       { id: "overview", title: "Overview" },
       { id: "using-splitsy", title: "Using Splitsy" },
       { id: "sign-in-and-wallets", title: "Sign-in and wallets" },
+      // Before bill-splits, because it is the smaller half of the same idea and
+      // the tab the app opens on: one sentence, one debt. A reader who arrives
+      // wanting to know what the app does meets the simplest thing first.
+      { id: "ious", title: "IOUs" },
       { id: "bill-splits", title: "Bill splits" },
       // Beside bill-splits rather than seven sections downstream: a recurring tab
       // is the scheduled counterpart to a one-time bill, and a reader who has just
       // read how one works is the reader for the other.
       { id: "recurring-tabs", title: "Recurring tabs" },
+      // Last in the part because it applies to everything before it: an IOU, a
+      // bill share and a recurring member can all name somebody who has never
+      // opened the app.
+      { id: "no-wallet-yet", title: "Paying someone with no wallet" },
     ],
   },
   {

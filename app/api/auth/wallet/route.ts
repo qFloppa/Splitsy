@@ -11,15 +11,24 @@
 //
 // ONE AGENT PER WALLET is the invariant, and autopay_grants_debtor_idx — the
 // partial unique index that already stops two accounts linking one address — is
-// what holds it. A wallet that a social account has already linked is REFUSED
-// here rather than handed a second account, with a second agent and a second
-// balance to fund. That is the exact confusion linking exists to prevent.
-import type { NextRequest } from "next/server";
+// what holds it. A wallet that a social account has already linked is therefore
+// never handed a second account with a second agent and a second balance to
+// fund: it is signed into the account that linked it, which is the account
+// holding the agent that settles its bills. See walletSigninAccount.
+import { NextResponse, type NextRequest } from "next/server";
 import { getWalletOwnerAccount, setGrantDebtorAddress } from "@/lib/agents-repo";
-import { verifySigninSignature } from "@/lib/agent-link";
+import { verifySigninSignature, walletSigninAccount } from "@/lib/agent-link";
 import { finishProviderLogin } from "@/lib/oauth-callback";
 import { describeAccount } from "@/lib/provider-display";
-import { getSessionUser, signWalletProof, WALLET_PROOF_COOKIE, WALLET_PROOF_TTL } from "@/lib/session";
+import {
+  getSessionUser,
+  SESSION_COOKIE_NAME,
+  SESSION_MAX_AGE,
+  signSession,
+  signWalletProof,
+  WALLET_PROOF_COOKIE,
+  WALLET_PROOF_TTL,
+} from "@/lib/session";
 import { getOrCreateUserAgent } from "@/lib/user-agent";
 import { getUserByProviderHandle } from "@/lib/users-repo";
 
@@ -56,38 +65,57 @@ export async function POST(request: NextRequest) {
   });
   if (!verdict.ok) return Response.json({ error: verdict.error }, { status: 400 });
 
-  // Already somebody's linked wallet? Then an agent already covers its bills,
-  // and it is on the other account. Refuse rather than mint a rival — and refuse
-  // BEFORE the upsert, so a rejected sign-in leaves no stray row behind.
-  //
-  // Not a sign-in path for that account either: linking proved control of the
-  // wallet to widen an account's reach, which is not consent for the key to
-  // become a login for the social identity behind it.
-  const holder = await getWalletOwnerAccount(address);
-  const isOwnAccount = holder?.provider === "wallet" && holder.provider_user_id === address;
-  if (holder && !isOwnAccount) {
-    return Response.json(
-      {
-        // Name the account, not just its provider: "sign in there" is only
-        // actionable if the user can tell which login "there" is.
-        error:
-          `That wallet is already linked to ${describeAccount({ provider: holder.provider, handle: holder.handle })}. ` +
-          `Sign in there — its agent already settles this wallet's bills.`,
-      },
-      { status: 409 },
-    );
-  }
-
-  // KEEP A SOCIAL SESSION. There is one session cookie, so signing this wallet in
-  // would evict whatever it held — and someone whose social login is live is not
-  // asking to be signed out of it. They are on the Agents tab, where a wallet
-  // with no account of its own has no agent to show, and this is what gives it
-  // one. The account is created either way; only the cookie differs.
+  // KEEP A SOCIAL SESSION. There is one session cookie, so setting it evicts
+  // whatever it held — and someone whose social login is live is not asking to be
+  // signed out of it. They are on the Agents tab, where a wallet with no account
+  // of its own has no agent to show, and this is what gives it one. The account is
+  // created either way; only the cookie differs.
   //
   // A WALLET session is replaced as normal: there is no second identity to
   // preserve, and the extension has already moved on to another address.
+  //
+  // Read BEFORE the holder branch below, which follows the same rule for the same
+  // reason — one live social session is never traded for another.
   const current = await getSessionUser().catch(() => null);
   const keepSession = !!current && current.provider !== "wallet";
+
+  // Already somebody's linked wallet? Then the agent that settles this wallet's
+  // bills is on THAT account — with its balance, its rules and its log — and this
+  // key is one of the two logins its owner attached to it. So sign them in there
+  // rather than refusing: refusing left the wallet's holder able to reach their own
+  // agent only through the social login, which is the exact split linking exists to
+  // close. Checked BEFORE the upsert, so this path writes nothing at all — the
+  // account, its agent and its link all already exist, and only the cookie changes.
+  const holder = await getWalletOwnerAccount(address);
+  const target = walletSigninAccount({
+    address,
+    holder: holder && { provider: holder.provider, providerUserId: holder.provider_user_id },
+    sessionProvider: current?.provider ?? null,
+  });
+  if (holder && target !== "self") {
+    // Name the account, not just its provider: any instruction about "that
+    // account" is only actionable if the user can tell which login it is.
+    const who = describeAccount({ provider: holder.provider, handle: holder.handle });
+    if (target === "busy") {
+      return Response.json(
+        {
+          error:
+            `That wallet belongs to ${who}, and its agent settles this wallet's bills. ` +
+            `Sign out here first and the wallet can sign you straight into that account.`,
+        },
+        { status: 409 },
+      );
+    }
+    const response = NextResponse.json({ ok: true, signedInAs: who });
+    response.cookies.set(SESSION_COOKIE_NAME, signSession(holder.id, sessionSecret), {
+      httpOnly: true,
+      secure: request.nextUrl.protocol === "https:",
+      sameSite: "lax",
+      path: "/",
+      maxAge: SESSION_MAX_AGE,
+    });
+    return response;
+  }
 
   const response = await finishProviderLogin({
     provider: "wallet",

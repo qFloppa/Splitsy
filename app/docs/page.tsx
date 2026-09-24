@@ -47,7 +47,8 @@ export const dynamic = "force-dynamic";
 
 export const metadata = {
   title: "Splitsy Docs",
-  description: "User and technical documentation for Splitsy bill splitting, recurring payments, Circle Gateway cross-chain payments, and Arc settlement.",
+  description:
+    "User and technical documentation for Splitsy: IOUs, bill splitting, recurring payments, paying someone with no wallet, Circle Gateway cross-chain payments, and Arc settlement.",
 };
 
 /* ── the pieces a section is built from ─────────────────────────────────────── */
@@ -244,9 +245,10 @@ export default function DocsPage() {
             Everything users need to <span className="lp-headline-accent">understand Splitsy.</span>
           </h1>
           <p className="lp-lede mt-6 max-w-2xl">
-            Splitsy turns shared bills into trackable USDC payment flows. It scans receipts, calculates who owes what, records
-            debts on Arc Testnet, lets payers fund and pay from their wallets, and automates recurring collection when a cycle
-            becomes due.
+            Splitsy turns what people owe each other into USDC payments you can check. It takes a debt stated in one
+            sentence or a photographed receipt, works out who owes what, records it on Arc, lets payers settle from a
+            wallet they get by signing in, holds money for people who have not signed in yet, and collects recurring
+            tabs when a cycle becomes due.
           </p>
 
           {/* The four facts a reader wants before the first section. It was a
@@ -257,8 +259,8 @@ export default function DocsPage() {
           <dl className="bill-contents doc-glance">
             {[
               { label: "Primary asset", value: "USDC" },
-              { label: "Network", value: "Arc Testnet" },
-              { label: "Payment types", value: "One-time bills and recurring tabs" },
+              { label: "Network", value: "Arc Testnet · test USDC only" },
+              { label: "Payment types", value: "IOUs, one-time bills and recurring tabs" },
               { label: "Cross-chain payment", value: "Circle Gateway (Avalanche, Base, Ethereum → Arc)" },
             ].map((fact) => (
               <div className="bill-cell" key={fact.label}>
@@ -271,9 +273,10 @@ export default function DocsPage() {
         </section>
 
         {/* ── the index ────────────────────────────────────────────────────────
-            Sixteen sections in four parts, and the only place in the document
-            that earns the full 88rem. [data-parts] is the shared rule: how many
-            parts a document has is the document's business. */}
+            Every section in four parts, and the only place in the document that
+            earns the full 88rem. The counts are read from the outline, so adding
+            a section never needs an edit here. [data-parts] is the shared rule:
+            how many parts a document has is the document's business. */}
         <section aria-labelledby="doc-contents" className="bill-poster" data-parts={PARTS.length}>
           <div className="lp-measure">
             <div className="bill-poster-head">
@@ -318,18 +321,29 @@ export default function DocsPage() {
             <article>
               <Section id="overview">
                 <p>
-                  Splitsy is built for groups that need more than a calculator screenshot. A splitter can upload a receipt, review
-                  the extracted bill, assign payer wallets, and create an onchain record of each participant&apos;s share. Payers can
-                  connect their wallets later, see only their own debts, pay in full or partially, and bridge USDC into Arc when
-                  their balance lives on another supported testnet.
+                  Splitsy is built for groups that need more than a calculator screenshot. State a debt in one sentence, or
+                  upload a receipt, review the extracted bill and assign payer shares. Payers sign in later, see only their
+                  own debts, pay in full or partially, and bridge USDC into Arc when their balance lives on another
+                  supported chain.
                 </p>
                 <p>
-                  The application has two product surfaces. <strong>Bills</strong> are one-time debts linked to a receipt or expense.{" "}
-                  <strong>Recurring</strong> tabs are scheduled payment agreements, such as rent, subscriptions, shared services, or
-                  repeating household costs. Both flows are designed around explicit wallet approval and visible balances.
+                  The application has three product surfaces. An <strong>IOU</strong> is a single debt stated as a sentence.{" "}
+                  <strong>Bills</strong> are one-time debts linked to a receipt or expense, split across several people.{" "}
+                  <strong>Recurring</strong> tabs are scheduled payment agreements, such as rent, subscriptions, shared
+                  services, or repeating household costs. All three are designed around explicit approval and visible
+                  balances.
                 </p>
                 <Rows
                   rows={[
+                    {
+                      title: "One sentence, one debt",
+                      body: (
+                        <>
+                          &quot;@dani owes me $42&quot; files a debt on Arc; &quot;I owe @dani $42&quot; pays it. No receipt, no
+                          split screen — see <a href="#ious">IOUs</a>.
+                        </>
+                      ),
+                    },
                     {
                       title: "Scan and review",
                       body: (
@@ -340,11 +354,21 @@ export default function DocsPage() {
                       ),
                     },
                     {
-                      title: "Wallet-first payment",
+                      title: "A wallet from signing in",
                       body: (
                         <>
-                          Browser wallets sign contract transactions. The app uses EIP-1193/EIP-6963 provider discovery and Viem wallet
-                          clients for Arc Testnet interactions.
+                          Signing in with X, Discord, Google or an email code gives you a working USDC wallet on Arc — no seed
+                          phrase, nothing to install. Browser wallets work too, discovered over EIP-6963 and signed through
+                          Viem.
+                        </>
+                      ),
+                    },
+                    {
+                      title: "Pay someone with no wallet",
+                      body: (
+                        <>
+                          Money sent to a handle nobody has signed in as waits in an escrow contract and is released on that
+                          person&apos;s first sign-in. The sender can take it back until then.
                         </>
                       ),
                     },
@@ -352,7 +376,7 @@ export default function DocsPage() {
                       title: "Pay cross-chain with Gateway",
                       body: (
                         <>
-                          Payers with USDC on Avalanche, Base, or Ethereum can pay directly from those chains to Arc Testnet. Gateway burns
+                          Payers with USDC on Avalanche, Base, or Ethereum can pay directly from those chains to Arc. Gateway burns
                           on the source chain, fetches an attestation, and mints on Arc — all in one two-step flow with no bridge UI.
                         </>
                       ),
@@ -380,6 +404,11 @@ export default function DocsPage() {
               </Section>
 
               <Section id="using-splitsy">
+                <p>
+                  Two ways in. The <strong>IOU</strong> tab is one sentence and is what the app opens on; the{" "}
+                  <strong>Bills</strong> tab is the full path below — a receipt, a split, and a share per person. Everything
+                  after step 04 is the same either way.
+                </p>
                 <Steps
                   steps={[
                     {
@@ -404,8 +433,9 @@ export default function DocsPage() {
                       title: "Choose a split",
                       body: (
                         <>
-                          Use equal split for a quick division or manual split when participants owe different amounts. Each payer needs a
-                          valid EVM wallet address and a positive amount.
+                          Use equal split for a quick division or manual split when participants owe different amounts. Tag each payer by
+                          handle, email or wallet address; anyone who has not signed in yet is filed under a{" "}
+                          <a href="#no-wallet-yet">derived slot</a> rather than a wallet somebody else holds.
                         </>
                       ),
                     },
@@ -414,7 +444,8 @@ export default function DocsPage() {
                       body: (
                         <>
                           The splitter creates a bill in the BillSplitRegistry contract. The contract stores a metadata hash, participant
-                          addresses, and each participant&apos;s owed USDC amount.
+                          addresses, and each participant&apos;s owed USDC amount. An optional &quot;pay by&quot; date is committed with
+                          it, and unlocks <a href="#bill-verification">all-or-nothing</a> bills.
                         </>
                       ),
                     },
@@ -422,8 +453,8 @@ export default function DocsPage() {
                       title: "Payers settle",
                       body: (
                         <>
-                          Payers connect the matching wallet, approve the registry for the selected USDC amount, and call the payment flow.
-                          Payments can be partial as long as they do not exceed the remaining debt.
+                          Payers sign in or connect the matching wallet, approve the registry for the selected USDC amount, and call the
+                          payment flow. Payments can be partial as long as they do not exceed the remaining debt.
                         </>
                       ),
                     },
@@ -432,7 +463,8 @@ export default function DocsPage() {
                       body: (
                         <>
                           Paid funds accumulate as claimable balance in the registry. The splitter can claim any amount up to the available
-                          paid balance.
+                          paid balance — or clear every open position at once from the{" "}
+                          <a href="#net-settlement-treasury">Treasury tab</a>.
                         </>
                       ),
                     },
@@ -473,22 +505,22 @@ export default function DocsPage() {
                       ),
                     },
                     {
-                      title: "A real wallet for your identity",
+                      title: "A wallet that is yours from the first login",
                       body: (
                         <>
-                          On first sign-in, Splitsy creates a <strong>Circle developer-controlled wallet</strong> on Arc Testnet keyed to
-                          your provider identity. It is a genuine on-chain account with its own address — you can receive USDC to it, send
-                          from it, and view it on the block explorer.
+                          Signing in creates an <strong>embedded wallet</strong> — a real Arc account with its own address, whose key is
+                          generated and held inside Privy&apos;s secure enclave, not by Splitsy. You can receive USDC to it, send from
+                          it, and view it on the block explorer. There is no seed phrase to write down and nothing to install.
                         </>
                       ),
                     },
                     {
-                      title: "A PIN before money moves",
+                      title: "Every payment is a prompt you approve",
                       body: (
                         <>
-                          Sending USDC requires a wallet PIN you set yourself. Entering it unlocks sends for five minutes, then re-locks.
-                          The PIN is stored only as a salted <code>scrypt</code> hash; the raw PIN never leaves your device in readable form
-                          and is never stored.
+                          Splitsy&apos;s server prepares a transaction; your wallet shows you what it is; nothing moves until you confirm.
+                          A bill payment is an approval followed by a payment, so it shows <strong>two</strong> prompts — two
+                          transactions really are being signed.
                         </>
                       ),
                     },
@@ -527,8 +559,8 @@ export default function DocsPage() {
                       title: "Create or reuse your wallet",
                       body: (
                         <>
-                          Splitsy provisions a Circle wallet keyed to your provider identity (idempotently — the same identity always maps
-                          to the same wallet), then stores your handle/email, avatar, and wallet address so friends can tag you.
+                          Your wallet is keyed to your provider identity, idempotently — the same identity always maps to the same
+                          wallet. Splitsy stores your handle/email, avatar, and wallet address so friends can tag you.
                         </>
                       ),
                     },
@@ -542,56 +574,72 @@ export default function DocsPage() {
                       ),
                     },
                     {
-                      title: "Discover what you owe",
+                      title: "Discover what you owe — and what is waiting for you",
                       body: (
                         <>
-                          Any bill already tagged to your handle or email is linked to you on sign-in and appears under your unpaid bills,
-                          ready to pay from your wallet.
+                          Any bill already tagged to your handle or email is linked to you on sign-in and appears under your unpaid bills.
+                          If somebody paid you before you had a wallet, that money is{" "}
+                          <a href="#no-wallet-yet">released out of escrow</a> during this same login.
                         </>
                       ),
                     },
                   ]}
                 />
 
-                <Subhead>Why a developer-controlled wallet (and not a user-controlled one)</Subhead>
+                <Subhead>Who holds the key</Subhead>
                 <p>
-                  Circle offers two wallet models. A <strong>user-controlled wallet</strong> is non-custodial but requires the user to
-                  authenticate to Circle directly — via Google, Apple, Facebook, email OTP, or a PIN — because the user holds a key
-                  share. Some of Splitsy&apos;s sign-in methods (like X and Discord) are <strong>not</strong> supported Circle
-                  logins at all, so they cannot unlock a user-controlled wallet; and for the ones that overlap, bridging the two
-                  would still force every debtor through a second, unrelated login (and a recovery-phrase burden) just to pay a
-                  dinner split — the exact friction Splitsy exists to remove.
+                  A wallet has to be created for you the instant you sign in — otherwise a debtor cannot pay a dinner split
+                  without first learning what a seed phrase is. There are two ways to do that, and a Splitsy deployment picks
+                  one. What the live deployment runs is the <strong>embedded wallet</strong>: the key is generated inside
+                  Privy&apos;s enclave and tied to your login, Splitsy never sees it, and every transaction needs your
+                  confirmation. Custody is yours from the first second, not handed over later.
                 </p>
                 <p>
-                  A <strong>developer-controlled wallet</strong> is created and operated server-side, keyed to a reference id (your
-                  provider identity). That lets Splitsy give <em>anyone</em> a working USDC wallet the instant they sign in — under a
-                  single, uniform model across all four providers, with no extra login, no seed phrase, and no app to install.
-                  Because Splitsy runs on <strong>Arc Testnet with test USDC that has no monetary value</strong>, the custodial
-                  trade-off carries no financial risk while delivering the smoothest possible onboarding. A future mainnet
-                  deployment would revisit this and offer genuine self-custody for real funds.
+                  The alternative — a Circle <strong>developer-controlled wallet</strong> — is created and operated
+                  server-side against a reference id. It buys one real advantage: it is a smart contract account, so it can
+                  execute several calls as a single atomic transaction, which is why{" "}
+                  <a href="#net-settlement-treasury">Settle net</a> costs one transaction there and two on an embedded
+                  wallet. It costs the thing that matters more, which is that the server can move your money, so sends are
+                  gated behind a <strong>PIN</strong> you set (five-minute unlock, stored only as a salted{" "}
+                  <code>scrypt</code> hash) rather than behind a signature only you can make.
                 </p>
                 <Table
-                  head={["Property", "Developer-controlled (Splitsy today)", "User-controlled"]}
+                  head={["Property", "Embedded wallet (live)", "Developer-controlled wallet"]}
                   rows={[
+                    ["Who can sign", "Only you, in the wallet's own prompt", "The server, behind your PIN"],
+                    ["Account type", "EOA", "Smart contract account (SCA)"],
+                    ["Works from a handle/email alone", "Yes — created at sign-in", "Yes — created at sign-in"],
+                    ["Onboarding steps for a newcomer", "None beyond signing in", "None beyond signing in, plus setting a PIN"],
                     [
-                      "Works from a handle/email alone",
-                      "Yes — created server-side on sign-in",
-                      "Only for Circle-supported logins (not X/Discord)",
+                      "Settle net",
+                      <>
+                        1 <code>approve</code> + 1 <code>settle</code>
+                      </>,
+                      <>
+                        1 atomic <code>executeBatch</code>
+                      </>,
                     ],
-                    ["Onboarding steps for a newcomer", "None beyond signing in", "Second login plus recovery-phrase setup"],
-                    ["Custody", "Server-operated (testnet, valueless USDC)", "User holds a key share"],
-                    ["Network", "Arc Testnet (EOA/SCA), USDC transfers", "Arc Testnet"],
                   ]}
                 />
-
-                <Subhead>Off-chain ledger for handle-tagged bills</Subhead>
                 <p>
-                  The <code>BillSplitRegistry</code> contract records debts by wallet address and needs every participant&apos;s address
-                  at creation time. A handle or email you tag may belong to someone who has not signed in yet and therefore has no
-                  address, so tagged bills are not written to the registry. Instead they live in an <strong>off-chain ledger</strong>:
-                  the bill and each debtor&apos;s share are stored keyed by provider + handle/email, and are linked to a real wallet
-                  the moment that person signs in. This is a deliberate second mode alongside the on-chain registry, chosen so you
-                  can split with anyone without knowing their address.
+                  Because Splitsy runs on <strong>Arc Testnet with test USDC that has no monetary value</strong>, neither
+                  choice carries financial risk today. That is also why the comparison is worth reading rather than glossing:
+                  it is the decision a real-money deployment turns on.
+                </p>
+
+                <Subhead>Two rails for a debt</Subhead>
+                <p>
+                  <code>BillSplitRegistry</code> records debts by wallet address and needs every participant&apos;s address at
+                  creation time. A handle you tag may belong to someone who has not signed in yet, so their share is filed
+                  under a <strong>derived slot</strong> — an address computed from their handle that nobody holds a key to
+                  (see <a href="#no-wallet-yet">Paying someone with no wallet</a>). The bill is a real on-chain bill either
+                  way; the slot is just the name the debt is filed under until its owner signs in.
+                </p>
+                <p>
+                  Alongside that registry rail there is an <strong>off-chain ledger</strong> for debts that are settled
+                  wallet-to-wallet rather than through the contract: the debt is stored keyed by provider + handle/email, and
+                  is linked to a real wallet the moment that person signs in. It is a deliberate second mode, not a fallback
+                  — some debts do not want a contract in the middle.
                 </p>
                 <Rows
                   rows={[
@@ -599,9 +647,9 @@ export default function DocsPage() {
                       title: "Direct settlement",
                       body: (
                         <>
-                          To pay, your wallet sends USDC <strong>directly to the creditor&apos;s wallet</strong> on Arc — no escrow contract in
-                          the middle. Splitsy initiates the transfer, confirms it, and marks the debt paid. Paid bills move to the history
-                          at the foot of your Dashboard with an explorer link.
+                          On the off-chain rail your wallet sends USDC <strong>directly to the creditor&apos;s wallet</strong> on Arc — no
+                          escrow contract in the middle. Splitsy prepares the transfer, confirms it, and marks the debt paid. Paid bills
+                          move to the history at the foot of your Dashboard with an explorer link.
                         </>
                       ),
                     },
@@ -609,8 +657,8 @@ export default function DocsPage() {
                       title: "Send, receive, and history",
                       body: (
                         <>
-                          Your wallet widget shows your live USDC balance, a copyable receive address, a PIN-gated send form, and a
-                          transaction history read from Circle — each with a link to the Arc block explorer.
+                          Your wallet widget shows your live USDC balance, a copyable receive address, a send form, and a transaction
+                          history — each entry with a link to the Arc block explorer.
                         </>
                       ),
                     },
@@ -619,8 +667,99 @@ export default function DocsPage() {
 
                 <Note title="What Splitsy stores about you">
                   Only your provider identity (an id/handle, or email for Google/email sign-in), display name, avatar URL, wallet
-                  address, and a salted hash of your wallet PIN. No tokens in the browser, and no provider content beyond your basic
-                  profile. Everything you can pay or be paid is test USDC on Arc Testnet.
+                  address, and — on a deployment that uses PIN-gated sends — a salted hash of that PIN. No tokens in the browser,
+                  and no provider content beyond your basic profile. Everything you can pay or be paid is test USDC on Arc Testnet.
+                </Note>
+              </Section>
+
+              <Section id="ious">
+                <p>
+                  An IOU is a debt stated as one sentence. Pick a direction, name a person by handle, email or wallet address,
+                  type an amount, and add a note if it needs one. There is no receipt to scan and no split to review, and it is
+                  the tab the app opens on.
+                </p>
+                <p>
+                  The two directions are <strong>not</strong> two styles of the same record. They travel different rails,
+                  because the contract decides who a bill&apos;s creditor is:
+                </p>
+                <Table
+                  head={["What you say", "What happens", "Why it has to be that way"]}
+                  rows={[
+                    [
+                      <>
+                        &quot;<strong>@dani owes me</strong> $42&quot;
+                      </>,
+                      <>
+                        A one-participant bill in <code>BillSplitRegistry</code>, created by your wallet with Dani as the only
+                        participant.
+                      </>,
+                      <>
+                        <code>createBill</code> makes the sender the bill&apos;s splitter, and <code>claim</code> pays only the
+                        splitter — so an on-chain bill can only ever be raised <em>by</em> the person who is owed.
+                      </>,
+                    ],
+                    [
+                      <>
+                        &quot;<strong>I owe @dani</strong> $42&quot;
+                      </>,
+                      <>A direct USDC transfer to Dani&apos;s wallet, or a deposit into escrow if Dani has none yet.</>,
+                      <>
+                        The registry cannot hold this one: it would need Dani to be the splitter, which means signing{" "}
+                        <code>createBill</code> from someone else&apos;s wallet. You already hold the money and you are the one
+                        who owes it, so there is nothing for a contract to coordinate.
+                      </>,
+                    ],
+                  ]}
+                />
+
+                <Rows
+                  rows={[
+                    {
+                      title: "Anyone, by any name",
+                      body: (
+                        <>
+                          A <code>0x</code> address, an email, or a bare X/Discord handle. Addresses and emails are detected from
+                          their shape; for a bare handle you pick the network it belongs to.
+                        </>
+                      ),
+                    },
+                    {
+                      title: "A ledger under the composer",
+                      body: (
+                        <>
+                          Every IOU you have raised or settled is listed as the same sentence, small, with what is still open. The
+                          figures are read from the registry on Arc, not from a cached balance.
+                        </>
+                      ),
+                    },
+                    {
+                      title: "Nobody home is still an answer",
+                      body: (
+                        <>
+                          &quot;I owe&quot; to someone with no wallet goes into{" "}
+                          <a href="#no-wallet-yet">escrow</a> rather than nowhere. A failed lookup is never read as &quot;no
+                          wallet&quot; — that would escrow money away from someone who could have been paid directly.
+                        </>
+                      ),
+                    },
+                    {
+                      title: "Signed the same way as everything else",
+                      body: (
+                        <>
+                          Your wallet approves it, whichever kind of wallet you use. An &quot;owes me&quot; IOU is one transaction;
+                          an &quot;I owe&quot; is a transfer, or an approval plus a deposit when it goes into escrow.
+                        </>
+                      ),
+                    },
+                  ]}
+                />
+
+                <Note title="An IOU you raise is a real bill">
+                  It carries a bill id, it is visible on the explorer, it earns the payer{" "}
+                  <a href="#payment-reputation">payment reputation</a> when they settle it, and it shows up in your{" "}
+                  <a href="#net-settlement-treasury">net position</a> beside everything else. The only thing it lacks is a
+                  receipt, so the <a href="#bill-verification">verification badge</a> reports &quot;genuine, no receipt&quot; —
+                  there is no image to cross-check a total against.
                 </Note>
               </Section>
 
@@ -635,9 +774,10 @@ export default function DocsPage() {
                   rows={[
                     [
                       "Create bill",
-                      <code key="fn">createBill(bytes32,address[],uint256[])</code>,
+                      <code key="fn">createBill(bytes32,address[],uint256[],…)</code>,
                       <>
-                        Registers participant debts and emits <code>BillCreated</code>.
+                        Registers participant debts and emits <code>BillCreated</code>. An optional due date and an
+                        all-or-nothing flag are part of the same call.
                       </>,
                     ],
                     [
@@ -646,9 +786,38 @@ export default function DocsPage() {
                       "Transfers USDC from payer to the registry and updates paid totals.",
                     ],
                     [
+                      "Pay someone else's debt",
+                      <code key="fn">payDebtFor(uint256,address,uint256)</code>,
+                      <>
+                        Pulls from the caller but credits the named debtor, and emits <code>DebtPaid</code> naming the{" "}
+                        <em>debtor</em> — which is how an <a href="#autopay-agents">autopay agent</a> pays your share without
+                        taking your reputation.
+                      </>,
+                    ],
+                    [
                       "Claim funds",
                       <code key="fn">claim(uint256,uint256)</code>,
                       "Allows only the splitter to withdraw paid, unclaimed funds.",
+                    ],
+                    [
+                      "Settle everything at once",
+                      <code key="fn">settle(uint256[],uint256[],uint256[])</code>,
+                      <>
+                        Claims every listed bill, then pays every listed debt, in one transaction — claims first, so their
+                        proceeds can fund the payments. See{" "}
+                        <a href="#net-settlement-treasury">Net-settlement treasury</a>.
+                      </>,
+                    ],
+                    [
+                      "Take a contribution back",
+                      <>
+                        <code>refund(uint256)</code>, <code>refundSlot(…)</code>
+                      </>,
+                      <>
+                        Returns a payer&apos;s own contribution when an all-or-nothing bill has failed.{" "}
+                        <code>refundSlot</code> does the same for a share filed under a{" "}
+                        <a href="#no-wallet-yet">derived slot</a>, paying the person&apos;s real wallet instead.
+                      </>,
                     ],
                     [
                       "Look up debts",
@@ -663,6 +832,11 @@ export default function DocsPage() {
                   Amounts are represented with 6 decimals to match USDC. User-entered dollar values are converted into USDC base
                   units before they are submitted to the contract.
                 </p>
+                <Note title="Bill ids belong to a registry, not to Splitsy">
+                  Ids restart at 1 in every deployment of the contract, so bill <code>#7</code> only means something next to the
+                  registry address it came from. When the registry is redeployed the previous one stays readable, so history
+                  survives — but the two number spaces never merge.
+                </Note>
               </Section>
 
               <Section id="recurring-tabs">
@@ -718,6 +892,117 @@ export default function DocsPage() {
                 </p>
               </Section>
 
+              <Section id="no-wallet-yet">
+                <p>
+                  You can name someone who has never opened Splitsy. What happens next depends on whether money is{" "}
+                  <strong>moving now</strong> or a debt is merely being <strong>recorded</strong>, and the two answers are
+                  different on purpose.
+                </p>
+                <Table
+                  head={["Situation", "Where it goes", "Who can move it"]}
+                  rows={[
+                    [
+                      <>
+                        You <strong>pay</strong> a handle with no wallet (an &quot;I owe&quot; IOU)
+                      </>,
+                      <>
+                        Into the <code>HandleEscrow</code> contract, against a hash of their handle.
+                      </>,
+                      <>
+                        Them, at their first sign-in — or you, any time before that, with <code>reclaim</code>.
+                      </>,
+                    ],
+                    [
+                      <>
+                        You <strong>record</strong> what a handle owes (a bill share, a tab member)
+                      </>,
+                      <>
+                        Nowhere. The share is filed against a <strong>derived slot</strong> — an address computed from the
+                        handle.
+                      </>,
+                      <>
+                        Nobody. No money is ever sent there; a slot is a filing name, not an account.
+                      </>,
+                    ],
+                  ]}
+                />
+
+                <Subhead>Money waiting for a person: HandleEscrow</Subhead>
+                <p>
+                  The escrow holds USDC against <code>keccak256(&quot;provider:handle&quot;)</code> and knows nothing else about
+                  the recipient. Three entry points, and each one exists to close a specific hole:
+                </p>
+                <Table
+                  head={["Call", "Who can call it", "What it does"]}
+                  rows={[
+                    [
+                      <code key="c">deposit(handleHash, amount)</code>,
+                      "the sender",
+                      "Moves the USDC in and returns a deposit id. Splitsy records who it is for, off-chain.",
+                    ],
+                    [
+                      <code key="c">release(id, to, deadline, signature)</code>,
+                      "anyone, with the attester's signature",
+                      <>
+                        Pays the deposit to <code>to</code>. Splitsy relays it during the recipient&apos;s first sign-in and pays
+                        the gas, so a person with no wallet and no USDC can still be paid.
+                      </>,
+                    ],
+                    [
+                      <code key="c">reclaim(id)</code>,
+                      "only the depositor",
+                      "Takes the money back, unconditionally, any time before a release.",
+                    ],
+                  ]}
+                />
+                <Note title="Why an unconditional reclaim is the safety net">
+                  The signing key that authorises releases is <strong>immutable</strong> — the contract has no setter and no
+                  owner, so changing it means deploying a new escrow. That is only an acceptable design because{" "}
+                  <code>reclaim</code> has no conditions on it: if the key were ever compromised, every depositor can pull their
+                  own money out ahead of it, and the contract is replaced. The two decisions hold each other up, and neither
+                  works alone.
+                </Note>
+                <p>
+                  A release signature binds the deposit id, the recipient address and a deadline, so it authorises exactly one
+                  payout to exactly one wallet. It cannot invent an amount — the contract pays what that deposit holds — and it
+                  cannot be replayed on another deployment, because the chain id and the contract address are part of what is
+                  signed.
+                </p>
+                <p>
+                  If the relaying wallet runs out of USDC (Arc charges gas in USDC), releases simply stop happening: deposits
+                  stay safe and reclaimable and the sign-in still succeeds. Money that is late is recoverable; money released
+                  to the wrong wallet is not, so the failure is deliberately on the cautious side.
+                </p>
+
+                <Subhead>A name with no key: derived slots</Subhead>
+                <p>
+                  A slot address is the low 160 bits of{" "}
+                  <code>keccak256(&quot;provider:handle&quot;)</code>. Tagging <code>@dani</code> on two bills therefore files
+                  both shares against the same address, and <strong>nobody holds a key to it</strong> — not Dani, not Splitsy,
+                  not ever. That is the property that makes it safe to use as a filing name and unsafe to send money to.
+                </p>
+                <p>
+                  It replaced something worse. Before, a tagged stranger had a wallet <em>minted</em> for them under
+                  Splitsy&apos;s key: they were told they owed money at an address they did not control, and unwinding a failed
+                  bill out of it cost three transactions and leaked gas every time. A derived slot has nothing to hold and
+                  nothing to leak.
+                </p>
+                <p>
+                  One thing still genuinely needs a key, and that is refunding a failed all-or-nothing bill:{" "}
+                  <code>refund</code> pays whoever calls it, and a slot has nobody to be the caller.{" "}
+                  <code>refundSlot(billId, slot, to, deadline, signature)</code> is the registry&apos;s answer — anyone may
+                  relay it, the attester&apos;s signature authorises it, and it pays <code>to</code>, the person&apos;s real
+                  wallet, rather than the slot. The signature binds all four arguments, so it can neither pay a
+                  non-participant nor invent an amount.
+                </p>
+                <Note title="What a stolen signing key could and could not do">
+                  One key signs both escrow releases and slot refunds — one key to guard rather than two. What that concedes is
+                  bounded and worth stating plainly: a stolen key could misdirect a release or a refund to a wallet of its
+                  choosing. It could not take money the escrow was never given, could not touch a paid bill that has not
+                  failed, could not invent an amount, and could not beat a depositor who reclaims first.
+                </Note>
+              </Section>
+
               <Section id="bill-verification">
                 <p>
                   Every on-chain bill carries a verification badge in the payer&apos;s view. It answers{" "}
@@ -760,8 +1045,11 @@ export default function DocsPage() {
                   Storing a full receipt on a blockchain would be expensive and public. Instead, only a{" "}
                   <strong>32-byte fingerprint</strong> is committed. When a bill is created, Splitsy computes a{" "}
                   <code>keccak256</code> hash over the bill&apos;s canonical fields and passes it to{" "}
-                  <code>createBill(bytes32 metadataHash, address[] participants, uint256[] amounts)</code>. The
-                  contract emits <code>BillCreated</code> with that hash; it can never be edited afterward.
+                  <code>
+                    createBill(bytes32 metadataHash, address[] participants, uint256[] amounts, uint64 dueDate, bool
+                    escrowUntilFull)
+                  </code>
+                  . The contract emits <code>BillCreated</code> with that hash; it can never be edited afterward.
                 </p>
                 <pre className="doc-code">{`metadataHash = keccak256(
   abi.encode(
@@ -925,8 +1213,8 @@ export default function DocsPage() {
               <Section id="payment-reputation">
                 <p>
                   Every payer who settles an on-chain bill in full earns <strong>verifiable payment reputation</strong> using
-                  the <a href="https://eips.ethereum.org/EIPS/eip-8004">ERC-8004</a> registries Arc pre-deploys on testnet —
-                  no Splitsy contract is involved. The payer&apos;s wallet receives an <strong>identity NFT</strong> on the
+                  the <a href="https://eips.ethereum.org/EIPS/eip-8004">ERC-8004</a> registries Arc pre-deploys on both of its
+                  networks — no Splitsy contract is involved. The payer&apos;s wallet receives an <strong>identity NFT</strong> on the
                   IdentityRegistry, and each completed payment is recorded as a scored feedback entry on the
                   ReputationRegistry. When someone later tags that payer into a new bill, the creation form shows a badge:
                   <em> &quot;Paid N bills in full on Arc · 97/100 timeliness&quot;</em>.
@@ -950,6 +1238,13 @@ export default function DocsPage() {
                     ],
                   ]}
                 />
+                <Note title="Reputation is switched on, not assumed">
+                  Both registries are Arc&apos;s own, and Arc mainnet has its own pair at different addresses. Splitsy treats
+                  them as <strong>opt-in</strong>: with the addresses unconfigured, reputation is off and off is silent —
+                  payments still succeed, and nothing is minted or scored. Turning it on spends gas from Splitsy&apos;s
+                  registrar and validator wallets on the first bill anybody pays, which is why it is a deliberate act per
+                  deployment rather than a default.
+                </Note>
 
                 <Note title="Consent policy — why this can't be used to grief anyone">
                   Feedback is <strong>positive-only</strong> and recorded <strong>only for a payment the wallet itself
@@ -976,9 +1271,10 @@ export default function DocsPage() {
                       body: (
                         <>
                           Registration is lazy: on the wallet&apos;s first scored payment, <code>register()</code> mints its
-                          identity NFT. A Circle-wallet payer&apos;s own wallet signs (it just paid, so it holds gas); for
-                          browser-wallet payers a dedicated <strong>registrar</strong> wallet mints on their behalf, then
-                          transfers the NFT to the payer — every payer ends up owning their own identity.
+                          identity NFT. A wallet Splitsy can sign for signs its own registration (it just paid, so it holds
+                          gas); a wallet Splitsy holds no key for — an embedded wallet, or a connected browser wallet — has a
+                          dedicated <strong>registrar</strong> wallet mint on its behalf, which then transfers the NFT to the
+                          payer. Every payer ends up owning their own identity.
                         </>
                       ),
                     },
@@ -1033,16 +1329,16 @@ export default function DocsPage() {
                     [
                       "Payer",
                       "The wallet that paid the bill",
-                      "Owns (or is bound to) the identity NFT being scored. Circle-wallet payers sign their own registration.",
+                      "Owns (or is bound to) the identity NFT being scored. A wallet Splitsy can sign for registers itself.",
                     ],
                     [
                       "Registrar",
-                      "Dedicated Splitsy Circle wallet",
-                      "Mints identity NFTs for browser-wallet payers, who never hand Splitsy a wallet to sign with, then transfers each NFT to its payer. It holds those NFTs at mint time — which is exactly why it must not also score them.",
+                      "A dedicated Splitsy wallet",
+                      "Mints identity NFTs for payers Splitsy cannot sign as — embedded wallets and connected browser wallets — then transfers each NFT to its payer. It holds those NFTs at mint time, which is exactly why it must not also score them.",
                     ],
                     [
                       "Validator",
-                      "A second dedicated Splitsy Circle wallet",
+                      "A second dedicated Splitsy wallet",
                       <>
                         Records every <code>giveFeedback</code>. Distinct from the registrar and from all payer wallets, so the no-self-scoring rule always holds.
                       </>,
@@ -1142,9 +1438,33 @@ export default function DocsPage() {
 
               <Section id="circle-and-arc">
                 <p>
-                  Splitsy uses Circle and Arc technology for USDC movement and settlement. Arc Testnet is the destination network for
+                  Splitsy uses Circle and Arc technology for USDC movement and settlement. Arc is the destination network for
                   the app&apos;s contracts. Circle Gateway enables cross-chain USDC payments from any supported source chain
-                  directly to Arc Testnet in one flow.
+                  directly to Arc in one flow.
+                </p>
+                <Subhead>Two networks, one switch</Subhead>
+                <p>
+                  Arc has a test network and a live one, and a Splitsy deployment runs on exactly one of them. Which one is a
+                  single setting, and everything that follows from it — chain id, RPC, explorer, USDC address, the two Gateway
+                  contracts — is resolved from that one answer rather than configured value by value. This deployment is on{" "}
+                  <strong>Arc Testnet</strong>, where USDC is test USDC and has no monetary value.
+                </p>
+                <Table
+                  head={["", "Arc Testnet (here)", "Arc mainnet"]}
+                  rows={[
+                    ["Chain id", <code key="v">5042002</code>, <code key="v">5042</code>],
+                    ["Explorer", "testnet.arcscan.app", "explorer.arc.io"],
+                    ["USDC", "the same predeploy address on both", "—"],
+                    ["What the money is", "test USDC, no value", "real USDC"],
+                  ]}
+                />
+                <p>
+                  The rule the switch is built around is that being wrong must be cheap: anything other than the exact word for
+                  mainnet resolves to testnet, and a mainnet deployment missing an address refuses to act rather than quietly
+                  reading a test contract. Two things are not available on mainnet at all — the ERC-8183 job contract the{" "}
+                  <a href="#autopay-agents">autopay ceremony</a> runs on is not deployed there, and the batching SDK{" "}
+                  <a href="#scout-agent">Scout</a> pays through has no mainnet Arc support — so those two features are off
+                  rather than approximated.
                 </p>
                 <Rows
                   rows={[
@@ -1152,9 +1472,9 @@ export default function DocsPage() {
                       title: "Circle Gateway",
                       body: (
                         <>
-                          Pay from <strong>any supported testnet</strong> (Avalanche Fuji, Base Sepolia, Ethereum Sepolia) and settle on Arc.
-                          Two-step flow: sign an EIP-712 burn intent on the source chain (gas-free), then execute the mint transaction on Arc.
-                          No bridge UI, no waiting — native USDC moves chain-to-chain in seconds.
+                          Pay from <strong>any supported chain</strong> (on testnet: Avalanche Fuji, Base Sepolia, Ethereum Sepolia) and
+                          settle on Arc. Two-step flow: sign an EIP-712 burn intent on the source chain (gas-free), then execute the mint
+                          transaction on Arc. No bridge UI, no waiting — native USDC moves chain-to-chain in seconds.
                         </>
                       ),
                     },
@@ -1182,8 +1502,9 @@ export default function DocsPage() {
                       title: "Arc properties",
                       body: (
                         <>
-                          Arc is EVM-compatible, uses USDC as its gas token in the Arc environment, and supports CCTP-based USDC bridging.
-                          Gateway&apos;s GatewayMinter contract on Arc (<code>0x0022222A...</code>) handles the final mint step after attestation.
+                          Arc is EVM-compatible, uses USDC as its gas token, and supports CCTP-based USDC bridging. Gateway&apos;s
+                          GatewayMinter contract on Arc handles the final mint step after attestation, at a different address on each
+                          network. Gas in USDC is why an agent&apos;s balance has to cover gas as well as the payment it makes.
                         </>
                       ),
                     },
@@ -1234,6 +1555,8 @@ export default function DocsPage() {
                         <>
                           Per-bill ceiling, per-day ceiling, an allowed-creator list, a creator score floor, a verified-hash
                           requirement, and a bill-contents review. Every one is a ceiling evaluated before payment, never a target.
+                          The per-transaction ceiling is additionally enforced inside the wallet provider&apos;s own enclave, so
+                          it holds even against a bug in Splitsy&apos;s rule code.
                         </>
                       ),
                     },
@@ -1269,8 +1592,8 @@ export default function DocsPage() {
                     ],
                     [
                       "From your Splitsy wallet",
-                      "The same transfer, sent server-side from your Circle wallet.",
-                      "Your wallet PIN unlocked — the same five-minute unlock a normal send uses.",
+                      "The same transfer, prepared by the server and sent from the wallet you signed in with.",
+                      "Your approval — the wallet's own confirmation prompt, or your PIN on a deployment that uses PIN-gated sends.",
                     ],
                     [
                       "From anywhere else",
@@ -1707,10 +2030,12 @@ export default function DocsPage() {
 
                 <Subhead>Scout&apos;s wallet and on-chain identity</Subhead>
                 <p>
-                  Scout does not use a Circle wallet like yours. It holds a dedicated server-side account on Arc
-                  whose <strong>only</strong> job is signing x402 payment authorizations — deliberately separate
-                  from every user wallet, and funded with a small amount of test USDC deposited into Circle&apos;s
-                  Gateway so its payments can be batched.
+                  Scout does not use a wallet like yours. It holds a dedicated server-side account on Arc whose{" "}
+                  <strong>only</strong> job is signing x402 payment authorizations — deliberately separate from every user
+                  wallet, and funded with a small amount of test USDC deposited into Circle&apos;s Gateway so its payments can
+                  be batched. Batching is also what limits Scout to the test network: the SDK it pays through has no Arc
+                  mainnet support, so a mainnet deployment runs with Scout switched off rather than paying real USDC on a
+                  test chain.
                 </p>
                 <p>
                   It is also registered as an agent on the same{" "}
@@ -1763,8 +2088,8 @@ export default function DocsPage() {
                       title: "One settlement",
                       body: (
                         <>
-                          Settle net pays every debt and collects every claimable bill in one action. On a Splitsy
-                          wallet the whole thing is <strong>one atomic transaction</strong>.
+                          Settle net pays every debt and collects every claimable bill in one action. The registry carries the
+                          whole batch in a single <code>settle</code> call, so it lands or reverts as one thing.
                         </>
                       ),
                     },
@@ -1794,44 +2119,56 @@ export default function DocsPage() {
                 <p>
                   Settling bill by bill means an approval plus a payment for every debt, and a claim for every
                   bill you are collecting on — <code>2 × debts + claims</code> transactions in total. What
-                  replaces that depends on which wallet signs:
+                  replaces that is one <code>settle(claimIds, payIds, amounts)</code> call on the registry, which runs every
+                  claim first — so the money you collect can fund the payments in the same transaction — and then every
+                  payment, all-or-nothing. A pay amount of zero means &quot;whatever I still owe&quot;, worked out at
+                  execution time, so a payment that lands while you are signing cannot make the batch revert on a stale
+                  figure.
+                </p>
+                <p>
+                  How many transactions that takes depends only on whether your wallet can bundle the USDC approval with it:
                 </p>
                 <Table
                   head={["Signing wallet", "Transactions to settle everything", "Failure behaviour"]}
                   rows={[
                     [
-                      "Splitsy wallet (social sign-in)",
+                      "Splitsy wallet — smart contract account",
                       <>
-                        <strong>1</strong> — every approval, payment and claim in one atomic batch
+                        <strong>1</strong> — the approval and the <code>settle</code> in one atomic batch
                       </>,
                       "All-or-nothing: if any leg would fail, the entire batch reverts and nothing settles.",
                     ],
                     [
-                      "Connected browser wallet",
+                      "Splitsy wallet — embedded wallet, or a connected browser wallet",
                       <>
-                        <strong>1 approval + 1 per debt + 1 per claim</strong>
+                        <strong>2</strong> — one <code>approve</code>, then one <code>settle</code>
                       </>,
-                      "Sequential: the progress modal shows exactly which step is running, and a later step failing leaves earlier ones settled.",
+                      <>
+                        The <code>settle</code> is still all-or-nothing. A dropped second prompt leaves an unspent approval,
+                        never a half-paid bill.
+                      </>,
                     ],
                   ]}
                 />
                 <p>
-                  The asymmetry is not arbitrary. Splitsy&apos;s social wallets are Circle{" "}
-                  <strong>smart contract accounts</strong>, which can execute a batch of calls as one atomic
-                  transaction; a connected browser wallet is a plain externally-owned account, which cannot, so it
-                  still signs each leg. Either way a <strong>single USDC approval</strong> covers every payment
-                  instead of one approval per bill.
+                  The asymmetry is not arbitrary, and it is not about leg count — two transactions cover ten bills exactly as
+                  they cover one. A smart contract account can execute several calls as a single atomic transaction, so the
+                  approval rides along; an ordinary account cannot, so the approval is its own prompt. Which of the two a
+                  request is sending is read from the approval already on chain rather than counted in the browser, so a
+                  reload picks up wherever the chain actually is. A selection with nothing to pay costs one transaction —
+                  there is no approval to send.
                 </p>
 
                 <Subhead>Settling from your Splitsy wallet</Subhead>
                 <Steps
                   steps={[
                     {
-                      title: "Unlock the wallet",
+                      title: "Approve it in your wallet",
                       body: (
                         <>
-                          Because this moves money, Settle net requires your wallet PIN to be unlocked — the same
-                          five-minute unlock used for a normal send. Locked, the button tells you to unlock first.
+                          Because this moves money, it needs your approval — the wallet&apos;s own confirmation prompt, or your
+                          PIN on a deployment that uses PIN-gated sends. Until then the button tells you so rather than
+                          starting.
                         </>
                       ),
                     },
@@ -1846,11 +2183,12 @@ export default function DocsPage() {
                       ),
                     },
                     {
-                      title: "One batch is assembled and sent",
+                      title: "The batch is assembled and sent",
                       body: (
                         <>
-                          One USDC approval for the summed total, one payment per debt, one claim per collectible bill —
-                          packed into a single atomic transaction against your own wallet account.
+                          One USDC approval for the summed total, then one <code>settle</code> carrying a claim for every
+                          collectible bill and a payment for every debt — as a single atomic transaction if your wallet can
+                          bundle the approval, and as two otherwise.
                         </>
                       ),
                     },
@@ -1886,8 +2224,8 @@ export default function DocsPage() {
                       title: "Experience layer",
                       body: (
                         <>
-                          The Splitsy web app handles receipt upload, bill review, split editing, wallet connection, debt payment,
-                          claim flows, recurring tab creation, approval management, tab selection, and event display.
+                          The Splitsy web app handles the IOU composer, receipt upload, bill review, split editing, wallet connection,
+                          debt payment, claim flows, recurring tab creation, approval management, tab selection, and event display.
                         </>
                       ),
                     },
@@ -1895,8 +2233,8 @@ export default function DocsPage() {
                       title: "Service layer",
                       body: (
                         <>
-                          Receipt extraction, currency conversion, and recurring settlement automation are handled outside the payment
-                          interface so users only see the actions they need.
+                          Receipt extraction, currency conversion, escrow releases at sign-in, and recurring settlement automation are
+                          handled outside the payment interface so users only see the actions they need.
                         </>
                       ),
                     },
@@ -1904,8 +2242,10 @@ export default function DocsPage() {
                       title: "Contracts",
                       body: (
                         <>
-                          <code>BillSplitRegistry</code> stores one-time debts. <code>RecurringTabFactory</code> creates recurring tab
-                          contracts. <code>RecurringTab</code> handles fixed-share scheduled collection and claimable balances.
+                          <code>BillSplitRegistry</code> stores one-time debts and the batched <code>settle</code>.{" "}
+                          <code>HandleEscrow</code> holds money for a person who has no wallet yet.{" "}
+                          <code>RecurringTabFactory</code> creates recurring tab contracts, and <code>RecurringTab</code> handles
+                          fixed-share scheduled collection and claimable balances.
                         </>
                       ),
                     },
@@ -1914,7 +2254,8 @@ export default function DocsPage() {
                       body: (
                         <>
                           Wallet, contract, and Circle bridge integrations are separated from the interface so payment flows remain
-                          consistent across one-time bills and recurring tabs.
+                          consistent across IOUs, one-time bills and recurring tabs. One module decides which Arc network the
+                          deployment is on, and every chain value is read from it rather than configured separately.
                         </>
                       ),
                     },
@@ -1928,15 +2269,19 @@ export default function DocsPage() {
                     },
                     {
                       title: "Typed transaction layer",
-                      body: "Strongly typed contract reads and writes for USDC payments, approvals, event history, and Arc Testnet wallet interactions.",
+                      body: "Strongly typed contract reads and writes for USDC payments, approvals, event history, and Arc wallet interactions.",
+                    },
+                    {
+                      title: "Two wallet backends",
+                      body: "One interface, two implementations: an embedded wallet the user owns, or a server-operated developer-controlled wallet. A deployment picks one, and the ~40 route handlers behind the session never learn which.",
                     },
                     {
                       title: "Solidity contracts",
-                      body: "Bill registry and recurring tab contracts define the accounting rules that keep payments verifiable onchain.",
+                      body: "Bill registry, handle escrow and recurring tab contracts define the accounting rules that keep payments verifiable onchain.",
                     },
                     {
                       title: "Circle Gateway",
-                      body: "Permissionless cross-chain USDC payments from Avalanche, Base, or Ethereum into Arc Testnet using EIP-712 burn intents and Gateway attestation.",
+                      body: "Permissionless cross-chain USDC payments from Avalanche, Base, or Ethereum into Arc using EIP-712 burn intents and Gateway attestation.",
                     },
                     {
                       title: "CCTP",
@@ -1944,7 +2289,7 @@ export default function DocsPage() {
                     },
                     {
                       title: "Settlement automation",
-                      body: "Protected automation checks recurring tabs on a schedule so payers do not need to press a settle button each cycle.",
+                      body: "Protected automation checks recurring tabs on a schedule so payers do not need to press a settle button each cycle, and nudges overdue shares on the creditor side.",
                     },
                     {
                       title: "Agent economy",
@@ -1964,9 +2309,17 @@ export default function DocsPage() {
                   rows={[
                     [
                       <code key="c">BillSplitRegistry</code>,
-                      "Creates bills, records participant debts, accepts partial or full payments, and lets splitters claim paid funds.",
+                      "Creates bills, records participant debts, accepts partial or full payments, batches claims and payments into one settle call, refunds a failed all-or-nothing bill, and lets splitters claim paid funds.",
                       <>
-                        <code>BillCreated</code>, <code>DebtPaid</code>, <code>FundsClaimed</code>
+                        <code>BillCreated</code>, <code>DebtPaid</code>, <code>DebtRefunded</code>,{" "}
+                        <code>FundsClaimed</code>, <code>DebtCollected</code>
+                      </>,
+                    ],
+                    [
+                      <code key="c">HandleEscrow</code>,
+                      "Holds USDC against a hash of someone's handle until they sign in, releases it to the wallet they arrive with, and lets the sender reclaim it at any time before that.",
+                      <>
+                        <code>Deposited</code>, <code>Released</code>, <code>Reclaimed</code>
                       </>,
                     ],
                     [
@@ -1983,6 +2336,17 @@ export default function DocsPage() {
                     ],
                   ]}
                 />
+                <Subhead>The live Arc Testnet deployment</Subhead>
+                <pre className="doc-code">{`BillSplitRegistry   0x8e30ca7f7347854629619aec68bd29d7ebedbd48
+HandleEscrow        0xc29b959868828702c37811deba826da48f0e1a6d
+RecurringTabFactory 0x9Cc377C957255582BCa8084a950F52e59fB0a41E
+USDC                0x3600000000000000000000000000000000000000`}</pre>
+                <p>
+                  Every one of them is readable on the explorer, and the two addresses the app writes bills and escrow
+                  deposits to are printed in the footer of every page — so what this document claims and what the running site
+                  is pointed at can be compared without taking either on trust. The registry and the escrow share one
+                  immutable signing key, readable from both with <code>attester()</code>.
+                </p>
                 <p>
                   The payment contracts build on a small set of shared, audited security primitives rather than external dependencies.
                   Each is intentionally minimal and carries no owner, upgrade, or privileged path.
@@ -1994,7 +2358,7 @@ export default function DocsPage() {
                       <code key="m">ReentrancyGuard</code>,
                       "Abstract base",
                       <>
-                        Provides the <code>nonReentrant</code> modifier. Every fund-moving entrypoint (<code>payDebt</code>, <code>claim</code>, <code>settleTab</code>) inherits it, so a function cannot be re-entered while it executes.
+                        Provides the <code>nonReentrant</code> modifier. Every fund-moving entrypoint (<code>payDebt</code>, <code>claim</code>, <code>settle</code>, <code>refund</code>, <code>deposit</code>, <code>release</code>, <code>reclaim</code>, <code>settleTab</code>) inherits it, so a function cannot be re-entered while it executes.
                       </>,
                     ],
                     [
@@ -2034,7 +2398,15 @@ export default function DocsPage() {
                   the operator: an agent that runs out of USDC skips with <code>agent_unfunded</code> and creates nothing on
                   chain, so restoring it is a top-up rather than an operator action. The Splitsy Settler and Auditor pay for
                   their own transactions out of their own balances, and an unset settlement configuration reads as autopay{" "}
-                  <strong>off</strong> — never as &quot;settle without the job&quot;.
+                  <strong>off</strong> — never as &quot;settle without the job&quot;. On the creditor side, a scheduled job
+                  nudges a share before its due date, escalates after it, and pulls only where the debtor granted a per-bill
+                  collect mandate.
+                </p>
+                <p>
+                  One operator duty has no user-visible counterpart: the wallet that relays{" "}
+                  <a href="#no-wallet-yet">escrow releases</a> needs USDC, because Arc charges gas in USDC. If it runs dry the
+                  releases stop and nothing on screen says so — deposits stay safe and reclaimable, and sign-ins keep working,
+                  which is the right failure but a quiet one. It is monitored by balance, not by error.
                 </p>
               </Section>
 
@@ -2045,9 +2417,12 @@ export default function DocsPage() {
                   <li>Recurring settlement is protected by operational controls and is not exposed as a public user action.</li>
                   <li>Every fund-moving entrypoint follows checks-effects-interactions and is guarded by the shared <code>ReentrancyGuard</code> (<code>nonReentrant</code>) module.</li>
                   <li>All USDC movement routes through the <code>SafeERC20</code> library, so a token that returns no data or <code>false</code> can never be treated as a successful transfer.</li>
-                  <li>Contracts hold no privileged owner and expose no upgrade, pause, sweep, or <code>selfdestruct</code> path; funds can only ever leave to a bill&apos;s splitter or a tab&apos;s immutable recipient.</li>
+                  <li>Contracts hold no privileged owner and expose no upgrade, pause, sweep, or <code>selfdestruct</code> path; funds can only ever leave to a bill&apos;s splitter, a refunded payer, a tab&apos;s immutable recipient, or an escrow deposit&apos;s recipient or depositor.</li>
+                  <li>Where a payment is signed by the user&apos;s own wallet, the server compares the signed transaction against the one it prepared before broadcasting it — otherwise a user could sign anything from their own wallet and have a route mark a debt paid.</li>
+                  <li>Money held for someone with no wallet is released only against a signature that names the deposit, the recipient and a deadline, and the depositor can <a href="#no-wallet-yet">reclaim</a> it unconditionally until that happens.</li>
+                  <li>An address derived from a handle has no key anywhere, which is why it is only ever used to <em>file</em> a debt and never to receive money.</li>
                   <li>Sensitive operational credentials must never be exposed in browser code, screenshots, public docs, or client logs.</li>
-                  <li>Contracts use custom errors and explicit checks for invalid amounts, unknown bills, unauthorized claims, and duplicate recurring members.</li>
+                  <li>Contracts use custom errors and explicit checks for invalid amounts, unknown bills, unauthorized claims, expired signatures, and duplicate recurring members.</li>
                   <li>Receipt OCR data should be reviewed by the splitter before submission. The scanner is a convenience layer, not an accounting authority.</li>
                   <li>Bridge flows depend on the connected wallet signing each step and on Circle attestation for CCTP minting.</li>
                   <li>Payment reputation is consent-based and positive-only: a score can only be created by a payment the wallet itself made, and every entry is re-verifiable against the on-chain payment it commits to (see <a href="#payment-reputation">Payment Reputation</a>).</li>
@@ -2063,9 +2438,59 @@ export default function DocsPage() {
 
               <Section id="configuration">
                 <p>
-                  Splitsy should be connected to the intended Arc Testnet contracts before users create bills or recurring tabs.
-                  Contract addresses, USDC token settings, bridge support, receipt scanning, and settlement automation are managed by
-                  the operator during deployment.
+                  Splitsy should be connected to the intended Arc contracts before users create bills or recurring tabs.
+                  Contract addresses, the network itself, USDC settings, bridge support, receipt scanning, and settlement
+                  automation are all managed by the operator at deployment.
+                </p>
+                <Subhead>What an operator decides</Subhead>
+                <Table
+                  head={["Setting", "What it chooses", "What its absence means"]}
+                  rows={[
+                    [
+                      "Network",
+                      <>
+                        Arc Testnet or Arc mainnet. Chain id, RPC, explorer, USDC and the Gateway contracts all follow from it.
+                      </>,
+                      "Testnet — the network where being wrong costs nothing.",
+                    ],
+                    [
+                      "Contract addresses",
+                      <>
+                        Which registry, escrow and tab factory this deployment reads and writes. Each network has its own set,
+                        so both can be configured at once and one setting decides which is live.
+                      </>,
+                      <>
+                        The feature refuses rather than guessing. A missing escrow address means money is never sent to a
+                        stranger, not sent somewhere else.
+                      </>,
+                    ],
+                    [
+                      "Wallet backend",
+                      "Whether sign-in produces an embedded wallet the user owns or a server-operated one.",
+                      "The server-operated wallet — the older path, which is what a misspelled value lands on.",
+                    ],
+                    [
+                      "Reputation registries",
+                      <>
+                        Whether <a href="#payment-reputation">payment reputation</a> is recorded at all.
+                      </>,
+                      "Off, and silently: payments succeed and nothing is minted or scored.",
+                    ],
+                    [
+                      "Agent economy",
+                      <>
+                        Whether <a href="#autopay-agents">autopay</a> runs as ERC-8183 jobs.
+                      </>,
+                      <>
+                        Autopay off — never &quot;settle without the job&quot;.
+                      </>,
+                    ],
+                  ]}
+                />
+                <p>
+                  Every browser-visible setting is frozen into the build that saw it, so changing one needs a redeploy rather
+                  than a saved value. That cuts both ways and is worth stating: a setting left <em>unset</em> keeps a live
+                  read, so the age of a build is never what keeps a feature off — only the absence of the value is.
                 </p>
                 <Rows
                   rows={[
@@ -2073,8 +2498,8 @@ export default function DocsPage() {
                       title: "For users",
                       body: (
                         <>
-                          Use a compatible browser wallet, switch to the supported Arc Testnet network, keep enough USDC for payments, and
-                          review every wallet prompt before signing.
+                          Use a compatible browser wallet or sign in for one, stay on the supported Arc network, keep enough USDC for
+                          payments and gas, and review every wallet prompt before signing.
                         </>
                       ),
                     },

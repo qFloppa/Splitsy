@@ -88,6 +88,45 @@ export async function verifySigninSignature(input: {
   });
 }
 
+// WHICH ACCOUNT a proven browser-wallet signature signs into.
+//
+// The signature is verified by the caller; this only decides whose session it
+// becomes, and there are three answers because a linked wallet is not a rival
+// account — it is the second login its owner attached to one:
+//
+//   'self'   — nobody else holds this address, so it gets an account of its own.
+//              The path POST /api/auth/wallet has always taken.
+//   'holder' — a social account has LINKED this wallet, so the agent that
+//              settles its bills lives there, along with that agent's balance,
+//              its rules and its log. Refusing made the wallet unable to reach
+//              any of it — the agent was manageable only from the social login,
+//              which is the one thing linking exists to avoid. The account's
+//              owner is who attached this key, and this signature is that key
+//              proving itself again.
+//   'busy'   — the same, but another social session is live in this browser.
+//              Connecting a wallet is not a request to be signed out of the
+//              account you are in, so that session stands and the caller names
+//              where the wallet lives instead.
+//
+// Pure, so the one decision that hands out a session is testable without a
+// database: everything it needs is already resolved by the caller.
+export function walletSigninAccount(input: {
+  address: string;
+  // The account holding this address as its linked wallet, if any.
+  holder: { provider: string; providerUserId: string } | null;
+  // The provider of the session already in this browser, or null when signed out.
+  sessionProvider: string | null;
+}): "self" | "holder" | "busy" {
+  const { holder } = input;
+  if (!holder) return "self";
+  // The wallet's OWN account holds its own link — the sign-in route writes it on
+  // every sign-in — and that is not somebody else's claim on the address.
+  if (holder.provider === "wallet" && holder.providerUserId.toLowerCase() === input.address.toLowerCase()) {
+    return "self";
+  }
+  return input.sessionProvider && input.sessionProvider !== "wallet" ? "busy" : "holder";
+}
+
 // Fired on `window` once a wallet session has been dropped and the server has
 // confirmed the cookie is gone. Panels that read the session when they mount —
 // the Agents tab holds the account's caps, decision log and agent balance —

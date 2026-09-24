@@ -5,6 +5,7 @@ import {
   buildLinkMessage,
   buildSigninMessage,
   isStaleWalletSession,
+  walletSigninAccount,
   verifyLinkSignature,
   verifySigninSignature,
   LINK_MAX_AGE_MS,
@@ -278,5 +279,57 @@ test("isStaleWalletSession fires on an account switch and on a disconnect", () =
     isStaleWalletSession({ provider: "x", handle: "qFloppa" }, { connected: false }),
     false,
     "a social account's browser wallet is a linked wallet, not its identity",
+  );
+});
+
+// The bug this decision exists for: a browser wallet linked to a social account
+// could not sign in AT ALL, so the agent it funds — its balance, its rules, its
+// log — was reachable only through the social login. Both linked wallets must
+// reach one agent, and the wallet half of that is this function.
+test("walletSigninAccount signs a linked wallet into the account that linked it", () => {
+  const address = account.address.toLowerCase();
+
+  // Nobody holds it: mint an account of its own, as this route always has.
+  assert.equal(
+    walletSigninAccount({ address, holder: null, sessionProvider: null }),
+    "self",
+    "an unlinked wallet gets its own account",
+  );
+
+  // The wallet's OWN account holds its own link — the sign-in route writes it on
+  // every sign-in — so this must not read as somebody else's claim, or a plain
+  // returning wallet user would be redirected into their own account and never
+  // re-provisioned.
+  assert.equal(
+    walletSigninAccount({
+      address,
+      holder: { provider: "wallet", providerUserId: account.address },
+      sessionProvider: null,
+    }),
+    "self",
+    "its own account, in checksummed casing, is still itself",
+  );
+
+  // The fix. A social account linked it, so its agent is there.
+  assert.equal(
+    walletSigninAccount({ address, holder: { provider: "x", providerUserId: "12345" }, sessionProvider: null }),
+    "holder",
+    "a linked wallet signs into the social account holding its agent",
+  );
+
+  // A wallet session is replaced as normal — the extension has moved on — so
+  // holding one must not block the switch.
+  assert.equal(
+    walletSigninAccount({ address, holder: { provider: "x", providerUserId: "12345" }, sessionProvider: "wallet" }),
+    "holder",
+    "a wallet session is not an identity worth keeping",
+  );
+
+  // One live social session is never traded for another: connecting a wallet is
+  // not a request to be signed out of the account you are in.
+  assert.equal(
+    walletSigninAccount({ address, holder: { provider: "x", providerUserId: "12345" }, sessionProvider: "discord" }),
+    "busy",
+    "a live social session stands",
   );
 });

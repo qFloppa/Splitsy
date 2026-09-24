@@ -27,7 +27,12 @@ import { siteContracts } from "@/lib/site-contracts";
 //                       foot of the page it was a display-sized restatement
 //   the link columns    two columns of four links are five rows tall to a rail's
 //                       one, plus two headings that only labelled four links each
-//   three contracts     a footer is not a deployment manifest; the README is
+//   three of six rows   the ledger keeps Splitsy's own three deployments — the
+//                       registry, the handle escrow, the tab factory — and drops
+//                       Arc's predeploys, the mandate and AgenticCommerce: a
+//                       footer is not a deployment manifest, the README is. The
+//                       three that stayed print on one line above ~950px, so the
+//                       band costs one row rather than six
 //   the product nav     How it works / Agents / Market / Launch app / Docs are
 //                       the masthead's links; a reader who scrolled past it to
 //                       get here did not need them offered again

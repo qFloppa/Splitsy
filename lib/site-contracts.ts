@@ -2,11 +2,13 @@
 //
 // Every address here is one a reader can paste into the explorer and check
 // against what the site claims to write to, so it is read from the same env vars
-// the read paths already read — REGISTRY_ADDRESS in lib/arc-read.ts and
-// RECURRING_TAB_FACTORY_ADDRESS in lib/recurring-read.ts — rather than copied out
-// of the README. A footer that quietly drifts from the deployment is worse than a
-// footer with no addresses in it.
+// the read paths already read — REGISTRY_ADDRESS in lib/arc-read.ts,
+// RECURRING_TAB_FACTORY_ADDRESS in lib/recurring-read.ts and
+// HANDLE_ESCROW_ADDRESS in both — rather than copied out of the README. A footer
+// that quietly drifts from the deployment is worse than a footer with no
+// addresses in it.
 import { ARC_EXPLORER } from "./arc-explorer.ts";
+import { forArcNetwork } from "./arc-chain.ts";
 
 const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
 
@@ -32,18 +34,46 @@ export function shortenAddress(address: string) {
   return `${address.slice(0, 8)}…${address.slice(-6)}`;
 }
 
-// Two, and only Splitsy's own deployments: the contract that writes a bill and
-// the one that repeats it. Declared in that order because it is the order the
-// money moves through them.
+// Three, and only Splitsy's own deployments: the contract that writes a bill,
+// the one that holds a payment for someone who has no wallet yet, and the one
+// that repeats a bill. Declared in that order because it is the order the money
+// moves through them.
 //
 // Arc's own predeploys (USDC, the ERC-8004 registries), AutopayMandate and
 // AgenticCommerce are deliberately not here. They are real and the app uses them,
 // but a footer is not a deployment manifest — the README is — and every row costs
-// height on every route. Two rows also divide the ledger's one-column and
-// two-column layouts exactly, so neither leaves an orphaned rule.
+// height on every route. Three is also what the ledger prints on ONE line above
+// ~900px (see .site-footer-ledger), so the band stays a single row tall on the
+// viewport most readers arrive on.
+//
+// Which address each name resolves to follows NEXT_PUBLIC_ARC_NETWORK, exactly
+// as the read paths do: the unsuffixed variable is the testnet slot and the
+// `_MAINNET` twin is the mainnet slot (lib/arc-chain.ts). Printing the testnet
+// address under a mainnet explorer link is the one failure this band cannot be
+// allowed to have — it would be a wrong fact wearing a checkable link.
+//
+// The KEY NAME is what forArcNetwork picks between, not the value, because this
+// module reads `env` by index. That is server-only, which is where the footer
+// runs; nothing here is inlined into the browser bundle.
 const SOURCES: { label: string; env: string }[] = [
-  { label: "BillSplitRegistry", env: "NEXT_PUBLIC_BILL_SPLIT_REGISTRY_ADDRESS" },
-  { label: "RecurringTabFactory", env: "NEXT_PUBLIC_RECURRING_TAB_FACTORY_ADDRESS" },
+  {
+    label: "BillSplitRegistry",
+    env: forArcNetwork(
+      "NEXT_PUBLIC_BILL_SPLIT_REGISTRY_ADDRESS_MAINNET",
+      "NEXT_PUBLIC_BILL_SPLIT_REGISTRY_ADDRESS",
+    ),
+  },
+  {
+    label: "HandleEscrow",
+    env: forArcNetwork("NEXT_PUBLIC_HANDLE_ESCROW_ADDRESS_MAINNET", "NEXT_PUBLIC_HANDLE_ESCROW_ADDRESS"),
+  },
+  {
+    label: "RecurringTabFactory",
+    env: forArcNetwork(
+      "NEXT_PUBLIC_RECURRING_TAB_FACTORY_ADDRESS_MAINNET",
+      "NEXT_PUBLIC_RECURRING_TAB_FACTORY_ADDRESS",
+    ),
+  },
 ];
 
 /**

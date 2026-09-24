@@ -276,16 +276,22 @@ Production" is not a defence against a mis-scoped label.
 Four differences no variable papers over. Three of them are one fact: a Privy
 wallet is an **EOA** where a Circle DCW is a smart contract account.
 
-**Settle net is unavailable.** `app/api/treasury/settle/route.ts:63` refuses with
-503 when `WALLET_PROVIDER=privy`. The route is one `executeBatch` sent to the
-wallet's own address, which only an SCA can execute — and an EOA does not revert
-on calldata it cannot run, it **succeeds and does nothing**. Measured, not
+**Settle net costs two transactions, not one.** `app/api/treasury/settle` sends
+one `approve` and one `settle` as a single `executeBatch` on the Circle stack,
+and as two plain transactions here. It cannot do otherwise: an EOA does not
+revert on calldata it cannot run, it **succeeds and does nothing**. Measured, not
 reasoned: tx `0x5870092926417f148363962be768594b7e555bfd7d7f6e8d82f1547b00dadf95`
 (block 60147923) carried 324 bytes of `executeBatch` calldata to a Privy wallet's
 own address and came back `status: 0x1`, `gasUsed: 25290` — base cost plus
 calldata, zero execution — `logs: []`, with `eth_getCode` on the target `0x`.
-Before the refusal the route answered `{ok: true, paid: […]}` naming every leg as
-settled and queued ERC-8004 payment feedback for debts nobody paid.
+The route answered `{ok: true, paid: […]}` naming every leg as settled and queued
+ERC-8004 payment feedback for debts nobody paid. It refused the whole stack with
+503 for a while afterwards; it now picks its leg from the on-chain allowance
+instead, the same way `app/api/onchain-bills/[billId]/pay` does, and never builds
+a batch here. The settlement itself is still atomic — `settle` carries every
+claim and pay leg in one call — so the worst a dropped second prompt leaves is an
+unspent allowance. The dashboard quotes **2** rather than 1 on this stack, driven
+by `custodian` from `/api/me`.
 
 **Arming an on-chain mandate throws.** `app/api/agents/grants/route.ts:363`, for
 the same reason — `approve` + `setMandate` are sent as one `executeBatch`.
@@ -349,11 +355,13 @@ who forgets the password loses the wallet.
 
 **Off by default, and it must stay off until the routes are migrated.** A claimed
 wallet can send from the wallet panel (`app/api/wallet/send` signs in the browser)
-and little else: `debts/[id]/pay`, the `onchain-bills/*` paths, `recurring/*` and
-`treasury/settle` all still ask the server to sign and now get a refusal they
+and little else: `debts/[id]/pay`, the `onchain-bills/*` paths and `recurring/*`
+all still ask the server to sign and now get a refusal they
 cannot recover from. They fail cleanly — `NotOurWalletError`, nothing moves — but
 they fail. Turning this on before that work lands gives users a wallet that does
-less than the one they started with, permanently.
+less than the one they started with, permanently. (`treasury/settle` no longer
+belongs on that list — it signs per leg in the browser. The rest of the list is
+worth re-checking against the routes before anyone trusts it.)
 
 The agent wallet is deliberately unaffected: it keeps our quorum as owner and
 signer, which is what lets autopay run while the user is away, and it is the one

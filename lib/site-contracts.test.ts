@@ -2,10 +2,16 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { shortenAddress, siteContracts } from "./site-contracts.ts";
 
-const REGISTRY = "0x924Cf4331741401cBc720770937C132A974E1a3b";
+const REGISTRY = "0x8e30ca7f7347854629619aec68bd29d7ebedbd48";
+const ESCROW = "0xc29b959868828702c37811deba826da48f0e1a6d";
 const FACTORY = "0x9Cc377C957255582BCa8084a950F52e59fB0a41E";
 const ZERO = "0x0000000000000000000000000000000000000000";
 
+// NEXT_PUBLIC_ARC_NETWORK is unset under `node --test`, so the keys below are the
+// testnet slots — which is what forArcNetwork picks for any value but the exact
+// string "mainnet". A mainnet run reads the `_MAINNET` twins instead and prints
+// nothing for the ones that are blank, which is the "unset is dropped" case
+// already covered here.
 test("a configured contract becomes a row that links to the explorer", () => {
   const rows = siteContracts({ NEXT_PUBLIC_BILL_SPLIT_REGISTRY_ADDRESS: REGISTRY });
 
@@ -45,28 +51,31 @@ test("an empty environment prints no rows at all, so the band drops out entirely
 test("rows keep their declared order", () => {
   const rows = siteContracts({
     NEXT_PUBLIC_RECURRING_TAB_FACTORY_ADDRESS: FACTORY,
+    NEXT_PUBLIC_HANDLE_ESCROW_ADDRESS: ESCROW,
     NEXT_PUBLIC_BILL_SPLIT_REGISTRY_ADDRESS: REGISTRY,
   });
 
   assert.deepEqual(
     rows.map((row) => row.label),
-    ["BillSplitRegistry", "RecurringTabFactory"],
+    ["BillSplitRegistry", "HandleEscrow", "RecurringTabFactory"],
   );
 });
 
-// Two is load-bearing: it divides both ledger layouts (1 column, 2 columns)
-// exactly, so neither can leave a rule hanging with nothing beside it.
-test("a fully configured environment prints exactly two rows", () => {
+// Three is what the ledger fits on one line above ~900px. A fourth would wrap the
+// band onto a second row under every route, which is the height this footer is
+// built to refuse.
+test("a fully configured environment prints exactly three rows", () => {
   const rows = siteContracts({
     NEXT_PUBLIC_BILL_SPLIT_REGISTRY_ADDRESS: REGISTRY,
+    NEXT_PUBLIC_HANDLE_ESCROW_ADDRESS: ESCROW,
     NEXT_PUBLIC_RECURRING_TAB_FACTORY_ADDRESS: FACTORY,
   });
 
-  assert.equal(rows.length, 2);
+  assert.equal(rows.length, 3);
 });
 
 test("the printed address keeps the 0x and stays checkable at both ends", () => {
-  assert.equal(shortenAddress(REGISTRY), "0x924Cf4…4E1a3b");
+  assert.equal(shortenAddress(REGISTRY), "0x8e30ca…edbd48");
   // Two contracts that share a four-character head still read apart, which is
   // why the head is 8 and not 6.
   assert.notEqual(shortenAddress(REGISTRY), shortenAddress(FACTORY));

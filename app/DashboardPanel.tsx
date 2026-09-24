@@ -411,6 +411,7 @@ export default function DashboardPanel({
   browserWallet = null,
   socialProvider = null,
   socialHandle = null,
+  socialCustodian = null,
   onSettleNet,
 }: {
   socialWallet?: string | null;
@@ -419,6 +420,9 @@ export default function DashboardPanel({
   // it ("@alice" + platform badge) instead of the generic word "Social".
   socialProvider?: IdentityProvider | null;
   socialHandle?: string | null;
+  // Who holds socialWallet's keys. Only the settle deck reads it, and only to
+  // say how many transactions one click costs — see TreasurySection.
+  socialCustodian?: "Circle" | "Privy" | null;
   // Settle from the connected browser wallet. Owned by HomeClient, which holds
   // the wallet client and the progress modal; undefined when none is connected.
   onSettleNet?: (selection: TreasurySettleSelection) => Promise<string | void>;
@@ -605,6 +609,7 @@ export default function DashboardPanel({
           onSettleNet={onSettleNet}
           onSettled={reload}
           scope={effectiveScope}
+          socialCustodian={socialCustodian}
           treasury={data.treasury}
         />
       ) : showEmpty ? (
@@ -1249,14 +1254,17 @@ function DashboardSkeleton() {
 // The copy below says both out loud, and the button quotes the exact amounts
 // that will move.
 //
-// What batching does buy is transactions: a Circle SCA wallet lands the whole
-// selection in ONE atomic tx, a browser EOA needs one approve plus one settle()
-// — two prompts, whatever the leg count.
+// What batching does buy is transactions. One click costs ONE transaction on a
+// Circle DCW, which is a smart account and takes the whole selection as a single
+// atomic batch, and TWO on any plain EOA — a connected browser wallet, or a
+// Privy social wallet — which has to send the approve and the settle separately.
+// Two whatever the leg count, because settle() carries them all.
 function TreasurySection({
   treasury,
   isDemo,
   scope,
   bothIdentities,
+  socialCustodian,
   onSettleNet,
   onSettled,
 }: {
@@ -1264,6 +1272,7 @@ function TreasurySection({
   isDemo: boolean;
   scope: Scope;
   bothIdentities: boolean;
+  socialCustodian: "Circle" | "Privy" | null;
   onSettleNet?: (selection: TreasurySettleSelection) => Promise<string | void>;
   onSettled: () => void;
 }) {
@@ -1290,10 +1299,13 @@ function TreasurySection({
   // browser EOA), so settling needs an explicit choice of which one pays.
   const needsScopeChoice = bothIdentities && scope === "all";
   const canSettle = hasWork && !isDemo && !needsScopeChoice && (scope === "social" || Boolean(onSettleNet));
-  // Social = Circle SCA → one atomic executeBatch. Wallet = EOA → approve +
-  // settle(), which since registry v2 carries every claim and pay leg, so the
-  // count is 2 no matter how many legs (1 when there is nothing to approve).
-  const atomic = scope === "social";
+  // One transaction only when the signer is a smart account, which on the social
+  // side means a Circle DCW. A Privy social wallet is an EOA and settles exactly
+  // like the browser one: approve, then settle() carrying every claim and pay
+  // leg — so the count is 2 no matter how many legs (1 when there is nothing to
+  // approve). Unknown custodian reads as the EOA count, which is the honest way
+  // round: promising one transaction and sending two is the wrong surprise.
+  const atomic = scope === "social" && socialCustodian === "Circle";
   const grossTxCount = 2 * payBillCount + claimBillCount;
   const settledTxCount = atomic ? 1 : payBillCount > 0 ? 2 : 1;
   const net = num(treasury.netUsdc);
@@ -1351,7 +1363,7 @@ function TreasurySection({
           paidCount ? `paid ${plural(paidCount, "bill")}` : "",
           claimedCount ? `collected ${plural(claimedCount, "bill")}` : "",
         ].filter(Boolean);
-        setNote(`Done — ${parts.join(" and ")} in one transaction on Arc.`);
+        setNote(`Done — ${parts.join(" and ")} in ${plural(settledTxCount, "transaction")} on Arc.`);
       }
       onSettled();
     } catch (e) {
@@ -1569,7 +1581,9 @@ function TreasurySection({
               note={
                 atomic
                   ? "one atomic transaction — every approval, payment and claim lands together, or none of it does"
-                  : "one USDC approval, then one transaction carrying every payment and collection"
+                  : payBillCount > 0
+                    ? "one USDC approval, then one transaction carrying every payment and collection"
+                    : "one transaction carrying every collection — nothing to approve when nothing is being paid"
               }
               value={String(settledTxCount)}
             />

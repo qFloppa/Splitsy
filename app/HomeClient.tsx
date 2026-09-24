@@ -383,6 +383,11 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
     slotAddress: string | null;
     provider: IdentityProvider | null;
     handle: string | null;
+    // Who holds the social wallet's keys, which is also what decides how it can
+    // settle: a Circle DCW is a smart account and lands a batch in one
+    // transaction, a Privy wallet is an EOA and needs two. The dashboard quotes
+    // that number before the user clicks, so it cannot be hard-coded there.
+    custodian?: "Circle" | "Privy";
   } | null>(null);
   // Which of the user's two identities creates a bill when BOTH are live (signed
   // in social + connected browser wallet). Defaults to the browser wallet — the
@@ -3538,6 +3543,7 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
               browserWallet={connectedWalletAccount}
               socialProvider={me?.provider ?? null}
               socialHandle={me?.handle ?? null}
+              socialCustodian={me?.custodian ?? null}
               onSettleNet={connectedWalletAccount ? settleNetWithWallet : undefined}
             />
 

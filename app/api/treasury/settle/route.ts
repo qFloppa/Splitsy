@@ -1,20 +1,19 @@
-// "Settle net" for the Circle wallet identity: approve, pay the outstanding
-// debts the user selected, and claim every funded bill — as ONE atomic on-chain
-// transaction.
+// "Settle net" for the social wallet identity: approve, pay the outstanding
+// debts the user selected, and claim every funded bill.
 //
-// Splitsy's social wallets are Circle SCA accounts (lib/circle-dcw.ts), which
-// expose executeBatch on the wallet's own address. Atomicity is the point: one
-// reverting leg reverts everything, so there is no half-settled state to report
-// or unwind. See https://developers.circle.com/wallets/batch-operations.md
-//
-// Since registry v2 the batch is just TWO calls: one approve, then one
+// Since registry v2 that is just TWO calls: one approve, then one
 // settle(claimIds, payIds, amounts) that carries every leg. The registry itself
 // runs the claims before the pays, so claim proceeds fund the pay legs inside
 // the same transaction.
 //
+// HOW THOSE TWO CALLS ARE SENT DEPENDS ON THE WALLET, and that is the only
+// difference between the stacks here — see step 3. A Circle DCW is an SCA
+// (lib/circle-dcw.ts) and takes both in one atomic executeBatch; a Privy wallet
+// is a plain EOA and takes them one after the other.
+//
 // Note this does NOT move less USDC — registry accounting binds each debt to its
 // billId, so every debt still gets its own pay leg. What collapses is the
-// transaction count: 2N+M calls become 2.
+// transaction count: 2N+M calls become 2, or 1 on an SCA.
 //
 // The body selects WHICH legs run (so a bogus bill can be left unpaid); it never
 // carries an amount. Every amount is read from chain.
@@ -31,6 +30,7 @@ import {
   getBillIdsForSplitterOnchain,
   getBillsOnchain,
   getParticipantsOnchain,
+  getUsdcAllowanceOnchain,
   getUsdcBalanceOnchain,
 } from "@/lib/arc-read";
 import { recordPaidFeedbackSafely } from "@/lib/erc8004";
@@ -47,27 +47,6 @@ const usdc = (v: bigint) => (Number(v) / 1e6).toString();
 export async function POST(request: Request) {
   const user = await getSessionUser();
   if (!user) return Response.json({ error: "Not signed in" }, { status: 401 });
-
-  // The whole route is ONE executeBatch sent to the wallet's own address, which
-  // only a Circle SCA can execute. The Privy stack's wallets are EOAs — and an
-  // EOA does not revert on calldata it cannot run, it IGNORES it. Measured on
-  // Arc rather than reasoned about: tx
-  // 0x5870092926417f148363962be768594b7e555bfd7d7f6e8d82f1547b00dadf95 sent 324
-  // bytes of executeBatch calldata to a Privy wallet's own address and came back
-  // status success, 25290 gas, no logs, with the batch's one approve leg simply
-  // not done. receiptToState reads that as "COMPLETE", so without this refusal
-  // the route would answer {ok: true} naming every leg as settled and then queue
-  // ERC-8004 payment feedback for debts nobody paid, off money that never moved.
-  //
-  // Refused here, ahead of the unlock prompt and every chain read: a silent
-  // success is not something a later check can undo, and there is no point
-  // asking someone for their PIN to authorise a transaction we must refuse.
-  if (walletProviderName() === "privy") {
-    return Response.json(
-      { error: "Settle net is only available on the Circle wallet stack" },
-      { status: 503 },
-    );
-  }
 
   const secret = process.env.SESSION_SECRET ?? "";
   const unlockToken = (await cookies()).get(WALLET_UNLOCK_COOKIE)?.value ?? "";
@@ -135,27 +114,21 @@ export async function POST(request: Request) {
     );
   }
 
-  // 2. Build the batch: approve, then one settle carrying every leg. The
+  // 2. Build the two calls: approve, then one settle carrying every leg. The
   //    approval must precede the settle that spends it; the claim-before-pay
   //    ordering is the registry's own, so it no longer has to be arranged here.
   const total = payLegs.reduce((s, l) => s + l.amount, 0n);
-  const calls: { to: string; data: `0x${string}` }[] = [];
-  if (total > 0n) {
-    calls.push({ to: ARC_USDC_ADDRESS, data: encodeApprove(REGISTRY_ADDRESS, total) });
-  }
-  calls.push({
-    to: REGISTRY_ADDRESS,
-    data: encodeSettle(
-      claimLegs.map((l) => l.billId),
-      payLegs.map((l) => l.billId),
-      payLegs.map((l) => l.amount),
-    ),
-  });
+  const approveData = encodeApprove(REGISTRY_ADDRESS, total);
+  const settleData = encodeSettle(
+    claimLegs.map((l) => l.billId),
+    payLegs.map((l) => l.billId),
+    payLegs.map((l) => l.amount),
+  );
 
   // 2b. Short wallet? Say so now. Circle reports an on-chain revert as a bare
   //     "execution failed", which reads as a bug rather than as an empty wallet.
-  //     Claims count toward the budget because they execute first in the same
-  //     atomic transaction. Gas is USDC on Arc too, so a wallet that clears this
+  //     Claims count toward the budget because they execute first inside the same
+  //     settle call. Gas is USDC on Arc too, so a wallet that clears this
   //     by a hair can still fail — this catches the honest shortfall, not a
   //     rounding one.
   if (total > 0n) {
@@ -169,31 +142,91 @@ export async function POST(request: Request) {
     }
   }
 
-  // 3. One atomic transaction, sent to the wallet's OWN address (that is where
-  //    executeBatch lives on an SCA account).
+  // 3. Send it. THE ONLY PLACE THE TWO WALLET STACKS DIFFER.
+  //
+  // A Circle DCW is an SCA, so both calls go out as ONE executeBatch sent to the
+  // wallet's own address — all-or-nothing, nothing to unwind.
+  //
+  // A Privy wallet is a plain EOA and cannot do that. Not "does it badly":
+  // an EOA does not revert on calldata it cannot run, it IGNORES it. Measured on
+  // Arc rather than reasoned about — tx
+  // 0x5870092926417f148363962be768594b7e555bfd7d7f6e8d82f1547b00dadf95 sent 324
+  // bytes of executeBatch calldata to a Privy wallet's own address and came back
+  // status success, 25290 gas, no logs, with the approve leg simply not done, which
+  // receiptToState reads as "COMPLETE". So the EOA sends the two calls as two
+  // transactions instead, and never builds a batch at all.
+  //
+  // WHAT THAT COSTS IS ONE EXTRA PROMPT, NOT THE SETTLEMENT'S ATOMICITY. settle()
+  // is still a single call carrying every claim and every pay leg, claims first.
+  // Only the approve stands outside it, and an approve that lands without its
+  // settle leaves an unspent allowance — not a half-paid bill.
+  const eoa = walletProviderName() === "privy";
+
+  // WHICH LEG, decided by the chain rather than by the client — the same trick as
+  // app/api/onchain-bills/[billId]/pay. When the user signs, each leg is its own
+  // prepare/sign/relay round trip, because the second leg's nonce follows the
+  // first. An allowance already covering the debt means the approve has mined and
+  // settle is next. Re-read on every pass, so a browser that dies after the
+  // approve resumes at settle, and one that retries the approve gets the settle it
+  // actually needs.
+  const leg: "approve" | "settle" =
+    eoa && total > 0n && (await getUsdcAllowanceOnchain(wallet, REGISTRY_ADDRESS)) < total ? "approve" : "settle";
+
+  // The wallet, the calldata, and what a ticket for it is allowed to be relayed
+  // as. The context carries a digest of the legs — a settlement is many calls in
+  // one transaction, so binding only the wallet would let a ticket for one plan
+  // relay against a different one — and on an EOA the LEG as well, so an approve
+  // ticket cannot be relayed as a settle or the other way round.
+  const [to, data, context] = eoa
+    ? ([
+        leg === "approve" ? ARC_USDC_ADDRESS : REGISTRY_ADDRESS,
+        leg === "approve" ? approveData : settleData,
+        `settle:${leg}:${payLegs.length}:${claimLegs.length}:${total.toString()}`,
+      ] as const)
+    : ([
+        wallet,
+        encodeExecuteBatch([
+          ...(total > 0n ? [{ to: ARC_USDC_ADDRESS, data: approveData }] : []),
+          { to: REGISTRY_ADDRESS, data: settleData },
+        ]),
+        `settle:${total > 0n ? 2 : 1}:${total.toString()}`,
+      ] as const);
+
   let tx: { txHash: string | null };
   try {
-    const data = encodeExecuteBatch(calls);
-    // A claimed wallet signs its own settlement. The batch is assembled from
-    // chain reads above on both passes, and the context carries a digest of the
-    // legs — a settlement is many calls in one transaction, so binding only the
-    // wallet would let a ticket for one plan relay against a different one.
+    // A claimed wallet signs its own settlement; the plan is re-derived from chain
+    // on both passes.
     const signed = await userSignedLeg({
       body: (body ?? null) as UserSignedBody | null,
       walletId,
       userId: user.id,
-      to: wallet,
+      to,
       data,
-      context: `settle:${calls.length}:${total.toString()}`,
+      context,
     });
     if (signed && "response" in signed) return signed.response;
 
-    tx = signed ? signed.tx : await executeContract(walletId, wallet, data);
+    if (signed) {
+      // The approve landed. `more` brings the browser back, and the allowance read
+      // above will hand it the settle. Nothing has been paid yet, so this answer
+      // names no bills and queues no reputation.
+      if (leg === "approve") return Response.json({ ok: true, txHash: signed.tx.txHash, more: true });
+      tx = signed.tx;
+    } else if (eoa) {
+      // Server still holds the key: it can send both calls itself, in order, with
+      // no round trip in between.
+      if (total > 0n) await executeContract(walletId, ARC_USDC_ADDRESS, approveData);
+      tx = await executeContract(walletId, REGISTRY_ADDRESS, settleData);
+    } else {
+      tx = await executeContract(walletId, wallet, data);
+    }
   } catch (err) {
     if (err instanceof InsufficientFundsError) {
       return Response.json({ error: "insufficient_funds" }, { status: 402 });
     }
-    // Atomic: nothing settled, so report the whole thing as failed.
+    // Nothing was paid: on the SCA the batch is atomic, and on the EOA a failure
+    // is either the approve (which moves nothing) or the settle (which reverts
+    // whole). Either way there is no partial settlement to report.
     return Response.json(
       { error: err instanceof Error ? err.message : "Settlement failed" },
       { status: 502 },
