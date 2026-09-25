@@ -31,7 +31,7 @@ import {
   parseUnits,
   recoverTransactionAddress,
 } from "viem";
-import { ARC } from "./arc-chain.ts";
+import { ARC, ARC_PROFILES } from "./arc-chain.ts";
 import { getPrivyWallet, insertPrivyWallet } from "./privy-wallets-repo.ts";
 import {
   InsufficientFundsError,
@@ -829,16 +829,46 @@ export const walletSpec = (namespace: string, idempotencyKey: string) => ({
   idempotency_key: idempotencyKey,
 });
 
-// Arc's public RPC refuses an eth_getLogs range wider than ~25k blocks (-32012
-// "requested range too large") and caps one response at 20k logs, so a wallet's
-// history is a walk backwards in chunks and not a single call. Both limits
-// measured against https://rpc.testnet.arc.network; a keyed endpoint may be
-// looser, which is why ARC_RPC is read from the environment.
+// Arc refuses an eth_getLogs range wider than 9k blocks ("requested range too
+// large") and caps one response at 20k logs, so a wallet's history is a walk
+// backwards in chunks and not a single call.
+//
+// 9k, not the ~25k this said before. Re-measured 2026-09-25 against
+// https://rpc.testnet.arc.network: 9_000 is served, 10_000 is refused. The node
+// tightened its cap some time after the original reading, and because the very
+// first chunk is the one that throws, EVERY history load failed — the panel's
+// "couldn't read the chain" is what a stale constant looks like from the outside.
+// 9_000n is also what lib/bill-split-contracts.ts and lib/recurring-contracts.ts
+// already walk in, so this is now one number.
 // ponytail: 200k blocks is ~1.5 days of Arc, i.e. "recent activity" rather than a
-// ledger, at 10 chunks x 2 calls per history load. Page further back from the
-// oldest row shown, or record our own sends, if the full history is ever needed.
-const LOG_CHUNK = 20_000n;
+// ledger, at 23 chunks x 2 calls per history load. Measured end to end: ~250ms per
+// pair in sequence, so the sweep now SPENDS the whole budget below and stops at
+// roughly chunk 20 of 23 — newest-first, so the tail it drops is the oldest. Raise
+// HISTORY_BUDGET_MS (the route allows 30s) if the last few chunks ever matter.
+// Page further back from the oldest row shown, or record our own sends, if the
+// full history is needed.
+export const LOG_CHUNK = 9_000n;
 const LOOKBACK_BLOCKS = 200_000n;
+
+// The log walk reads the CHAIN'S OWN NODE, never ARC_RPC.
+//
+// An ARC_RPC_URL override is set to escape the public node's rate limit on
+// ordinary contract reads, and a free-tier keyed endpoint pays for that by
+// capping eth_getLogs far below what Arc itself allows. Measured 2026-09-25:
+// lb.drpc.live free plan serves 100 blocks, and Alchemy's free tier serves TEN —
+// and drpc's refusal *says* "ranges over 10000 blocks are not supported", so the
+// number in the message is not the number enforced. Walking 200k blocks 100 at a
+// time is 2,000 chunks, which is not a history, it is a timeout. So this one read
+// declines the override instead of being broken by it; every other read here still
+// uses it.
+//
+// ponytail: an override that IS wide enough gets ignored for this read too —
+// rpc.solidrpc.io serves 25k, i.e. better than Arc's own node. Give the log walk
+// its own variable (and its own chunk size) if using such an endpoint matters.
+const logsClient = createPublicClient({
+  chain: ARC.chain,
+  transport: http(ARC_PROFILES[ARC.network].rpcUrl),
+});
 const TRANSFER = getAbiItem({ abi: erc20Abi, name: "Transfer" });
 
 // ── User key export ────────────────────────────────────────────────────────────
@@ -1222,12 +1252,12 @@ export const backend: WalletBackend = {
   // no Privy counterpart, and USDC Transfer logs are the same truth without a
   // second system to be stale.
   //
-  // NEWEST FIRST, AND BOUNDED BY TIME rather than only by depth. The walk is ten
-  // chunks of two getLogs calls, and each pair costs ~0.4s from a fast network —
-  // so the full sweep can outlast a serverless function's limit, and when it did,
-  // EVERYTHING was thrown away including the newest chunk that had already
-  // answered. Measured on Arc: a wallet's recent activity is in chunk 0, found in
-  // under half a second, and then discarded ten chunks later.
+  // NEWEST FIRST, AND BOUNDED BY TIME rather than only by depth. The walk is 23
+  // chunks of two getLogs calls, and each pair costs ~250ms in sequence against
+  // Arc's own node — so the full sweep DOES outlast the budget, and when that was
+  // not handled, EVERYTHING was thrown away including the newest chunk that had
+  // already answered. Measured on Arc: a wallet's recent activity is in chunk 0,
+  // found in under half a second, and then discarded twenty chunks later.
   //
   // So the loop stops when the budget is spent and returns what it has. It already
   // walked head-downwards, which is what makes a partial answer the RIGHT partial
@@ -1238,7 +1268,10 @@ export const backend: WalletBackend = {
   async listTransactions(_walletId: string, address: string): Promise<WalletTx[]> {
     const self = getAddress(address);
     const deadline = Date.now() + HISTORY_BUDGET_MS;
-    const head = await publicClient.getBlockNumber();
+    // Head from the SAME node that serves the logs below — a head read off one
+    // endpoint and a range read off another can disagree by a few blocks, and the
+    // walk would ask for a toBlock the log node has not seen yet.
+    const head = await logsClient.getBlockNumber();
     const oldest = head > LOOKBACK_BLOCKS ? head - LOOKBACK_BLOCKS : 0n;
     const logs: TransferLog[] = [];
 
@@ -1250,8 +1283,8 @@ export const backend: WalletBackend = {
       const fromBlock = toBlock - LOG_CHUNK > oldest ? toBlock - LOG_CHUNK : oldest;
       const window = { address: ARC_USDC, event: TRANSFER, fromBlock, toBlock, strict: true } as const;
       const [out, incoming] = await Promise.all([
-        publicClient.getLogs({ ...window, args: { from: self } }),
-        publicClient.getLogs({ ...window, args: { to: self } }),
+        logsClient.getLogs({ ...window, args: { from: self } }),
+        logsClient.getLogs({ ...window, args: { to: self } }),
       ]);
       logs.push(...out, ...incoming);
       toBlock = fromBlock - 1n;

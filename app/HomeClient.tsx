@@ -158,7 +158,8 @@ type ScoutReport = {
 type OcrState = "idle" | "reading" | "ready" | "error";
 export type BillRunState = "idle" | "connecting" | "working" | "success" | "error";
 type RecurringRunState = "idle" | "connecting" | "working" | "error" | "success";
-type AppTab = "bills" | "settle" | "recurring" | "dashboard" | "agents" | "iou";
+const APP_TABS = ["bills", "settle", "recurring", "dashboard", "agents", "iou"] as const;
+type AppTab = (typeof APP_TABS)[number];
 type RecurringCycle = "test" | "weekly" | "monthly" | "custom";
 type RecurringMemberInput = {
   id: string;
@@ -305,7 +306,18 @@ const RECORD_STEPS: Record<"handle" | "wallet" | "empty", Step> = {
 export default function HomeClient({ testCycleEnabled = false }: { testCycleEnabled?: boolean }) {
   // IOU is where you land: an amount and a name is the shortest thing the app
   // does, and it reads as a page rather than a form. Bills is one tap away.
+  //
+  // The tab you are on lives in the URL hash, so a refresh comes back where you
+  // left off and /app#agents can be pasted to someone. Read in an effect rather
+  // than in the initialiser: the hash is not there during SSR, and a state that
+  // disagrees with the server's first paint is a hydration error.
   const [activeTab, setActiveTab] = useState<AppTab>("iou");
+  useEffect(() => {
+    // Not decodeURIComponent: every tab name is plain ASCII, and a stray "%" in
+    // the hash would throw URIError out of the mount effect.
+    const fromHash = window.location.hash.slice(1) as AppTab;
+    if (APP_TABS.includes(fromHash)) setActiveTab(fromHash);
+  }, []);
   // What the agents tab's masthead needs to light its contents rail. Reported up
   // by SettlementAgentsPanel, which is the only thing that knows — same shape as
   // XHistoryPanel's onCount, and for the same reason: the rail is above the
@@ -2612,6 +2624,11 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
     // there is never dismissed — and would otherwise greet you on the next tab
     // as a popup about something you finished with minutes ago.
     closeFlow();
+
+    // replaceState, not `location.hash = tab`: assigning the hash would scroll
+    // to any element that happens to share the id and stack a history entry per
+    // tab press, so Back would walk the tabs instead of leaving the app.
+    window.history.replaceState(null, "", `#${tab}`);
 
     const transitionDocument = document as Document & {
       startViewTransition?: (callback: () => void) => void;

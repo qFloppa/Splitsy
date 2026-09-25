@@ -55,14 +55,21 @@ export async function GET() {
     const txs = await listTransactions(user.circle_wallet_id, wallet);
     const transactions = await enrich(txs, wallet);
     return Response.json({ transactions, explorer: EXPLORER });
-  } catch {
+  } catch (err) {
     // A FAILED READ IS NOT AN EMPTY WALLET, and saying so cost a real debugging
     // session: this returned a bare [] for any failure, so the panel rendered "No
     // transactions yet" whether the wallet had never been used or the RPC had just
-    // refused. On the Privy stack the history IS the chain — ten getLogs chunk
+    // refused. On the Privy stack the history IS the chain — 23 getLogs chunk
     // pairs per load against an endpoint that rate-limits bursts (-32005/-32011,
     // see lib/privy-wallet.ts:listTransactions) — so the failure is ordinary
     // enough that it must be told apart from the honest empty answer.
+    //
+    // LOGGED, because a bare `catch {}` here cost a SECOND debugging session: the
+    // panel said "couldn't read the chain" for a month while LOG_CHUNK sat above
+    // the range Arc had quietly started refusing, and the one sentence naming the
+    // cap was thrown away on the way out. The user-facing words stay vague on
+    // purpose; the server does not have to.
+    console.error("[wallet/transactions] chain read failed:", err instanceof Error ? err.message : err);
     //
     // Still a 200 with an empty list: the panel renders the same shape either way
     // and only the message differs. What it must never do is claim a balance's

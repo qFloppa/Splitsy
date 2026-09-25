@@ -1115,8 +1115,110 @@ export default function SettlementAgentsPanel({ onState }: { onState?: (state: A
               placeholder="0"
               value={String(grant.minCreatorScore)}
             />
-            <PosterFact label="Settles bills owed by" value={settlesFor} />
+            <PosterFact
+              label="Settles bills owed by"
+              // The link control rides with the fact it changes, at figure
+              // register in the top rail. It used to be a fourth word on the
+              // checks rail below — which made the one action that turns two
+              // agents into one the easiest thing on this page to scroll past,
+              // and two agents means two balances a person can lose track of.
+              //
+              // Three states, and the control only exists in two of them. A
+              // wallet sign-in has nothing to link or unlink; a social account
+              // with no wallet connected is told why rather than given a button
+              // that can only fail.
+              note={
+                walletSignin ? null : linkedAddress ? (
+                  <button
+                    aria-pressed={showUnlink}
+                    className="iou-provider bill-toggle"
+                    onClick={() => setShowUnlink((open) => !open)}
+                    type="button"
+                  >
+                    unlink {short(linkedAddress)}
+                  </button>
+                ) : connectedAddress ? (
+                  <button className="iou-provider" disabled={saving} onClick={linkWallet} type="button">
+                    link {short(connectedAddress)}
+                  </button>
+                ) : (
+                  // Kept to a rail-sized phrase: this cell is one column of a
+                  // grid that starts at 7.5rem, and the paragraph this replaced
+                  // would set as a dozen two-word lines.
+                  "connect a browser wallet to link one"
+                )
+              }
+              // Warned only while a SECOND agent exists: that is the state where
+              // two real balances are running under two sets of rules, and the
+              // control below is the only thing that ends it.
+              tone={agentWallet?.otherAgent ? "warn" : undefined}
+              value={settlesFor}
+            />
           </div>
+
+          {/* ── Unlinking ── It does LESS than people expect, and the gap is
+              money: for anyone who armed this wallet under the old mandate flow
+              the standing permission is on the CHAIN, and unlinking does not
+              touch it. Revoke first, then unlink, offered as that pair. Sits
+              directly under the control that opens it. */}
+          <AnimatePresence>
+            {showUnlink && linkedAddress && !walletSignin ? (
+              <motion.div key="unlink" {...revealMotion}>
+                <ul className="bill-options-hint list-disc space-y-1 pl-4">
+                  <li>
+                    Autopay for {short(linkedAddress)} stops — its bills are no longer resolvable to your account.
+                  </li>
+                  {/* Two different truths, and the difference is a balance. An
+                      agent this account only holds because linking merged two
+                      accounts GOES BACK on unlink — the inverse of the adoption
+                      — so the reassuring version of this line would be a lie
+                      about money. */}
+                  {agentWallet?.agentFromWallet ? (
+                    <li>
+                      Your agent goes back to being that wallet&rsquo;s own, with its balance and its identity NFT:
+                      linking is what merged the two accounts, and unlinking un-merges them. This login gets its own
+                      agent again — a different address, and an empty one until you fund it or link back.
+                    </li>
+                  ) : (
+                    <li>
+                      Your agent, its balance and its identity NFT are untouched — they belong to your account, not to
+                      that wallet.
+                    </li>
+                  )}
+                  {staleMandate ? (
+                    <li>
+                      The mandate you armed on it earlier survives, along with its USDC approval. Splitsy no longer
+                      pulls under it, but revoking is still a transaction only that wallet can send.
+                    </li>
+                  ) : null}
+                </ul>
+                <div className="bill-options">
+                  {/* Signed by the LINKED wallet itself, so it is offered only
+                      while that exact account is connected and only while there
+                      is something left to revoke. */}
+                  {staleMandate ? (
+                    <button
+                      className="iou-provider"
+                      disabled={saving || !mandateAddress || !connectedAddress || wrongAccount}
+                      onClick={revokeMandate}
+                      type="button"
+                    >
+                      revoke the old mandate first
+                    </button>
+                  ) : null}
+                  <button className="iou-provider" disabled={saving} onClick={unlinkWallet} type="button">
+                    {staleMandate ? "unlink anyway" : "unlink"}
+                  </button>
+                </div>
+                {staleMandate && wrongAccount ? (
+                  <p className="bill-options-hint">
+                    Your wallet is on a different account than the one you linked. The mandate is keyed on the sender,
+                    so switch back to {short(linkedAddress)} to revoke it.
+                  </p>
+                ) : null}
+              </motion.div>
+            ) : null}
+          </AnimatePresence>
 
           {/* ── Allowed creators ── One address, one line of poster type, with
               its own remove: the same payer row the bills poster sets a split
@@ -1217,24 +1319,6 @@ export default function SettlementAgentsPanel({ onState }: { onState?: (state: A
             >
               check the contents
             </button>
-            {/* Three states, and the control only exists in two of them. A
-                wallet sign-in has nothing to link or unlink; a social account
-                with no wallet connected gets the hint instead of a button that
-                can only fail. */}
-            {walletSignin ? null : linkedAddress ? (
-              <button
-                aria-pressed={showUnlink}
-                className="iou-provider bill-toggle"
-                onClick={() => setShowUnlink((open) => !open)}
-                type="button"
-              >
-                unlink {short(linkedAddress)}
-              </button>
-            ) : connectedAddress ? (
-              <button className="iou-provider" disabled={saving} onClick={linkWallet} type="button">
-                link {short(connectedAddress)}
-              </button>
-            ) : null}
           </div>
 
           {/* One line each, and only when there is something to say: what an
@@ -1258,16 +1342,6 @@ export default function SettlementAgentsPanel({ onState }: { onState?: (state: A
               ? ` And they hold for ${short(agentWallet.address ?? "")} only — your other agent runs under the rules stored on its own account.`
               : ""}
           </p>
-
-          {/* Why the control isn't there, which is the other thing a hint is
-              for: with no wallet connected there is nothing to link, and a
-              button that can only fail is worse than the sentence. */}
-          {!walletSignin && !linkedAddress && !connectedAddress ? (
-            <p className="bill-options-hint">
-              Connect a browser wallet and you can link it here — the same agent then covers bills owed by it too, out
-              of the one balance, with no second agent to fund.
-            </p>
-          ) : null}
 
           {grant.minCreatorScore === 0 ? null : (
             // Stated plainly because it is the one rule that fails open.
@@ -1297,69 +1371,6 @@ export default function SettlementAgentsPanel({ onState }: { onState?: (state: A
               below records every attempt as <span className="mono">agent_unfunded</span>.
             </p>
           ) : null}
-
-          {/* ── Unlinking ── It does LESS than people expect, and the gap is
-              money: for anyone who armed this wallet under the old mandate flow
-              the standing permission is on the CHAIN, and unlinking does not
-              touch it. Revoke first, then unlink, offered as that pair. */}
-          <AnimatePresence>
-            {showUnlink && linkedAddress && !walletSignin ? (
-              <motion.div key="unlink" {...revealMotion}>
-                <ul className="bill-options-hint list-disc space-y-1 pl-4">
-                  <li>
-                    Autopay for {short(linkedAddress)} stops — its bills are no longer resolvable to your account.
-                  </li>
-                  {/* Two different truths, and the difference is a balance. An
-                      agent this account only holds because linking merged two
-                      accounts GOES BACK on unlink — the inverse of the adoption
-                      — so the reassuring version of this line would be a lie
-                      about money. */}
-                  {agentWallet?.agentFromWallet ? (
-                    <li>
-                      Your agent goes back to being that wallet&rsquo;s own, with its balance and its identity NFT:
-                      linking is what merged the two accounts, and unlinking un-merges them. This login gets its own
-                      agent again — a different address, and an empty one until you fund it or link back.
-                    </li>
-                  ) : (
-                    <li>
-                      Your agent, its balance and its identity NFT are untouched — they belong to your account, not to
-                      that wallet.
-                    </li>
-                  )}
-                  {staleMandate ? (
-                    <li>
-                      The mandate you armed on it earlier survives, along with its USDC approval. Splitsy no longer
-                      pulls under it, but revoking is still a transaction only that wallet can send.
-                    </li>
-                  ) : null}
-                </ul>
-                <div className="bill-options">
-                  {/* Signed by the LINKED wallet itself, so it is offered only
-                      while that exact account is connected and only while there
-                      is something left to revoke. */}
-                  {staleMandate ? (
-                    <button
-                      className="iou-provider"
-                      disabled={saving || !mandateAddress || !connectedAddress || wrongAccount}
-                      onClick={revokeMandate}
-                      type="button"
-                    >
-                      revoke the old mandate first
-                    </button>
-                  ) : null}
-                  <button className="iou-provider" disabled={saving} onClick={unlinkWallet} type="button">
-                    {staleMandate ? "unlink anyway" : "unlink"}
-                  </button>
-                </div>
-                {staleMandate && wrongAccount ? (
-                  <p className="bill-options-hint">
-                    Your wallet is on a different account than the one you linked. The mandate is keyed on the sender,
-                    so switch back to {short(linkedAddress)} to revoke it.
-                  </p>
-                ) : null}
-              </motion.div>
-            ) : null}
-          </AnimatePresence>
 
           {/* The one check on this page that is not a rule, so it is the one
               that has to show its working. Every line below is a claim about

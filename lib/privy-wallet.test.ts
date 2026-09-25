@@ -3,6 +3,7 @@ import { test } from "node:test";
 import { WaitForTransactionReceiptTimeoutError } from "viem";
 import {
   GAS_RESERVE_USDC,
+  LOG_CHUNK,
   claimLanded,
   fateFromReads,
   isNonceCollision,
@@ -410,4 +411,17 @@ test("missing fields are refused rather than treated as a match", () => {
 // is refused by the receipt check instead.
 test("a different gas estimate is not a mismatch", () => {
   assert.equal(matchesPrepared(SIGNED, { ...PREPARED, gas_limit: "0x1d4c0", max_fee_per_gas: "0x77359400" }), true);
+});
+
+// THE BUG THIS GUARDS: LOG_CHUNK sat at 20_000n while Arc's node had quietly
+// dropped its eth_getLogs cap, so the FIRST chunk of every history walk threw and
+// the wallet panel showed "couldn't read the chain" for every user — a stale
+// constant, visible only as a vague message. fromBlock..toBlock is inclusive, so
+// the range asked for is LOG_CHUNK + 1 blocks.
+//
+// Measured 2026-09-25 against https://rpc.testnet.arc.network: 9_000 is served,
+// 10_000 is refused with "requested range too large". Widening this means
+// re-measuring, not guessing — the last guess cost a working history tab.
+test("the history chunk fits the eth_getLogs range Arc actually serves", () => {
+  assert.ok(LOG_CHUNK <= 9_000n, `LOG_CHUNK ${LOG_CHUNK} exceeds Arc's measured 9k getLogs cap`);
 });

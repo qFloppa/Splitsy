@@ -228,6 +228,14 @@
   /* Display face for hero/headline type only; Clash Display's variable range
      is 200–700, so rules using it must not exceed font-weight 700. */
   --font-display: var(--font-clash), "Clash Display", ui-sans-serif, system-ui, sans-serif;
+  /* Clash Display's word space is 140/1000 em — narrower than its own full stop
+     (304) and a little over half what a text face gives you. At display sizes
+     that is the face's own tight fit; at the 0.72–0.9rem the app chrome is set
+     in it lands at under 2px, and words visibly run together ("0x4E72…6182isn't
+     signed in here"). So every rule that reaches for the Clash stack pairs it
+     with this, buying the space back proportionally. One knob: turn it down if
+     a headline ever reads too airy, and nothing else has to change. */
+  --clash-word-spacing: 0.1em;
 }
 
 * {
@@ -771,6 +779,7 @@ input[type="number"],
 
 .history-detail-label {
   font-family: var(--font-clash), system-ui, sans-serif;
+  word-spacing: var(--clash-word-spacing);
   font-size: 0.68rem;
   font-weight: 500;
   text-transform: uppercase;
@@ -1116,6 +1125,7 @@ input[type="number"],
 
 .flow-title {
   font-family: var(--font-clash), system-ui, sans-serif;
+  word-spacing: var(--clash-word-spacing);
   font-weight: 300;
   font-size: clamp(1.9rem, 1.2rem + 2.2vw, 3.1rem);
   line-height: 1;
@@ -1436,6 +1446,7 @@ input[type="number"],
 
 .site-footer-row-name {
   font-family: var(--font-clash), system-ui, sans-serif;
+  word-spacing: var(--clash-word-spacing);
   font-weight: 300;
   font-size: 0.95rem;
   letter-spacing: -0.01em;
@@ -2470,6 +2481,7 @@ a.lp-row:hover {
   margin-top: 0.34rem;
   font-family: var(--font-display);
   font-size: 1.16rem;
+  word-spacing: var(--clash-word-spacing);
   /* 400, not 300: at card-title size Clash's light weight draws hairlines
      (same reason .settle-label sits at 500). */
   font-weight: 400;
@@ -3015,6 +3027,7 @@ a.job-trail-tx:hover {
    500 is the same mark, legibly drawn. */
 .pay-label {
   font-family: var(--font-clash), system-ui, sans-serif;
+  word-spacing: var(--clash-word-spacing);
   font-weight: 500;
   font-size: 0.72rem;
   letter-spacing: 0.18em;
@@ -3131,6 +3144,7 @@ a.job-trail-tx:hover {
 
 .pay-merchant {
   font-family: var(--font-clash), system-ui, sans-serif;
+  word-spacing: var(--clash-word-spacing);
   font-weight: 300;
   letter-spacing: -0.03em;
   line-height: 0.92;
@@ -3147,6 +3161,7 @@ a.job-trail-tx:hover {
    the top of the 600; with that gone the weight has to be stated once, here. */
 .pay-amount {
   font-family: var(--font-clash), system-ui, sans-serif;
+  word-spacing: var(--clash-word-spacing);
   font-weight: 300;
   font-variant-numeric: tabular-nums;
   letter-spacing: -0.03em;
@@ -3209,6 +3224,7 @@ a.job-trail-tx:hover {
    would break "Everyone's covered" across three lines. */
 .pay-cleared {
   font-family: var(--font-clash), system-ui, sans-serif;
+  word-spacing: var(--clash-word-spacing);
   font-weight: 300;
   font-size: clamp(2rem, 1.2rem + 2.4vw, 3.4rem);
   line-height: 1;
@@ -3325,6 +3341,7 @@ a.job-trail-tx:hover {
    roster in bold beside a 300-weight poster. 400 reads as the same voice. */
 .pay-row-name {
   font-family: var(--font-clash), system-ui, sans-serif;
+  word-spacing: var(--clash-word-spacing);
   font-weight: 400;
   letter-spacing: -0.02em;
   font-size: clamp(1.35rem, 1rem + 1.4vw, 2.4rem);
@@ -3412,6 +3429,7 @@ a.job-trail-tx:hover {
 
 .pay-bar-total {
   font-family: var(--font-clash), system-ui, sans-serif;
+  word-spacing: var(--clash-word-spacing);
   font-variant-numeric: tabular-nums;
   font-weight: 600;
   letter-spacing: -0.02em;
@@ -3476,6 +3494,7 @@ a.job-trail-tx:hover {
      in background-image, and a shorthand here (or in :hover) resets it. */
   background-color: color-mix(in srgb, var(--surface-strong) 62%, transparent);
   font-family: var(--font-clash), system-ui, sans-serif;
+  word-spacing: var(--clash-word-spacing);
   font-weight: 500;
   font-size: 0.78rem;
   letter-spacing: 0.01em;
@@ -3772,6 +3791,7 @@ body:has(.app-shell[data-app-tab="iou"]) .site-footer {
   z-index: 1;
   pointer-events: none;
   font-family: var(--font-clash), system-ui, sans-serif;
+  word-spacing: var(--clash-word-spacing);
   font-weight: 500;
   font-size: clamp(2.4rem, 1rem + 4.4vw, 5.5rem);
   line-height: 1;
@@ -3825,6 +3845,7 @@ body:has(.app-shell[data-app-tab="iou"]) .site-footer {
   display: flex;
   justify-content: space-between;
   font-family: var(--font-clash), system-ui, sans-serif;
+  word-spacing: var(--clash-word-spacing);
   font-size: 0.72rem;
   font-weight: 500;
   letter-spacing: 0.18em;
@@ -3867,6 +3888,7 @@ body:has(.app-shell[data-app-tab="iou"]) .site-footer {
 
 .settle-merchant {
   font-family: var(--font-clash), system-ui, sans-serif;
+  word-spacing: var(--clash-word-spacing);
   font-weight: 300;
   font-size: clamp(3.2rem, 1.4rem + 7vw, 9rem);
   line-height: 0.9;
@@ -3879,6 +3901,7 @@ body:has(.app-shell[data-app-tab="iou"]) .site-footer {
 
 .settle-label {
   font-family: var(--font-clash), system-ui, sans-serif;
+  word-spacing: var(--clash-word-spacing);
   font-weight: 500;
   font-size: 0.72rem;
   letter-spacing: 0.18em;
@@ -3888,6 +3911,7 @@ body:has(.app-shell[data-app-tab="iou"]) .site-footer {
 
 .settle-amount {
   font-family: var(--font-clash), system-ui, sans-serif;
+  word-spacing: var(--clash-word-spacing);
   font-weight: 300;
   font-size: clamp(3rem, 1.4rem + 6vw, 7rem);
   line-height: 1;
@@ -3946,6 +3970,7 @@ body:has(.app-shell[data-app-tab="iou"]) .site-footer {
   /* The two rules below are pinned to this box. */
   position: relative;
   font-family: var(--font-clash), system-ui, sans-serif;
+  word-spacing: var(--clash-word-spacing);
   font-weight: 300;
   font-size: clamp(2.2rem, 1rem + 3.2vw, 4.4rem);
   letter-spacing: 0.14em;
@@ -4121,6 +4146,7 @@ body:has(.app-shell[data-app-tab="iou"]) .site-footer {
 
 .settle-trigger {
   font-family: var(--font-clash), system-ui, sans-serif;
+  word-spacing: var(--clash-word-spacing);
   font-weight: 300;
   font-size: 0.78rem;
   letter-spacing: 0.06em;
@@ -4314,6 +4340,7 @@ select.settle-trigger option {
 
 .settle-aside-value {
   font-family: var(--font-clash), system-ui, sans-serif;
+  word-spacing: var(--clash-word-spacing);
   font-weight: 300;
   font-size: 1.65rem;
   line-height: 1.2;
@@ -4338,6 +4365,7 @@ select.settle-trigger option {
 
 .settle-steps {
   font-family: var(--font-clash), system-ui, sans-serif;
+  word-spacing: var(--clash-word-spacing);
   font-weight: 300;
   font-size: 1rem;
   color: var(--pay-poster-dim);
@@ -4422,6 +4450,7 @@ select.settle-trigger option {
   justify-content: space-between;
   gap: 1rem;
   font-family: var(--font-clash), system-ui, sans-serif;
+  word-spacing: var(--clash-word-spacing);
   font-size: 0.72rem;
   font-weight: 500;
   letter-spacing: 0.18em;
@@ -4479,6 +4508,7 @@ select.settle-trigger option {
   align-items: baseline;
   gap: 0.1em 0.3em;
   font-family: var(--font-clash), system-ui, sans-serif;
+  word-spacing: var(--clash-word-spacing);
   font-weight: 300;
   font-size: clamp(2.4rem, 1.1rem + 5.2vw, 7rem);
   line-height: 0.98;
@@ -4688,6 +4718,7 @@ select.settle-trigger option {
   max-width: 40ch;
   margin-top: clamp(0.7rem, 0.5rem + 0.6vw, 1.1rem);
   font-family: var(--font-clash), system-ui, sans-serif;
+  word-spacing: var(--clash-word-spacing);
   font-weight: 300;
   /* Stated here, not on the input: the note and the ghost behind it must land
      character-for-character, so they take their metrics from one declaration. */
@@ -4770,6 +4801,7 @@ select.settle-trigger option {
 
 .iou-error {
   font-family: var(--font-clash), system-ui, sans-serif;
+  word-spacing: var(--clash-word-spacing);
   font-size: 0.78rem;
   font-weight: 500;
   letter-spacing: 0.06em;
@@ -4787,6 +4819,7 @@ select.settle-trigger option {
   /* The keyline below is pinned to this box. */
   position: relative;
   font-family: var(--font-clash), system-ui, sans-serif;
+  word-spacing: var(--clash-word-spacing);
   font-size: 0.72rem;
   font-weight: 500;
   letter-spacing: 0.18em;
@@ -4952,6 +4985,7 @@ select.settle-trigger option {
   display: flex;
   justify-content: space-between;
   font-family: var(--font-clash), system-ui, sans-serif;
+  word-spacing: var(--clash-word-spacing);
   font-size: 0.72rem;
   font-weight: 500;
   letter-spacing: 0.18em;
@@ -4971,6 +5005,7 @@ select.settle-trigger option {
   width: 100%;
   padding: 0.5rem 0;
   font-family: var(--font-clash), system-ui, sans-serif;
+  word-spacing: var(--clash-word-spacing);
   font-weight: 300;
   font-size: clamp(0.95rem, 0.85rem + 0.5vw, 1.35rem);
   letter-spacing: -0.01em;
@@ -5054,6 +5089,7 @@ select.settle-trigger option {
 
 .iou-empty {
   font-family: var(--font-clash), system-ui, sans-serif;
+  word-spacing: var(--clash-word-spacing);
   font-weight: 300;
   font-size: 0.9rem;
   color: var(--pay-poster-dim);
@@ -5154,6 +5190,7 @@ select.settle-trigger option {
    tracked out, because uppercase micro-caps at 0.18em says "tap me". */
 .bill-poster-fact {
   font-family: var(--font-clash), system-ui, sans-serif;
+  word-spacing: var(--clash-word-spacing);
   font-size: 0.76rem;
   font-weight: 400;
   color: var(--pay-poster-dim);
@@ -5203,6 +5240,7 @@ select.settle-trigger option {
 .bill-figure,
 .bill-figure-sm {
   font-family: var(--font-clash), system-ui, sans-serif;
+  word-spacing: var(--clash-word-spacing);
   font-weight: 300;
   letter-spacing: -0.03em;
   line-height: 0.95;
@@ -5366,6 +5404,7 @@ select.settle-trigger option {
   align-items: center;
   gap: 0.6rem;
   font-family: var(--font-clash), system-ui, sans-serif;
+  word-spacing: var(--clash-word-spacing);
   font-weight: 400;
   font-size: 0.95rem;
   font-variant-numeric: tabular-nums;
@@ -5411,6 +5450,7 @@ select.settle-trigger option {
   gap: 0.9rem;
   padding: 0.45rem 0;
   font-family: var(--font-clash), system-ui, sans-serif;
+  word-spacing: var(--clash-word-spacing);
   font-weight: 300;
   font-size: clamp(0.92rem, 0.85rem + 0.3vw, 1.1rem);
   border-bottom: 1px solid color-mix(in srgb, var(--pay-poster-rule) 45%, transparent);
@@ -5472,6 +5512,7 @@ select.settle-trigger option {
 .bill-payer-target,
 .bill-payer-share {
   font-family: var(--font-clash), system-ui, sans-serif;
+  word-spacing: var(--clash-word-spacing);
   font-weight: 300;
   font-size: clamp(1.55rem, 1.1rem + 1.9vw, 2.9rem);
   line-height: 1;
@@ -5547,6 +5588,7 @@ select.settle-trigger option {
    editable value does. */
 .bill-payer-name {
   font-family: var(--font-clash), system-ui, sans-serif;
+  word-spacing: var(--clash-word-spacing);
   font-weight: 400;
   font-size: 0.95rem;
   letter-spacing: -0.01em;
@@ -5917,6 +5959,7 @@ select.settle-trigger option {
   background: none;
   padding: 0;
   font-family: var(--font-clash), system-ui, sans-serif;
+  word-spacing: var(--clash-word-spacing);
   font-weight: 400;
   font-size: 0.95rem;
   color: var(--pay-poster-dim);
@@ -5952,6 +5995,7 @@ select.settle-trigger option {
 
 .bill-masthead-title {
   font-family: var(--font-clash), system-ui, sans-serif;
+  word-spacing: var(--clash-word-spacing);
   font-weight: 300;
   /* Above .bill-display's ceiling: the merchant name is the biggest thing in a
      section, and this is the biggest thing on the page. */
@@ -5990,6 +6034,7 @@ select.settle-trigger option {
 .bill-contents-label {
   display: block;
   font-family: var(--font-clash), system-ui, sans-serif;
+  word-spacing: var(--clash-word-spacing);
   font-weight: 400;
   font-size: clamp(0.92rem, 0.85rem + 0.25vw, 1.08rem);
   line-height: 1.3;
@@ -6089,6 +6134,7 @@ select.settle-trigger option {
    size the words are the target, which is why there is no icon and no button. */
 .bill-plate-call {
   font-family: var(--font-clash), system-ui, sans-serif;
+  word-spacing: var(--clash-word-spacing);
   font-weight: 300;
   font-size: clamp(1.75rem, 1.1rem + 2.6vw, 3.4rem);
   line-height: 1;
@@ -6176,6 +6222,7 @@ select.settle-trigger option {
 
 .bill-poster-total > span {
   font-family: var(--font-clash), system-ui, sans-serif;
+  word-spacing: var(--clash-word-spacing);
   font-weight: 300;
   font-size: clamp(1.3rem, 1rem + 1.1vw, 1.9rem);
   line-height: 1;
@@ -6195,6 +6242,7 @@ select.settle-trigger option {
    register with. */
 .bill-poster-msg {
   font-family: var(--font-clash), system-ui, sans-serif;
+  word-spacing: var(--clash-word-spacing);
   font-size: 0.78rem;
   font-weight: 500;
   letter-spacing: 0.06em;
@@ -6385,6 +6433,7 @@ select.settle-trigger option {
   background: var(--pay-poster-bg);
   color: var(--pay-poster-fg);
   font-family: var(--font-clash), system-ui, sans-serif;
+  word-spacing: var(--clash-word-spacing);
 }
 
 /* ── Recurring: the ledger row as a picker ────────────────────────────────────
@@ -6466,6 +6515,7 @@ select.settle-trigger option {
   padding-left: 0.9rem;
   border-left: 1px solid var(--pay-poster-rule);
   font-family: var(--font-clash), system-ui, sans-serif;
+  word-spacing: var(--clash-word-spacing);
   font-weight: 300;
   font-size: clamp(0.95rem, 0.9rem + 0.3vw, 1.15rem);
   line-height: 1.5;
@@ -6631,6 +6681,7 @@ select.settle-trigger option {
 
 .bill-chart .recharts-cartesian-axis-tick text {
   font-family: var(--font-clash), system-ui, sans-serif;
+  word-spacing: var(--clash-word-spacing);
   font-size: 0.68rem;
   font-weight: 500;
   letter-spacing: 0.1em;
@@ -6655,6 +6706,7 @@ select.settle-trigger option {
   background: var(--pay-poster-bg);
   box-shadow: none;
   font-family: var(--font-clash), system-ui, sans-serif;
+  word-spacing: var(--clash-word-spacing);
 }
 
 /* Which ink is which series, on the marks rail instead of in a legend box: the
@@ -6708,6 +6760,7 @@ select.settle-trigger option {
   max-width: 30ch;
   margin: clamp(0.75rem, 0.55rem + 0.6vw, 1.2rem) 0 0;
   font-family: var(--font-clash), system-ui, sans-serif;
+  word-spacing: var(--clash-word-spacing);
   font-weight: 300;
   font-size: clamp(1.5rem, 1.05rem + 1.75vw, 2.6rem);
   line-height: 1.02;
@@ -6785,6 +6838,7 @@ select.settle-trigger option {
 
 .bill-table th {
   font-family: var(--font-clash), system-ui, sans-serif;
+  word-spacing: var(--clash-word-spacing);
   font-size: 0.68rem;
   font-weight: 500;
   letter-spacing: 0.16em;
@@ -7503,6 +7557,7 @@ select.settle-trigger option {
   background: none;
   padding: 0;
   font-family: var(--font-clash), system-ui, sans-serif;
+  word-spacing: var(--clash-word-spacing);
   font-size: 0.86rem;
   color: var(--pay-poster-fg);
 }
@@ -7549,6 +7604,7 @@ select.settle-trigger option {
 .doc-search-meta {
   margin-top: 0.5rem;
   font-family: var(--font-clash), system-ui, sans-serif;
+  word-spacing: var(--clash-word-spacing);
   font-size: 0.72rem;
   color: var(--pay-poster-dim);
 }
@@ -7734,6 +7790,7 @@ mark.doc-mark {
 
 .doc-section .doc-subhead > span {
   font-family: var(--font-clash), system-ui, sans-serif;
+  word-spacing: var(--clash-word-spacing);
   font-weight: 400;
   font-size: clamp(1rem, 0.95rem + 0.25vw, 1.15rem);
   line-height: 1.3;
@@ -7791,6 +7848,7 @@ mark.doc-mark {
 .doc-row-title {
   display: block;
   font-family: var(--font-clash), system-ui, sans-serif;
+  word-spacing: var(--clash-word-spacing);
   font-weight: 400;
   font-size: clamp(0.95rem, 0.9rem + 0.25vw, 1.08rem);
   line-height: 1.3;
@@ -8003,6 +8061,7 @@ mark.doc-mark {
   background: none;
   padding: 0.4rem 0;
   font-family: var(--font-clash), system-ui, sans-serif;
+  word-spacing: var(--clash-word-spacing);
   font-size: 0.72rem;
   font-weight: 500;
   letter-spacing: 0.18em;
@@ -8147,6 +8206,7 @@ mark.doc-mark {
   gap: 0.3rem;
   margin: 0.35rem 0 0;
   font-family: var(--font-clash), system-ui, sans-serif;
+  word-spacing: var(--clash-word-spacing);
   font-weight: 300;
   font-size: 2.5rem;
   line-height: 1;
@@ -8240,6 +8300,7 @@ mark.doc-mark {
    .settle-amount's own reasoning, at the scale this panel can hold one at. */
 .wallet-line[data-figure] > input {
   font-family: var(--font-clash), system-ui, sans-serif;
+  word-spacing: var(--clash-word-spacing);
   font-weight: 300;
   font-size: 2.1rem;
   line-height: 1.15;
@@ -8376,6 +8437,7 @@ mark.doc-mark {
    question a trigger answers, and the word beside it already says what it opens. */
 .wallet-initial {
   font-family: var(--font-clash), system-ui, sans-serif;
+  word-spacing: var(--clash-word-spacing);
   font-weight: 300;
   font-size: 1.15rem;
   letter-spacing: 0;
