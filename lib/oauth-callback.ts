@@ -172,7 +172,7 @@ export async function finishProviderLogin(params: {
   // Untouched rather than cleared when setSession is false: the browser keeps the
   // session it already had. Clearing would be its own kind of sign-out.
   if (setSession) {
-    response.cookies.set(SESSION_COOKIE_NAME, signSession(appUser.id, sessionSecret), {
+    response.cookies.set(SESSION_COOKIE_NAME, signSession(appUser.id, Date.now(), sessionSecret), {
       httpOnly: true,
       secure: request.nextUrl.protocol === "https:",
       sameSite: "lax",

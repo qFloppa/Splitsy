@@ -9,7 +9,7 @@ import {
 } from "@/lib/email-otp";
 import { upsertOtp } from "@/lib/otp-repo";
 import { verifyTurnstile } from "@/lib/turnstile";
-import { checkEmailRateLimit, checkIpRateLimit } from "@/lib/rate-limit";
+import { checkEmailRateLimit, checkIpRateLimit, callerIp } from "@/lib/rate-limit";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -28,17 +28,21 @@ export async function POST(request: Request) {
   }
 
   // Verify Turnstile token
-  const ip = request.headers.get("cf-connecting-ip") ?? request.headers.get("x-forwarded-for")?.split(",")[0] ?? "";
+  const ip = callerIp(request);
   const turnstileValid = await verifyTurnstile(turnstileToken, ip);
   if (!turnstileValid) {
     return Response.json({ error: "Verification failed. Please try again." }, { status: 400 });
   }
 
-  // Rate limiting: per-email and per-IP
-  if (!checkEmailRateLimit(email)) {
+  // Rate limiting: per-email and per-IP. Both are awaited now — the counters are
+  // in Postgres rather than in this instance's memory, so they hold across
+  // lambdas and across cold starts. The IP is always keyed (callerIp falls back
+  // to "unknown"), because a request with no discernible address should get a
+  // share of the limit rather than a bypass of it.
+  if (!(await checkEmailRateLimit(email))) {
     return Response.json({ error: "Too many requests for this email. Wait a minute." }, { status: 429 });
   }
-  if (ip && !checkIpRateLimit(ip)) {
+  if (!(await checkIpRateLimit(ip))) {
     return Response.json({ error: "Too many requests from your network. Wait a minute." }, { status: 429 });
   }
 

@@ -29,10 +29,30 @@ export async function getSessionUser(): Promise<AppUser | null> {
   const raw = store.get(SESSION_COOKIE_NAME)?.value;
   if (!raw) return null;
 
-  const userId = verifySession(raw, secret);
-  if (!userId) return null;
+  const session = verifySession(raw, secret, Date.now());
+  if (!session) return null;
 
-  return getUserById(userId);
+  const user = await getUserById(session.userId);
+  if (!user) return null;
+
+  // REVOCATION, and the only kind a stateless session can have: a token is dead
+  // if it was minted before the moment this account last invalidated its
+  // sessions. Signing out bumps that column (app/api/auth/logout), and so can an
+  // operator with one UPDATE — which is what makes a leaked cookie something that
+  // can be dealt with rather than waited out for thirty days.
+  //
+  // A NULL column means "never revoked" and must not read as "revoked at the
+  // epoch" or the reverse; the comparison is skipped entirely in that case, which
+  // is every account that has never signed out.
+  if (user.sessions_valid_from) {
+    const validFrom = Date.parse(user.sessions_valid_from);
+    // An unparseable value is treated as no revocation rather than as a total
+    // lockout: the failure mode of the other direction is every user of this
+    // deployment signed out at once, for a bad string in one column.
+    if (Number.isFinite(validFrom) && session.issuedAtMs < validFrom) return null;
+  }
+
+  return user;
 }
 
 // This browser's OTHER account — the one a browser wallet signed into while the

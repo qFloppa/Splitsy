@@ -1366,6 +1366,47 @@ contract BillSplitRegistryTest is Test {
     registry.refundSlot(billId, SLOT, alice, deadline, sig);
   }
 
+  /// @dev ONE AUTHORIZATION, ONE ENCODING. `_requireAttester` reads r, s and v
+  ///      with `calldataload`, which has no idea where the `bytes` argument
+  ///      ends — so without a length check a valid signature with arbitrary
+  ///      junk appended recovers the same signer and authorizes the same
+  ///      refund. Nothing is forged either way, which is exactly why this needs
+  ///      a test rather than trust: the happy path cannot tell the difference,
+  ///      and the guard is invisible until something tries to get past it.
+  ///      {HandleEscrowSecurity} makes the same two checks against the escrow.
+  function testRefundSlotRejectsTrailingSignatureBytes() public {
+    uint256 billId = _failedSlotBill();
+    uint256 deadline = block.timestamp + 1 hours;
+    bytes memory padded = abi.encodePacked(_signSlot(billId, SLOT, alice, deadline), bytes1(0x00));
+
+    vm.prank(stranger);
+    vm.expectRevert(BillSplitRegistry.InvalidSignature.selector);
+    registry.refundSlot(billId, SLOT, alice, deadline, padded);
+  }
+
+  function testRefundSlotRejectsShortSignature() public {
+    uint256 billId = _failedSlotBill();
+    uint256 deadline = block.timestamp + 1 hours;
+    bytes memory full = _signSlot(billId, SLOT, alice, deadline);
+
+    // 64 bytes: r and s intact, v truncated away. `calldataload` would read the
+    // next word for it rather than stopping.
+    bytes memory short = new bytes(64);
+    for (uint256 i = 0; i < 64; i++) short[i] = full[i];
+
+    vm.prank(stranger);
+    vm.expectRevert(BillSplitRegistry.InvalidSignature.selector);
+    registry.refundSlot(billId, SLOT, alice, deadline, short);
+  }
+
+  function testRefundSlotRejectsEmptySignature() public {
+    uint256 billId = _failedSlotBill();
+
+    vm.prank(stranger);
+    vm.expectRevert(BillSplitRegistry.InvalidSignature.selector);
+    registry.refundSlot(billId, SLOT, alice, block.timestamp + 1 hours, "");
+  }
+
   /// @dev A real wallet's own {refund} is untouched by any of this. Two
   ///      participants and one payer, so the bill actually failed.
   function testRefundStillWorksForRealWallets() public {

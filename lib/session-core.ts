@@ -19,42 +19,83 @@ export function signaturesMatch(providedSig: string, expectedSig: string): boole
   return timingSafeEqual(provided, expected);
 }
 
-// Token format: "<userId>.<base64url-hmac-of-userId>". The userId is opaque
-// (a Supabase uuid) and contains no ".", so we split on the last ".".
-export function signSession(userId: string, secret: string): string {
-  return `${userId}.${sign(userId, secret)}`;
+// Token format: "<userId>.<issuedAtMs>.<hmac>". The userId is opaque (a Supabase
+// uuid) and contains no ".".
+//
+// THE ISSUE TIME IS SIGNED, and this is the whole reason the format changed. The
+// token used to be "<userId>.<hmac-of-userId>" — no time in it at all. Its 30-day
+// life was the cookie's Max-Age, which is a hint to the browser holding it and
+// nothing to the server: a token captured once verified forever, and there was no
+// value anywhere that could make it stop. For a cookie that gates every money
+// route that is not a session, it is a bearer key with no expiry.
+//
+// Signing the issue time buys two things at once. The token now EXPIRES on its
+// own, server-side, at SESSION_MAX_AGE. And because the instant it was minted is
+// verifiable, `users.sessions_valid_from` can retire every token issued before a
+// chosen moment — which is the only REVOCATION a stateless session can have. See
+// getSessionUser in lib/session.ts for that comparison, and
+// schema-session-revocation.sql for the column.
+//
+// DOMAIN-SEPARATED, like the other two tokens. Without the prefix a wallet-unlock
+// value — same three-part shape, same secret — could be replayed into this cookie
+// and verify here.
+const SESSION_DOMAIN = "session.";
+
+export function signSession(userId: string, issuedAtMs: number, secret: string): string {
+  const payload = `${userId}.${issuedAtMs}`;
+  return `${payload}.${sign(`${SESSION_DOMAIN}${payload}`, secret)}`;
 }
 
-export function verifySession(token: string, secret: string): string | null {
+export type VerifiedSession = { userId: string; issuedAtMs: number };
+
+/**
+ * The session this token stands for, or null.
+ *
+ * Takes `now` rather than reading the clock so it stays pure and testable, the
+ * same shape as verifyWalletUnlock.
+ */
+export function verifySession(token: string, secret: string, now: number): VerifiedSession | null {
   if (!token) return null;
-  const dot = token.lastIndexOf(".");
-  if (dot <= 0) return null;
+  const parts = token.split(".");
+  if (parts.length !== 3) return null;
+  const [userId, issuedAtStr, providedSig] = parts;
+  if (!userId) return null;
 
-  const userId = token.slice(0, dot);
-  const providedSig = token.slice(dot + 1);
-  const expectedSig = sign(userId, secret);
+  const issuedAtMs = Number(issuedAtStr);
+  if (!Number.isFinite(issuedAtMs)) return null;
+  // Expired, and — the other direction — issued in the future. A future stamp is
+  // not a clock-skew allowance to make: the only way to hold one is to have minted
+  // it, and letting it through would be a token that outlives the window by
+  // however far ahead it was dated.
+  if (issuedAtMs + SESSION_MAX_AGE * 1000 <= now) return null;
+  if (issuedAtMs > now + 60_000) return null;
 
-  const provided = Buffer.from(providedSig);
-  const expected = Buffer.from(expectedSig);
-  if (provided.length !== expected.length) return null;
-  if (!timingSafeEqual(provided, expected)) return null;
+  const expectedSig = sign(`${SESSION_DOMAIN}${userId}.${issuedAtStr}`, secret);
+  if (!signaturesMatch(providedSig, expectedSig)) return null;
 
-  return userId;
+  return { userId, issuedAtMs };
 }
 
 export const WALLET_UNLOCK_COOKIE = "splitsy_wallet_unlock";
 export const WALLET_UNLOCK_TTL = 300; // seconds — re-auth every 5 minutes
+
+// DOMAIN-SEPARATED from the session cookie above, which it was not before: both
+// are "<id>.<number>.<hmac>" over the same secret, so an unsigned-prefix unlock
+// token was a value that could verify in either place. Harmless in practice only
+// because a uuid carries no ".", which is a property of the id rather than a check
+// anything made.
+const UNLOCK_DOMAIN = "wunlock.";
 
 // Short-lived wallet-unlock token: "<userId>.<expiresAtMs>.<hmac>". Signing the
 // expiry means the client can't extend it. Verification takes `now` so it's pure
 // and testable.
 export function signWalletUnlock(userId: string, expiresAtMs: number, secret: string): string {
   const payload = `${userId}.${expiresAtMs}`;
-  return `${payload}.${sign(payload, secret)}`;
+  return `${payload}.${sign(`${UNLOCK_DOMAIN}${payload}`, secret)}`;
 }
 
 export function verifyWalletUnlock(token: string, secret: string, now: number): string | null {
-  return verifyStamped(token, secret, now, "");
+  return verifyStamped(token, secret, now, UNLOCK_DOMAIN);
 }
 
 // A SECOND identity in the same browser: the account a browser wallet signed into

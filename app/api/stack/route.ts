@@ -1,6 +1,7 @@
 import { walletProviderName } from "@/lib/wallet-provider";
 import { getPrivyWallet } from "@/lib/privy-wallets-repo";
 import { createSupabaseServerClient } from "@/lib/supabase";
+import { ARC } from "@/lib/arc-chain";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -110,6 +111,35 @@ export async function GET() {
 
   return Response.json({
     walletProvider: walletProviderName(),
+    // WHICH CHAIN THIS BUILD RESOLVED, which is the other half of "is this
+    // deployment what it claims". Everything else here answers which wallet stack
+    // and which database; none of it would notice a mainnet build reading testnet
+    // state, which viem does not check and which renders as real money.
+    //
+    // The RPC URL is reported as a HOST, not the configured string: ARC_RPC_URL
+    // may carry an API key in its path or query, and a diagnostic is exactly the
+    // place a keyed endpoint gets pasted into a screenshot.
+    arc: {
+      network: ARC.network,
+      chainId: ARC.chainId,
+      rpcHost: (() => {
+        try {
+          return new URL(ARC.rpcUrl).host;
+        } catch {
+          return null;
+        }
+      })(),
+      usdc: ARC.usdcAddress,
+      // Zero means "not configured for this network" — mainnet never falls back
+      // to the testnet slot, so a zero here is the loud version of the quiet
+      // failure lib/arc-chain.ts exists to prevent.
+      registry: process.env.NEXT_PUBLIC_BILL_SPLIT_REGISTRY_ADDRESS_MAINNET
+        ?? process.env.NEXT_PUBLIC_BILL_SPLIT_REGISTRY_ADDRESS
+        ?? null,
+      handleEscrow: process.env.NEXT_PUBLIC_HANDLE_ESCROW_ADDRESS_MAINNET
+        ?? process.env.NEXT_PUBLIC_HANDLE_ESCROW_ADDRESS
+        ?? null,
+    },
     supabaseProject,
     privyWalletsTable,
     walletCreation: await walletCreationProperties(),

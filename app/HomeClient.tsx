@@ -13,6 +13,7 @@ import {
   Wallet,
 } from "lucide-react";
 import * as Dialog from "@radix-ui/react-dialog";
+import { Turnstile, type TurnstileInstance } from "@marsidev/react-turnstile";
 import { AnimatePresence, motion } from "framer-motion";
 import confetti from "canvas-confetti";
 import gsap from "gsap";
@@ -553,6 +554,12 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
   // A discount is shown as a note, not a field — the total already carries it.
   const discountShown = Number((billDiscount(bill) * usdRate).toFixed(2));
   const imageInputRef = useRef<HTMLInputElement | null>(null);
+  // The scan's bot gate. Read as a literal so Next inlines it at build time; an
+  // unset key leaves the widget unrendered and the route then refuses anonymous
+  // scans outright (lib/turnstile.ts fails closed), which is the intended
+  // direction for a deployment that has not been configured.
+  const turnstileSiteKey = process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY;
+  const turnstileRef = useRef<TurnstileInstance | undefined>(undefined);
   const receiptPrintRef = useRef<HTMLDivElement | null>(null);
   const reviewBillRef = useRef<HTMLDivElement | null>(null);
   const reviewSplitRef = useRef<HTMLDivElement | null>(null);
@@ -667,6 +674,20 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
     // Splitsy's x402 OCR endpoint in USDC fractions, and buys a second opinion
     // when its own parse comes back unsure. `declined` means it refused to spend
     // on an unreadable image — that is a real answer, not an error to retry.
+    //
+    // THE CHALLENGE RIDES ALONG for a visitor who is not signed in. /api/scout/scan
+    // reaches a paid model on every call and takes no money from the caller, so it
+    // is gated (see that route). The widget is INVISIBLE and executed here rather
+    // than rendered as a checkbox: the scan is already a deliberate gesture, and a
+    // second one in front of the app's first screen would cost more than it buys.
+    // A signed-in caller skips this entirely — the route takes the session instead.
+    if (turnstileSiteKey && turnstileRef.current) {
+      const token = await turnstileRef.current
+        .getResponsePromise()
+        .catch(() => null);
+      if (token) formData.set("turnstileToken", token);
+    }
+
     const response = await fetch("/api/scout/scan", {
       method: "POST",
       body: formData,
@@ -3041,6 +3062,20 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
                         or enter it by hand
                       </button>
                     </div>
+                    {/* The bot gate on /api/scout/scan, which spends real money on
+                        a paid model for every call. "interaction-only" means it
+                        draws nothing unless Cloudflare actually wants a challenge,
+                        so the scan stays a one-gesture flow for a real visitor.
+                        A signed-in caller never needs it — the route takes the
+                        session instead — but the widget costs nothing idle and
+                        rendering it unconditionally avoids a second code path. */}
+                    {turnstileSiteKey ? (
+                      <Turnstile
+                        ref={turnstileRef}
+                        siteKey={turnstileSiteKey}
+                        options={{ appearance: "interaction-only", size: "flexible", theme: "auto" }}
+                      />
+                    ) : null}
                   </form>
                 </div>
               </section>

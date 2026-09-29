@@ -53,6 +53,10 @@ export type AppUser = {
   agent_wallet_address: string | null;
   agent_wallet_id: string | null;
   pin_hash: string | null;
+  // Sessions issued before this instant are rejected (schema-session-revocation.sql).
+  // Null on every account that has never signed out, which is what "never revoked"
+  // has to look like — see getSessionUser.
+  sessions_valid_from: string | null;
   created_at: string;
 };
 

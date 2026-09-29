@@ -107,7 +107,7 @@ export async function POST(request: NextRequest) {
       );
     }
     const response = NextResponse.json({ ok: true, signedInAs: who });
-    response.cookies.set(SESSION_COOKIE_NAME, signSession(holder.id, sessionSecret), {
+    response.cookies.set(SESSION_COOKIE_NAME, signSession(holder.id, Date.now(), sessionSecret), {
       httpOnly: true,
       secure: request.nextUrl.protocol === "https:",
       sameSite: "lax",

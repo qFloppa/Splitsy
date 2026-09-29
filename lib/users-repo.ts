@@ -88,6 +88,27 @@ export async function setUserPin(id: string, pinHash: string): Promise<void> {
   }
 }
 
+// Retire every session token this account has been issued so far.
+//
+// The token carries its own signed issue time, so moving this column forward is
+// all revocation takes — no table of live sessions to sweep, and it reaches every
+// browser at once rather than the one that asked. See getSessionUser for the
+// comparison and schema-session-revocation.sql for why the column is nullable.
+//
+// THROWS rather than swallowing, unlike most best-effort writes in this file.
+// A sign-out that reports success while leaving the tokens live is a lie about
+// something the user asked for specifically.
+export async function revokeUserSessions(id: string): Promise<void> {
+  const client = requireClient();
+  const { error } = await client
+    .from("users")
+    .update({ sessions_valid_from: new Date().toISOString() })
+    .eq("id", id);
+  if (error) {
+    throw new Error(`Failed to revoke sessions: ${error.message}`);
+  }
+}
+
 // Find a user by (provider, handle) — handle normalized like bills-repo. Used by
 // address resolution to reuse an existing person's wallet before pre-minting.
 //

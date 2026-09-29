@@ -7,8 +7,18 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import * as fontkit from "fontkit";
 import sharp from "sharp";
+import { ARC } from "./arc-chain.ts";
 
 const SIZE = 1254; // template is 1254×1254; the band below y≈1050 is clear
+
+// WHAT THIS PICTURE SAYS ABOUT THE CHAIN, and why it is read from the config
+// rather than written in the string. The band used to read "ARC TESTNET"
+// literally, so a mainnet deployment minted NFTs stamped with the wrong network —
+// and an NFT image is immutable once minted, so every one of them would have
+// stayed wrong forever with no way to correct it short of re-minting every agent.
+// Coming from ARC.network means the stamp cannot disagree with the chain the
+// registration actually landed on.
+const NETWORK_LABEL = ARC.network === "mainnet" ? "ARC" : "ARC TESTNET";
 
 let cachedFont: fontkit.Font | null = null;
 let cachedTemplate: Buffer | null = null;
@@ -66,7 +76,7 @@ export async function composeAgentImage(input: AgentImageInput): Promise<Buffer>
     `<svg xmlns="http://www.w3.org/2000/svg" width="${SIZE}" height="${SIZE}">` +
     line(font, `SPLITSY · ${input.title.toUpperCase()}`, 1090, 34, "#8fb4ff", 0.28) +
     line(font, input.walletAddress.toLowerCase(), 1150, 36, "#eaf2ff") +
-    line(font, `REGISTERED ${date} · ARC TESTNET`, 1204, 24, "#5f7bb0", 0.12) +
+    line(font, `REGISTERED ${date} · ${NETWORK_LABEL}`, 1204, 24, "#5f7bb0", 0.12) +
     "</svg>";
   return sharp(loadTemplate())
     .composite([{ input: Buffer.from(svg), top: 0, left: 0 }])

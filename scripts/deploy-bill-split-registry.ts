@@ -15,6 +15,29 @@ if (!attester || !/^0x[a-fA-F0-9]{40}$/.test(attester)) {
   throw new Error("Set ESCROW_ATTESTER_ADDRESS to the address whose key will sign slot refunds.");
 }
 
+// PROVE THE SIGNING KEY MATCHES THE IMMUTABLE ATTESTER, here, before the deploy.
+//
+// The attester is set once and forever in the constructor below; the refund relay
+// signs with REFUND_SLOT_ATTESTER_PRIVATE_KEY (lib/refund-slot.ts). Nothing at
+// runtime checks the two agree — a mainnet with a mismatched pair does not error,
+// it silently reverts every slot refund and strands that money in the registry
+// with no exit but a redeploy. Two env vars mean two chances to fumble one, so
+// the one moment both halves are in hand is caught rather than trusted.
+const signerKey = process.env.REFUND_SLOT_ATTESTER_PRIVATE_KEY;
+if (!signerKey || !/^0x[0-9a-fA-F]{64}$/.test(signerKey)) {
+  throw new Error(
+    "Set REFUND_SLOT_ATTESTER_PRIVATE_KEY to the private half of ESCROW_ATTESTER_ADDRESS before deploying.",
+  );
+}
+const { privateKeyToAccount } = await import("viem/accounts");
+const signerAddress = privateKeyToAccount(signerKey as `0x${string}`).address;
+if (signerAddress.toLowerCase() !== attester.toLowerCase()) {
+  throw new Error(
+    `REFUND_SLOT_ATTESTER_PRIVATE_KEY derives ${signerAddress}, not the attester ${attester}. ` +
+      "They must match, or slot refunds can never be signed for this registry.",
+  );
+}
+
 // The chain comes from `--network`, not from a literal in here: a script that
 // pins its own network deploys to testnet however you invoke it. USDC and the
 // explorer come from the profile (lib/arc-chain.ts), so neither is retyped.

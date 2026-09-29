@@ -972,9 +972,23 @@ contract BillSplitRegistry is ReentrancyGuard {
   ///      mint a second valid signature for a message the attester already
   ///      signed — harmless for a one-shot refund, but the same guard
   ///      {HandleEscrow.release} carries and there is no reason to differ.
+  ///
+  ///      THE LENGTH IS CHECKED FIRST, which is the guard this function was
+  ///      missing while its own comment claimed parity with
+  ///      {HandleEscrow._recover}. `calldataload` does not know where the
+  ///      signature ends: on a short `bytes` it reads whatever calldata follows,
+  ///      and past `calldatasize` it reads zero bytes. Neither forges anything —
+  ///      the recovered signer still has to BE the attester — but without the
+  ///      check a 65-byte signature with arbitrary trailing bytes verifies just
+  ///      as well as the canonical one, so a single authorization has unlimited
+  ///      encodings. That is the exact property the `s` bound above exists to
+  ///      deny, and denying it in one dimension while leaving the other open is
+  ///      not a position worth holding.
   /// @param digest The EIP-712 digest the signature must cover.
   /// @param signature 65-byte `(r, s, v)` signature.
   function _requireAttester(bytes32 digest, bytes calldata signature) private view {
+    if (signature.length != 65) revert InvalidSignature();
+
     bytes32 r;
     bytes32 s;
     uint8 v;
@@ -988,6 +1002,10 @@ contract BillSplitRegistry is ReentrancyGuard {
       revert InvalidSignature();
     }
 
+    // ecrecover returns the zero address for a malformed signature rather than
+    // reverting, and rejects a `v` outside {27, 28} that way — so the explicit
+    // `v` check {HandleEscrow._recover} makes is covered by the comparison
+    // against `attester`, which the zero address can never satisfy.
     address signer = ecrecover(digest, v, r, s);
     if (signer == address(0) || signer != attester) revert InvalidSignature();
   }

@@ -1,5 +1,11 @@
 # Deployments
 
+> **Going to mainnet?** `docs/mainnet-launch-checklist.md` is the gate: what must
+> be *true* before the apex flip, and how to check each item. This file describes
+> the arrangement; that one asserts it. Two schema migrations
+> (`schema-rate-limits.sql`, `schema-session-revocation.sql`) are required before
+> the flip — one of them fails silently if skipped.
+
 One repo, two wallet stacks. `WALLET_PROVIDER` is the only switch, and `circle`
 is the default in `walletProviderName()` (`lib/wallet-provider.ts:52`) — the match
 is exact, so a typo, a capitalised value or an unset variable in a new
@@ -43,7 +49,7 @@ git push origin main:testnet
 | `WALLET_UI` | `privy` | `privy` |
 | `WALLET_CLAIM_ENABLED` | unset → off | unset → off |
 | Wallets | Privy embedded, EOA | Privy embedded, EOA |
-| Database | new Supabase, clean | `splitsy-test` (`hdyioojrozodmutpldsu`) |
+| Database | `splitsy-mainnet` (`xajhxturetrpxovgqijg`) | `hvckneltkugnvtwfrzlb` |
 | Enclave policy | new, chain 5042 | existing |
 | ERC-8004 / AgenticCommerce | unset → **off** until Circle deploys | set |
 | Vercel crons | run | **do not run** |
@@ -624,6 +630,38 @@ with. Testnet; re-send after the fix.
 wallet in both systems. Sharing the database would also put this stack's writes
 in front of live users, which is the one outcome the whole arrangement exists to
 prevent.
+
+---
+
+## The two databases
+
+| | Production (apex) | Preview (`testnet.splitsy.xyz`) |
+|---|---|---|
+| Project | `splitsy-mainnet` (`xajhxturetrpxovgqijg`) | `hvckneltkugnvtwfrzlb` |
+| Contents at launch | empty — `schema-mainnet.sql` and nothing else | the live testnet data |
+| Vercel scope | Production | Preview **and** Development |
+
+**`hvckneltkugnvtwfrzlb` is the testnet database, and it keeps its data.** The
+`testnet` preview branch is fast-forwarded from `main`, so the OLD rows are
+readable by the new code rather than orphaned: the security migrations are purely
+additive, and `users.sessions_valid_from` defaults to NULL, which every session
+check reads as "nothing has been revoked" (`lib/session.ts`). Existing testnet
+cookies survive the push, which is the correct outcome on a network where being
+wrong is free.
+
+**The mainnet database starts empty and is built from one file.** Not by replaying
+`schema-*.sql` in filename order — that chain is a migration *history*, and
+running it against a fresh project does not produce the schema that was tested:
+`schema.sql` creates legacy tables no code reads, `schema-generic-identity.sql`
+renames one column and drops another, and two of the files are ALTER-only against
+tables created elsewhere. `schema-mainnet.sql` was generated from this project's
+live schema and describes the end state directly, in one idempotent file.
+
+**No data is copied across.** Every pre-existing user gets a new wallet at a new
+address regardless (see §7 of `docs/mainnet-launch-checklist.md`), so carrying
+rows over would only import wallet addresses that cannot be signed for on
+mainnet. Nothing in the new project must be able to name a wallet that lives in
+the old one — that is the same rule as above, from the other direction.
 
 ---
 
