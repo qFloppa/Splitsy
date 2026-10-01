@@ -5096,12 +5096,141 @@ select.settle-trigger option {
   padding: 0.5rem 0;
 }
 
+/* ── The archive ──────────────────────────────────────────────────────────────
+   What has already landed. It shares the ledger's rails but not its grammar: the
+   ledger is a list of things to act on, set at one line with the amount hard
+   right, and these are receipts, set with a date gutter and the hash given a line
+   of its own. Reading alike is the failure mode here — a settled IOU that looks
+   like one you still owe is worse than not showing it at all.
+
+   IT CANNOT GROW THE PAGE FOREVER. The panel scrolls inside itself past a short
+   cap, so the archive can never become the page and push the composer out of the
+   first screen. The cap is in `rem` rather than `vh` on purpose: on a short
+   viewport a `vh` cap would leave the ledger's own rows off-screen behind it. */
+
+.iou-ledger-left { display: inline-flex; align-items: center; gap: 1.1rem; }
+
+/* The toggle is a rail word, so it takes the rail's type and gives up the button
+   chrome that would otherwise sit a box on a hairline row. */
+.iou-archive-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5em;
+  border: 0;
+  background: none;
+  padding: 0;
+  font: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  color: inherit;
+  cursor: pointer;
+  transition: color var(--dur-1) var(--ease-out);
+}
+
+.iou-archive-toggle:hover, .iou-archive-toggle:focus-visible { color: var(--pay-poster-fg); }
+.iou-archive-toggle:focus-visible { outline: 1px solid currentColor; outline-offset: 0.35em; }
+
+.iou-archive-chevron { transition: transform var(--dur-2) var(--ease-out); }
+.iou-archive-toggle[aria-expanded="true"] .iou-archive-chevron { transform: rotate(180deg); }
+
+.iou-archive {
+  border-top: 1px solid var(--pay-poster-rule);
+  margin-top: 0.4rem;
+  padding-top: 0.9rem;
+  /* `overflow: auto` is what makes the mask's fade honest: content genuinely
+     continues at both edges rather than being cosmetically dimmed. */
+  overflow: auto;
+  max-height: 22rem;
+  /* The fade says "there is more" in both directions, which a hard edge does not.
+     On a scroll container the mask is positioned against the padding box rather
+     than the scrolled content, so it stays pinned to the panel's edges instead of
+     sliding away with the rows. */
+  mask-image: linear-gradient(to bottom, transparent 0, #000 0.9rem, #000 calc(100% - 0.9rem), transparent 100%);
+  overscroll-behavior: contain;
+}
+
+.iou-archive-head {
+  display: flex;
+  justify-content: space-between;
+  font-family: var(--font-clash), system-ui, sans-serif;
+  word-spacing: var(--clash-word-spacing);
+  font-size: 0.72rem;
+  font-weight: 500;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--pay-poster-dim);
+  margin-bottom: 0.35rem;
+}
+
+/* The stub. Baseline-aligned like .iou-row, but three columns rather than two —
+   the date is a gutter, not a token in the sentence. */
+.iou-archive-row {
+  display: flex;
+  align-items: baseline;
+  gap: 1rem;
+  padding: 0.6rem 0;
+  font-family: var(--font-clash), system-ui, sans-serif;
+  word-spacing: var(--clash-word-spacing);
+  font-weight: 300;
+  font-size: clamp(0.9rem, 0.84rem + 0.36vw, 1.15rem);
+  letter-spacing: -0.01em;
+  /* Dimmer than .iou-row's 72%: a settled IOU is a fact you can stop thinking
+     about, and the ledger above should be what holds the eye. */
+  color: color-mix(in srgb, var(--pay-poster-fg) 58%, var(--pay-poster-bg));
+  border-bottom: 1px solid color-mix(in srgb, var(--pay-poster-rule) 32%, transparent);
+}
+
+.iou-archive-row:last-child { border-bottom: 0; }
+
+/* The gutter, in mono and tabular so 09 and 12 line up as a column rather than
+   drifting with the digits. Fixed width, so the IOUs all start at one x. */
+.iou-stub-date {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  align-items: flex-start;
+  width: 2.4rem;
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+  line-height: 1.15;
+  letter-spacing: 0.08em;
+  color: var(--pay-poster-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.iou-stub-month { opacity: 0.7; }
+.iou-stub-day { font-size: 0.78rem; }
+
+.iou-stub-body { flex: 1; min-width: 0; }
+
+.iou-stub-line { font: inherit; letter-spacing: inherit; }
+.iou-stub-note { color: var(--pay-poster-dim); font-size: 0.84em; }
+
+/* Where the hash sits when there is one, and what the row says when there is not.
+   Same slot, so a mixed archive stays on one grid. */
+.iou-stub-pending {
+  display: inline-block;
+  margin-top: 0.15rem;
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  letter-spacing: 0.02em;
+  color: var(--pay-poster-dim);
+  font-style: italic;
+}
+
+/* The hash drops to its own line inside .iou-stub-body, so it is the body's
+   second line rather than a third column competing for the same baseline. */
+.iou-stub-body .iou-row-tx { margin-top: 0.15rem; }
+
+.iou-stub-amount { flex: none; align-self: baseline; }
+
 @media (prefers-reduced-motion: reduce) {
   .iou-rule { transform: scaleX(1) !important; }
   /* The focus underlines stay — they're the indicator — but they appear rather
      than draw. Same for the provider mark: visible, not animated in. */
   .iou-slot::after, .iou-verb::after, .iou-note-wrap::after { transition: none; }
   .iou-mark { animation: none; }
+  .iou-archive-chevron { transition: none; }
   .iou-row[data-state="pending"]::after { animation: none; opacity: 0; }
   .iou-row[data-state="settled"] .iou-row-amount { animation: none; }
   /* Matches the reveal selectors' specificity, or it loses to them and leaves

@@ -412,6 +412,99 @@ export async function getBillsOnchain(billIds: bigint[]): Promise<(BillOnchain |
 
 export type ParticipantOnchain = { owed: bigint; paid: bigint; exists: boolean };
 
+// BillSplitRegistry.DebtPaid, for the IOU archive. Same event lib/bill-split-
+// contracts.ts decodes on the client, declared separately because this module is
+// server-only and that one is "use client".
+const DEBT_PAID_ABI = [
+  {
+    type: "event",
+    name: "DebtPaid",
+    anonymous: false,
+    inputs: [
+      { indexed: true, name: "billId", type: "uint256" },
+      { indexed: true, name: "payer", type: "address" },
+      { indexed: false, name: "amount", type: "uint256" },
+      { indexed: false, name: "paidTotal", type: "uint256" },
+      { indexed: false, name: "owedTotal", type: "uint256" },
+    ],
+  },
+] as const;
+
+/**
+ * What settled each of these bills, and when it last did.
+ *
+ * The archive needs a bill's payment legs for one reason: the transaction to link
+ * on a landed ask is the PAYMENT, not the creation, and that hash exists nowhere
+ * but in this event. `paidTotal` on the newest leg is the total that landed —
+ * taking it from the event rather than summing `amount` across legs is the same
+ * number the contract itself reports, and it cannot drift from a partial payment
+ * this scan happened to fall outside of.
+ *
+ * BOUNDED ON PURPOSE. Arc's public RPC refuses an eth_getLogs range wider than
+ * ~9k blocks, and the cap is on the RANGE rather than the result, so filtering by
+ * billId does not let this scan further back — it only makes each chunk cheaper.
+ * A bill paid outside the newest window therefore comes back absent, which the
+ * archive turns into "landed, with the creation tx to check" rather than into a
+ * wrong or missing row. The window is the largest the node serves.
+ */
+export async function getBillPaymentsOnchain(
+  billIds: bigint[],
+): Promise<Map<string, { total: bigint; lastTxHash: string; lastAt: number | null }>> {
+  const out = new Map<string, { total: bigint; lastTxHash: string; lastAt: number | null }>();
+  if (billIds.length === 0) return out;
+
+  const latest = await publicClient.getBlockNumber();
+  const fromBlock = latest > 9_000n ? latest - 9_000n : 0n;
+  const logs = await publicClient
+    .getLogs({ address: REGISTRY_ADDRESS, fromBlock, toBlock: latest })
+    .catch(() => []);
+
+  // Per bill: the newest leg, by block then by log index so two legs inside one
+  // block still order correctly.
+  const newest = new Map<string, { paidTotal: bigint; txHash: `0x${string}`; blockNumber: bigint; index: number }>();
+  const blockNumbers = new Set<bigint>();
+
+  for (const log of logs) {
+    if (log.blockNumber === null || log.transactionHash === null) continue;
+    let decoded: { billId: bigint; paidTotal: bigint };
+    try {
+      const ev = decodeEventLog({ abi: DEBT_PAID_ABI, data: log.data, topics: log.topics });
+      if (ev.eventName !== "DebtPaid") continue;
+      decoded = { billId: ev.args.billId, paidTotal: ev.args.paidTotal };
+    } catch {
+      continue; // not a DebtPaid — every other registry event lands here
+    }
+    const id = decoded.billId.toString();
+    const current = newest.get(id);
+    const index = log.logIndex ?? 0;
+    if (current && (current.blockNumber > log.blockNumber || (current.blockNumber === log.blockNumber && current.index >= index))) {
+      continue;
+    }
+    newest.set(id, { paidTotal: decoded.paidTotal, txHash: log.transactionHash, blockNumber: log.blockNumber, index });
+    blockNumbers.add(log.blockNumber);
+  }
+
+  // One timestamp read per distinct block, not per leg. A miss leaves null rather
+  // than failing the scan: the date is decoration on a row whose hash is the point.
+  const timestamps = new Map<bigint, bigint>();
+  await Promise.all(
+    [...blockNumbers].map(async (blockNumber) => {
+      try {
+        const block = await publicClient.getBlock({ blockNumber });
+        timestamps.set(blockNumber, block.timestamp);
+      } catch {
+        // Left absent — read as null below.
+      }
+    }),
+  );
+
+  for (const [id, leg] of newest) {
+    const ts = timestamps.get(leg.blockNumber);
+    out.set(id, { total: leg.paidTotal, lastTxHash: leg.txHash, lastAt: ts === undefined ? null : Number(ts) });
+  }
+  return out;
+}
+
 export async function getParticipantsOnchain(
   pairs: { billId: bigint; addr: `0x${string}` }[],
 ): Promise<(ParticipantOnchain | null)[]> {

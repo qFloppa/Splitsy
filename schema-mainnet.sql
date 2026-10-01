@@ -18,7 +18,7 @@
 -- directly.
 --
 -- IDEMPOTENT. Every statement is `if not exists` / `or replace`, so a partial run
--- can be re-run. It creates nothing and drops nothing outside these 16 tables.
+-- can be re-run. It creates nothing and drops nothing outside these 17 tables.
 --
 -- RLS IS ON FOR EVERY TABLE, WITH NO POLICIES. That is deliberate and it is the
 -- whole authorization story at the database layer: anon and authenticated can read
@@ -443,6 +443,40 @@ create unique index if not exists dunning_log_once_per_action
   on dunning_log (registry_address, bill_id, debtor_address, action)
   where action in ('nudge','escalate');
 
+-- The ledger of IOUs, so the IOU tab can show an archive of the ones that have
+-- landed. Half of an IOU is invisible on chain: "X owes me" files a registry bill
+-- and could be reconstructed from DebtPaid logs, but "I owe X" is a bare USDC
+-- transfer with nothing attached, and the chain cannot tell it apart from any
+-- other transfer out of the wallet. So the sentence is written down when it is
+-- made, or it does not exist.
+--
+-- A JOURNAL, NOT AN AUTHORITY: every row is written AFTER its transaction has
+-- settled, and nothing here decides whether money may move. `status` is the state
+-- at write time, not a live one — whether a row has landed since is derived on
+-- read and never stored, which is what keeps this a single-writer append log.
+-- Source of truth for the full column commentary: schema-iou-journal.sql.
+create table if not exists iou_journal (
+  id                   uuid primary key default gen_random_uuid(),
+  signer_address       text not null,
+  kind                 text not null check (kind in ('ask','settle')),
+  counterparty_label   text not null,
+  counterparty_address text,
+  amount_usdc          numeric(20,6) not null,
+  note                 text not null default '',
+  status               text not null default 'open' check (status in ('open','escrowed','landed','cancelled')),
+  registry_address     text,
+  bill_id              text,
+  escrow_address       text,
+  escrow_deposit_id    text,
+  tx_hash              text,
+  created_at           timestamptz not null default now()
+);
+
+create index if not exists idx_iou_journal_signer on iou_journal (signer_address, created_at desc);
+
+create index if not exists idx_iou_journal_bill on iou_journal (registry_address, bill_id) where bill_id is not null;
+create index if not exists idx_iou_journal_deposit on iou_journal (escrow_address, escrow_deposit_id) where escrow_deposit_id is not null;
+
 -- ─────────────────────────────────────────────────────────────────────────────
 -- 9. Row level security — LAST, so it applies to everything above
 -- ─────────────────────────────────────────────────────────────────────────────
@@ -471,6 +505,7 @@ alter table x402_payments          enable row level security;
 alter table autopay_grants         enable row level security;
 alter table autopay_log            enable row level security;
 alter table dunning_log            enable row level security;
+alter table iou_journal            enable row level security;
 
 -- ─────────────────────────────────────────────────────────────────────────────
 -- 10. Verify. Run this after the file and read the three numbers.
@@ -485,7 +520,7 @@ alter table dunning_log            enable row level security;
 --     from pg_class c join pg_namespace n on n.oid = c.relnamespace
 --    where n.nspname = 'public' and c.relkind = 'r';
 --
--- Expected: tables 16, rls_on 16, policies 0.
+-- Expected: tables 17, rls_on 17, policies 0.
 --
 --   select to_regproc('public.bump_rate_limit(text,int)') is not null as bump_fn,
 --          to_regproc('public.peek_rate_limit(text)')     is not null as peek_fn,

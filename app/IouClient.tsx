@@ -2,7 +2,7 @@
 
 import confetti from "canvas-confetti";
 import gsap from "gsap";
-import { ExternalLink, Mail, Wallet } from "lucide-react";
+import { ChevronDown, ExternalLink, Mail, Wallet } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { flushSync } from "react-dom";
@@ -43,6 +43,7 @@ import {
   type IouPlan,
   type IouSigner,
 } from "@/lib/iou";
+import { archiveTotals, type ArchiveRow } from "@/lib/iou-archive";
 import { providerDisplay } from "@/lib/provider-display";
 import type { AccountProvider, IdentityProvider } from "@/lib/types";
 import { arcWalletClient } from "@/lib/wagmi";
@@ -79,13 +80,39 @@ type TxRef = { url: string } | { pending: Promise<string | null> } | null;
 // "waiting for @dani". Both travel WITH the transaction: a module-level flag
 // would be a second source of truth, and the wrong one the moment two commits
 // are in flight. No handle here — the row already carries the label.
-type RailResult = { tx: TxRef; escrowed?: boolean; warning?: string };
+//
+// `journal` is the other half of the same idea: what the rail LEARNED that the
+// archive needs and the client cannot reconstruct. An ask's billId exists only in
+// the create route's response, and an escrowed settle's deposit id only in the
+// deposit route's — so unless the rail hands them back here, the journal row
+// written on success has nothing to point at and the archive can never resolve it.
+// Absent on the rails with nothing extra to say.
+type RailResult = {
+  tx: TxRef;
+  escrowed?: boolean;
+  warning?: string;
+  journal?: { registryAddress?: string; billId?: string; escrowAddress?: string; escrowDepositId?: string };
+};
 
 const reduced = () => window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
 const money = (n: number) => n.toFixed(2);
 // Both producers build "<explorer>/tx/<hash>", so the tail is the hash — shown
 // short, the same form an address takes everywhere else on this page.
 const txLabel = (url: string) => shortAddress(url.slice(url.lastIndexOf("/") + 1));
+
+// The archive's date gutter. Three letters and two digits — the shortest form
+// that still names a specific day, because the gutter is 4 characters wide and
+// everything to its right is the IOU itself.
+const MONTHS = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"];
+const stubDate = (at: number) => {
+  if (!at) return { day: "—", month: "" };
+  const d = new Date(at * 1000);
+  return { day: String(d.getDate()).padStart(2, "0"), month: MONTHS[d.getMonth()] };
+};
+
+// An archive link is always a chain hash — unlike the ledger's, which can point at
+// a Circle transaction that never surfaced one — so it takes the same short form.
+const hashLabel = (hash: string | null) => (hash ? shortAddress(hash) : null);
 
 // What to say when a route refuses to spend. "locked" is a sentinel with a
 // remedy no generic sentence can name; everything else payErrorMessage already
@@ -201,6 +228,8 @@ export default function IouClient({ onReceipts }: { onReceipts: () => void }) {
   const [preferred, setPreferred] = useState<IouSigner>(savedSigner);
   const [targetFocused, setTargetFocused] = useState(false);
   const [socialOpen, setSocialOpen] = useState(false);
+  const [archive, setArchive] = useState<ArchiveRow[]>([]);
+  const [archiveOpen, setArchiveOpen] = useState(false);
 
   const sentenceRef = useRef<HTMLDivElement>(null);
   const ruleRef = useRef<HTMLDivElement>(null);
@@ -208,6 +237,7 @@ export default function IouClient({ onReceipts }: { onReceipts: () => void }) {
   const targetRef = useRef<HTMLInputElement>(null);
   const noteRef = useRef<HTMLInputElement>(null);
   const ghostRef = useRef<HTMLSpanElement>(null);
+  const archiveRef = useRef<HTMLDivElement>(null);
   const ledgerShown = useRef(false);
   const seq = useRef(0);
 
@@ -263,6 +293,7 @@ export default function IouClient({ onReceipts }: { onReceipts: () => void }) {
     ...serverRows.filter((s) => !recent.some((r) => r.label.toLowerCase() === s.label.toLowerCase())),
   ];
   const net = ledgerNet(rows);
+  const settled = archiveTotals(archive);
 
   useEffect(() => {
     let live = true;
@@ -298,6 +329,30 @@ export default function IouClient({ onReceipts }: { onReceipts: () => void }) {
       })
       // A ledger that fails to load is a quieter page, not a broken one — the
       // composer is the point and works without it.
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, [ledgerWallets, reload]);
+
+  // The archive, off the same wallet set the ledger uses. Reloaded on `reload`
+  // alongside it, so an IOU committed a moment ago is already in the archive's
+  // next fetch rather than needing a page refresh to appear.
+  //
+  // A SEPARATE REQUEST FROM THE DASHBOARD, not more fields on it: that route
+  // answers for every tab, and this one reads chain logs no other tab has a use
+  // for. It cannot be lazy either — the COUNT is what decides whether the
+  // section renders at all, so it has to be known before anyone can open it.
+  // The read is bounded (one multicall plus one windowed log scan) and a failure
+  // is a missing section, not a broken page.
+  useEffect(() => {
+    if (!ledgerWallets) return;
+    let live = true;
+    fetch(`/api/iou?wallets=${ledgerWallets}`)
+      .then((r) => r.json())
+      .then((d) => {
+        if (live && Array.isArray(d?.rows)) setArchive(d.rows as ArchiveRow[]);
+      })
       .catch(() => {});
     return () => {
       live = false;
@@ -685,7 +740,15 @@ export default function IouClient({ onReceipts }: { onReceipts: () => void }) {
   async function sendAsk(plan: IouPlan): Promise<RailResult> {
     const outcome = await walletPost("/api/onchain-bills/create", askBody(plan) as Record<string, unknown>);
     if (!outcome.ok) throw new Error(payErrorMessage(outcome.error) || "Couldn't put that on Arc.");
-    return { tx: outcome.data.txHash ? { url: explorerTxUrl(outcome.data.txHash as string) } : null };
+    return {
+      tx: outcome.data.txHash ? { url: explorerTxUrl(outcome.data.txHash as string) } : null,
+      // The bill id is the archive's only way back to this IOU on chain, and it
+      // exists nowhere else — the journal row names the bill, not the reverse.
+      journal: {
+        registryAddress: BILL_SPLIT_REGISTRY_ADDRESS,
+        billId: typeof outcome.data.billId === "string" ? outcome.data.billId : undefined,
+      },
+    };
   }
 
   // A direct transfer. The registry can't hold "I owe you" — createBill makes
@@ -729,7 +792,12 @@ export default function IouClient({ onReceipts }: { onReceipts: () => void }) {
           : depositId
             ? undefined
             : unrecorded("Splitsy couldn't confirm that deposit went through.", null, txHash);
-      return { tx: txHash ? { url: explorerTxUrl(txHash) } : null, escrowed: true, warning };
+      return {
+        tx: txHash ? { url: explorerTxUrl(txHash) } : null,
+        escrowed: true,
+        warning,
+        journal: { escrowAddress: HANDLE_ESCROW_ADDRESS, escrowDepositId: depositId ?? undefined },
+      };
     }
 
     // walletPost, not a plain POST: /api/wallet/send has been user-signed since the
@@ -793,7 +861,12 @@ export default function IouClient({ onReceipts }: { onReceipts: () => void }) {
       })
       .catch(() => {});
 
-    return { tx: { url: explorerTxUrl(created.hash) } };
+    return {
+      tx: { url: explorerTxUrl(created.hash) },
+      // The preimage register needs the same two values the server rail sends, so
+      // they are reported the same way — see RailResult.journal.
+      journal: { registryAddress: BILL_SPLIT_REGISTRY_ADDRESS, billId: created.billId.toString() },
+    };
   }
 
   // The settle, signed in the user's own wallet: one USDC transfer on Arc. Same
@@ -831,7 +904,12 @@ export default function IouClient({ onReceipts }: { onReceipts: () => void }) {
       // next move is to press settle again, depositing a second time. So a
       // failure from this point is a WARNING on a row that stays put.
       const warning = await recordEscrowDeposit(plan, deposited.depositId?.toString() ?? null, deposited.hash);
-      return { tx: { url: explorerTxUrl(deposited.hash) }, escrowed: true, warning };
+      return {
+        tx: { url: explorerTxUrl(deposited.hash) },
+        escrowed: true,
+        warning,
+        journal: { escrowAddress: HANDLE_ESCROW_ADDRESS, escrowDepositId: deposited.depositId?.toString() },
+      };
     }
 
     if (to.toLowerCase() === wallet.account.toLowerCase()) throw new Error("That handle is your own wallet.");
@@ -844,6 +922,53 @@ export default function IouClient({ onReceipts }: { onReceipts: () => void }) {
   // resolves later, and the row may already be gone by then — a server refresh
   // replaces it with the netted version — so the update is a no-op miss rather
   // than a resurrection.
+  /**
+   * Write this IOU into the journal, so the archive can show it once it lands.
+   *
+   * FIRE AND FORGET, AND THAT IS NOT SLOPPINESS. The money has already moved by
+   * the time this runs, so a throw here must never reach commit's catch — that
+   * would run promote() and hand the sentence back to a user whose natural next
+   * move is to press settle again. A row we failed to write costs one IOU missing
+   * from the archive; a reject costs a second payment. The route answers 200 with
+   * `recorded: false` for the same reason, so the two halves agree.
+   *
+   * The hash, when it is a Circle transfer, does not exist yet — the rail hands
+   * back a promise instead of blocking (see TxRef). So the row is written either
+   * immediately, with the hash in hand, or once that promise settles. Written
+   * WITHOUT one rather than not at all, if it never resolves: the sentence and the
+   * amount are the facts the chain never had, and they are worth keeping even when
+   * the receipt is missing.
+   */
+  function journalIou(plan: IouPlan, done: RailResult) {
+    const body = {
+      kind: plan.kind,
+      status: done.escrowed ? "escrowed" : "open",
+      // The same label the ledger row carries, since it is the same sentence.
+      counterpartyLabel: provider === "wallet" ? targetName(plan) : `${display.prefix}${plan.handle}`,
+      amountUsd: plan.amountUsd,
+      note: plan.note,
+      // Whose wallet signed — the archive is scoped to it, and the route takes the
+      // address from the session for a social user and from this for a browser one.
+      signerAddress: signer === "wallet" ? walletAddress : socialAddress,
+      ...done.journal,
+    };
+    const post = (txHash: string | null) =>
+      fetch("/api/iou", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...body, txHash }),
+      })
+        .then(async (r) => {
+          if (!r.ok) console.error("Recording the IOU failed:", r.status, await r.text());
+        })
+        .catch(() => {});
+
+    const tx = done.tx;
+    if (!tx) return void post(null);
+    if ("url" in tx) return void post(tx.url.slice(tx.url.lastIndexOf("/") + 1));
+    void tx.pending.then((url) => post(url ? url.slice(url.lastIndexOf("/") + 1) : null)).catch(() => {});
+  }
+
   function stampTx(rowId: string, tx: TxRef) {
     if (!tx) return;
     const attach = (url: string | null) =>
@@ -904,6 +1029,7 @@ export default function IouClient({ onReceipts }: { onReceipts: () => void }) {
       const state = done.warning ? "escrow-unrecorded" : done.escrowed ? "escrowed" : "settled";
       setRecent((r) => r.map((x) => (x.id === id ? { ...x, state } : x)));
       stampTx(id, done.tx);
+      journalIou(plan, done);
       // Shown even though the commit succeeded, and no confetti over it: this is
       // the one sentence standing between the sender and money only they can get
       // back.
@@ -937,6 +1063,53 @@ export default function IouClient({ onReceipts }: { onReceipts: () => void }) {
       setBusy(false);
     }
   }
+
+  /**
+   * Opening the archive: the panel grows to its own height and the receipts
+   * stagger in under it.
+   *
+   * A height tween rather than a CSS one, because the panel's height is its
+   * content's and there is no number to put in a keyframe. It animates the
+   * PANEL, never the ledger above it — the ledger is measured by `demote`, which
+   * flies a clone down to a row's rect, and animating that rect mid-flight would
+   * land the clone somewhere the row no longer is.
+   *
+   * Measured after the DOM has the panel in it, so a mount-time height tween gets
+   * a real rect. Reduced motion skips straight to `height: auto`.
+   */
+  useEffect(() => {
+    const node = archiveRef.current;
+    if (!node) return;
+    if (reduced()) {
+      gsap.set(node, { clearProps: "height" });
+      return;
+    }
+    const full = node.scrollHeight;
+    gsap.fromTo(
+      node,
+      { height: 0, autoAlpha: 0 },
+      {
+        height: full,
+        autoAlpha: 1,
+        duration: 0.52,
+        ease: "expo.out",
+        // `height: auto` at the end, not `full`: the rows inside are data-driven,
+        // and a hard pixel height would clip them the moment a reload adds one.
+        onComplete: () => gsap.set(node, { clearProps: "height" }),
+      },
+    );
+    const ctx = gsap.context(() => {
+      gsap.from("[data-archive-row]", {
+        y: 10,
+        autoAlpha: 0,
+        duration: 0.5,
+        ease: "expo.out",
+        stagger: 0.035,
+        delay: 0.06,
+      });
+    }, node);
+    return () => ctx.revert();
+  }, [archiveOpen]);
 
   const verb = draft.direction === "i-owe" ? "owe" : "owes me";
   const action = draft.direction === "i-owe" ? "settle" : "send the ask";
@@ -1172,7 +1345,31 @@ export default function IouClient({ onReceipts }: { onReceipts: () => void }) {
 
       <div className="iou-ledger" ref={ledgerRef}>
         <div className="iou-ledger-head">
-          <span>open</span>
+          {/* The archive's toggle rides this rail rather than taking a row of its
+              own, so a closed archive costs the composer exactly zero height —
+              the ledger head is already here and already this tall. */}
+          <span className="iou-ledger-left">
+            <span>open</span>
+            {archive.length > 0 ? (
+              <button
+                aria-controls="iou-archive"
+                aria-expanded={archiveOpen}
+                className="iou-archive-toggle"
+                onClick={() => setArchiveOpen((o) => !o)}
+                type="button"
+              >
+                {/* "landed" is a claim about where money IS, so escrowed deposits
+                    are counted separately rather than folded in — the same
+                    distinction the ledger draws when it says "waiting for @dani"
+                    instead of "settled". */}
+                <span>
+                  {settled.settledCount} landed
+                  {settled.inFlight > 0 ? ` · ${settled.inFlight} waiting` : ""}
+                </span>
+                <ChevronDown className="iou-archive-chevron" size={13} />
+              </button>
+            ) : null}
+          </span>
           <span>{net === 0 ? "square" : net > 0 ? `+$${money(net)} to you` : `−$${money(-net)}`}</span>
         </div>
         {rows.length === 0 ? (
@@ -1232,6 +1429,61 @@ export default function IouClient({ onReceipts }: { onReceipts: () => void }) {
           })
         )}
       </div>
+
+      {/* ── The archive ────────────────────────────────────────────────────────
+          What has already landed, as a receipt stub rather than another ledger
+          row. The live ledger above is a list of things to act on; this is a
+          record of things done, and the two must not read alike — so the date
+          gutter is added, the hash comes down onto its own line where it can be
+          read, and the ink is dimmer throughout.
+
+          It sits BELOW the ledger and only exists when open, so the composer
+          above it measures the same whether this is open or closed: nothing here
+          is in the flow until it is asked for. */}
+      {archiveOpen && archive.length > 0 ? (
+        <div className="iou-archive" id="iou-archive" ref={archiveRef}>
+          <div className="iou-archive-head">
+            <span>landed</span>
+            <span>${money(settled.settledUsd)} settled</span>
+          </div>
+          {archive.map((row) => {
+            const { day, month } = stubDate(row.at);
+            return (
+              <div className="iou-archive-row" data-archive-row={row.id} key={row.id}>
+                <span aria-hidden className="iou-stub-date">
+                  <span className="iou-stub-month">{month}</span>
+                  <span className="iou-stub-day">{day}</span>
+                </span>
+                <div className="iou-stub-body">
+                  <p className="iou-stub-line">
+                    {row.direction === "i-owe" ? `I owed ${row.label}` : `${row.label} owed me`}
+                    {row.note ? <span className="iou-stub-note"> · {row.note}</span> : null}
+                  </p>
+                  {row.txHash ? (
+                    <a
+                      className="iou-row-tx"
+                      href={explorerTxUrl(row.txHash)}
+                      rel="noreferrer"
+                      target="_blank"
+                    >
+                      {hashLabel(row.txHash)}
+                      <ExternalLink size={11} />
+                    </a>
+                  ) : (
+                    // Not "no transaction" — for an escrowed IOU it is money still
+                    // waiting for someone, and saying nothing there would read as a
+                    // broken row rather than an honest one.
+                    <span className="iou-stub-pending">
+                      {row.outcome === "in-flight" ? "still in escrow" : "transfer — no hash recorded"}
+                    </span>
+                  )}
+                </div>
+                <span className="iou-row-amount iou-stub-amount">${money(row.amountUsd)}</span>
+              </div>
+            );
+          })}
+        </div>
+      ) : null}
     </main>
   );
 }
