@@ -1,0 +1,8 @@
+node_modules/
+frames/
+*.mp4
+*.mov
+*.webm
+*.wav
+*.mp3
+package-lock.json

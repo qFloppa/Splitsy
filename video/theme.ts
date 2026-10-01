@@ -80,6 +80,42 @@ export const labelStyle = (color: string = C.dim, size: number = T.label) =>
     color,
   }) as const;
 
+/**
+ * The full Splitsy lockup, cropped to its artwork.
+ *
+ * public/splitsydarkfull.png is 1536×1024 with a lot of transparent margin
+ * around the logo: the alpha content box is x 95..1480, y 281..736, i.e.
+ * 1386×456. Dropped in as a plain <Img> the lockup would sit high and small, so
+ * every use crops to that box — and because the margin is not uniform the left
+ * and top offsets are the margin times the scale, not a constant. Getting that
+ * wrong by mixing the two axes is a silent ~30px horizontal shift, which is
+ * exactly what it did the first time.
+ *
+ * Returns the style for the inner <Img> plus the box for the clipping wrapper.
+ */
+export const LOGO_FULL = { src: "splitsydarkfull.png", width: 1536, height: 1024 } as const;
+const LOGO_X = [95, 1480] as const;
+const LOGO_Y = [281, 736] as const;
+
+export const fullLogo = (targetWidth: number) => {
+  const contentW = LOGO_X[1] - LOGO_X[0] + 1;
+  const contentH = LOGO_Y[1] - LOGO_Y[0] + 1;
+  const scale = targetWidth / contentW;
+
+  return {
+    /** Wrapper: the art's true box, so overflow:hidden crops the margin away. */
+    box: { width: targetWidth, height: Math.round(contentH * scale) } as const,
+    /** Inner <Img> style: scaled by width, offset so the content box hits 0,0. */
+    img: {
+      position: "absolute",
+      width: Math.round(LOGO_FULL.width * scale),
+      left: -LOGO_X[0] * scale,
+      top: -LOGO_Y[0] * scale,
+      display: "block",
+    } as const,
+  };
+};
+
 /** .iou-sentence's shared type. Every token in the sentence inherits it. */
 export const sentenceStyle = {
   fontFamily: CLASH,

@@ -1,0 +1,16 @@
+{
+  "name": "splitsy-motion-showreel",
+  "version": "1.0.0",
+  "description": "15-second motion graphics showreel for Splitsy",
+  "scripts": {
+    "dev": "serve -l 8080",
+    "render": "node render.js"
+  },
+  "devDependencies": {
+    "puppeteer": "^22.0.0",
+    "serve": "^14.2.1"
+  },
+  "allowScripts": {
+    "puppeteer@22.15.0": true
+  }
+}
