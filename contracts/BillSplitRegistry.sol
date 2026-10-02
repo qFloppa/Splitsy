@@ -50,6 +50,17 @@ import {ReentrancyGuard} from "./security/ReentrancyGuard.sol";
 ///        nonce or signature: it moves only `msg.sender`'s own funds to and
 ///        from bills they are already party to, so there is nothing to replay.
 ///
+///      The one privileged signature, and why it is nearly powerless:
+///      {bind} is the only function an attester signature reaches, and it is
+///      WRITE-ONCE per handle. It answers "which wallet do this handle's
+///      refunds pay to" exactly once and can never revisit the answer, so a
+///      leaked key cannot redirect the refunds of anyone who has signed in even
+///      once — on any bill, however old. {refundSlot} then takes no destination
+///      at all and needs no signature; it reads the binding. What a leaked key
+///      can still do is claim a handle that has NEVER signed in and that has
+///      money sitting on a failed escrowed bill, one handle at a time, as a
+///      public {HandleBound} event it cannot take back.
+///
 ///      Escrow composition: {escrowUntilFull} makes a bill all-or-nothing. The
 ///      splitter's claim is withheld until every participant has paid, and the
 ///      deadline does *not* release it — a bill still short at `dueDate` has
@@ -129,10 +140,23 @@ contract BillSplitRegistry is ReentrancyGuard {
   error SignatureExpired(uint256 deadline);
   /// @notice Thrown when signature verification fails.
   error InvalidSignature();
+  /// @notice Thrown when a handle already has a wallet bound to it.
+  /// @dev Bindings are write-once; see {bind}.
+  /// @param handleHash The handle that is already bound.
+  error AlreadyBound(bytes32 handleHash);
+  /// @notice Thrown when a slot refund is attempted before its handle is bound.
+  /// @param handleHash The handle with no wallet behind it yet.
+  error NotBoundYet(bytes32 handleHash);
 
   /// @notice Emitted once at deployment, recording the token this registry is bound to.
   /// @dev `usdc` is immutable, so this is the only time it is ever set.
   event RegistryDeployed(address indexed usdc);
+
+  /// @notice Emitted when a handle is bound to a wallet, which happens once ever.
+  /// @dev Indexed on both sides so a watcher can alert on a binding to an
+  ///      unexpected wallet. A hijack by a leaked attester key is an event of
+  ///      this shape and cannot be anything quieter.
+  event HandleBound(bytes32 indexed handleHash, address indexed wallet);
   /// @notice Emitted when a new bill is created.
   event BillCreated(
     uint256 indexed billId,
@@ -228,19 +252,27 @@ contract BillSplitRegistry is ReentrancyGuard {
   ///      the reentrancy surface that introduces.
   IERC20 public immutable usdc;
 
-  /// @notice Address authorized to sign refundSlot calls.
-  /// @dev Same party that signs HandleEscrow.release. A leaked key can misdirect
-  ///      refunds, but cannot pay a non-participant.
+  /// @notice Address authorized to sign handle bindings.
+  /// @dev Same party that signs HandleEscrow.release, and the registry's ONLY
+  ///      privileged signature. Its reach is deliberately one-shot per handle:
+  ///      it can say where a never-seen handle's refunds go, once, and can never
+  ///      revisit that answer. See {bind}.
   address public immutable attester;
 
-  /// @notice EIP-712 domain separator for refundSlot signatures.
+  /// @notice EIP-712 domain separator for attester signatures.
   /// @dev Distinct from HandleEscrow's domain so a redeploy cannot replay old signatures.
   bytes32 public immutable DOMAIN_SEPARATOR;
 
-  /// @notice EIP-712 typehash for RefundSlot messages.
-  bytes32 public constant REFUND_SLOT_TYPEHASH = keccak256(
-    "RefundSlot(uint256 billId,address slot,address to,uint256 deadline)"
+  /// @notice EIP-712 typehash for Bind messages.
+  bytes32 public constant BIND_TYPEHASH = keccak256(
+    "Bind(bytes32 handleHash,address wallet,uint256 deadline)"
   );
+
+  /// @notice The wallet a handle's slot refunds pay out to. Write-once.
+  /// @dev Zero means "never bound". {bind} is the only writer and refuses to
+  ///      overwrite, which is what makes a leaked attester key unable to
+  ///      redirect anyone who has already signed in even once.
+  mapping(bytes32 handleHash => address wallet) public boundWallet;
 
   /// @notice Identifier that will be assigned to the next created bill.
   uint256 public nextBillId = 1;
@@ -260,7 +292,7 @@ contract BillSplitRegistry is ReentrancyGuard {
   /// @notice Binds this registry to the USDC token it will custody.
   /// @dev The token address is immutable; there is no setter and no upgrade path.
   /// @param usdc_ Address of the USDC token contract; must be non-zero.
-  /// @param attester_ Address authorized to sign refundSlot calls; must be non-zero.
+  /// @param attester_ Address authorized to sign handle bindings; must be non-zero.
   constructor(address usdc_, address attester_) {
     if (usdc_ == address(0)) {
       revert InvalidConfiguration();
@@ -561,36 +593,70 @@ contract BillSplitRegistry is ReentrancyGuard {
     usdc.safeTransfer(msg.sender, amount);
   }
 
-  /// @notice Refund a slot participant's payment when a bill has failed.
-  /// @dev Permissionless relay authorized by the attester's EIP-712 signature.
-  ///      The signature binds `to`, so a stolen attester key can misdirect one
-  ///      refund but can never pay a non-participant. Same concession
-  ///      HandleEscrow.release already documents.
-  /// @param billId The bill to refund from.
-  /// @param slot The slot participant's address (derived from their handle).
-  /// @param to The address to send the refund to (the user's real wallet).
+  /// @notice Records, once and forever, which wallet a handle's refunds pay to.
+  /// @dev THIS IS WRITE-ONCE, AND THAT IS THE WHOLE SECURITY PROPERTY. The
+  ///      attester's only power here is to answer a question that has never been
+  ///      answered. It cannot change an answer, so a leaked key cannot redirect
+  ///      the refunds of anyone whose handle is already bound — which is
+  ///      everyone who has signed in even once, including on bills created long
+  ///      before the key leaked.
+  ///
+  ///      Permissionless relay: the signature is the authorisation, not the
+  ///      caller, for the same reason {refundSlot} is relayed — the wallet being
+  ///      bound is new and has no gas.
+  ///
+  ///      Binding to the slot's own address is refused. A slot is derived from
+  ///      the handle and nobody holds a key to it (lib/handle-slot.ts), so a
+  ///      refund sent there would be money no one could ever move. That is a
+  ///      typo-shaped way to burn a refund, and it costs one comparison to make
+  ///      impossible.
+  /// @param handleHash keccak256 over the normalized "provider:handle" string.
+  /// @param wallet The wallet refunds for this handle pay out to; must be non-zero.
   /// @param deadline Signature expiry (block.timestamp).
   /// @param signature EIP-712 signature from the attester.
-  function refundSlot(
-    uint256 billId,
-    address slot,
-    address to,
-    uint256 deadline,
-    bytes calldata signature
-  ) external nonReentrant {
+  function bind(bytes32 handleHash, address wallet, uint256 deadline, bytes calldata signature) external {
+    if (wallet == address(0) || wallet == address(uint160(uint256(handleHash)))) {
+      revert InvalidConfiguration();
+    }
+    if (boundWallet[handleHash] != address(0)) revert AlreadyBound(handleHash);
     // slither-disable-next-line timestamp
     if (block.timestamp > deadline) revert SignatureExpired(deadline);
 
     _requireAttester(
       keccak256(
         abi.encodePacked(
-          "\x19\x01", DOMAIN_SEPARATOR, keccak256(abi.encode(REFUND_SLOT_TYPEHASH, billId, slot, to, deadline))
+          "\x19\x01", DOMAIN_SEPARATOR, keccak256(abi.encode(BIND_TYPEHASH, handleHash, wallet, deadline))
         )
       ),
       signature
     );
 
-    // Refund the slot's payment, but send it to `to` instead of to `slot`.
+    boundWallet[handleHash] = wallet;
+
+    emit HandleBound(handleHash, wallet);
+  }
+
+  /// @notice Refund a slot participant's payment when a bill has failed.
+  /// @dev PERMISSIONLESS, AND TAKES NO DESTINATION. There is no `to` parameter
+  ///      for a signature to aim, which is the point: the destination comes from
+  ///      {boundWallet}, written once by {bind} and unchangeable after. The
+  ///      previous version of this function took `(slot, to, signature)` and let
+  ///      a valid signature name any address; a leaked key could misdirect one
+  ///      refund per slot. Moving the trusted statement into a write-once
+  ///      mapping removes that, and removes the signature from this path
+  ///      entirely.
+  ///
+  ///      The slot is DERIVED from `handleHash` rather than passed in, so it
+  ///      cannot disagree with the binding being read. Same derivation as
+  ///      lib/handle-slot.ts: the low 160 bits of the handle hash.
+  /// @param billId The bill to refund from.
+  /// @param handleHash The slot participant's handle hash; the slot is its low 160 bits.
+  function refundSlot(uint256 billId, bytes32 handleHash) external nonReentrant {
+    address to = boundWallet[handleHash];
+    if (to == address(0)) revert NotBoundYet(handleHash);
+
+    address slot = address(uint160(uint256(handleHash)));
+
     Bill storage bill = _billOrRevert(billId);
     Participant storage participant = _participants[billId][slot];
 
@@ -967,10 +1033,10 @@ contract BillSplitRegistry is ReentrancyGuard {
   }
 
   /// @notice Reverts unless `signature` is the attester's over `digest`.
-  /// @dev Split out of {refundSlot} so its locals stay off that function's
-  ///      stack. Rejects high-`s` signatures, which would let a third party
-  ///      mint a second valid signature for a message the attester already
-  ///      signed — harmless for a one-shot refund, but the same guard
+  /// @dev Split out of {bind} so its locals stay off that function's stack.
+  ///      Rejects high-`s` signatures, which would let a third party mint a
+  ///      second valid signature for a message the attester already signed —
+  ///      harmless against a write-once mapping, but the same guard
   ///      {HandleEscrow.release} carries and there is no reason to differ.
   ///
   ///      THE LENGTH IS CHECKED FIRST, which is the guard this function was

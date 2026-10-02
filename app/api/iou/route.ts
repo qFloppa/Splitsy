@@ -2,7 +2,7 @@ import { getBillsOnchain, getBillPaymentsOnchain } from "@/lib/arc-read";
 import { archiveRows, archiveTotals } from "@/lib/iou-archive";
 import { getDepositStanding, insertIou, listIousForWallets } from "@/lib/iou-journal-repo";
 import { getSessionUser } from "@/lib/session";
-import { getSlotWalletForUser } from "@/lib/pending-wallets-repo";
+import { getSlotWalletsForUser } from "@/lib/pending-wallets-repo";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -46,8 +46,8 @@ function parseWallets(url: URL, sessionWallet: string | null, extra: string[] = 
 export async function GET(request: Request) {
   const url = new URL(request.url);
   const user = await getSessionUser();
-  const slot = user ? await getSlotWalletForUser(user).catch(() => null) : null;
-  const wallets = parseWallets(url, user?.wallet_address ?? null, slot ? [slot.wallet_address] : []);
+  const slots = user ? await getSlotWalletsForUser(user).catch(() => []) : [];
+  const wallets = parseWallets(url, user?.wallet_address ?? null, slots.map((s) => s.wallet_address));
   if (wallets.length === 0) return Response.json({ rows: [], settledUsd: 0, count: 0 });
 
   let journal;

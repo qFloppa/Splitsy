@@ -1,5 +1,5 @@
 import { getSessionUser } from "@/lib/session";
-import { getSlotWalletForUser } from "@/lib/pending-wallets-repo";
+import { getSlotWalletsForUser } from "@/lib/pending-wallets-repo";
 import { walletProviderLabel, walletUiName } from "@/lib/wallet-provider";
 
 export const runtime = "nodejs";
@@ -15,10 +15,11 @@ export async function GET() {
   if (!user) {
     return Response.json({ user: null, walletUi });
   }
-  // The slot a bill named as the debtor if this person was tagged before they
-  // joined. Best-effort: a lookup failure costs the slot's debts a render, not the
-  // whole panel, and the next poll retries.
-  const slot = await getSlotWalletForUser(user).catch(() => null);
+  // The slots a bill named as the debtor if this person was tagged before they
+  // joined — one per handle their account owns, because a rename leaves the old
+  // handle's slot named on chain forever. Best-effort: a lookup failure costs the
+  // slots' debts a render, not the whole panel, and the next poll retries.
+  const slots = await getSlotWalletsForUser(user).catch(() => []);
   return Response.json({
     walletUi,
     user: {
@@ -34,11 +35,12 @@ export async function GET() {
       name: user.name,
       avatarUrl: user.avatar_url,
       walletAddress: user.wallet_address,
-      // The address a bill used as their debtor slot BEFORE they signed in, or
-      // null when they were never tagged as a stranger. The settle deck reads the
-      // registry for this too — a debt recorded against it is theirs, and without
-      // this the deck asks only about walletAddress and finds nothing.
-      slotAddress: slot?.wallet_address ?? null,
+      // The addresses a bill used as their debtor slot BEFORE they signed in, or
+      // empty when they were never tagged as a stranger. The settle deck reads the
+      // registry for these too — a debt recorded against one is theirs, and without
+      // them the deck asks only about walletAddress and finds nothing. PLURAL: a
+      // handle rename leaves the old handle's slot on chain, still owing.
+      slotAddresses: slots.map((s) => s.wallet_address),
       // Which custodian actually holds this wallet's keys. The panel says so out
       // loud (spec §5) and the two stacks have different answers, so it cannot be
       // a hard-coded string in the component.

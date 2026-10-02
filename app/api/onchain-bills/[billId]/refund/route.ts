@@ -2,8 +2,10 @@ import { cookies } from "next/headers";
 import { getSessionUser } from "@/lib/session";
 import { verifyWalletUnlock, WALLET_UNLOCK_COOKIE } from "@/lib/session-core";
 import { encodeRefund } from "@/lib/registry-calldata";
-import { getSlotWalletForUser } from "@/lib/pending-wallets-repo";
-import { refundSlotToOwner } from "@/lib/refund-slot";
+import { getSlotWalletsForUser } from "@/lib/pending-wallets-repo";
+import { HandleBoundElsewhereError, refundSlotToOwner } from "@/lib/refund-slot";
+import { handleHash } from "@/lib/handle-escrow";
+import { slotForHandle } from "@/lib/handle-slot";
 import { userSignedLeg, type UserSignedBody } from "@/lib/user-signed";
 import { executeContract } from "@/lib/wallet-provider";
 import { REGISTRY_ADDRESS, getBillOnchain, getParticipantOnchain } from "@/lib/arc-read";
@@ -39,19 +41,27 @@ export async function POST(request: Request, { params }: { params: Promise<{ bil
   const bill = await getBillOnchain(id);
   const me = user.wallet_address as `0x${string}`;
 
-  // WHOSE CONTRIBUTION IS BEING REFUNDED — their own wallet's, or their slot's.
-  // A bill created before this person signed in names the slot as the participant,
-  // and refund() pays msg.sender, so their own wallet cannot call it. The slot is
-  // checked second so a debt they can refund directly is never shadowed by one they
-  // cannot.
+  // WHOSE CONTRIBUTION IS BEING REFUNDED — their own wallet's, or one of their
+  // slots'. A bill created before this person signed in names the slot as the
+  // participant, and refund() pays msg.sender, so their own wallet cannot call it.
+  // The slots are checked second so a debt they can refund directly is never
+  // shadowed by one they cannot.
+  //
+  // EVERY SLOT THIS ACCOUNT OWNS, because a handle rename leaves the old handle's
+  // slot named on chain forever while `users.handle` moves on. Deriving one slot
+  // from the current handle answered "you're not on this bill" for their own
+  // money, and that money has no other exit: {refundSlot} pays the binding for
+  // that exact hash and the registry has no reclaim.
   let participant = await getParticipantOnchain(id, me);
-  let slot = null as Awaited<ReturnType<typeof getSlotWalletForUser>>;
+  let slot = null as Awaited<ReturnType<typeof getSlotWalletsForUser>>[number] | null;
   if (!participant.exists) {
-    slot = await getSlotWalletForUser(user).catch(() => null);
-    if (slot) {
-      const slotPart = await getParticipantOnchain(id, slot.wallet_address as `0x${string}`);
-      if (slotPart.exists) participant = slotPart;
-      else slot = null;
+    for (const candidate of await getSlotWalletsForUser(user).catch(() => [])) {
+      const slotPart = await getParticipantOnchain(id, candidate.wallet_address as `0x${string}`);
+      if (slotPart.exists) {
+        participant = slotPart;
+        slot = candidate;
+        break;
+      }
     }
   }
 
@@ -77,15 +87,31 @@ export async function POST(request: Request, { params }: { params: Promise<{ bil
 
   try {
     // A DERIVED SLOT'S REFUND GOES THROUGH THE REGISTRY, not the user. The slot has
-    // no key and never will, so there is nothing for them to sign; {refundSlot} is
-    // permissionless to call and authorized by an attester signature that binds
-    // the recipient, so the money lands on their real wallet in one transaction
-    // with nothing left behind at the slot.
+    // no key and never will, so there is nothing for them to sign. The handle is
+    // bound to this wallet once (permanently), and {refundSlot} then pays the
+    // binding with no signature and no destination parameter of its own.
     if (slot) {
+      const hash = handleHash(slot.provider, slot.handle);
+
+      // A LEGACY PRE-MINTED ROW IS NOT A DERIVED SLOT. Those rows name a Circle
+      // DCW address that has no preimage, and {refundSlot} derives the slot from
+      // the hash it is handed — so it would look up a participant that is not on
+      // the bill. The table is documented as self-emptying tombstones that leave
+      // on their owner's first login (lib/pending-wallets-repo.ts), so this is
+      // unreachable in practice; it is an explicit error rather than a silent
+      // NotParticipant revert if one ever survives.
+      if (slotForHandle(slot.provider, slot.handle).toLowerCase() !== slot.wallet_address.toLowerCase()) {
+        console.error("Legacy pre-minted slot cannot use refundSlot:", slot.provider, slot.handle);
+        return Response.json(
+          { error: "This refund needs a manual unwind — contact support with your bill id." },
+          { status: 409 },
+        );
+      }
+
       const { txHash } = await refundSlotToOwner({
         registryAddress: REGISTRY_ADDRESS,
         billId: id,
-        slot: slot.wallet_address,
+        handleHash: hash,
         to: me,
       });
       return Response.json({ ok: true, txHash, amount: refundable.toString() });
@@ -108,6 +134,17 @@ export async function POST(request: Request, { params }: { params: Promise<{ bil
     const tx = signed ? signed.tx : await executeContract(user.circle_wallet_id, REGISTRY_ADDRESS, data);
     return Response.json({ ok: true, txHash: tx.txHash, amount: refundable.toString() });
   } catch (err) {
+    // The one cost of a write-once binding, in words the user can act on: the
+    // money is not lost, it is payable to the wallet their handle was bound to.
+    if (err instanceof HandleBoundElsewhereError) {
+      return Response.json(
+        {
+          error: `This handle's refunds were already pointed at ${err.boundTo}, which cannot be changed. Sign in with that wallet to collect it.`,
+          boundTo: err.boundTo,
+        },
+        { status: 409 },
+      );
+    }
     return Response.json({ error: err instanceof Error ? err.message : "refund failed" }, { status: 502 });
   }
 }

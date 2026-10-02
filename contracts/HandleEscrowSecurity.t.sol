@@ -12,6 +12,10 @@ import {Test} from "./test/Test.sol";
 /// @notice Checks the SolidityScan claims and isolation of signed authorizations.
 contract HandleEscrowSecurityTest is Test {
   uint256 private constant ATTESTER_KEY = 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80;
+  // Wide enough that these cases never touch the ceiling; the ceiling has its
+  // own tests against a deliberately tight instance.
+  uint256 private constant HOLD_WINDOW = 30 days;
+  uint128 private constant MAX_RELEASE_PER_DAY = 1_000_000e6;
   uint256 private constant CURVE_ORDER = 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141;
   address private constant ATTESTER = 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266;
   address private constant ALICE = address(0xA11CE);
@@ -24,7 +28,7 @@ contract HandleEscrowSecurityTest is Test {
 
   function setUp() public {
     usdc = new MockUSDC();
-    escrow = new HandleEscrow(address(usdc), ATTESTER);
+    escrow = new HandleEscrow(address(usdc), ATTESTER, HOLD_WINDOW, MAX_RELEASE_PER_DAY);
     usdc.mint(ALICE, 100e6);
     vm.prank(ALICE);
     usdc.approve(address(escrow), type(uint256).max);
@@ -57,7 +61,7 @@ contract HandleEscrowSecurityTest is Test {
   }
 
   function _assertHeld(uint256 id) private view {
-    (address depositor, bytes32 handle, uint256 amount) = escrow.deposits(id);
+    (address depositor,, bytes32 handle, uint256 amount) = escrow.deposits(id);
     assertEq(depositor, ALICE);
     assertTrue(handle == HANDLE);
     assertEq(amount, AMOUNT);
@@ -114,7 +118,7 @@ contract HandleEscrowSecurityTest is Test {
 
   function test_signatureForAnotherDeploymentIsRejected() public {
     uint256 id = _deposit();
-    HandleEscrow other = new HandleEscrow(address(usdc), ATTESTER);
+    HandleEscrow other = new HandleEscrow(address(usdc), ATTESTER, HOLD_WINDOW, MAX_RELEASE_PER_DAY);
     uint256 deadline = block.timestamp + 1 hours;
     bytes memory sig = _signature(address(other), block.chainid, id, RECIPIENT, deadline);
     vm.expectRevert(HandleEscrow.BadSignature.selector);
@@ -266,7 +270,7 @@ contract HandleEscrowSecurityTest is Test {
     vm.prank(ALICE);
     vm.expectRevert(abi.encodeWithSelector(SafeERC20.SafeERC20FailedOperation.selector, address(usdc)));
     escrow.deposit(HANDLE, AMOUNT);
-    (,, uint256 amount) = escrow.deposits(1);
+    (,,, uint256 amount) = escrow.deposits(1);
     assertEq(amount, 0);
     assertEq(usdc.balanceOf(address(escrow)), 0);
     vm.clearMockedCalls();
@@ -275,12 +279,12 @@ contract HandleEscrowSecurityTest is Test {
 
   function test_zeroAttesterIsRejected() public {
     vm.expectRevert(HandleEscrow.InvalidConfiguration.selector);
-    new HandleEscrow(address(usdc), address(0));
+    new HandleEscrow(address(usdc), address(0), HOLD_WINDOW, MAX_RELEASE_PER_DAY);
   }
 
   function test_zeroTokenIsRejected() public {
     vm.expectRevert(HandleEscrow.InvalidConfiguration.selector);
-    new HandleEscrow(address(0), ATTESTER);
+    new HandleEscrow(address(0), ATTESTER, HOLD_WINDOW, MAX_RELEASE_PER_DAY);
   }
 
   function testFuzz_signatureCannotRedirectPayment(address replacement) public {
@@ -319,7 +323,7 @@ contract HandleEscrowSecurityTest is Test {
         escrow.reclaim(id);
         refunded += amounts[i];
       }
-      (,, uint256 held) = escrow.deposits(id);
+      (,,, uint256 held) = escrow.deposits(id);
       assertEq(held, 0);
       assertEq(usdc.balanceOf(address(escrow)), total - paid - refunded);
       assertEq(usdc.balanceOf(RECIPIENT), paid);
@@ -329,7 +333,7 @@ contract HandleEscrowSecurityTest is Test {
 
   function _reentrantSetup() private returns (MaliciousUSDC token, HandleEscrow target) {
     token = new MaliciousUSDC();
-    target = new HandleEscrow(address(token), ATTESTER);
+    target = new HandleEscrow(address(token), ATTESTER, HOLD_WINDOW, MAX_RELEASE_PER_DAY);
     token.mint(ALICE, 10e6);
     vm.prank(ALICE);
     token.approve(address(target), type(uint256).max);
@@ -364,7 +368,7 @@ contract HandleEscrowSecurityTest is Test {
     token.arm(address(target), abi.encodeCall(HandleEscrow.release, (2, RECIPIENT, deadline, second)));
     target.release(1, RECIPIENT, deadline, _signature(address(target), block.chainid, 1, RECIPIENT, deadline));
     _assertReentryBlocked(token);
-    (,, uint256 held) = target.deposits(2);
+    (,,, uint256 held) = target.deposits(2);
     assertEq(held, AMOUNT);
     assertEq(token.balanceOf(RECIPIENT), AMOUNT);
     target.release(2, RECIPIENT, deadline, second);
@@ -383,7 +387,7 @@ contract HandleEscrowSecurityTest is Test {
     vm.prank(ALICE);
     target.reclaim(1);
     _assertReentryBlocked(token);
-    (,, uint256 held) = target.deposits(2);
+    (,,, uint256 held) = target.deposits(2);
     assertEq(held, AMOUNT);
     assertEq(token.balanceOf(ALICE), 9e6);
     assertEq(token.balanceOf(RECIPIENT), 0);

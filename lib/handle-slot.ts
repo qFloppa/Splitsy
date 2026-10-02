@@ -31,28 +31,40 @@ export function slotForHandle(provider: IdentityProvider | string, handle: strin
   return `0x${handleHash(provider, handle).slice(-40)}` as `0x${string}`;
 }
 
-/// The registry's refund entrypoints, as a fragment this module can encode.
-export const REFUND_SLOT_ABI = parseAbi([
-  "function refundSlot(uint256 billId, address slot, address to, uint256 deadline, bytes signature)",
+/// The registry's handle-binding and refund entrypoints.
+///
+/// TWO CALLS, ONE SIGNATURE BETWEEN THEM. `bind` carries the attester's
+/// signature and is WRITE-ONCE per handle; `refundSlot` carries none at all and
+/// takes no destination, reading the binding instead. That split is the security
+/// property — see {bind} in BillSplitRegistry.sol. The old shape
+/// (`refundSlot(billId, slot, to, deadline, signature)`) let a valid signature
+/// name any destination on every call, so a leaked key could redirect a refund
+/// for anyone, at any time.
+export const BIND_ABI = parseAbi([
+  "function bind(bytes32 handleHash, address wallet, uint256 deadline, bytes signature)",
+  "function refundSlot(uint256 billId, bytes32 handleHash)",
+  "function boundWallet(bytes32 handleHash) view returns (address)",
 ]);
 
-export const encodeRefundSlot = (
-  billId: bigint,
-  slot: `0x${string}`,
-  to: `0x${string}`,
+export const encodeBind = (
+  handleHash: `0x${string}`,
+  wallet: `0x${string}`,
   deadline: bigint,
   signature: `0x${string}`,
-) => encodeFunctionData({ abi: REFUND_SLOT_ABI, functionName: "refundSlot", args: [billId, slot, to, deadline, signature] });
+) => encodeFunctionData({ abi: BIND_ABI, functionName: "bind", args: [handleHash, wallet, deadline, signature] });
 
-// The EIP-712 shape, mirroring REFUND_SLOT_TYPEHASH in BillSplitRegistry.sol.
-// Field names and order are part of the hash: rename or reorder one and every
+/// No destination and no signature: the binding already said where this goes.
+export const encodeRefundSlot = (billId: bigint, handleHash: `0x${string}`) =>
+  encodeFunctionData({ abi: BIND_ABI, functionName: "refundSlot", args: [billId, handleHash] });
+
+// The EIP-712 shape, mirroring BIND_TYPEHASH in BillSplitRegistry.sol. Field
+// names and order are part of the hash: rename or reorder one and every
 // signature stops verifying — silently, since the failure surfaces as the
-// contract's own InvalidSignature on a real refund rather than here.
-export const REFUND_SLOT_TYPES = {
-  RefundSlot: [
-    { name: "billId", type: "uint256" },
-    { name: "slot", type: "address" },
-    { name: "to", type: "address" },
+// contract's own InvalidSignature on a real binding rather than here.
+export const BIND_TYPES = {
+  Bind: [
+    { name: "handleHash", type: "bytes32" },
+    { name: "wallet", type: "address" },
     { name: "deadline", type: "uint256" },
   ],
 } as const;
@@ -60,6 +72,6 @@ export const REFUND_SLOT_TYPES = {
 // Chain id and contract address are in the domain, so a signature made for one
 // deployment cannot be replayed against another. Deliberately NOT the same name
 // as HandleEscrow's domain — the two must not share a separator, or a release
-// signature would verify as a refund.
-export const refundSlotDomain = (chainId: number, verifyingContract: `0x${string}`) =>
+// signature would verify as a binding.
+export const bindDomain = (chainId: number, verifyingContract: `0x${string}`) =>
   ({ name: "Splitsy BillSplit", version: "1", chainId, verifyingContract }) as const;

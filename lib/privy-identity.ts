@@ -182,6 +182,17 @@ const realDeps: IdentityDeps = {
 // released and re-registered by someone else at X or Discord would match the
 // original owner's row. Nothing in Privy's response distinguishes that case, it is
 // testnet, and the alternative — never matching on handle — is the larger failure.
+//
+// AND IT IS THE ONE PLACE handle_claims DOES NOT REACH. That table
+// (schema-handle-claims.sql) fixes re-registration everywhere money is looked up
+// — escrow releases, slot refunds — by making first login the permanent owner of
+// a handle. It cannot help here, because this runs BEFORE there is a row to
+// compare against: the question is whether Privy's subject is a new spelling of
+// an existing person or a different person holding their old handle, and only
+// Privy knows. So the guard downstream is worth nothing on this path — a login
+// that lands on the owner's row IS the owner as far as everything after it is
+// concerned. Closing it is a measurement, not a patch: confirm Privy's subject
+// equals the stored provider_user_id for X and Discord, then delete the fallback.
 export async function upsertUserFromPrivy(
   profile: PrivyProfile,
   deps: IdentityDeps = realDeps,

@@ -209,3 +209,35 @@ export async function getUsersByWallets(
   }
   return result;
 }
+
+/**
+ * Wallet address -> the wallet id the server can transact with, for the handful
+ * of paths that act on a user's behalf without the user present.
+ *
+ * Distinct from {getUsersByWallets}, which is display-only enrichment and
+ * degrades silently. This one is used to SEND a transaction, so a failure
+ * throws: a sweep that quietly found no wallets would look like a sweep with
+ * nothing to do.
+ */
+export async function getWalletIdsByAddresses(
+  addresses: string[],
+): Promise<Map<string, string>> {
+  const result = new Map<string, string>();
+  const wanted = [...new Set(addresses.map((a) => a.toLowerCase()))].filter(Boolean);
+  if (wanted.length === 0) return result;
+
+  const client = createSupabaseServerClient();
+  if (!client) throw new Error("Supabase is not configured");
+
+  const { data, error } = await client
+    .from("users")
+    .select("wallet_address, circle_wallet_id")
+    .in("wallet_address", wanted);
+  if (error) throw new Error(`Failed to read wallet ids: ${error.message}`);
+
+  for (const row of data ?? []) {
+    if (!row.wallet_address || !row.circle_wallet_id) continue;
+    result.set(String(row.wallet_address).toLowerCase(), String(row.circle_wallet_id));
+  }
+  return result;
+}

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { keccak256, toFunctionSelector, toHex } from "viem";
-import { encodeRefundSlot, refundSlotDomain, REFUND_SLOT_TYPES, slotForHandle } from "./handle-slot.ts";
+import { BIND_TYPES, bindDomain, encodeBind, encodeRefundSlot, slotForHandle } from "./handle-slot.ts";
 
 test("golden vector: x:alice matches Solidity", () => {
   // Must match BillSplitRegistry.t.sol's testSlotDerivationMatchesTypeScript.
@@ -42,38 +42,51 @@ test("different providers produce different slots", () => {
 // refund — which is the failure mode this whole pinning exists to avoid.
 
 test("golden vector: the EIP-712 typehash matches the contract's", () => {
-  // Field names and order are part of the hash. Renaming `slot` or moving
+  // Field names and order are part of the hash. Renaming `wallet` or moving
   // `deadline` changes this value and silently invalidates every signature.
   const typehash = keccak256(
-    toHex("RefundSlot(uint256 billId,address slot,address to,uint256 deadline)"),
+    toHex("Bind(bytes32 handleHash,address wallet,uint256 deadline)"),
   );
-  assert.equal(typehash, "0x0839007c5ec3423006f0b25f02dc659006a7a827b441364dca638ef68b0c64de");
+  assert.equal(typehash, "0x1adc3991894b22b3c051e8195f6b53ee11b99beb7e7165b10a2928c2261eadf5");
 
   // And that the shape we actually sign is the one that hashes to it.
-  const encoded = REFUND_SLOT_TYPES.RefundSlot.map((f) => `${f.type} ${f.name}`).join(",");
-  assert.equal(keccak256(toHex(`RefundSlot(${encoded})`)), typehash);
+  const encoded = BIND_TYPES.Bind.map((f: { type: string; name: string }) => `${f.type} ${f.name}`).join(",");
+  assert.equal(keccak256(toHex(`Bind(${encoded})`)), typehash);
 });
 
 test("the domain is BillSplit's own, not HandleEscrow's", () => {
-  // Sharing a separator would let a release signature verify as a refund.
-  const domain = refundSlotDomain(1, `0x${"ab".repeat(20)}`);
+  // Sharing a separator would let a release signature verify as a binding.
+  const domain = bindDomain(1, `0x${"ab".repeat(20)}`);
   assert.equal(domain.name, "Splitsy BillSplit");
   assert.notEqual(domain.name, "Splitsy HandleEscrow");
   assert.equal(domain.version, "1");
 });
 
-test("the encoder targets the contract's refundSlot selector", () => {
+test("the bind encoder targets the contract's bind selector", () => {
   // A wrong selector reverts with no reason string — the least debuggable
   // failure this path has.
-  const data = encodeRefundSlot(
-    7n,
-    slotForHandle("x", "alice"),
+  const data = encodeBind(
+    keccak256(toHex("x:alice")),
     `0x${"11".repeat(20)}`,
     1700000000n,
     `0x${"cd".repeat(65)}`,
   );
-  assert.equal(
-    data.slice(0, 10),
-    toFunctionSelector("refundSlot(uint256,address,address,uint256,bytes)"),
-  );
+  assert.equal(data.slice(0, 10), toFunctionSelector("bind(bytes32,address,uint256,bytes)"));
+});
+
+test("refundSlot takes no destination and no signature", () => {
+  // THE SECURITY PROPERTY, AS A SELECTOR. If this ever grows an address
+  // argument again, a signature could aim a refund somewhere and write-once
+  // binding would have been pointless.
+  const data = encodeRefundSlot(7n, keccak256(toHex("x:alice")));
+  assert.equal(data.slice(0, 10), toFunctionSelector("refundSlot(uint256,bytes32)"));
+  // Selector plus exactly two words: nothing else fits.
+  assert.equal(data.length, 10 + 2 * 64);
+});
+
+test("the slot the contract derives is the one TypeScript files", () => {
+  // refundSlot derives `address(uint160(uint256(handleHash)))` internally, so
+  // these two formulas must agree or a refund hits NotParticipant.
+  const hash = keccak256(toHex("x:alice"));
+  assert.equal(slotForHandle("x", "alice"), `0x${hash.slice(-40)}`);
 });

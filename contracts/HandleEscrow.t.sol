@@ -16,18 +16,22 @@ contract HandleEscrowTest is Test {
   address private stranger = address(0xBAD);
 
   bytes32 private constant DANI_HASH = keccak256("email:dani@example.com");
+  uint256 private constant HOLD_WINDOW = 30 days;
+  uint128 private constant MAX_RELEASE_PER_DAY = 1_000_000e6;
   uint256 private constant AMOUNT = 1e6;
 
   MockUSDC private usdc;
   HandleEscrow private escrow;
 
-  event Deposited(uint256 indexed id, address indexed depositor, bytes32 indexed handleHash, uint256 amount);
+  event Deposited(
+    uint256 indexed id, address indexed depositor, bytes32 indexed handleHash, uint256 amount, uint64 expiresAt
+  );
   event Released(uint256 indexed id, address indexed to, uint256 amount);
   event Reclaimed(uint256 indexed id, address indexed depositor, uint256 amount);
 
   function setUp() public {
     usdc = new MockUSDC();
-    escrow = new HandleEscrow(address(usdc), ATTESTER);
+    escrow = new HandleEscrow(address(usdc), ATTESTER, HOLD_WINDOW, MAX_RELEASE_PER_DAY);
     usdc.mint(alice, 100e6);
     vm.prank(alice);
     usdc.approve(address(escrow), type(uint256).max);
@@ -53,13 +57,13 @@ contract HandleEscrowTest is Test {
     // _deposit is a cheatcode, not a call, so it does not consume this. The id
     // is a literal because the first deposit is always 1, asserted just below.
     vm.expectEmit(true, true, true, true, address(escrow));
-    emit Deposited(1, alice, DANI_HASH, AMOUNT);
+    emit Deposited(1, alice, DANI_HASH, AMOUNT, uint64(block.timestamp + HOLD_WINDOW));
 
     uint256 id = _deposit();
     assertEq(id, 1);
     assertEq(usdc.balanceOf(address(escrow)), AMOUNT);
     assertEq(usdc.balanceOf(alice), 99e6);
-    (address depositor, bytes32 handleHash, uint256 amount) = escrow.deposits(id);
+    (address depositor,, bytes32 handleHash, uint256 amount) = escrow.deposits(id);
     assertEq(depositor, alice);
     assertTrue(handleHash == DANI_HASH);
     assertEq(amount, AMOUNT);

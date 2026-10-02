@@ -517,13 +517,78 @@ has to be a transaction sender, which is the point of the permissionless
 `release` entry point.
 
 **The attester is immutable in the deployed contract.** There is no setter and
-no owner (`contracts/HandleEscrow.sol:88-90`). Rotating the key is not a
-variable change: it needs a redeploy, and until then any deposit already held
-is releasable only by the old key. If the key is compromised, the recovery path
-is that depositors take their money back with `reclaim` — unconditional,
-available any time before a release, callable only by the depositor — and the
-contract is redeployed under a new attester. That only works because reclaim is
-unconditional; the two decisions hold each other up.
+no owner. Rotating the key is not a variable change: it needs a redeploy, and
+until then any deposit already held is releasable only by the old key. If the key
+is compromised, the recovery path is that depositors take their money back with
+`reclaim` — unconditional, available any time before a release, callable only by
+the depositor — and the contract is redeployed under a new attester. That only
+works because reclaim is unconditional; the two decisions hold each other up.
+
+**Two constructor bounds exist because of that.** `holdWindow` and
+`maxReleasePerDay` are both immutable, both set at deploy, and both cap what a
+*valid* signature can achieve — so they bind a stolen key exactly as they bind
+the real one. The deploy script defaults them (30 days, 10,000 USDC/day) and
+accepts `ESCROW_HOLD_WINDOW_SECONDS` / `ESCROW_MAX_RELEASE_PER_DAY_UNITS` to
+override. Getting these wrong degrades rather than bricks: too tight and honest
+releases bounce until the bucket refills (deposits stay safe and reclaimable),
+too loose and the leaked-key exposure is larger than it needed to be.
+
+| Variable | Default | Notes |
+|---|---|---|
+| `ESCROW_HOLD_WINDOW_SECONDS` | `2592000` (30 days) | immutable once deployed; the backstop, not the policy |
+| `ESCROW_MAX_RELEASE_PER_DAY_UNITS` | `10000000000` (10,000 USDC) | immutable; rolling 24h bucket, not a calendar day |
+| `ESCROW_RECLAIM_AFTER_DAYS` | `7` | the sweep's policy; retunable with no redeploy |
+| `ESCROW_SWEEP_SECRET` | falls back to `CRON_SECRET` | bearer token for `/api/escrow/reclaim-stale` |
+
+**The sweep is the operational half.** `/api/escrow/reclaim-stale` runs nightly
+(`vercel.json`), reclaims open deposits older than `ESCROW_RECLAIM_AFTER_DAYS`
+from the depositor's own wallet, and marks them `reclaimed` — a third status that
+needs `schema-escrow-reclaim.sql` applied before the route will write. It reads
+the contract before spending gas, skips depositors whose wallets this server
+cannot sign for, and caps itself at 25 reclaims per run so a backlog shows up as
+several runs rather than one request that times out halfway.
+
+A reclaim is **not** a release with a different tx hash: the money went back to
+the sender and the debt it was settling is still outstanding. Collapsing the two
+statuses would make the IOU view lie about who is owed what.
+
+**`BillSplitRegistry` no longer has a signed refund destination.** Its attester
+signs `bind(handleHash, wallet, deadline)` only, which is write-once per handle;
+`refundSlot(billId, handleHash)` then takes no signature and no destination. A
+leaked key cannot redirect a refund for any handle already bound. Deploying the
+registry is unchanged — same two constructor arguments — but the existing
+deployment carries the old signed-`to` shape and has to be replaced to get the
+property.
+
+**A handle's owner is decided once, by first login** — `handle_claims`
+(`schema-handle-claims.sql`), and this migration has to be applied **with its
+backfill**. Every money path keys on the handle string rather than the provider's
+stable id (`handleHash` is `keccak256("x:alice")`, and a stranger's slot is that
+hash truncated), so a rename on X or Discord used to orphan the money twice over:
+the owner's login looked under the new handle and found nothing, and whoever
+re-registered the freed handle looked like them. The second half is the one the
+table exists for — `bind` is write-once, so a slot refund bound to the wrong
+wallet is unfixable by anyone, including the real owner.
+
+First login under a handle wins it; a rename leaves the old claim standing, so one
+account owns several handles and login collects under all of them
+(`lib/handle-claims.ts`). Two consequences worth knowing before the flip:
+
+- **Skip the backfill and the window stays open.** Every handle in use is
+  unclaimed until someone logs in under it, and the first login to touch one wins
+  — including a stranger's. The backfill claims every existing account's current
+  handle in one statement, oldest row per handle winning.
+- **Skip the migration entirely and logins release nothing.** The claim read
+  throws, the login treats that as "release nothing this pass" and continues, so
+  the symptom is money that stops arriving with a `Handle claim failed` line in
+  the log — the same silent shape as an unfunded releaser below.
+
+Not covered by any of this: the Privy rail's handle fallback
+(`lib/privy-identity.ts`), which lands a login on an existing row by handle when
+Privy's subject is not the id the OAuth callback stored. A re-registered handle
+matches the original owner's row *there*, before claims are ever consulted. The
+fix is a measurement rather than a patch — confirm Privy's subject equals the
+stored `provider_user_id` for X and Discord, then the fallback can go.
 
 **The releaser wallet needs USDC, and not for the amount being released.**
 Releases are relayed by `getOrCreateWallet("splitsy", "escrow-releaser")`

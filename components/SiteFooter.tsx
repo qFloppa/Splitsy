@@ -2,6 +2,7 @@ import Link from "next/link";
 import { ArrowUpRight } from "lucide-react";
 
 import { ARC_EXPLORER } from "@/lib/arc-explorer";
+import { unstable_cache } from "next/cache";
 import { siteContracts } from "@/lib/site-contracts";
 
 // The site's colophon — the block a printed spec sheet ends with, stating what
@@ -49,8 +50,48 @@ const LEGAL = [
   { href: "/legal", label: "Terms & Privacy" },
 ];
 
-export function SiteFooter() {
+// WHY THE ESCROW BALANCE IS PUBLISHED, and why it belongs next to the addresses
+// rather than in a FAQ. HandleEscrow's attester key cannot be rotated, so the
+// honest statement about it is "a leaked key could misdirect what this contract
+// is holding right now". That sentence is unanswerable in the abstract and
+// trivially answerable with a number: the balance is a public `balanceOf` any
+// reader can check, the nightly sweep keeps it near a week of inflow, and a
+// visible small figure settles the question better than a paragraph defending it.
+//
+// A FAILED READ PRINTS NOTHING. An RPC hiccup must not replace a true number
+// with a false one, and must not take the footer down with it — so the read is
+// caught and the line simply does not render.
+//
+// `unstable_cache` and not `use cache`: the newer directive needs Cache
+// Components turned on app-wide (next.config.ts), which is not a change worth
+// making for one footer line. Revalidating every five minutes keeps this to one
+// eth_call per five minutes instead of one per page render. Upgrade path is the
+// `use cache` directive if this app ever opts in.
+const cachedEscrowBalance = unstable_cache(
+  async () => {
+    const { getEscrowBalanceOnchain } = await import("@/lib/arc-read");
+    return (await getEscrowBalanceOnchain()).toString();
+  },
+  ["site-footer-escrow-balance"],
+  { revalidate: 300 },
+);
+
+const RECLAIM_AFTER_DAYS = Number(process.env.ESCROW_RECLAIM_AFTER_DAYS ?? 7);
+
+async function escrowHolding(): Promise<string | null> {
+  try {
+    const units = BigInt(await cachedEscrowBalance());
+    // Whole dollars. Cents on a figure whose point is its order of magnitude is
+    // noise, and this band has no room for them.
+    return `$${(Number(units) / 1e6).toLocaleString("en-US", { maximumFractionDigits: 0 })}`;
+  } catch {
+    return null;
+  }
+}
+
+export async function SiteFooter() {
   const contracts = siteContracts();
+  const holding = contracts.length > 0 ? await escrowHolding() : null;
 
   return (
     <footer className="site-footer">
@@ -102,6 +143,11 @@ export function SiteFooter() {
                 </li>
               ))}
             </ul>
+            {holding !== null && (
+              <p className="site-footer-exposure settle-label">
+                {`Escrow holding ${holding} · unclaimed deposits return to the sender after ${RECLAIM_AFTER_DAYS} days`}
+              </p>
+            )}
           </section>
         )}
 

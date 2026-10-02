@@ -1414,6 +1414,16 @@ input[type="number"],
   list-style: none;
 }
 
+/* The published exposure, under the addresses it is about. Spans the whole
+   measure rather than sitting in a ledger column: it is one sentence about all
+   three rows, and dropping it into the grid would make it look like a fourth
+   contract. Opacity rather than a dimmer colour so it reads as a footnote to the
+   band above in both themes without a second variable to keep in sync. */
+.site-footer-exposure {
+  margin: calc(var(--foot-gap) * 0.4) 0 0;
+  opacity: 0.72;
+}
+
 /* .iou-row's grammar at footer scale. Its own size rather than that one's clamp:
    .iou-row is tuned for a debt you are about to settle, and a contract address
    is a reference, not a figure. */

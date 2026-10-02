@@ -329,7 +329,7 @@ settle rails deposit into it when the recipient has never signed in:
 
 | Entry point | Who calls it | What it does |
 |---|---|---|
-| `deposit(handleHash, amount)` | the sender's wallet | moves USDC in and returns a deposit id |
+| `deposit(handleHash, amount)` | the sender's wallet | moves USDC in, stamps a 30-day expiry, returns a deposit id |
 | `release(id, to, deadline, signature)` | anyone | pays the deposit to `to`, authorised by the attester's EIP-712 signature |
 | `reclaim(id)` | the depositor only | takes it back, unconditionally, any time before a release |
 
@@ -345,6 +345,32 @@ properties hold it together, and they hold each other up:
   contract is redeployed under a new attester.
 - **A release is relayed, not sent by the recipient.** So a person with no wallet
   and no gas can still be paid.
+
+### Two bounds, because the key cannot be rotated
+
+Neither is a permission check. Both cap what a *valid* signature can achieve, so
+they bind the real attester and a stolen one identically — which is the only kind
+of bound that is worth anything against a key that cannot be replaced.
+
+| Bound | Value | What it buys |
+|---|---|---|
+| `holdWindow` | 30 days, immutable | past `expiresAt` the only exit is `reclaim`, so the reachable balance is one window's inflow rather than every deposit ever made |
+| `maxReleasePerDay` | 10,000 USDC, rolling 24h bucket | a leaked key gets one day's ceiling, in public, while depositors reclaim the rest |
+
+`reclaim` is exempt from both. An escape hatch with a rate limit is not one: a
+capped reclaim would let a leaked key outrun the people trying to get out.
+
+The 30 days is a **backstop**, not the policy. The policy is the nightly sweep at
+`/api/escrow/reclaim-stale`, which reclaims after `ESCROW_RECLAIM_AFTER_DAYS`
+(default 7) and can be retuned without a redeploy. The contract's copy exists so
+the bound still holds if the sweep is switched off, forgotten, or Splitsy stops
+running. A deposit above the ceiling is refused at `deposit` rather than accepted
+and left unreleasable.
+
+The balance this actually holds is printed live in the site footer, because the
+honest statement about an unrotatable key is "it could misdirect what the
+contract is holding right now" — and that is a number any reader can check with
+one `balanceOf`.
 
 Releases fail *silently* if the relayer runs out of USDC (Arc charges gas in
 USDC): deposits stay safe and reclaimable, the login still succeeds, and money
@@ -362,18 +388,39 @@ path that minted a custodial wallet for every tagged stranger.
 Money can be *paid toward* a slot's share (a third party settling it, an autopay
 agent) but can never rest at the slot itself. That leaves one hole a failed
 all-or-nothing bill would otherwise open, since `refund` pays `msg.sender` and a
-slot has no `msg.sender` to be. `BillSplitRegistry.refundSlot(billId, slot, to,
-deadline, signature)` is the answer: permissionless to call, authorised by an
-EIP-712 signature over all four arguments, and it pays `to` — the user's real
-wallet — instead of the slot.
+slot has no `msg.sender` to be. Two calls answer it, and the split between them
+is the security property:
+
+| Entry point | Signature | What it can do |
+|---|---|---|
+| `bind(handleHash, wallet, deadline, signature)` | attester's | writes `handleHash -> wallet` **once, permanently** |
+| `refundSlot(billId, handleHash)` | **none** | pays the slot's contribution to whatever `bind` recorded |
+
+`refundSlot` has no destination parameter. There is nothing for a signature to
+aim, because the destination is stored state written once and never revisited.
+
+**What that changed.** The previous shape was `refundSlot(billId, slot, to,
+deadline, signature)`, which paid a signed `to` — so a valid signature could name
+any destination, on every call, forever. A leaked key could redirect the refund of
+anyone, repeatedly. With a write-once binding it cannot redirect anyone whose
+handle is already bound, which is everyone who has signed in even once, on every
+bill however old.
+
+**What a leaked key can still do**, stated rather than softened: claim a handle
+that has **never** been bound, once, as a public `HandleBound` event it cannot
+take back. It cannot rebind, cannot name a destination at refund time, and cannot
+touch a handle already bound. The cost of write-once is that someone who moves to
+a different wallet cannot redirect their old slots — the refund is still payable,
+to the wallet they were bound to, and the route says so by name.
+
+Binding happens lazily, on the first refund that needs it, rather than at login:
+identical security (the mapping is write-once whenever written) and the gas is
+only spent when there is actually a refund to pay.
 
 Both signatures come from the same key (`ESCROW_ATTESTER_PRIVATE_KEY` /
 `REFUND_SLOT_ATTESTER_PRIVATE_KEY`), which is one key to guard rather than two.
-What that concedes is bounded and stated: a stolen key can misdirect a refund or
-a release, but the signature binds `to` at signing time, so it cannot pay a
-non-participant and cannot invent an amount. The contract pays what is actually
-held. The two EIP-712 domains are deliberately different, so a release signature
-can never verify as a refund.
+The two EIP-712 domains are deliberately different, so a release signature can
+never verify as a binding.
 
 ## Circle Gateway (Cross-Chain Payments)
 

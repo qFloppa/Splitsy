@@ -3,7 +3,7 @@ import { after } from "next/server";
 import { getSessionUser } from "@/lib/session";
 import { verifyWalletUnlock, WALLET_UNLOCK_COOKIE } from "@/lib/session-core";
 import { encodeApprove, encodePayDebt, encodePayDebtFor } from "@/lib/registry-calldata";
-import { getSlotWalletForUser } from "@/lib/pending-wallets-repo";
+import { getSlotWalletsForUser } from "@/lib/pending-wallets-repo";
 import { prepareForUser, relayForUser, userMustSign, type UserSignedBody } from "@/lib/user-signed";
 import { executeContract, InsufficientFundsError } from "@/lib/wallet-provider";
 import {
@@ -63,13 +63,17 @@ export async function POST(request: Request, { params }: { params: Promise<{ bil
   let debtor = me;
   let part = await getParticipantOnchain(BigInt(billId), me);
   if (!part.exists) {
-    const slot = await getSlotWalletForUser(user).catch(() => null);
-    if (slot) {
+    // EVERY SLOT THIS ACCOUNT OWNS, not just the current handle's. A bill created
+    // before a rename names the OLD handle's slot as the debtor, on chain and
+    // permanently, so asking about one derived address answered "you're not a
+    // participant" for a debt that is theirs.
+    for (const slot of await getSlotWalletsForUser(user).catch(() => [])) {
       const slotAddr = slot.wallet_address as `0x${string}`;
       const slotPart = await getParticipantOnchain(BigInt(billId), slotAddr);
       if (slotPart.exists) {
         debtor = slotAddr;
         part = slotPart;
+        break;
       }
     }
   }

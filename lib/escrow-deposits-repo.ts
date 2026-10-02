@@ -109,3 +109,64 @@ export async function markDepositReleased(
     .match({ escrow_address: escrowAddress.toLowerCase(), deposit_id: depositId });
   if (error) throw new Error(`Failed to mark escrow deposit released: ${error.message}`);
 }
+
+/**
+ * Deposits old enough for the nightly sweep to pull back to their senders.
+ *
+ * WHY A SWEEP EXISTS AT ALL. HandleEscrow's attester key cannot be rotated, so
+ * the only way to bound what a leak could reach is to bound what the contract
+ * holds. The contract's own `holdWindow` is the backstop (30 days, immutable);
+ * this is the policy, and it is deliberately the tunable half — change
+ * ESCROW_RECLAIM_AFTER_DAYS and the exposure moves, with no redeploy.
+ *
+ * Scoped to ONE escrow address because ids restart at 1 per deployment and a
+ * reclaim aimed at the wrong contract is a reclaim of someone else's deposit.
+ */
+export async function getStaleOpenDeposits(
+  escrowAddress: string,
+  olderThan: Date,
+): Promise<
+  { deposit_id: string; depositor_address: string; amount_usdc: string; provider: string; handle: string }[]
+> {
+  const client = requireClient();
+  const { data, error } = await client
+    .from("escrow_deposits")
+    .select("deposit_id, depositor_address, amount_usdc, provider, handle")
+    .eq("escrow_address", escrowAddress.toLowerCase())
+    .eq("status", "open")
+    .lt("created_at", olderThan.toISOString());
+  if (error) throw new Error(`Failed to read stale escrow deposits: ${error.message}`);
+  return (data ?? []).map((r) => ({
+    deposit_id: r.deposit_id,
+    depositor_address: String(r.depositor_address).toLowerCase(),
+    // Same reason as getOpenDeposits: PostgREST hands numeric back as a number
+    // or a string depending on the value, and the caller needs uint256 units.
+    amount_usdc: String(r.amount_usdc),
+    provider: r.provider,
+    handle: r.handle,
+  }));
+}
+
+/**
+ * Mark a deposit reclaimed. Bookkeeping after the fact, same as
+ * {markDepositReleased} — the chain has already moved.
+ *
+ * NOT 'released'. A released deposit reached its recipient; a reclaimed one went
+ * back to its sender and the debt it was settling is still outstanding.
+ */
+export async function markDepositReclaimed(
+  escrowAddress: string,
+  depositId: string,
+  txHash: string | null,
+): Promise<void> {
+  const client = requireClient();
+  const { error } = await client
+    .from("escrow_deposits")
+    .update({
+      status: "reclaimed",
+      reclaim_tx_hash: txHash,
+      reclaimed_at: new Date().toISOString(),
+    })
+    .match({ escrow_address: escrowAddress.toLowerCase(), deposit_id: depositId });
+  if (error) throw new Error(`Failed to mark escrow deposit reclaimed: ${error.message}`);
+}

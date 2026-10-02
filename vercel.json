@@ -7,6 +7,10 @@
     {
       "path": "/api/agents/dunning",
       "schedule": "0 12 * * *"
+    },
+    {
+      "path": "/api/escrow/reclaim-stale",
+      "schedule": "17 3 * * *"
     }
   ]
 }

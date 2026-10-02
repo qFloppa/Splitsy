@@ -390,10 +390,11 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
   // kept so the split form can reject the creator tagging themselves.
   const [me, setMe] = useState<{
     walletAddress: string | null;
-    // The address a bill named as this person's debtor slot if they were tagged
-    // before they ever signed in. Read alongside walletAddress by
-    // refreshBillRegistry — a debt recorded against it is theirs.
-    slotAddress: string | null;
+    // The addresses a bill named as this person's debtor slot if they were tagged
+    // before they ever signed in — one per handle their account owns, since a
+    // rename leaves the old handle's slot named on chain. Read alongside
+    // walletAddress by refreshBillRegistry — a debt recorded against one is theirs.
+    slotAddresses: string[];
     provider: IdentityProvider | null;
     handle: string | null;
     // Who holds the social wallet's keys, which is also what decides how it can
@@ -457,10 +458,10 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
   const recurringActingAccount = (recurringWallet?.account ?? me?.walletAddress ?? null) as `0x${string}` | null;
   const recurringViaServer = !recurringWallet && Boolean(me?.walletAddress);
   const socialWalletAddress = (me?.walletAddress ?? null) as `0x${string}` | null;
-  // Read as a second social address, never as the primary one: it holds no balance
-  // and signs nothing, so it must not reach registryReadAddress or the balance
-  // display. It exists only so bills that name it as the debtor show up.
-  const slotWalletAddress = (me?.slotAddress ?? null) as `0x${string}` | null;
+  // Read as further social addresses, never as the primary one: they hold no
+  // balance and sign nothing, so they must not reach registryReadAddress or the
+  // balance display. They exist only so bills that name them as the debtor show up.
+  const slotWalletAddresses = (me?.slotAddresses ?? []) as `0x${string}`[];
   // The browser wallet the split form would sign with: the built app wallet, or
   // the raw wagmi connection while the app wallet is still being (re)built.
   const connectedWalletAccount = (billWallet?.account ?? address ?? null) as `0x${string}` | null;
@@ -478,7 +479,7 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
   useEffect(() => {
     if (registryReadAddress) void refreshBillRegistry(registryReadAddress);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [registryReadAddress, socialWalletAddress, slotWalletAddress]);
+  }, [registryReadAddress, socialWalletAddress, slotWalletAddresses.join(",")]);
 
   // Load recurring tabs when the social (DCW) identity becomes available — even
   // if a browser wallet is already connected, since its earlier sweep ran before
@@ -962,20 +963,21 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
   // primary address whose balance feeds the legacy single-balance display.
   async function refreshBillRegistry(account: `0x${string}` | undefined = registryReadAddress ?? undefined) {
     const social = socialWalletAddress;
-    const slot = slotWalletAddress;
+    const slots = slotWalletAddresses;
+    const slotKeys = new Set(slots.map((s) => s.toLowerCase()));
     const seen = new Set<string>();
     const targets: { account: `0x${string}`; via: "wallet" | "social" }[] = [];
-    for (const candidate of [account, billWallet?.account, social, slot]) {
+    for (const candidate of [account, billWallet?.account, social, ...slots]) {
       if (!candidate) continue;
       const key = candidate.toLowerCase();
       if (seen.has(key)) continue;
       seen.add(key);
-      // The SLOT is tagged "social" so its rows act through the server, which is
+      // A SLOT is tagged "social" so its rows act through the server, which is
       // the only thing that can settle them: paying one is payDebtFor from the
       // user's own wallet, and refunding one is relayed out of the slot itself.
       // Tagged "wallet" the deck would try to sign payDebt from the browser wallet,
       // which is not the participant and would revert.
-      const isSlot = Boolean(slot) && key === slot!.toLowerCase();
+      const isSlot = slotKeys.has(key);
       const isSocial = isSlot || (social ? key === social.toLowerCase() : false);
       targets.push({ account: candidate, via: isSocial ? "social" : "wallet" });
     }

@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { upsertUserFromProvider, setUserWallet } from "@/lib/users-repo";
 import { resolveDebtsForHandle } from "@/lib/bills-repo";
 import { releaseEscrowForHandle } from "@/lib/escrow-release";
+import { claimAndListHandles } from "@/lib/handle-claims";
 import { getOrCreateWallet, walletProviderName } from "@/lib/wallet-provider";
 import { getPendingWallet, deletePendingWallet } from "@/lib/pending-wallets-repo";
 import { signSession, SESSION_COOKIE_NAME, SESSION_MAX_AGE } from "@/lib/session";
@@ -80,37 +81,56 @@ export async function finishProviderLogin(params: {
   // has no handle namespace — a bill aimed at a raw address is on chain against
   // that address, not pending in this table under it.
   if (provider !== "wallet") {
+    // NOT `appUser.handle`, AND NOT JUST ONE HANDLE. Everything below is keyed by
+    // handle string — bill_debts rows, escrow deposits, the slot a bill named —
+    // while the account is keyed by provider id, so a rename orphans all of it
+    // under the old string. This is the list of handles this account owns, which
+    // after a rename is more than one, and which EXCLUDES a handle somebody else
+    // claimed first. See lib/handle-claims.ts for what that exclusion is for.
+    //
+    // A failure here releases nothing, deliberately: the money stays where it is
+    // and the next sign-in retries. Empty would be indistinguishable from a
+    // correctly-refused re-registered handle, so it must not be the error value.
+    let myHandles: string[] = [];
     try {
-      await resolveDebtsForHandle(appUser.id, provider, appUser.handle);
-    } catch (resolveErr) {
-      console.error("Debt resolution failed (login continues):", resolveErr);
+      myHandles = await claimAndListHandles(appUser.id, provider, appUser.handle);
+    } catch (claimErr) {
+      console.error("Handle claim failed (login continues, nothing linked or released):", claimErr);
     }
 
-    // The same sentence resolveDebtsForHandle just said — "you proved who you
-    // are, take what is tagged with your handle" — with money attached. Anything
-    // escrowed for this handle can now be paid out, because a wallet exists and
-    // login is the only moment the handle is proven.
-    //
-    // Best-effort, like the linking above: a release that fails is retried by the
-    // next sign-in, and blocking the login over it would cost the user their
-    // session for something they cannot act on. Skipped for a wallet sign-in for
-    // the same reason the debt linking is — escrow rows are keyed by HANDLE, and
-    // a wallet has no handle namespace.
-    //
-    // params.walletAddress is what the Privy route just linked. The OAuth routes
-    // pass nothing and fall back to the row, which covers every RETURNING user —
-    // and a brand-new one on the Circle stack still reads null here, because the
-    // provisioning below runs after this. That costs a delay, not the money: the
-    // row stays 'open' and the next sign-in releases it.
-    try {
-      await releaseEscrowForHandle(
-        appUser.id,
-        provider,
-        appUser.handle,
-        params.walletAddress ?? appUser.wallet_address,
-      );
-    } catch (releaseErr) {
-      console.error("Escrow release failed (login continues):", releaseErr);
+    for (const handle of myHandles) {
+      try {
+        await resolveDebtsForHandle(appUser.id, provider, handle);
+      } catch (resolveErr) {
+        console.error("Debt resolution failed (login continues):", resolveErr);
+      }
+
+      // The same sentence resolveDebtsForHandle just said — "you proved who you
+      // are, take what is tagged with your handle" — with money attached. Anything
+      // escrowed for this handle can now be paid out, because a wallet exists and
+      // login is the only moment the handle is proven.
+      //
+      // Best-effort, like the linking above: a release that fails is retried by the
+      // next sign-in, and blocking the login over it would cost the user their
+      // session for something they cannot act on. Skipped for a wallet sign-in for
+      // the same reason the debt linking is — escrow rows are keyed by HANDLE, and
+      // a wallet has no handle namespace.
+      //
+      // params.walletAddress is what the Privy route just linked. The OAuth routes
+      // pass nothing and fall back to the row, which covers every RETURNING user —
+      // and a brand-new one on the Circle stack still reads null here, because the
+      // provisioning below runs after this. That costs a delay, not the money: the
+      // row stays 'open' and the next sign-in releases it.
+      try {
+        await releaseEscrowForHandle(
+          appUser.id,
+          provider,
+          handle,
+          params.walletAddress ?? appUser.wallet_address,
+        );
+      } catch (releaseErr) {
+        console.error("Escrow release failed (login continues):", releaseErr);
+      }
     }
   }
 

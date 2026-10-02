@@ -1,42 +1,131 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { refundSlotToOwner } from "./refund-slot.ts";
-import { encodeRefundSlot, slotForHandle } from "./handle-slot.ts";
+import { keccak256, toHex } from "viem";
+import { HandleBoundElsewhereError, refundSlotToOwner } from "./refund-slot.ts";
+import { encodeRefundSlot } from "./handle-slot.ts";
 
 const REGISTRY = "0x" + "ab".repeat(20);
-const SLOT = slotForHandle("x", "alice");
+const HANDLE = keccak256(toHex("x:alice"));
 const TO = "0x" + "11".repeat(20);
+const OTHER = "0x" + "22".repeat(20);
+const ZERO = "0x0000000000000000000000000000000000000000";
+const SIG = "0x" + "cd".repeat(65);
 
-test("signs over the recipient it was given, and relays to that same contract", async () => {
-  // The signature binds `to` at signing time. If these two ever came from
-  // different places, the contract would reject the signature rather than pay
-  // the wrong address — but the relay would still have spent gas finding out.
-  let signedFor: { billId: bigint; slot: string; to: string } | null = null;
-  let relayedTo = "";
+test("an unbound handle is bound first, then refunded", async () => {
+  // Two legs, in that order. Refunding before the binding exists reverts with
+  // NotBoundYet, so the order is the contract's requirement, not a preference.
+  let signedFor: { handleHash: string; wallet: string } | null = null;
+  const relayed: string[] = [];
 
-  await refundSlotToOwner({
+  const result = await refundSlotToOwner({
     registryAddress: REGISTRY,
     billId: 7n,
-    slot: SLOT,
+    handleHash: HANDLE,
     to: TO,
     deps: {
-      signRefund: async (_addr, billId, slot, to) => {
-        signedFor = { billId, slot, to };
-        return "0x" + "cd".repeat(65);
+      readBinding: async () => ZERO,
+      signBind: async (_addr, handleHash, wallet) => {
+        signedFor = { handleHash, wallet };
+        return SIG;
       },
-      relay: async (addr) => {
-        relayedTo = addr;
+      relay: async (addr, data) => {
+        relayed.push(data);
+        assert.equal(addr, REGISTRY, "both legs go to the registry");
+        return { txHash: `0xTX${relayed.length}` };
+      },
+    },
+  });
+
+  assert.deepEqual(signedFor, { handleHash: HANDLE, wallet: TO });
+  assert.equal(relayed.length, 2, "bind then refundSlot");
+  assert.equal(relayed[1], encodeRefundSlot(7n, HANDLE), "second leg is the signature-free refund");
+  assert.equal(result.bindTxHash, "0xTX1");
+  assert.equal(result.txHash, "0xTX2");
+});
+
+test("an already-bound handle skips the binding entirely", async () => {
+  // No second signature, and nothing for a leaked key to do: the destination is
+  // already fixed in storage. This is the common path after a user's first refund.
+  let signCalls = 0;
+  const relayed: string[] = [];
+
+  const result = await refundSlotToOwner({
+    registryAddress: REGISTRY,
+    billId: 7n,
+    handleHash: HANDLE,
+    to: TO,
+    deps: {
+      readBinding: async () => TO,
+      signBind: async () => {
+        signCalls += 1;
+        return SIG;
+      },
+      relay: async (_addr, data) => {
+        relayed.push(data);
         return { txHash: "0xTX" };
       },
     },
   });
 
-  assert.deepEqual(signedFor, { billId: 7n, slot: SLOT, to: TO });
-  assert.equal(relayedTo, REGISTRY);
+  assert.equal(signCalls, 0, "nothing was signed");
+  assert.equal(relayed.length, 1, "one leg only");
+  assert.equal(relayed[0], encodeRefundSlot(7n, HANDLE));
+  assert.equal(result.bindTxHash, null);
+});
+
+test("a handle bound to someone else fails before spending any gas", async () => {
+  // Write-once has a cost and this is it. Caught on the READ, so the user gets a
+  // sentence naming the bound wallet instead of an AlreadyBound revert they paid
+  // for. The money is not lost — anyone can call refundSlot and it pays there.
+  let relayCalls = 0;
+
+  await assert.rejects(
+    refundSlotToOwner({
+      registryAddress: REGISTRY,
+      billId: 1n,
+      handleHash: HANDLE,
+      to: TO,
+      deps: {
+        readBinding: async () => OTHER,
+        signBind: async () => SIG,
+        relay: async () => {
+          relayCalls += 1;
+          return { txHash: "0xTX" };
+        },
+      },
+    }),
+    (err: unknown) => err instanceof HandleBoundElsewhereError && err.boundTo === OTHER,
+  );
+
+  assert.equal(relayCalls, 0, "no transaction was sent");
+});
+
+test("the binding comparison ignores address case", async () => {
+  // Chain reads come back checksummed and session wallets often do not. A
+  // case-sensitive compare here would read "bound elsewhere" for the same
+  // address and refuse a refund that is perfectly fine.
+  let relayCalls = 0;
+
+  await refundSlotToOwner({
+    registryAddress: REGISTRY,
+    billId: 1n,
+    handleHash: HANDLE,
+    to: TO.toUpperCase().replace("0X", "0x"),
+    deps: {
+      readBinding: async () => TO,
+      signBind: async () => SIG,
+      relay: async () => {
+        relayCalls += 1;
+        return { txHash: "0xTX" };
+      },
+    },
+  });
+
+  assert.equal(relayCalls, 1, "treated as already bound to this wallet");
 });
 
 test("the deadline it signs is in the future and inside the window", async () => {
-  // A deadline in the past makes every refund revert with SignatureExpired; one
+  // A deadline in the past makes every binding revert with SignatureExpired; one
   // far in the future leaves a leaked signature useful for years.
   let deadline = 0n;
   const now = BigInt(Math.floor(Date.now() / 1000));
@@ -44,12 +133,13 @@ test("the deadline it signs is in the future and inside the window", async () =>
   await refundSlotToOwner({
     registryAddress: REGISTRY,
     billId: 1n,
-    slot: SLOT,
+    handleHash: HANDLE,
     to: TO,
     deps: {
-      signRefund: async (_addr, _billId, _slot, _to, d) => {
+      readBinding: async () => ZERO,
+      signBind: async (_addr, _hash, _wallet, d) => {
         deadline = d;
-        return "0x" + "cd".repeat(65);
+        return SIG;
       },
       relay: async () => ({ txHash: "0xTX" }),
     },
@@ -66,10 +156,11 @@ test("a failed relay propagates rather than being swallowed", async () => {
     refundSlotToOwner({
       registryAddress: REGISTRY,
       billId: 1n,
-      slot: SLOT,
+      handleHash: HANDLE,
       to: TO,
       deps: {
-        signRefund: async () => "0x" + "cd".repeat(65),
+        readBinding: async () => TO,
+        signBind: async () => SIG,
         relay: async () => {
           throw new Error("NothingToRefund");
         },
@@ -77,14 +168,4 @@ test("a failed relay propagates rather than being swallowed", async () => {
     }),
     /NothingToRefund/,
   );
-});
-
-test("the calldata it builds carries the slot and recipient verbatim", () => {
-  // The encoder is what the contract decodes; a wrong field here is a refund
-  // that reverts on chain with no useful message.
-  const sig = ("0x" + "cd".repeat(65)) as `0x${string}`;
-  const data = encodeRefundSlot(7n, SLOT, TO as `0x${string}`, 1700000000n, sig);
-  assert.ok(data.startsWith("0x"), "is calldata");
-  // 4-byte selector + 5 words of head + offset+length+padding for the bytes.
-  assert.ok(data.length > 8 + 5 * 64, "carries all five arguments");
 });

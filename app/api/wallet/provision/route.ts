@@ -205,7 +205,7 @@ export async function POST(request: Request) {
     //    2026-09-15.
     //
     //    That is closed elsewhere rather than here, and without settling anything:
-    //    the routes now ALSO read the holding address, via getSlotWalletForUser
+    //    the routes now ALSO read the holding address, via getSlotWalletsForUser
     //    (lib/pending-wallets-repo.ts). A debt filed under it is paid with
     //    payDebtFor from the user's own wallet, and a failed all-or-nothing bill is
     //    refunded out of it by the registry's attester-signed refundSlot, which
@@ -286,7 +286,7 @@ export async function POST(request: Request) {
     // row is the only record of which slot belongs to which handle, so deleting it
     // makes those debts unfindable — the settle deck, /api/dashboard,
     // [billId]/pay and [billId]/refund all locate them through
-    // getSlotWalletForUser, which reads exactly this row.
+    // getSlotWalletsForUser, which reads exactly this row.
     //
     // Nothing depends on it being gone. resolveParticipantAddress prefers
     // users.wallet_address, so a kept row never diverts a new bill; the Circle

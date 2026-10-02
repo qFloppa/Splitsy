@@ -5,6 +5,7 @@
 import { createPublicClient, decodeEventLog, formatUnits, http, parseAbiItem } from "viem";
 import { ARC, forArcNetwork } from "./arc-chain.ts";
 import { HANDLE_ESCROW_ABI } from "./handle-escrow.ts";
+import { BIND_ABI } from "./handle-slot.ts";
 
 export const REGISTRY_ADDRESS = (forArcNetwork(
   process.env.NEXT_PUBLIC_BILL_SPLIT_REGISTRY_ADDRESS_MAINNET,
@@ -620,7 +621,38 @@ export async function getEscrowDepositOnchain(id: bigint, escrowAddress: `0x${st
     functionName: "deposits",
     args: [id],
   });
-  return { depositor: r[0], handleHash: r[1], amount: r[2] };
+  return { depositor: r[0], expiresAt: r[1], handleHash: r[2], amount: r[3] };
+}
+
+/**
+ * The wallet a handle's slot refunds pay to, or the zero address if never bound.
+ *
+ * WRITE-ONCE ON CHAIN, so this is safe to cache for as long as you like once it
+ * answers non-zero — the registry has no function that could change it. A zero
+ * answer is the only one worth re-reading.
+ */
+export async function getBoundWalletOnchain(
+  handleHash: `0x${string}`,
+  registryAddress: `0x${string}` = REGISTRY_ADDRESS,
+): Promise<`0x${string}`> {
+  return publicClient.readContract({
+    address: registryAddress,
+    abi: BIND_ABI,
+    functionName: "boundWallet",
+    args: [handleHash],
+  });
+}
+
+/** USDC the escrow is holding right now — the exposure the colophon publishes. */
+export async function getEscrowBalanceOnchain(
+  escrowAddress: `0x${string}` = HANDLE_ESCROW_ADDRESS,
+): Promise<bigint> {
+  return publicClient.readContract({
+    address: ARC_USDC_ADDRESS,
+    abi: [parseAbiItem("function balanceOf(address owner) view returns (uint256)")],
+    functionName: "balanceOf",
+    args: [escrowAddress],
+  });
 }
 
 /**

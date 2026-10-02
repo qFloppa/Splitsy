@@ -27,11 +27,17 @@ export const HANDLE_ESCROW_ABI = parseAbi([
   "function deposit(bytes32 handleHash, uint256 amount) returns (uint256)",
   "function release(uint256 id, address to, uint256 deadline, bytes signature)",
   "function reclaim(uint256 id)",
-  "function deposits(uint256) view returns (address depositor, bytes32 handleHash, uint256 amount)",
-  "event Deposited(uint256 indexed id, address indexed depositor, bytes32 indexed handleHash, uint256 amount)",
+  "function deposits(uint256) view returns (address depositor, uint64 expiresAt, bytes32 handleHash, uint256 amount)",
+  "function holdWindow() view returns (uint256)",
+  "function maxReleasePerDay() view returns (uint128)",
+  "function releasableNow() view returns (uint256)",
+  "event Deposited(uint256 indexed id, address indexed depositor, bytes32 indexed handleHash, uint256 amount, uint64 expiresAt)",
   "event Released(uint256 indexed id, address indexed to, uint256 amount)",
   "event Reclaimed(uint256 indexed id, address indexed depositor, uint256 amount)",
 ]);
+
+export const encodeReclaim = (id: bigint) =>
+  encodeFunctionData({ abi: HANDLE_ESCROW_ABI, functionName: "reclaim", args: [id] });
 
 export const encodeDeposit = (hash: `0x${string}`, amountUnits: bigint) =>
   encodeFunctionData({ abi: HANDLE_ESCROW_ABI, functionName: "deposit", args: [hash, amountUnits] });
