@@ -23,7 +23,23 @@ export function handleHash(provider: string, handle: string): `0x${string}` {
   return keccak256(toHex(`${provider.toLowerCase()}:${normalizeHandle(handle)}`));
 }
 
+// EVERY ERROR IS LISTED, and that is not completeness for its own sake. viem
+// decodes a revert against this array and nothing else, so an error missing here
+// reaches the user as "Execution reverted for an unknown reason" — which is what
+// a $2.10 deposit said when it was really AmountExceedsDailyLimit(2100000, 2000)
+// against an escrow deployed with its ceiling in whole USDC. A partial list is
+// the same bug, waiting on whichever error was left out.
 export const HANDLE_ESCROW_ABI = parseAbi([
+  "error InvalidAmount()",
+  "error AmountExceedsDailyLimit(uint256 amount, uint256 maximum)",
+  "error InvalidConfiguration()",
+  "error InvalidRecipient()",
+  "error NoSuchDeposit(uint256 id)",
+  "error DepositExpired(uint256 id, uint64 expiresAt)",
+  "error DailyLimitExceeded(uint256 requested, uint256 available)",
+  "error NotDepositor(uint256 id, address caller)",
+  "error BadSignature()",
+  "error SignatureExpired()",
   "function deposit(bytes32 handleHash, uint256 amount) returns (uint256)",
   "function release(uint256 id, address to, uint256 deadline, bytes signature)",
   "function reclaim(uint256 id)",

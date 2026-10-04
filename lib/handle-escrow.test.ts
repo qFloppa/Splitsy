@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { decodeFunctionData, domainSeparator, encodeAbiParameters, keccak256, toHex } from "viem";
+import { decodeErrorResult, decodeFunctionData, domainSeparator, encodeAbiParameters, keccak256, toHex } from "viem";
 import {
   encodeDeposit,
   encodeRelease,
@@ -76,6 +76,39 @@ test("the domain separator is the one HandleEscrow.sol's constructor builds", ()
   // viem's domainSeparator is hashDomain with the field list derived from the
   // domain itself, so dropping or adding a field changes this too.
   assert.equal(domainSeparator({ domain: releaseDomain(5042002, verifyingContract) }), expected);
+});
+
+test("the ABI names the contract's reverts instead of 'unknown reason'", () => {
+  // CAPTURED FROM ARC, not constructed here: this is the exact revert data an
+  // eth_call to a HandleEscrow deployed with maxReleasePerDay = 2000 base units
+  // returned for a $2.10 deposit. Without the error entries in HANDLE_ESCROW_ABI
+  // viem cannot decode it and the user is told "Execution reverted for an
+  // unknown reason", which names neither the number that was wrong nor the limit
+  // it broke. The deposit route, the browser rail and the release signer all
+  // decode against this one array, so this check covers all three.
+  const onChainRevert =
+    "0x0ea9df32" +
+    "0000000000000000000000000000000000000000000000000000000000200b20" +
+    "00000000000000000000000000000000000000000000000000000000000007d0";
+  const decoded = decodeErrorResult({ abi: HANDLE_ESCROW_ABI, data: onChainRevert as `0x${string}` });
+  assert.equal(decoded.errorName, "AmountExceedsDailyLimit");
+  assert.deepEqual(decoded.args, [2_100_000n, 2_000n]);
+
+  // Every error the contract can throw, so the one left out is not discovered in
+  // production. Compare with the `error` list in HandleEscrow.sol.
+  const named = HANDLE_ESCROW_ABI.filter((i) => i.type === "error").map((i) => i.name).sort();
+  assert.deepEqual(named, [
+    "AmountExceedsDailyLimit",
+    "BadSignature",
+    "DailyLimitExceeded",
+    "DepositExpired",
+    "InvalidAmount",
+    "InvalidConfiguration",
+    "InvalidRecipient",
+    "NoSuchDeposit",
+    "NotDepositor",
+    "SignatureExpired",
+  ]);
 });
 
 test("every argument the encoders take lands in its own slot", () => {

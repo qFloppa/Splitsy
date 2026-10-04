@@ -38,6 +38,30 @@ if (HOLD_WINDOW_SECONDS <= 0n || MAX_RELEASE_PER_DAY <= 0n) {
   throw new Error("Hold window and daily release ceiling must both be positive.");
 }
 
+// FLOORS, BECAUSE BOTH ARGUMENTS ARE IMMUTABLE AND BOTH ARE IN UNITS NOBODY
+// THINKS IN. "30 days" is 2592000 and "2000 USDC" is 2000000000; typing the
+// human number instead deploys a contract that compiles, verifies, reads back
+// plausibly, and refuses every real deposit — which is exactly what happened
+// once, with a ceiling of 2000 base units ($0.002) that bounced $2.10 off
+// AmountExceedsDailyLimit. There is no setter, so the only repair is a redeploy
+// and a new address in every env. These floors are far below any value worth
+// choosing, so they reject the units mistake without constraining the policy.
+const MIN_HOLD_WINDOW_SECONDS = 86_400n; // 1 day — the sweep runs nightly
+const MIN_MAX_RELEASE_PER_DAY = 1_000_000n; // 1 USDC
+
+if (HOLD_WINDOW_SECONDS < MIN_HOLD_WINDOW_SECONDS) {
+  throw new Error(
+    `ESCROW_HOLD_WINDOW_SECONDS is ${HOLD_WINDOW_SECONDS}, under the ${MIN_HOLD_WINDOW_SECONDS}s floor. ` +
+      "It is SECONDS, not days — 30 days is 2592000.",
+  );
+}
+if (MAX_RELEASE_PER_DAY < MIN_MAX_RELEASE_PER_DAY) {
+  throw new Error(
+    `ESCROW_MAX_RELEASE_PER_DAY_UNITS is ${MAX_RELEASE_PER_DAY}, under the ${MIN_MAX_RELEASE_PER_DAY} floor. ` +
+      "It is micro-USDC, not USDC — 2000 USDC is 2000000000.",
+  );
+}
+
 // The chain comes from `--network`; USDC and the explorer come from the profile
 // (lib/arc-chain.ts). See scripts/deploy-bill-split-registry.ts.
 const { viem, networkName } = await network.create({ chainType: "l1" });
