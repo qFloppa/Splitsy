@@ -94,8 +94,17 @@ test("the ABI names the contract's reverts instead of 'unknown reason'", () => {
   assert.equal(decoded.errorName, "AmountExceedsDailyLimit");
   assert.deepEqual(decoded.args, [2_100_000n, 2_000n]);
 
+  // The likeliest real deposit failure, also captured from Arc: safeTransferFrom
+  // reverting because the depositor's allowance was short. It is declared in
+  // SafeERC20, not HandleEscrow, so a list built by reading only the contract's
+  // own `error` lines would miss it — and miss it on the commonest path.
+  const shortAllowance = `0x5274afe7${"0".repeat(24)}3600000000000000000000000000000000000000`;
+  const erc20 = decodeErrorResult({ abi: HANDLE_ESCROW_ABI, data: shortAllowance as `0x${string}` });
+  assert.equal(erc20.errorName, "SafeERC20FailedOperation");
+
   // Every error the contract can throw, so the one left out is not discovered in
-  // production. Compare with the `error` list in HandleEscrow.sol.
+  // production. Compare with the `error` lines in HandleEscrow.sol, plus the two
+  // it inherits from SafeERC20 and ReentrancyGuard.
   const named = HANDLE_ESCROW_ABI.filter((i) => i.type === "error").map((i) => i.name).sort();
   assert.deepEqual(named, [
     "AmountExceedsDailyLimit",
@@ -107,6 +116,8 @@ test("the ABI names the contract's reverts instead of 'unknown reason'", () => {
     "InvalidRecipient",
     "NoSuchDeposit",
     "NotDepositor",
+    "ReentrancyGuardReentrantCall",
+    "SafeERC20FailedOperation",
     "SignatureExpired",
   ]);
 });

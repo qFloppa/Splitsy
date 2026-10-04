@@ -40,6 +40,16 @@ export const HANDLE_ESCROW_ABI = parseAbi([
   "error NotDepositor(uint256 id, address caller)",
   "error BadSignature()",
   "error SignatureExpired()",
+  // NOT declared in HandleEscrow.sol — these come from SafeERC20 and
+  // ReentrancyGuard, and the contract throws them all the same. The first is the
+  // likeliest failure of a real deposit by a wide margin: safeTransferFrom
+  // reverts with it when the depositor's allowance or balance is short, and it
+  // names the token rather than the shortfall, so the sentence the user gets has
+  // to come from above. Omitting them would leave the commonest deposit failure
+  // reading "unknown reason" after the rest of this list was added to stop
+  // exactly that.
+  "error SafeERC20FailedOperation(address token)",
+  "error ReentrancyGuardReentrantCall()",
   "function deposit(bytes32 handleHash, uint256 amount) returns (uint256)",
   "function release(uint256 id, address to, uint256 deadline, bytes signature)",
   "function reclaim(uint256 id)",

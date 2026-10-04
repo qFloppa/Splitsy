@@ -2338,7 +2338,7 @@ export default function DocsPage() {
                 />
                 <Subhead>The live Arc Testnet deployment</Subhead>
                 <pre className="doc-code">{`BillSplitRegistry   0x8e30ca7f7347854629619aec68bd29d7ebedbd48
-HandleEscrow        0xc29b959868828702c37811deba826da48f0e1a6d
+HandleEscrow        0x4F22222942448D7Fc96DDF505e1e28edaF0957C7
 RecurringTabFactory 0x9Cc377C957255582BCa8084a950F52e59fB0a41E
 USDC                0x3600000000000000000000000000000000000000`}</pre>
                 <p>

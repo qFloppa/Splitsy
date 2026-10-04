@@ -11,7 +11,7 @@ import {
   RELEASE_TYPES,
 } from "./lib/handle-escrow.ts";
 
-const ESCROW = "0xc29b959868828702c37811deba826da48f0e1a6d" as const;
+const ESCROW = "0x4F22222942448D7Fc96DDF505e1e28edaF0957C7" as const;
 const RECIPIENT = "0x000000000000000000000000000000000000bEEF" as const;
 const AMOUNT = 10_000n; // 0.01 USDC, 6dp
 
