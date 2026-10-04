@@ -12,7 +12,7 @@ import {
   usdcShortfallMessage,
 } from "@/lib/arc-read";
 import { insertEscrowDeposit } from "@/lib/escrow-deposits-repo";
-import { encodeDeposit, handleHash } from "@/lib/handle-escrow";
+import { encodeDeposit, escrowRevertReason, handleHash } from "@/lib/handle-escrow";
 import { validHandle } from "@/lib/iou";
 import { encodeApprove } from "@/lib/registry-calldata";
 import { getSessionUser } from "@/lib/session";
@@ -129,10 +129,7 @@ export async function POST(request: Request) {
           legsRemaining: leg === "approve" ? 2 : 1,
         });
       } catch (err) {
-        return Response.json(
-          { error: err instanceof Error ? err.message : "Could not prepare this deposit." },
-          { status: 502 },
-        );
+        return Response.json({ error: withReason(err, "Could not prepare this deposit.") }, { status: 502 });
       }
     }
 
@@ -250,5 +247,19 @@ function failed(err: unknown, mayHaveDeposited: boolean) {
       { status: 202 },
     );
   }
-  return Response.json({ error: err instanceof Error ? err.message : "deposit failed" }, { status: 502 });
+  return Response.json({ error: withReason(err, "deposit failed") }, { status: 502 });
+}
+
+// The sentence, with the contract's own verdict on the end of it.
+//
+// Every revert on this route reaches the user as viem's "Execution reverted for
+// an unknown reason", because the server rail hands viem no abi — see
+// escrowRevertReason. The decoded name is appended rather than substituted: the
+// viem message carries the contract address and the calldata, which is what
+// makes a misconfigured deployment diagnosable at all, and the name alone would
+// not have told us WHICH escrow refused.
+function withReason(err: unknown, fallback: string) {
+  const message = err instanceof Error ? err.message : fallback;
+  const reason = escrowRevertReason(err);
+  return reason ? `${message}\n\nEscrow refused it: ${reason}` : message;
 }

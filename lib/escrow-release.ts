@@ -36,7 +36,7 @@
 // (the db and wallet modules are reached lazily from the deps object below), so
 // `node --test` loads this file with no database, no SDK and no chain. Same rule
 // and same reason as lib/handle-escrow.ts and lib/wallet-resolve.ts.
-import { encodeRelease, releaseDomain, RELEASE_TYPES } from "./handle-escrow.ts";
+import { encodeRelease, escrowRevertReason, releaseDomain, RELEASE_TYPES } from "./handle-escrow.ts";
 import type { IdentityProvider } from "./types";
 import { ARC } from "./arc-chain.ts";
 
@@ -227,8 +227,15 @@ export async function releaseEscrowForHandle(
         // stale row is the design working, not breakage. Nothing to clean up and
         // nothing to retry here — the row stays 'open' and the next sign-in runs
         // this same pass, which costs a chain read and no gas.
+        //
+        // The decoded error is what tells those two apart, and it is worth the
+        // one call: NoSuchDeposit is the expected door, while DepositExpired,
+        // DailyLimitExceeded or BadSignature are live deposits that will not
+        // release until someone acts. Without it every one of them logs as
+        // "unknown reason" — see escrowRevertReason.
         console.error(
           `Escrow release for ${provider}:${handle} failed for deposit ${deposit.deposit_id} (login continues):`,
+          escrowRevertReason(releaseErr) ?? "",
           releaseErr,
         );
       }

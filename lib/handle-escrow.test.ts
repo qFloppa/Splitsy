@@ -4,6 +4,7 @@ import { decodeErrorResult, decodeFunctionData, domainSeparator, encodeAbiParame
 import {
   encodeDeposit,
   encodeRelease,
+  escrowRevertReason,
   handleHash,
   HANDLE_ESCROW_ABI,
   releaseDomain,
@@ -120,6 +121,110 @@ test("the ABI names the contract's reverts instead of 'unknown reason'", () => {
     "SafeERC20FailedOperation",
     "SignatureExpired",
   ]);
+});
+
+// A throwaway JSON-RPC server that answers every read plausibly and reverts the
+// two calls viem can estimate gas with. Thirty lines of fake node beats a
+// hand-built error object: the bug being fixed here was caused by assuming how
+// viem nests its causes, so the test lets viem do the nesting.
+//
+// `revertOn` picks the branch. prepareTransactionRequest prefers
+// eth_fillTransaction and falls back to eth_estimateGas when the node does not
+// have it, and the two produce DIFFERENT error types — TransactionExecutionError
+// and EstimateGasExecutionError. The reported failure came from the first and the
+// local reproduction from the second, so both are covered rather than whichever
+// one this machine's RPC happens to pick.
+// The literal AmountExceedsDailyLimit(2000000, 2000) payload an Arc node returned
+// for the $2.00 deposit that prompted this. Pasted rather than assembled: my first
+// attempt at building it from padding counts was two zeros short in one word,
+// which decodes to nothing and made the test fail for a reason that had nothing
+// to do with the code under test.
+const REVERT =
+  "0x0ea9df3200000000000000000000000000000000000000000000000000000000001e8480" +
+  "00000000000000000000000000000000000000000000000000000000000007d0";
+
+async function rpcServerRevertingOn(revertOn: "eth_fillTransaction" | "eth_estimateGas") {
+  const { createServer } = await import("node:http");
+  const reply = (method: string) => {
+    if (method === revertOn) return { error: { code: 3, message: "execution reverted", data: REVERT } };
+    switch (method) {
+      case "eth_fillTransaction":
+        return { error: { code: -32601, message: "method is not available" } };
+      case "eth_chainId":
+        return { result: "0x4ceb52" };
+      case "eth_getTransactionCount":
+        return { result: "0x1" };
+      case "eth_maxPriorityFeePerGas":
+        return { result: "0x5f5e100" };
+      case "eth_getBlockByNumber":
+        return { result: { baseFeePerGas: "0x5f5e100", number: "0x1", timestamp: "0x1" } };
+      default:
+        return { result: "0x1" };
+    }
+  };
+
+  const server = createServer((req, res) => {
+    let body = "";
+    req.on("data", (c) => (body += c));
+    req.on("end", () => {
+      const { id, method } = JSON.parse(body);
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ jsonrpc: "2.0", id, ...reply(method) }));
+    });
+  });
+  await new Promise<void>((done) => server.listen(0, "127.0.0.1", done));
+  const { port } = server.address() as { port: number };
+  return { url: `http://127.0.0.1:${port}`, close: () => new Promise<void>((d) => server.close(() => d())) };
+}
+
+for (const branch of ["eth_fillTransaction", "eth_estimateGas"] as const) {
+  test(`the escrow error is recovered from a server-rail revert via ${branch}`, async () => {
+    // THE BUG THIS EXISTS FOR. Listing the errors in HANDLE_ESCROW_ABI fixes the
+    // browser rail, where writeContract is handed that abi. The server rail signs
+    // with Privy, so it reaches the chain through prepareTransactionRequest, and
+    // the revert comes back with no abi anywhere in the call — viem builds its
+    // message from the node's words alone, the node says exactly "execution
+    // reverted", and the user is told "unknown reason" however complete the abi
+    // is. The payload is still in the cause chain, which is what this recovers.
+    const { createPublicClient, http } = await import("viem");
+    const { ARC } = await import("./arc-chain.ts");
+    const node = await rpcServerRevertingOn(branch);
+    try {
+      // A fresh client per case: viem caches whether a node has
+      // eth_fillTransaction against the client's uid, so a shared one would
+      // answer for whichever branch ran first. The real chain, because the fake
+      // node answers eth_chainId with Arc's id — which makes the error viem
+      // builds here carry the same `chain:` line the reported one did.
+      const client = createPublicClient({ chain: ARC.chain, transport: http(node.url) });
+      await assert.rejects(
+        client.prepareTransactionRequest({
+          account: "0x1234567890123456789012345678901234567890",
+          to: "0x4F22222942448D7Fc96DDF505e1e28edaF0957C7",
+          data: encodeDeposit(handleHash("email", "test22@splitsy.xyz"), 2_000_000n),
+          type: "eip1559",
+        }),
+        (err: Error & { shortMessage?: string }) => {
+          // The precondition: viem really does lose the reason here. If a future
+          // viem starts decoding this itself, this assertion is the thing that
+          // notices, and escrowRevertReason can go.
+          assert.match(err.shortMessage ?? err.message, /unknown reason/);
+          assert.equal(escrowRevertReason(err), "AmountExceedsDailyLimit(2000000, 2000)");
+          return true;
+        },
+      );
+    } finally {
+      await node.close();
+    }
+  });
+}
+
+test("escrowRevertReason declines what it cannot name, rather than guessing", () => {
+  assert.equal(escrowRevertReason(new Error("plain failure")), null);
+  assert.equal(escrowRevertReason(undefined), null);
+  // A revert with no payload names nothing, and `0x` must not read as a selector.
+  assert.equal(escrowRevertReason({ walk: () => ({ data: "0x" }) }), null);
+  // Another contract's error: decoding must fail closed, not mislabel it.
+  assert.equal(escrowRevertReason({ walk: () => ({ data: `0xdeadbeef${"00".repeat(32)}` }) }), null);
 });
 
 test("every argument the encoders take lands in its own slot", () => {

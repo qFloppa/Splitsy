@@ -7,7 +7,7 @@
 //
 // Pure and framework-free (no "use client", no next/*, no @/ aliases) so it
 // stays importable by `node --test`. Same rule as lib/iou.ts.
-import { encodeFunctionData, keccak256, parseAbi, toHex } from "viem";
+import { decodeErrorResult, encodeFunctionData, keccak256, parseAbi, toHex } from "viem";
 import { normalizeHandle } from "./iou.ts";
 
 /// The identifier a deposit is filed under.
@@ -70,6 +70,53 @@ export const encodeDeposit = (hash: `0x${string}`, amountUnits: bigint) =>
 
 export const encodeRelease = (id: bigint, to: `0x${string}`, deadline: bigint, signature: `0x${string}`) =>
   encodeFunctionData({ abi: HANDLE_ESCROW_ABI, functionName: "release", args: [id, to, deadline, signature] });
+
+/**
+ * The escrow error behind a failed server-rail transaction, or null.
+ *
+ * WHY THIS EXISTS WHEN THE ABI ABOVE ALREADY LISTS EVERY ERROR. Those entries
+ * only help a caller that hands viem an abi — `writeContract`, which is the
+ * BROWSER rail. The server rail signs with Privy, so it goes through
+ * prepareTransactionRequest to get a nonce and a gas limit, and the revert
+ * surfaces from the gas estimate (or, on an RPC that supports it,
+ * eth_fillTransaction) with no abi anywhere in the call. Both build their error
+ * from the node's message string alone, and the node's message is the bare words
+ * "execution reverted" — so viem says "Execution reverted for an unknown reason"
+ * and no addition to the list above can change that.
+ *
+ * The revert payload is not lost, though: the JSON-RPC error carried it, and
+ * viem keeps that error in the cause chain. So walk down to whatever still has
+ * `data` and decode it against the list we already maintain.
+ *
+ * Returns the error NAMED, with its arguments — `AmountExceedsDailyLimit(2000000,
+ * 2000)` rather than a sentence. Deliberately not a lookup table of friendly
+ * phrasings: the caller supplies the human sentence, and the one thing it cannot
+ * reconstruct is which of twelve errors fired and with what numbers.
+ */
+export function escrowRevertReason(err: unknown): string | null {
+  // Duck-typed rather than `instanceof BaseError`: this module is importable by
+  // `node --test` and the error arrives from whichever viem the caller used.
+  const walk = (err as { walk?: (fn: (e: unknown) => boolean) => unknown })?.walk;
+  if (typeof walk !== "function") return null;
+
+  const carrier = walk.call(err, (e) => typeof (e as { data?: unknown })?.data === "string") as {
+    data?: string;
+  } | null;
+
+  // A selector is 4 bytes, so anything shorter than 0x + 8 hex is not one. "0x"
+  // specifically is a revert with no data at all, which names nothing.
+  const data = carrier?.data;
+  if (!data || data.length < 10) return null;
+
+  try {
+    const { errorName, args } = decodeErrorResult({ abi: HANDLE_ESCROW_ABI, data: data as `0x${string}` });
+    return args?.length ? `${errorName}(${args.join(", ")})` : errorName;
+  } catch {
+    // Some other contract's error, or one this ABI does not list. The caller's
+    // own sentence is still better than a half-decoded guess.
+    return null;
+  }
+}
 
 // The EIP-712 shape, mirroring RELEASE_TYPEHASH in HandleEscrow.sol. Field names
 // and order are part of the hash: rename or reorder one and every signature
