@@ -3,7 +3,7 @@ import { measureText } from "@remotion/layout-utils";
 import { interpolateColors } from "remotion";
 import { Mail, Wallet } from "lucide-react";
 
-import { C, CLASH, DISCORD_PATH, sentenceStyle, T, WORD_SPACING } from "./theme";
+import { C, CLASH, DISCORD_PATH, easeIn, easeOut, sentenceStyle, T, WORD_SPACING } from "./theme";
 
 /**
  * The IOU composer's sentence, rebuilt from app/IouClient.tsx + .iou-sentence.
@@ -286,35 +286,92 @@ export const Composer: React.FC<ComposerState> = ({
 };
 
 /**
- * The note line's ghost. The app writes it per character rather than per word,
- * because a stagger is what makes a swap read as being written rather than
- * crossfaded — so this does the same.
+ * The note line's ghost, and the swap the app rotates its REASONS with.
+ *
+ * The app writes it per character rather than per word, because a stagger is
+ * what makes a swap read as being written rather than crossfaded — so this does
+ * the same. One gsap timeline per swap there: the outgoing characters stagger up
+ * and out while the whole line blurs, and only once they are gone is the next
+ * reason written and staggered up into place. Sequential, so one <Ghost> covers
+ * a rotation — two lines are never on screen at once.
+ *
+ * Both staggers are `stagger: { amount }`, i.e. the spread is divided among
+ * however many characters there are. "the bar tab" and "your half of the airbnb"
+ * therefore take exactly as long as each other, which is the only reason a
+ * rotation through mixed-length phrases reads as one gesture rather than a long
+ * phrase crawling and a short one snapping.
  */
-export const Ghost: React.FC<{ text: string; chars: number }> = ({ text, chars }) => (
-  <div
-    style={{
-      fontFamily: CLASH,
-      wordSpacing: WORD_SPACING,
-      fontWeight: 300,
-      fontSize: T.note,
-      color: C.ghost,
-      whiteSpace: "pre",
-      display: "flex",
-    }}
-  >
-    {Array.from(text).map((ch, i) => (
-      <span
-        key={i}
-        style={{
-          opacity: i < chars ? 1 : 0,
-          transform: `translateY(${i < chars ? 0 : 0.3}em)`,
-        }}
-      >
-        {ch === " " ? " " : ch}
-      </span>
-    ))}
-  </div>
-);
+
+/** The out tween at 60fps: 0.28s, spread across a 0.18s stagger. */
+export const GHOST_OUT = 28;
+/** The in tween: 0.52s across 0.24s. A swap is the two back to back. */
+export const GHOST_IN = 46;
+
+/** Each window's stagger share; the remainder is one character's own tween. */
+const OUT_SPREAD = 0.18 / 0.46;
+const IN_SPREAD = 0.24 / 0.76;
+/** `filter: blur(3px)`, tweened over 0.28s of the out and 0.44s of the in. */
+const BLUR = 3;
+const BLUR_IN = 0.28 / 0.46;
+const BLUR_OUT = 0.44 / 0.76;
+/** yPercent: ±70 — the travel, the same distance leaving as arriving. */
+const TRAVEL = 70;
+
+const clamp01 = (v: number) => Math.min(1, Math.max(0, v));
+
+/** Character i's own 0 → 1 within a `stagger: { amount }` tween. */
+const staggered = (p: number, i: number, n: number, spread: number) =>
+  clamp01((p - (n > 1 ? (i / (n - 1)) * spread : 0)) / (1 - spread));
+
+export const Ghost: React.FC<{
+  /** The reason in the slot. */
+  text: string;
+  /** 0 → 1 over GHOST_IN, linear: the line arriving. The eases are applied here. */
+  enter: number;
+  /** 0 → 1 over GHOST_OUT, linear: that same line leaving, clearing the next one's way. */
+  exit?: number;
+}> = ({ text, enter, exit = 0 }) => {
+  const chars = Array.from(text);
+  // Blur the line, not each character: one filtered layer for the whole phrase
+  // instead of twenty, and the phrase is what the eye tracks. Both halves live
+  // in one expression so the resting state is exactly zero and the filter comes
+  // off the layer entirely.
+  const blur =
+    BLUR * Math.max(easeIn(clamp01(exit / BLUR_IN)), 1 - easeOut(clamp01(enter / BLUR_OUT)));
+
+  return (
+    <div
+      style={{
+        fontFamily: CLASH,
+        wordSpacing: WORD_SPACING,
+        fontWeight: 300,
+        fontSize: T.note,
+        color: C.ghost,
+        whiteSpace: "pre",
+        display: "flex",
+        filter: blur > 0.01 ? `blur(${blur}px)` : undefined,
+      }}
+    >
+      {chars.map((ch, i) => {
+        // The app's expo.out and power2.in, served by the app's own --ease-out
+        // and its mirror: the video keeps one easing vocabulary.
+        const into = easeOut(staggered(enter, i, chars.length, IN_SPREAD));
+        const away = easeIn(staggered(exit, i, chars.length, OUT_SPREAD));
+        return (
+          <span
+            key={i}
+            style={{
+              opacity: into * (1 - away),
+              transform: `translateY(${(1 - into) * TRAVEL - away * TRAVEL}%)`,
+            }}
+          >
+            {ch === " " ? " " : ch}
+          </span>
+        );
+      })}
+    </div>
+  );
+};
 
 /** .settle-action — the borderless display word that moves money. */
 export const Action: React.FC<{

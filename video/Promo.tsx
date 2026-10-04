@@ -11,7 +11,7 @@ import {
 } from "remotion";
 
 import { Glass } from "./Glass";
-import { Action, Composer, Ghost, type Provider } from "./Sentence";
+import { Action, Composer, Ghost, GHOST_IN, GHOST_OUT, type Provider } from "./Sentence";
 import {
   C,
   CLASH,
@@ -58,8 +58,36 @@ const ADDRESS = "0xEE42a492B183CdFf04439F2Cb6A9c49F857F70AC";
 /** What .iou-compact draws in the full address's place. The value is untouched. */
 const ADDRESS_SHORT = "0xEE42…70AC";
 const AMOUNT = "42";
-/** One of the real REASONS from app/IouClient.tsx. */
-const REASON = "last night's ramen";
+
+/**
+ * The note line's suggestions, verbatim from REASONS in app/IouClient.tsx.
+ *
+ * The app shuffles its fifteen and rotates through them for as long as the field
+ * is untouched; a render has to be deterministic, so this is a fixed hand of
+ * three. Chosen to be three different kinds of debt rather than three meals — a
+ * late dinner, a night out, a household bill — and ordered so the settle lands on
+ * the household bill, which is the least glamorous and the most convincing thing
+ * to be moving programmable money for.
+ */
+const REASONS = ["last night's ramen", "the bar tab", "the wifi bill"];
+
+/**
+ * The frame each reason is written. Three beats short of five seconds apart, both
+ * on a beat (120bpm, 30 frames), so the rotation sits on the same grid as the cut
+ * and the music and reads as part of the edit rather than as a loop running
+ * underneath it. The first lands with the note line's own reveal.
+ *
+ * A swap takes 74 frames, so this leaves each reason still for a shade under two
+ * seconds — the app's own dwell, near enough. Tighter than that and the line is a
+ * flicker nobody reads; the first version of this ran on the bar and the middle
+ * phrases were gone in three quarters of a second.
+ *
+ * The second swap lands on ANYONE, with the namespace row: the frame that says
+ * "anyone" is the frame that says "anything". Nothing replaces the third, which
+ * holds through the settle — the app freezes the line too rather than swapping it
+ * under someone who is about to pay.
+ */
+const REASON_AT = [296, 480, 660];
 
 /** The mainnet card, one masked word per box so they can stagger. */
 const MAINNET_WORDS: { text: string; accent?: boolean }[] = [
@@ -90,6 +118,30 @@ const typing = (frame: number, text: string, from: number, perChar: number) => {
   if (frame < from) return perChar > 0 ? "" : text;
   const shown = perChar > 0 ? n : text.length - n;
   return text.slice(0, Math.max(0, Math.min(text.length, shown)));
+};
+
+/** 0 → 1 across a frame span, uneased — the easing belongs to whoever consumes it. */
+const progress = (frame: number, from: number, span: number) =>
+  interpolate(frame, [from, from + span], [0, 1], {
+    extrapolateLeft: "clamp",
+    extrapolateRight: "clamp",
+  });
+
+/**
+ * Where the ghost is: the reason in the slot, how far it has arrived, and how far
+ * it has left. The app's swap is sequential — the outgoing line is gone before
+ * the next is written — so the handoff is exact rather than a crossfade: the
+ * outgoing reaches zero on the very frame its successor starts from zero.
+ */
+const ghostAt = (frame: number) => {
+  let i = 0;
+  while (i + 1 < REASON_AT.length && frame >= REASON_AT[i + 1]) i++;
+  const next = REASON_AT[i + 1];
+  return {
+    text: REASONS[i],
+    enter: progress(frame, REASON_AT[i], GHOST_IN),
+    exit: next === undefined ? 0 : progress(frame, next - GHOST_OUT, GHOST_OUT),
+  };
 };
 
 /**
@@ -259,11 +311,11 @@ export const Promo: React.FC = () => {
           />
         </div>
 
-        {/* the note line's ghost — the app writes it per character, so this does
-            too. It stays up through the settle: the app never clears it, and
+        {/* the note line's ghost — the app's rotating suggestion, swapped on the
+            bar. It stays up through the settle: the app never clears it, and
             dropping it early left a dead band between the rule and the action. */}
         <div style={{ position: "absolute", top: 636, left: MARGIN }}>
-          <Ghost text={REASON} chars={Math.floor(ramp(frame, 296, 356) * REASON.length)} />
+          <Ghost {...ghostAt(frame)} />
         </div>
 
         {/* .iou-meta — "on x" only while the target does not already name its own
