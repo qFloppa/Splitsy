@@ -2411,6 +2411,11 @@ USDC                0x3600000000000000000000000000000000000000`}</pre>
               </Section>
 
               <Section id="security">
+                <p>
+                  The list below is the engineering one, written for a reader who already knows what these terms
+                  mean. The same guarantees in plain words — and an honest account of what could still go wrong —
+                  are on <Link href="/security">the security page</Link>.
+                </p>
                 <ul>
                   <li>Users explicitly approve USDC spend before contracts can pull funds.</li>
                   <li>Recurring approval is constrained to the tab contract address and can be revoked by setting allowance to zero.</li>

@@ -656,6 +656,48 @@ export async function getEscrowBalanceOnchain(
 }
 
 /**
+ * The escrow's two immutable bounds, for the sentences /security prints about
+ * them: how long a deposit stays releasable, and the rolling 24h release ceiling.
+ *
+ * READ LIVE RATHER THAN REPEATED, because both are constructor arguments with no
+ * setter and both have env-var overrides in scripts/deploy-handle-escrow.ts. A
+ * page quoting that script's defaults would be quoting what Splitsy MEANT to
+ * deploy; this quotes what is actually there. Same rule lib/site-contracts.ts
+ * applies to the addresses beside them.
+ *
+ * Nulls instead of throwing, and nulls for an unconfigured escrow, because the
+ * only caller is a page: an RPC that is down must cost the page its two figures,
+ * never the fourteen other things it has to say. `allowFailure` is on for the
+ * same reason — one dead call should not take the other with it.
+ */
+export async function getEscrowBounds(escrowAddress: `0x${string}` = HANDLE_ESCROW_ADDRESS): Promise<{
+  holdWindowSeconds: bigint | null;
+  maxReleasePerDayUnits: bigint | null;
+}> {
+  const none = { holdWindowSeconds: null, maxReleasePerDayUnits: null };
+  if (escrowAddress === ZERO_ADDRESS) return none;
+
+  const contract = { address: escrowAddress, abi: HANDLE_ESCROW_ABI } as const;
+
+  try {
+    const [holdWindow, maxReleasePerDay] = await publicClient.multicall({
+      contracts: [
+        { ...contract, functionName: "holdWindow" },
+        { ...contract, functionName: "maxReleasePerDay" },
+      ],
+      allowFailure: true,
+    });
+
+    return {
+      holdWindowSeconds: holdWindow.status === "success" ? holdWindow.result : null,
+      maxReleasePerDayUnits: maxReleasePerDay.status === "success" ? BigInt(maxReleasePerDay.result) : null,
+    };
+  } catch {
+    return none;
+  }
+}
+
+/**
  * The deposit a transaction created, read out of its own `Deposited` event.
  *
  * `deposit()` returns the id, but a return value does not survive being sent as
