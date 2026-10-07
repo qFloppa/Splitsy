@@ -9,8 +9,8 @@
 // Design: docs/superpowers/specs/2026-09-08-privy-key-export-design.md
 import { Chacha20Poly1305 } from "@hpke/chacha20poly1305";
 import { CipherSuite, DhkemP256HkdfSha256, HkdfSha256 } from "@hpke/core";
-import { p256 } from "@noble/curves/p256";
-import { sha256 } from "@noble/hashes/sha2";
+import { p256 } from "@noble/curves/nist.js";
+import { sha256 } from "@noble/hashes/sha2.js";
 import canonicalize from "canonicalize";
 import { privateKeyToAddress } from "viem/accounts";
 
@@ -111,11 +111,13 @@ export function canonicalPayload(input: AuthorizationInput): Uint8Array {
 
 // DER, not raw r||s. crypto.subtle.sign({name:'ECDSA'}) would return the latter
 // and Privy rejects it, so this goes through noble instead of WebCrypto.
-// @noble/curves is pinned to 1.4.2 (viem's copy, the one that resolves from here):
-// its signature object exposes toDERRawBytes(). Privy's own nested 1.9.7 uses
-// toBytes('der') — same output, different method name, wrong package path.
+// Both options are LOAD-BEARING under @noble/curves 2.x: it returns raw bytes
+// unless told otherwise, and it HASHES ITS INPUT unless told otherwise. The 1.4.2
+// this replaced did neither — sign(...).toDERRawBytes() signed the digest it was
+// handed. Dropping prehash:false double-hashes, and Privy answers 401 with nothing
+// to say why, so lib/export-crypto.test.ts verifies against an SDK-made signature.
 export function signAuthorization(payload: Uint8Array, secretKey: Uint8Array): string {
-  return base64FromBytes(p256.sign(sha256(payload), secretKey).toDERRawBytes());
+  return base64FromBytes(p256.sign(sha256(payload), secretKey, { format: "der", prehash: false }));
 }
 
 // OWASP-current for PBKDF2-SHA256. Roughly a second in a browser, which is the
@@ -166,7 +168,7 @@ export function accountSalt(provider: string, providerUserId: string): string {
 export function validScalar(bytes: Uint8Array): Uint8Array {
   let candidate = bytes;
   for (let attempt = 0; attempt < 8; attempt++) {
-    if (p256.utils.isValidPrivateKey(candidate)) return candidate;
+    if (p256.utils.isValidSecretKey(candidate)) return candidate;
     candidate = sha256(candidate);
   }
   throw new Error("Could not derive a valid P-256 scalar from this password");

@@ -3,8 +3,8 @@ import { test } from "node:test";
 import { Chacha20Poly1305 } from "@hpke/chacha20poly1305";
 import { CipherSuite, DhkemP256HkdfSha256, HkdfSha256 } from "@hpke/core";
 import { formatRequestForAuthorizationSignature, generateAuthorizationSignature, generateP256KeyPair } from "@privy-io/node";
-import { p256 } from "@noble/curves/p256";
-import { sha256 } from "@noble/hashes/sha2";
+import { p256 } from "@noble/curves/nist.js";
+import { sha256 } from "@noble/hashes/sha2.js";
 import { generatePrivateKey, privateKeyToAddress } from "viem/accounts";
 import {
   base64FromBytes,
@@ -41,13 +41,13 @@ test("an empty body serialises as an empty string, as the SDK does", () => {
 // WebCrypto's ECDSA sign returns raw r||s; Privy wants DER. Getting this wrong
 // produces a well-formed request that is rejected, so it gets its own check.
 test("our signature is DER and verifies under the derived public key", () => {
-  const secretKey = p256.utils.randomPrivateKey();
+  const secretKey = p256.utils.randomSecretKey();
   const input = exportRequestInput("wal_123", "app_456", "c3Bpa2k=");
   const payload = canonicalPayload(input);
   const signature = signAuthorization(payload, secretKey);
   const der = bytesFromBase64(signature);
   assert.equal(der[0], 0x30, "a DER ECDSA signature starts with SEQUENCE (0x30)");
-  assert.ok(p256.verify(der, sha256(payload), p256.getPublicKey(secretKey, false)));
+  assert.ok(p256.verify(der, sha256(payload), p256.getPublicKey(secretKey, false), { format: "der", prehash: false }));
 });
 
 test("a signature the SDK produced verifies under our verifier", async () => {
@@ -58,7 +58,14 @@ test("a signature the SDK produced verifies under our verifier", async () => {
   // The last 65 bytes of a P-256 SPKI are the uncompressed point.
   const point = bytesFromBase64(keypair.publicKey).slice(-65);
   assert.equal(point[0], 0x04, "an uncompressed EC point starts with 0x04");
-  assert.ok(p256.verify(bytesFromBase64(signature), sha256(payload), point));
+  // lowS:false because the SDK signs with @noble/curves 1.x, which does not
+  // normalise s — about half its signatures carry a high s, which is perfectly
+  // legal P-256 and which @noble/curves 2.x rejects by default. Ours (signed by
+  // 2.x) are always low-s, the stricter subset, so Privy's own 1.x verifier takes
+  // them either way. Without this the test fails on roughly every other run.
+  assert.ok(
+    p256.verify(bytesFromBase64(signature), sha256(payload), point, { format: "der", prehash: false, lowS: false }),
+  );
 });
 
 // The user-signed spend path. Same risk as the export payload above, same check,
@@ -130,13 +137,13 @@ test("an out-of-range scalar is re-hashed deterministically, never randomised", 
   assert.deepEqual(validScalar(zero), first, "the repair must be deterministic");
 
   const order = new Uint8Array(32);
-  const n = p256.CURVE.n;
+  const n = p256.Point.Fn.ORDER;
   for (let i = 0; i < 32; i++) order[31 - i] = Number((n >> BigInt(8 * i)) & 0xffn);
   assert.notDeepEqual(validScalar(order), order, "the curve order itself is out of range");
 });
 
 test("a valid scalar is returned untouched", () => {
-  const key = p256.utils.randomPrivateKey();
+  const key = p256.utils.randomSecretKey();
   assert.deepEqual(validScalar(key), key);
 });
 
@@ -153,7 +160,7 @@ test("derivation is deterministic, and the salt separates wallets", async () => 
 // SPKI-formatted ECDH or ECDSA public key" — and the SDK's own documented example
 // for recipient_public_key IS a raw point. This asserts the format Privy wants.
 test("the owner public key is base64 SPKI that WebCrypto will re-import", async () => {
-  const secretKey = p256.utils.randomPrivateKey();
+  const secretKey = p256.utils.randomSecretKey();
   const spki = await ownerPublicKeySpki(secretKey);
   const bytes = bytesFromBase64(spki);
   assert.equal(bytes.length, 91, "a P-256 SPKI is 91 bytes");
