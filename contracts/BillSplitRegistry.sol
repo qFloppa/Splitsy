@@ -615,7 +615,7 @@ contract BillSplitRegistry is ReentrancyGuard {
   /// @param deadline Signature expiry (block.timestamp).
   /// @param signature EIP-712 signature from the attester.
   function bind(bytes32 handleHash, address wallet, uint256 deadline, bytes calldata signature) external {
-    if (wallet == address(0) || wallet == address(uint160(uint256(handleHash)))) {
+    if (wallet == address(0) || wallet == address(bytes20(handleHash))) {
       revert InvalidConfiguration();
     }
     if (boundWallet[handleHash] != address(0)) revert AlreadyBound(handleHash);
@@ -648,14 +648,14 @@ contract BillSplitRegistry is ReentrancyGuard {
   ///
   ///      The slot is DERIVED from `handleHash` rather than passed in, so it
   ///      cannot disagree with the binding being read. Same derivation as
-  ///      lib/handle-slot.ts: the low 160 bits of the handle hash.
+  ///      lib/handle-slot.ts: the leading 20 bytes of the handle hash.
   /// @param billId The bill to refund from.
-  /// @param handleHash The slot participant's handle hash; the slot is its low 160 bits.
+  /// @param handleHash The slot participant's handle hash; the slot is its leading 20 bytes.
   function refundSlot(uint256 billId, bytes32 handleHash) external nonReentrant {
     address to = boundWallet[handleHash];
     if (to == address(0)) revert NotBoundYet(handleHash);
 
-    address slot = address(uint160(uint256(handleHash)));
+    address slot = address(bytes20(handleHash));
 
     Bill storage bill = _billOrRevert(billId);
     Participant storage participant = _participants[billId][slot];

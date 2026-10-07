@@ -24,9 +24,9 @@ contract BillSplitRegistryTest is Test {
   // derives the slot itself, so a test slot has to be a real derivation — an
   // address picked out of the air has no preimage to pass in.
   bytes32 private constant HANDLE = keccak256("x:alice");
-  address private constant SLOT = address(uint160(uint256(keccak256("x:alice"))));
+  address private constant SLOT = address(bytes20(keccak256("x:alice")));
   bytes32 private constant OTHER_HANDLE = keccak256("x:stranger");
-  address private constant OTHER_SLOT = address(uint160(uint256(keccak256("x:stranger"))));
+  address private constant OTHER_SLOT = address(bytes20(keccak256("x:stranger")));
   address private constant ROOT = address(0x0075); // a second deployment, for the wrong-domain test
 
   address private splitter = address(0x5157);
@@ -1514,15 +1514,18 @@ contract BillSplitRegistryTest is Test {
   // it is handed, so this vector pins BOTH sides of the same formula rather than
   // just the TypeScript one. What is pinned is the FORMULA:
   // keccak256 over the normalized "provider:handle" string, truncated to its
-  // low 160 bits. Worth pinning because the truncation end (low, not high) and
-  // the separator are exactly what a reimplementation gets wrong.
+  // leading 20 bytes. Worth pinning because the truncation end (leading, not
+  // trailing) and the separator are exactly what a reimplementation gets wrong.
   //
   // What this does NOT cover: normalization. `provider.toLowerCase()` and
   // strip-the-@ happen only in TS, and "x:alice" here is already in that form.
   // A normalization bug would need a vector with uppercase or an @.
   function testSlotDerivationMatchesTypeScript() public pure {
     bytes32 hash = keccak256(bytes("x:alice"));
-    assertEq(address(uint160(uint256(hash))), 0xC9834a77DDbba5cd5dE18F51981dA02B790AeDed);
+    assertEq(address(bytes20(hash)), 0x50Cf558Fd8F494FBd881BAD3c9834a77ddBbA5Cd);
+    // The end that was truncated, pinned against itself: the trailing-20-bytes
+    // address is a DIFFERENT address, and filing a debt there would strand it.
+    assertTrue(address(bytes20(hash)) != address(uint160(uint256(hash))), "leading, not trailing");
   }
 
   // The other two constants a TypeScript signature has to agree with. The slot

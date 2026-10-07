@@ -6,7 +6,7 @@ import { BIND_TYPES, bindDomain, encodeBind, encodeRefundSlot, slotForHandle } f
 test("golden vector: x:alice matches Solidity", () => {
   // Must match BillSplitRegistry.t.sol's testSlotDerivationMatchesTypeScript.
   // If these ever disagree, refunds fail in prod with "NotParticipant".
-  assert.equal(slotForHandle("x", "alice"), "0xc9834a77ddbba5cd5de18f51981da02b790aeded");
+  assert.equal(slotForHandle("x", "alice"), "0x50cf558fd8f494fbd881bad3c9834a77ddbba5cd");
 });
 
 test("golden vector: normalization is applied before hashing", () => {
@@ -85,8 +85,9 @@ test("refundSlot takes no destination and no signature", () => {
 });
 
 test("the slot the contract derives is the one TypeScript files", () => {
-  // refundSlot derives `address(uint160(uint256(handleHash)))` internally, so
-  // these two formulas must agree or a refund hits NotParticipant.
+  // refundSlot derives `address(bytes20(handleHash))` internally, so these two
+  // formulas must agree or a refund hits NotParticipant. Leading 20 bytes on
+  // both sides — a slice from the wrong end is the failure this catches.
   const hash = keccak256(toHex("x:alice"));
-  assert.equal(slotForHandle("x", "alice"), `0x${hash.slice(-40)}`);
+  assert.equal(slotForHandle("x", "alice"), hash.slice(0, 42));
 });

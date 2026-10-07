@@ -976,7 +976,7 @@ export default function DocsPage() {
 
                 <Subhead>A name with no key: derived slots</Subhead>
                 <p>
-                  A slot address is the low 160 bits of{" "}
+                  A slot address is the leading 20 bytes of{" "}
                   <code>keccak256(&quot;provider:handle&quot;)</code>. Tagging <code>@dani</code> on two bills therefore files
                   both shares against the same address, and <strong>nobody holds a key to it</strong> — not Dani, not Splitsy,
                   not ever. That is the property that makes it safe to use as a filing name and unsafe to send money to.

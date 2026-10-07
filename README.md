@@ -379,7 +379,7 @@ addresses and the measured cost per release.
 
 ### Derived handle slots — an address with no key
 
-`lib/handle-slot.ts` turns a handle into an address: the low 160 bits of
+`lib/handle-slot.ts` turns a handle into an address: the leading 20 bytes of
 `keccak256("<provider>:<handle>")`. Tagging `@dani` on two bills therefore files
 the same address both times, and **nobody holds a key to it** — which is the
 point. It is a filing key, never a proof of identity, and it replaced the older

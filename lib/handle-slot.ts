@@ -13,8 +13,11 @@ import type { IdentityProvider } from "./types.ts";
 
 /// The address a handle's slot lives at.
 ///
-/// Same derivation HandleEscrow deposits use, truncated to an address: the low
-/// 160 bits of keccak256 over the normalized "provider:handle" string.
+/// Same derivation HandleEscrow deposits use, truncated to an address: the
+/// leading 20 bytes of keccak256 over the normalized "provider:handle" string.
+/// Leading rather than trailing so the Solidity side can say
+/// `address(bytes20(handleHash))` — one cast, and not the `uint160(uint256(x))`
+/// shape that scanners read as a conjured-recipient scam.
 ///
 /// NOT A SECRET, AND NOT AN ACCOUNT. The input is a short, guessable string, so
 /// this address is computable by anyone who can guess the handle — it is a filing
@@ -27,8 +30,8 @@ import type { IdentityProvider } from "./types.ts";
 /// deposit key cannot drift apart. A second normalizer would be a second thing to
 /// get wrong.
 export function slotForHandle(provider: IdentityProvider | string, handle: string): `0x${string}` {
-  // The low 40 hex characters of the 32-byte hash, which is the low 160 bits.
-  return `0x${handleHash(provider, handle).slice(-40)}` as `0x${string}`;
+  // The first 40 hex characters after "0x", which is the leading 20 bytes.
+  return handleHash(provider, handle).slice(0, 42) as `0x${string}`;
 }
 
 /// The registry's handle-binding and refund entrypoints.
