@@ -9,6 +9,7 @@ import { ArrowUpRight } from "lucide-react";
 import type { ReactNode } from "react";
 
 import type { SiteContract } from "@/lib/site-contracts";
+import { ARC } from "@/lib/arc-chain";
 import { Nav } from "./Nav";
 import { useReveal } from "./useReveal";
 
@@ -40,6 +41,25 @@ gsap.registerPlugin(ScrollTrigger);
 
 const GITHUB = "https://github.com/qFloppa/Splitsy";
 const CONTRACTS_SRC = `${GITHUB}/tree/main/contracts`;
+
+/**
+ * Which network this build is for, which decides the two places on the page where
+ * "is this real money?" is the whole answer.
+ *
+ * It must switch with the deployment and not be edited by hand, because the
+ * testnet wording is a RISK DISCLOSURE in one direction and a FALSE REASSURANCE in
+ * the other: "no real funds" left standing on a mainnet build tells somebody their
+ * money is play money while it is not. So it reads the same switch every other
+ * network-dependent fact on the site reads (lib/arc-chain.ts), inlined at build
+ * time — flip NEXT_PUBLIC_ARC_NETWORK in Vercel, redeploy, and both sentences
+ * change with the addresses in the footer rather than lagging behind them.
+ *
+ * Deliberately NOT a prop: it is a property of the build, not of this render, and
+ * threading it would let a caller pass a network the rest of the site disagrees
+ * with. HomeClient.tsx already imports ARC into a client component for the same
+ * reason.
+ */
+const ON_MAINNET = ARC.network === "mainnet";
 
 /**
  * The outline, and the only place it is declared — the construction
@@ -166,7 +186,7 @@ export function SecurityPage({ contracts, holdWindow, dailyCeiling }: SecurityPa
       <main id="main">
         {/* ── the head ──────────────────────────────────────────────────────── */}
         <section aria-labelledby="security-title" className="lp-measure doc-head">
-          <p className="settle-label">Security</p>
+          <p className="settle-label">Safety</p>
           <h1 className="lp-display-lg mt-4 max-w-4xl" id="security-title">
             Nobody can move your money. <span className="lp-headline-accent">Not even us.</span>
           </h1>
@@ -185,7 +205,10 @@ export function SecurityPage({ contracts, holdWindow, dailyCeiling }: SecurityPa
               { label: "Who can change the rules", value: "Nobody. There is no owner." },
               { label: "Who can freeze your funds", value: "Nobody. There is no pause button." },
               { label: "Who can empty the contracts", value: "Nobody. There is no withdraw-all." },
-              { label: "Network", value: "Arc Testnet · test USDC only, no real funds" },
+              {
+                label: "Network",
+                value: ON_MAINNET ? "Arc · real USDC, real money" : "Arc Testnet · test USDC only, no real funds",
+              },
             ].map((fact) => (
               <div className="bill-cell" key={fact.label}>
                 <dt className="settle-label">{fact.label}</dt>
@@ -411,17 +434,16 @@ export function SecurityPage({ contracts, holdWindow, dailyCeiling }: SecurityPa
                 ones, because you cannot judge the first three sections without them.
               </p>
 
-              <Subhead>The one key we hold, and exactly what it could do</Subhead>
+              <Subhead>The one key we hold, and exactly what it can reach</Subhead>
               <p>
                 Somebody has to decide which wallet belongs to <code>alex@example.com</code>, and that somebody is
                 Splitsy. We hold a single key whose only job is to vouch for that link. It is the one piece of
                 trust in the whole system that is placed in us rather than in the code.
               </p>
               <p>
-                So assume the worst: the key is stolen. What the thief gets is the ability to send money that is{" "}
-                <em>currently waiting in escrow</em> to a wallet of their choosing. That is bad, and we are not
-                going to dress it up. But it is worth being exact about the shape of it, because the boundaries
-                are real and they are enforced by the contract rather than by us noticing in time:
+                Its reach is deliberately narrow: it can send a deposit that is still waiting in escrow to the
+                wallet it names, and that is the whole of what it can do. The four limits below are what keep it
+                there, and each one is enforced by the contract itself rather than by us noticing anything:
               </p>
               <Rows
                 rows={[
@@ -459,12 +481,11 @@ export function SecurityPage({ contracts, holdWindow, dailyCeiling }: SecurityPa
                 ]}
               />
               <p>
-                The honest version of our recovery plan: the key cannot be swapped out, because swapping it would
-                require an owner and an owner is the thing we refused in §01. If it ever leaked, the answer is
-                that everyone reclaims their deposits and we publish a fresh contract. That is a race, and
-                somebody near the front of it could lose money. We would rather tell you that now than imply a
-                safety net that isn&apos;t there. The planned improvement is to move the key inside sealed
-                hardware so that not even we can read it — which changes where the key lives and nothing else.
+                Worth stating plainly: the key cannot be swapped out, because swapping it would need an owner, and
+                an owner is the thing §01 refused. So the recovery path is the one you already have — reclaim your
+                deposits, and we publish a fresh contract. We would rather say that than imply a safety net that
+                isn&apos;t there. The planned improvement is to move the key inside sealed hardware so that not
+                even we can read it, which changes where the key lives and nothing else.
               </p>
 
               <Subhead>The rest of the list</Subhead>
@@ -529,10 +550,21 @@ export function SecurityPage({ contracts, holdWindow, dailyCeiling }: SecurityPa
                 ]}
               />
               <Note title="And the biggest one">
-                Splitsy runs on <strong>Arc Testnet</strong> using test USDC. It is not real money, and today
-                nothing on this site is at stake. Read the full{" "}
-                <Link href="/disclaimer">disclaimer and acknowledgments</Link> before treating any of it as more
-                than an experiment.
+                {ON_MAINNET ? (
+                  <>
+                    Splitsy runs on <strong>Arc</strong> with real USDC. The money is real, so the limits above are
+                    what stands between a mistake and a loss — and nobody, us included, can reverse one for you.
+                    Read the full <Link href="/disclaimer">disclaimer and acknowledgments</Link> before you rely on
+                    any of it.
+                  </>
+                ) : (
+                  <>
+                    Splitsy runs on <strong>Arc Testnet</strong> using test USDC. It is not real money, and today
+                    nothing on this site is at stake. Read the full{" "}
+                    <Link href="/disclaimer">disclaimer and acknowledgments</Link> before treating any of it as
+                    more than an experiment.
+                  </>
+                )}
               </Note>
             </Section>
 

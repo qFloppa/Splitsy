@@ -21,7 +21,7 @@ import { SecurityPage } from "@/components/landing/SecurityPage";
 export const dynamic = "force-dynamic";
 
 export const metadata: Metadata = {
-  title: "Security",
+  title: "Safety",
   description:
     "How Splitsy's contracts protect your money, in plain English: no owner, no pause, no way to empty them, how money held for someone with no wallet works, and what could still go wrong.",
   openGraph: {

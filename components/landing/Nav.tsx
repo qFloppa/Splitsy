@@ -72,7 +72,7 @@ export function Nav() {
           </div>
           <div className="app-tools">
             <Link className="iou-provider bill-toggle" href="/security">
-              Security
+              Safety
             </Link>
             <Link className="iou-provider bill-toggle" href="/docs">
               Docs
