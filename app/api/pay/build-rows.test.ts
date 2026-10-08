@@ -4,6 +4,9 @@ import { buildPayRows } from "./build-rows.ts";
 
 const P = (owed: bigint, paid: bigint) => ({ owed, paid, exists: true });
 
+// A live row, as app/api/pay/[token]/route.ts assembles it from getUsersByWallets.
+const live = (handle: string, provider: string, avatarUrl: string | null = null) => ({ handle, provider, avatarUrl });
+
 test("labels and providers pair with participants by position", () => {
   const rows = buildPayRows({
     participantList: ["0xAaA", "0xBbB", "0xCcC"],
@@ -17,17 +20,51 @@ test("labels and providers pair with participants by position", () => {
   assert.deepEqual(rows.map((r) => r.remainingUnits), ["1000000", "2000000", "3000000"]);
 });
 
+// The snapshot label is the only name an un-signed-in participant has, so it
+// still has to produce a chip — with the "@" stripped back off, because the
+// prefix is providerDisplay's to re-add per provider and "@@mert" was what
+// keeping both spellings produced.
+test("a social snapshot label yields a handle; a form default does not", () => {
+  const rows = buildPayRows({
+    participantList: ["0xAaA", "0xBbB", "0xCcC"],
+    participants: [P(1000000n, 0n), P(1000000n, 0n), P(1000000n, 0n)],
+    labels: ["@mert", "sarah", "Payer 3"],
+    providers: ["x", "discord", "wallet"],
+    liveHandles: new Map(),
+  });
+  assert.deepEqual(rows.map((r) => r.handle), ["mert", "sarah", null]);
+});
+
 test("a live handle beats the creation-time label snapshot", () => {
   const rows = buildPayRows({
     participantList: ["0xAaA", "0xBbB"],
     participants: [P(1000000n, 0n), P(1000000n, 0n)],
     labels: ["@old_handle", "@sarah"],
     providers: ["x", "x"],
-    liveHandles: new Map([["0xaaa", { handle: "new_handle", provider: "discord" }]]),
+    liveHandles: new Map([["0xaaa", live("new_handle", "discord", "https://cdn/x.png")]]),
   });
-  assert.equal(rows[0].label, "@new_handle");
+  assert.equal(rows[0].handle, "new_handle");
   assert.equal(rows[0].provider, "discord");
-  assert.equal(rows[1].label, "@sarah");
+  assert.equal(rows[0].avatarUrl, "https://cdn/x.png");
+  assert.equal(rows[1].handle, "sarah");
+  assert.equal(rows[1].avatarUrl, null);
+});
+
+// The "@" is a platform convention, not part of the name. Baking it in server-side
+// is what put one on every Discord username and every email address on this page.
+test("no provider's handle arrives pre-prefixed", () => {
+  const rows = buildPayRows({
+    participantList: ["0xAaA", "0xBbB"],
+    participants: [P(1000000n, 0n), P(1000000n, 0n)],
+    labels: ["", ""],
+    providers: ["discord", "email"],
+    liveHandles: new Map([
+      ["0xaaa", live("dani", "discord")],
+      ["0xbbb", live("sam@mail.com", "email")],
+    ]),
+  });
+  assert.deepEqual(rows.map((r) => r.handle), ["dani", "sam@mail.com"]);
+  assert.ok(!rows.some((r) => r.handle?.startsWith("@")));
 });
 
 test("a short label array (pre-migration row) falls back without shifting", () => {
@@ -41,6 +78,7 @@ test("a short label array (pre-migration row) falls back without shifting", () =
   assert.equal(rows[0].label, "@mert");
   assert.equal(rows[1].label, "0xBbBb…BbBb");
   assert.equal(rows[1].provider, null);
+  assert.equal(rows[1].handle, null);
   assert.equal(rows[1].remainingUnits, "2000000");
 });
 
@@ -103,7 +141,8 @@ test("live handle lookup is case-insensitive against checksummed chain addresses
     participants: [P(1000000n, 0n)],
     labels: ["Payer 1"],
     providers: ["wallet"],
-    liveHandles: new Map([["0xabcdef1234567890abcdef1234567890abcdef12", { handle: "lina", provider: "x" }]]),
+    liveHandles: new Map([["0xabcdef1234567890abcdef1234567890abcdef12", live("lina", "x")]]),
   });
-  assert.equal(rows[0].label, "@lina");
+  assert.equal(rows[0].handle, "lina");
+  assert.equal(rows[0].provider, "x");
 });

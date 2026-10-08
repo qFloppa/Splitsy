@@ -8,6 +8,10 @@ export type ProviderPerson = {
   provider?: AccountProvider | null;
   handle?: string | null;
   avatarUrl?: string | null;
+  // The wallet this person pays from, when it is known. Display-only: it is what
+  // turns the tag into a link to the chain, and it is absent for a person who has
+  // been tagged on a bill but never signed in (no wallet exists for them yet).
+  address?: string | null;
 };
 
 export type ProviderDisplay = {
@@ -16,7 +20,40 @@ export type ProviderDisplay = {
   profileUrl: string | null;
   label: string;
   prefix: string;
+  // The letter to draw when there is no avatar to show. Discord and email-OTP
+  // accounts store no avatar_url at all, so this is the common case rather than
+  // the fallback — an empty avatar slot collapses the row it should align.
+  monogram: string | null;
 };
+
+// The first character worth drawing as an initial, uppercased.
+//
+// Punctuation is skipped rather than taken: an X handle may be typed with its
+// "@" and Discord names routinely start with underscores, both of which would
+// otherwise monogram every such person to the same glyph. Digits count — a
+// handle can legitimately start with one, and "9" names its owner better than
+// a question mark does.
+function monogramOf(bare: string | null): string | null {
+  return bare?.match(/[a-z0-9]/i)?.[0].toUpperCase() ?? null;
+}
+
+// A handle is UNTRUSTED TEXT on its way into a URL, so it is encoded before it
+// gets there. It reaches us from an OAuth provider, from Privy, or from a bill's
+// creation-time snapshot label — none of which this app controls — and the two
+// URLs below are consumed as an href and as a CSS `url()`. A handle holding a
+// quote or a bracket would otherwise terminate the `url()` early and let the
+// rest of it be read as declarations.
+//
+// THE PARENTHESES ARE ESCAPED BY HAND because encodeURIComponent does not touch
+// them — they are "unreserved marks" to it. Inside the quoted url("…") the tag
+// writes today they are already harmless, the quote being the character that
+// could end the string; escaping them anyway is one replace, and it means this
+// stays safe if the quoting around it is ever changed.
+//
+// Nothing changes for a real handle: X allows [A-Za-z0-9_] and Discord's set is
+// narrower still, and neither step touches any of those.
+const urlSafe = (handle: string) =>
+  encodeURIComponent(handle).replace(/\(/g, "%28").replace(/\)/g, "%29");
 
 export function providerDisplay(person: ProviderPerson): ProviderDisplay {
   const provider = person.provider ?? "x";
@@ -32,6 +69,9 @@ export function providerDisplay(person: ProviderPerson): ProviderDisplay {
       profileUrl: null,
       label: bare ? `${bare.slice(0, 6)}…${bare.slice(-4)}` : "?",
       prefix: "",
+      // An address has no initial worth drawing — every one of them would
+      // monogram to "0". ProviderIcon's wallet mark stands in for it.
+      monogram: null,
     };
   }
 
@@ -44,6 +84,7 @@ export function providerDisplay(person: ProviderPerson): ProviderDisplay {
       profileUrl: null, // Discord has no public per-username profile page.
       label: bare ?? "?",
       prefix: "", // Discord usernames don't carry a leading "@".
+      monogram: monogramOf(bare),
     };
   }
 
@@ -54,10 +95,11 @@ export function providerDisplay(person: ProviderPerson): ProviderDisplay {
       // unavatar.io resolves a Gravatar (or provider-specific avatar) from an
       // email, so a tagged email shows a face even before they've signed in.
       // A stored avatar_url (Google picture) takes precedence once we have one.
-      avatarSrc: person.avatarUrl || (email ? `https://unavatar.io/${encodeURIComponent(email)}` : null),
+      avatarSrc: person.avatarUrl || (email ? `https://unavatar.io/${urlSafe(email)}` : null),
       profileUrl: null, // No public profile page for an email identity.
       label: email ?? "?",
       prefix: "",
+      monogram: monogramOf(email),
     };
   }
 
@@ -65,10 +107,11 @@ export function providerDisplay(person: ProviderPerson): ProviderDisplay {
   // users show a picture even before they've signed in.
   return {
     provider: "x",
-    avatarSrc: person.avatarUrl || (bare ? `https://unavatar.io/x/${bare}` : null),
-    profileUrl: bare ? `https://x.com/${bare}` : null,
+    avatarSrc: person.avatarUrl || (bare ? `https://unavatar.io/x/${urlSafe(bare)}` : null),
+    profileUrl: bare ? `https://x.com/${urlSafe(bare)}` : null,
     label: bare ?? "?",
     prefix: "@",
+    monogram: monogramOf(bare),
   };
 }
 

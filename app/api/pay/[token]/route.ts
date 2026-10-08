@@ -44,7 +44,7 @@ export async function GET(_request: Request, ctx: RouteContext<"/api/pay/[token]
   const liveHandles = new Map(
     [...(await getUsersByWallets([...bill.participantList, bill.splitter]))].map(([addr, user]) => [
       addr,
-      { handle: user.handle, provider: String(user.provider) },
+      { handle: user.handle, provider: String(user.provider), avatarUrl: user.avatarUrl },
     ]),
   );
 
@@ -71,8 +71,13 @@ export async function GET(_request: Request, ctx: RouteContext<"/api/pay/[token]
     receiptUrl: preimage.receiptUrl,
     creator: {
       address: bill.splitter,
-      label: creatorLive ? `@${creatorLive.handle}` : null,
+      // Bare handle and raw provider, never a composed label: which providers
+      // wear a leading "@" is lib/provider-display.ts's rule, and this route
+      // used to hardcode one for all of them — so a Discord creator read as
+      // "@dani" and an email creator as "@sam@mail.com".
+      handle: creatorLive ? creatorLive.handle : null,
       provider: creatorLive ? creatorLive.provider : null,
+      avatarUrl: creatorLive ? creatorLive.avatarUrl : null,
     },
     totalOwedUnits: bill.totalOwed.toString(),
     totalPaidUnits: bill.totalPaid.toString(),

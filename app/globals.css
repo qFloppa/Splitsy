@@ -8688,3 +8688,207 @@ mark.doc-mark {
 .signin-check {
   margin-top: 1rem;
 }
+
+/* ============================================================================
+   The identity tag (every surface that names a person)
+   ==========================================================================
+
+   One chip for "who", wherever a person is named: the creator of a bill, the
+   payers on its roster, a counterparty in the treasury. It replaces the three
+   spellings those surfaces had grown — a bare "@handle" string, a monospace
+   shortened address, and an avatar sitting beside a loose platform icon — none
+   of which agreed on height, so a roster mixing X and Discord rows stepped.
+
+   The platform mark is NOTCHED INTO the avatar rather than set beside it. Beside
+   it, the mark is a second object competing with the face and the handle for the
+   same line, and it widens every row by its own size plus a gap; notched, it is
+   a property OF the face, which is what it actually is — and the row measures
+   the same whether the person is on X, on Discord, or holding a raw wallet.
+
+   Colour comes from --chart-identity-*, the tokens the dashboard already tints
+   its identity meters with, so a person is the same colour wherever they appear.
+   ========================================================================== */
+
+.ptag {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4em;
+  vertical-align: middle;
+  font-weight: 600;
+  color: inherit;
+  text-decoration: none;
+  /* The handle is the long part and the only part worth truncating — the circle
+     has a fixed size and must never be squeezed into an oval. */
+  min-width: 0;
+  max-width: 100%;
+}
+
+a.ptag:hover .ptag-handle {
+  text-decoration: underline;
+  text-underline-offset: 0.18em;
+}
+
+.ptag-handle {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  /* Shrinkable, or the ellipsis never triggers: a flex item defaults to
+     min-width:auto, which refuses to go narrower than its own text. */
+  min-width: 0;
+}
+
+/* The geometry lives HERE, not in the component, because --ptag-size may be an
+   `em`: the pay roster sets its names in type that scales from 1.35rem to
+   2.4rem with the viewport, and a circle pinned to a pixel count sits right at
+   exactly one width. Everything inside the circle is therefore sized off the
+   variable or off 100% — the `size` prop only ever sets the variable. */
+.ptag-avatar {
+  --ptag-size: 18px;
+  /* The platform's own colour, set once here and read by the monogram in both
+     themes. X is the default for the same reason providerDisplay defaults to it. */
+  --ptag-ink: var(--chart-identity-x);
+  position: relative;
+  flex: 0 0 auto;
+  display: inline-grid;
+  place-items: center;
+  width: var(--ptag-size);
+  height: var(--ptag-size);
+  border-radius: 50%;
+  /* The ring, not a border: a border would eat into the size the caller asked
+     for, and two tags at the same `size` have to draw the same diameter. */
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--text-muted) 28%, transparent);
+}
+
+/* On top of the monogram, filling the circle. A background rather than an <img>
+   — see ProviderAvatar: a background that fails to load paints nothing and
+   uncovers the letter beneath it, where a broken <img> paints a glyph over it. */
+.ptag-face {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background-position: center;
+  background-repeat: no-repeat;
+  background-size: cover;
+}
+
+.ptag-monogram {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  /* Half the diameter: a cap-height letter then fills about a third of the
+     circle, which is where an initial stops reading as a cramped glyph and
+     starts reading as a monogram. */
+  font-size: calc(var(--ptag-size) * 0.5);
+  font-weight: 650;
+  line-height: 1;
+  color: var(--ptag-ink);
+  background: color-mix(in srgb, var(--ptag-ink) 16%, transparent);
+}
+
+/* Lifted off the platform hue toward the page's own ink. The identity tokens are
+   chosen to carry a meter bar on a light pane — Discord's #008300 at full
+   strength is a dim letter on a dark one, and the initial is the one thing in
+   the circle a reader is meant to resolve. */
+:root[data-theme="dark"] .ptag-monogram {
+  color: color-mix(in srgb, var(--ptag-ink) 52%, var(--foreground));
+  background: color-mix(in srgb, var(--ptag-ink) 26%, transparent);
+}
+
+/* The wallet mark standing in for an initial.
+   A PERCENTAGE, NOT --ptag-size. An `em` inside a custom property resolves
+   against the font-size of the element that USES it, and the rule above has just
+   changed this element's font-size to half the diameter — so `var(--ptag-size)`
+   read from in here measures half of what it does on .ptag-avatar, and the glyph
+   came out at a third of its size wherever the tag was sized in `em`. A
+   percentage resolves against the box instead, which is what was meant. */
+.ptag-monogram-glyph > svg {
+  width: 58%;
+  height: 58%;
+}
+
+.ptag-avatar[data-provider="discord"] {
+  --ptag-ink: var(--chart-identity-discord);
+}
+
+.ptag-avatar[data-provider="email"] {
+  --ptag-ink: var(--chart-identity-email);
+}
+
+.ptag-avatar[data-provider="wallet"] {
+  --ptag-ink: var(--chart-identity-wallet);
+}
+
+/* Overhanging the circle by about a sixth of itself, with a cutout in the page's
+   own colour so the mark reads as a separate object against a busy avatar. The
+   cutout is a ring rather than a filled square because the badge is round and
+   the avatar behind it is too.
+
+   The floor matters more than the ratio: below about 9px the X glyph and the
+   Discord wordless mark both turn to mush, so a 16px tag badges at the floor and
+   anything larger scales with the circle. */
+.ptag-badge {
+  --ptag-badge: max(9px, calc(var(--ptag-size) * 0.44));
+  position: absolute;
+  right: calc(var(--ptag-badge) * -0.3);
+  bottom: calc(var(--ptag-badge) * -0.3);
+  display: grid;
+  place-items: center;
+  width: var(--ptag-badge);
+  height: var(--ptag-badge);
+  border-radius: 50%;
+  background: var(--background);
+  box-shadow: 0 0 0 1.5px var(--background);
+}
+
+/* The mark fills the badge, whatever pixel size its own attributes carry — the
+   component cannot compute one when --ptag-size is an `em`. */
+.ptag-badge > * {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+/* The X mark is a solid black glyph on a transparent PNG, so on a dark surface
+   it disappears into the cutout behind it. Inverting it there costs nothing and
+   is what every other monochrome mark in this file does. */
+:root[data-theme="dark"] .ptag-badge img[alt="X"] {
+  filter: invert(1);
+}
+
+/* ── The tag on the pay poster ────────────────────────────────────────────────
+
+   Two surfaces here name a person, and they want opposite things from the tag.
+
+   The roster rows set their names in Clash at up to 2.4rem and at weight 400, so
+   the tag inherits the weight rather than imposing its own 600 — a tag that
+   bolded itself was the one thing on that column heavier than the amount beside
+   it. The creator line is 0.8rem prose on a grid of footnotes, so the tag has to
+   sit ON the baseline of a sentence rather than own a row of its own. */
+
+.pay-row-name .ptag {
+  font-weight: inherit;
+}
+
+/* Sized in `em`, against type that runs 1.35rem → 2.4rem with the viewport. A
+   pixel diameter here is correct at exactly one width: at the small end the
+   circle swamps the name, at the large end it reads as a loose icon dropped
+   beside it. The override lands on .ptag-avatar rather than .ptag because that
+   is the element the variable is declared on. */
+.pay-row-name .ptag-avatar {
+  --ptag-size: 0.66em;
+}
+
+.pay-creator {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.34rem;
+}
+
+/* The tag's own weight, against 0.8rem dim prose: the name is the fact on this
+   line and the words around it are the label. */
+.pay-creator .ptag {
+  color: var(--pay-poster-fg);
+}
