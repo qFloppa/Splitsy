@@ -12,9 +12,11 @@ import SignInMenu from "@/app/SignInMenu";
 import WalletMark from "@/app/WalletMark";
 import XAuthControl from "@/app/XAuthControl";
 import { Switch } from "@/app/SettlementAgentsPanel";
-import { ProviderIcon } from "@/app/ProviderTag";
+import { ProviderAvatar, ProviderTag } from "@/app/ProviderTag";
 import { payErrorMessage, walletPost } from "@/app/signed-send";
 import type { AccountProvider } from "@/lib/types";
+import { ARC_EXPLORER } from "@/lib/arc-explorer";
+import { providerDisplay } from "@/lib/provider-display";
 import { useTheme } from "@/lib/use-theme";
 import { arcWalletClient, wagmiConfig } from "@/lib/wagmi";
 import { coveredByOthers, payableRows, selectionTotalUnits } from "@/lib/pay-link";
@@ -41,10 +43,20 @@ import { CHAIN_CONFIGS } from "@/lib/gateway-contracts";
 // stamp's 700, the row names' 600, the figures' 600 — into hairlines, and set
 // --font-display on <html>, so it leaked to every page reached from this one.
 
-type Row = {
+// Who a row or a bill belongs to. The API sends the parts of an identity, never
+// a composed label — lib/provider-display.ts owns the "@"-or-not rule, and this
+// route used to hardcode an "@" for every provider.
+type Person = {
   address: string;
-  label: string;
+  handle: string | null;
   provider: string | null;
+  avatarUrl: string | null;
+};
+
+type Row = Person & {
+  // The name for a participant with no social identity: the creation-time
+  // snapshot label ("Payer 3") or the shortened address.
+  label: string;
   owedUnits: string;
   paidUnits: string;
   remainingUnits: string;
@@ -58,7 +70,7 @@ type Bill = {
   dueDate: number;
   escrowUntilFull: boolean;
   receiptUrl: string | null;
-  creator: { address: string; label: string | null; provider: string | null };
+  creator: Person;
   totalOwedUnits: string;
   totalPaidUnits: string;
   settled: boolean;
@@ -76,6 +88,59 @@ const usd = (units: string) => `$${Number(billUnitsToUsdc(BigInt(units))).toFixe
 // unknown values to the X logo, and claiming the wrong platform is worse than
 // claiming none.
 const KNOWN_PROVIDERS = new Set(["x", "discord", "email", "wallet"]);
+
+// Whether we know enough about someone to name them rather than their wallet.
+// Both halves matter: a handle with an unrecognised provider would be badged
+// with the wrong platform's logo, which is a worse claim than making none.
+const named = (p: Person) => Boolean(p.handle) && KNOWN_PROVIDERS.has(p.provider ?? "");
+
+// The person as prose, for the sentences that cannot hold a tag — "@mert's share
+// was already covered", "The creator can collect $40".
+function personName(p: Person, fallback?: string): string {
+  const d = providerDisplay(
+    named(p) ? { provider: p.provider as AccountProvider, handle: p.handle } : { provider: "wallet", handle: p.address },
+  );
+  return named(p) ? `${d.prefix}${d.label}` : fallback || d.label;
+}
+
+// The person as a tag: badged avatar, handle, linking to their wallet on Arc.
+//
+// An address-only participant still gets the circle, so a roster of mixed rows
+// measures the same all the way down — it just holds the wallet mark instead of
+// a face, and keeps whatever name the bill's form gave it ("Payer 3"), which is
+// the only name that row has ever had.
+//
+// No `size`: each surface sets --ptag-size in its own stylesheet, because the
+// roster's names scale with the viewport and the footnote rail's don't.
+function Who({ person, fallback }: { person: Person; fallback?: string }) {
+  if (named(person)) {
+    return (
+      <ProviderTag
+        person={{
+          provider: person.provider as AccountProvider,
+          handle: person.handle,
+          avatarUrl: person.avatarUrl,
+          address: person.address,
+        }}
+      />
+    );
+  }
+
+  const wallet = { provider: "wallet" as const, handle: person.address };
+  return (
+    <a
+      className="ptag"
+      href={`${ARC_EXPLORER}/address/${person.address}`}
+      onClick={(e) => e.stopPropagation()}
+      rel="noreferrer"
+      target="_blank"
+      title={person.address}
+    >
+      <ProviderAvatar person={wallet} />
+      <span className="ptag-handle">{fallback || providerDisplay(wallet).label}</span>
+    </a>
+  );
+}
 
 // The app's masthead, minus the tab rail: a share link is opened by people with
 // no session, and tabs into an app they have not signed into are five dead ends.
@@ -284,7 +349,7 @@ export default function PayClient({ token }: { token: string }) {
       .map(([address]) => address);
     const covered = new Set(coveredByOthers(fresh?.rows ?? [], failed));
     setRowStates(Object.fromEntries(Object.entries(states).filter(([address]) => !covered.has(address))));
-    const labels = (fresh ?? bill!).rows.filter((row) => covered.has(row.address)).map((row) => row.label);
+    const labels = (fresh ?? bill!).rows.filter((row) => covered.has(row.address)).map((row) => personName(row, row.label));
     setMessage(
       labels.length === 0
         ? ""
@@ -611,7 +676,7 @@ export default function PayClient({ token }: { token: string }) {
               <div className="doc-note pay-note" data-tone="ok">
                 <p className="settle-label">All shares paid</p>
                 <p>
-                  {bill.creator.label ?? "The creator"} can collect {usd(bill.totalOwedUnits)}.
+                  {personName(bill.creator)} can collect {usd(bill.totalOwedUnits)}.
                 </p>
               </div>
             ) : null}
@@ -624,9 +689,14 @@ export default function PayClient({ token }: { token: string }) {
               <CheckCircle2 size={14} strokeWidth={2.2} />
               Details verified against Arc
             </p>
-            <p>
-              Created by {bill.creator.label ?? `${bill.creator.address.slice(0, 6)}…${bill.creator.address.slice(-4)}`}
-              {bill.dueDate > 0 ? ` · due ${new Date(bill.dueDate * 1000).toLocaleDateString()}` : ""}
+            {/* The one line on this page that answers "who is asking me for
+                money", so it carries the tag rather than a 42-character address
+                — and the tag opens the creator's wallet on Arc, which is the
+                other half of that question. */}
+            <p className="pay-creator">
+              <span>Created by</span>
+              <Who person={bill.creator} />
+              {bill.dueDate > 0 ? <span>· due {new Date(bill.dueDate * 1000).toLocaleDateString()}</span> : null}
             </p>
             {/* Only while the note above isn't already saying it. This line states
                 the bill's rule; the note states the same rule with the group's
@@ -647,7 +717,7 @@ export default function PayClient({ token }: { token: string }) {
               <p className="pay-label">Nothing left to pay</p>
               <p className="pay-cleared">Everyone&apos;s covered</p>
               <p className="pay-fine">
-                All {bill.rows.length} shares are paid. {bill.creator.label ?? "The creator"} can collect{" "}
+                All {bill.rows.length} shares are paid. {personName(bill.creator)} can collect{" "}
                 {usd(bill.totalOwedUnits)} from Arc.
               </p>
             </>
@@ -677,17 +747,12 @@ export default function PayClient({ token }: { token: string }) {
                           checked={selected.has(row.address)}
                           disabled={paying}
                           onChange={() => toggle(row.address)}
-                          srLabel={`Cover ${row.label}'s share`}
+                          srLabel={`Cover ${personName(row, row.label)}'s share`}
                         />
                       )}
                       <div className="min-w-0 flex-1">
-                        <p className="pay-row-name flex items-center gap-2">
-                          {KNOWN_PROVIDERS.has(row.provider ?? "") ? (
-                            <span className="flex shrink-0 items-center">
-                              <ProviderIcon provider={row.provider as AccountProvider} size={20} />
-                            </span>
-                          ) : null}
-                          <span className="truncate">{row.label}</span>
+                        <p className="pay-row-name">
+                          <Who fallback={row.label} person={row} />
                         </p>
                         <p className="pay-row-meta">
                           {state === "signing"

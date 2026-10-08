@@ -1,7 +1,19 @@
 export type PayRow = {
   address: string;
+  // The name for a row that has no social identity: the creation-time snapshot
+  // label ("Payer 3") or the shortened address. For a row that HAS one, `handle`
+  // is set and the client composes the name from it — see the note on `handle`.
   label: string;
   provider: string | null;
+  // The social handle, bare — no leading "@", whatever the provider.
+  //
+  // THE PREFIX IS NOT PART OF THE NAME. This field used to arrive as the
+  // finished string `"@" + handle`, which put an "@" on every Discord username
+  // and every email address on the pay page. Which providers wear one is
+  // lib/provider-display.ts's single rule, and it can only apply it to a bare
+  // handle. Null means "no social identity here" — render `label`.
+  handle: string | null;
+  avatarUrl: string | null;
   // Base units (6 dp) as decimal-integer strings. Never numbers: a bill split
   // three ways lands on thirds of a cent, and JSON floats lose them.
   owedUnits: string;
@@ -10,6 +22,12 @@ export type PayRow = {
 };
 
 type ParticipantRead = { owed: bigint; paid: bigint; exists: boolean };
+
+// The providers that name a PERSON. A "wallet" row's label is a positional form
+// default ("Payer 3") which names a row in someone else's form, not a person, so
+// it never becomes a handle — the same rule lib/dashboard-aggregate.ts's
+// counterpartyLabel applies to the treasury view.
+const SOCIAL_PROVIDERS = new Set(["x", "discord", "email"]);
 
 function shorten(address: string): string {
   return `${address.slice(0, 6)}…${address.slice(-4)}`;
@@ -38,7 +56,7 @@ export function buildPayRows({
   participants: readonly (ParticipantRead | null)[];
   labels: readonly string[];
   providers: readonly string[];
-  liveHandles: Map<string, { handle: string; provider: string }>;
+  liveHandles: Map<string, { handle: string; provider: string; avatarUrl: string | null }>;
 }): PayRow[] {
   const rows: PayRow[] = [];
 
@@ -52,12 +70,21 @@ export function buildPayRows({
 
     const live = liveHandles.get(address.toLowerCase());
     const snapshotLabel = labels[k];
+    const snapshotProvider = providers[k] ?? null;
     const remaining = read.owed > read.paid ? read.owed - read.paid : 0n;
+
+    // A snapshot label is the only name a participant who has never signed in
+    // has, so it still has to produce a tag — stripped back to a bare handle,
+    // because the snapshot stored the prefixed form.
+    const snapshotHandle =
+      snapshotLabel && SOCIAL_PROVIDERS.has(snapshotProvider ?? "") ? snapshotLabel.replace(/^@/, "") : null;
 
     rows.push({
       address,
-      label: live ? `@${live.handle}` : snapshotLabel || shorten(address),
-      provider: live ? live.provider : (providers[k] ?? null),
+      label: snapshotLabel || shorten(address),
+      provider: live ? live.provider : snapshotProvider,
+      handle: live ? live.handle : snapshotHandle,
+      avatarUrl: live ? live.avatarUrl : null,
       owedUnits: read.owed.toString(),
       paidUnits: read.paid.toString(),
       remainingUnits: remaining.toString(),

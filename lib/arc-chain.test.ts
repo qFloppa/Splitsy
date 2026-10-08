@@ -118,6 +118,35 @@ test("an empty override is ignored rather than blanking the endpoint", () => {
   assert.equal(resolveArcProfile("mainnet", undefined).rpcUrl, ARC_PROFILES.mainnet.rpcUrl);
 });
 
+// A viem client built with a bare http() transport reads the URL off the CHAIN
+// object (chain.rpcUrls.default.http[0]), not the profile's rpcUrl — and
+// wallets add chains to the browser by the same list. If the resolved chain
+// keeps its table URL while the profile carries an override, every such client
+// silently bypasses the override: exactly how an app configured for a keyed RPC
+// still hit the retired public endpoint from the IOU tab (the browser's
+// "Failed to fetch" on rpc.testnet.arc.network, which Arc now 403s). The chain
+// the profile hands out must agree with the endpoint the profile names.
+test("the resolved chain's first RPC url is the profile's rpcUrl, override or not", () => {
+  for (const [network, override] of [
+    ["mainnet", undefined],
+    ["testnet", undefined],
+    ["mainnet", "https://arc-mainnet.g.alchemy.com/v2/key"],
+    ["testnet", "https://arc-testnet.g.alchemy.com/v2/key"],
+  ] as const) {
+    const profile = resolveArcProfile(network, override);
+    assert.equal(profile.chain.rpcUrls.default.http[0], profile.rpcUrl, network);
+  }
+});
+
+// The public testnet endpoint Arc retired 2026-10-08: rpc.testnet.arc.network
+// now answers 403, its replacement is rpc.testnet.arc.io. A stale default here
+// resurfaces as "Failed to fetch" in every browser that was built without an
+// RPC override.
+test("the default testnet RPC is the live endpoint, not the retired one", () => {
+  assert.equal(ARC_PROFILES.testnet.rpcUrl, "https://rpc.testnet.arc.io");
+  assert.notEqual(ARC_PROFILES.testnet.rpcUrl, "https://rpc.testnet.arc.network");
+});
+
 // Mutating a returned profile must not poison the next caller — these are
 // module-level singletons read by ~20 modules.
 test("a returned profile does not alias the shared table", () => {

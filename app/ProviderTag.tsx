@@ -1,6 +1,7 @@
 "use client";
 
 import { Mail, Wallet } from "lucide-react";
+import { ARC_EXPLORER } from "@/lib/arc-explorer";
 import { providerDisplay, type ProviderPerson } from "@/lib/provider-display";
 import type { AccountProvider } from "@/lib/types";
 
@@ -33,40 +34,101 @@ export function ProviderIcon({ provider, size = 13 }: { provider: AccountProvide
   return <img src="/x.png" alt="X" width={size} height={size} style={{ width: size, height: size }} />;
 }
 
-// A tagged person: avatar + platform badge + handle. X handles link to the
-// public profile (providerDisplay supplies the URL); Discord/Email don't have
-// one, so they render as plain text. `size` controls the avatar diameter.
-export function ProviderTag({ person, size = 18 }: { person: ProviderPerson; size?: number }) {
+// `size` sets the diameter, in px, for a caller that knows the number. Omit it
+// and the surface's stylesheet decides via --ptag-size — which is how a tag sits
+// in type that scales with the viewport (the pay roster sets it in `em`, so the
+// circle grows with the name beside it instead of pinning to 22px at every width).
+function sizeVar(size?: number | string) {
+  if (size === undefined) return undefined;
+  return { "--ptag-size": typeof size === "number" ? `${size}px` : size } as React.CSSProperties;
+}
+
+// The round part of a tag: a face if one loads, the handle's initial if not, and
+// the platform mark notched into the corner either way.
+//
+// THE MONOGRAM IS THE COMMON CASE, NOT THE FALLBACK. We only ever store an
+// avatar_url for X and Google sign-ins — Discord and email-OTP accounts have
+// none — so a tag that only drew real pictures left most rows with an empty
+// slot, and a row with no circle is visibly lighter than the ones beside it.
+//
+// SO THE FACE IS A BACKGROUND, NOT AN <img>, and that is the whole trick: a
+// background-image that fails to load paints NOTHING, uncovering the monogram
+// underneath it. The same thing written as an <img> cannot be made reliable —
+// `avatarSrc` for an X or email identity is a guess resolved by unavatar.io from
+// the handle alone, it answers for people who have never signed in, and when it
+// 404s or rate-limits the browser paints its broken-image glyph. An onError
+// handler does not save it either: an image that fails BEFORE hydration fires
+// its error event into nothing, and the glyph then stays for the life of the
+// page. No JavaScript is involved in the version below.
+export function ProviderAvatar({ person, size }: { person: ProviderPerson; size?: number | string }) {
   const d = providerDisplay(person);
-  const badge = Math.max(11, Math.round(size * 0.7));
+
+  return (
+    <span className="ptag-avatar" data-provider={d.provider} style={sizeVar(size)}>
+      {d.monogram ? (
+        <span className="ptag-monogram">{d.monogram}</span>
+      ) : (
+        // A wallet address has no initial and no face. The mark fills the circle
+        // instead of hanging off it — badging a wallet icon with a wallet icon
+        // says the same thing twice.
+        <span className="ptag-monogram ptag-monogram-glyph">
+          <ProviderIcon provider={d.provider} />
+        </span>
+      )}
+      {d.avatarSrc ? (
+        // Quoted, and the handle inside it is percent-encoded by providerDisplay:
+        // this value is interpolated into CSS, and a handle carrying a quote
+        // would otherwise close the url() and have the remainder read as style.
+        <span className="ptag-face" style={{ backgroundImage: `url("${d.avatarSrc}")` }} />
+      ) : null}
+      {d.monogram ? (
+        <span className="ptag-badge">
+          <ProviderIcon provider={d.provider} />
+        </span>
+      ) : null}
+    </span>
+  );
+}
+
+// A tagged person: badged avatar + handle, linking to their wallet on Arc.
+//
+// WHERE IT POINTS, AND WHY THE CHAIN WINS. A payer's question about the person
+// who billed them is "who is this and where is my money going", and the address
+// answers the second half — so when we know the wallet, the whole tag opens it
+// on the explorer. The public profile is the fallback for someone who has been
+// tagged on a bill but never signed in: there is no wallet for them yet, and an
+// x.com page is better than a dead tag. Discord and email have neither, so those
+// render as plain text.
+export function ProviderTag({ person, size }: { person: ProviderPerson; size?: number | string }) {
+  const d = providerDisplay(person);
+  const href = person.address ? `${ARC_EXPLORER}/address/${person.address}` : d.profileUrl;
 
   const inner = (
     <>
-      {d.avatarSrc ? (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img src={d.avatarSrc} alt="" width={size} height={size} className="rounded-full" style={{ width: size, height: size }} />
-      ) : null}
-      <ProviderIcon provider={d.provider} size={badge} />
-      <span>
+      <ProviderAvatar person={person} size={size} />
+      <span className="ptag-handle">
         {d.prefix}
         {d.label}
       </span>
     </>
   );
 
-  if (d.profileUrl) {
+  if (href) {
     return (
       <a
-        href={d.profileUrl}
-        target="_blank"
-        rel="noreferrer"
+        className="ptag"
+        href={href}
         onClick={(e) => e.stopPropagation()}
-        className="inline-flex items-center gap-1 align-middle font-semibold text-[#1d9bf0] hover:underline"
+        rel="noreferrer"
+        target="_blank"
+        // The address is what the link opens, so it is also what the tooltip
+        // should say — the handle is already on screen.
+        title={person.address ?? undefined}
       >
         {inner}
       </a>
     );
   }
 
-  return <span className="inline-flex items-center gap-1 align-middle font-semibold">{inner}</span>;
+  return <span className="ptag">{inner}</span>;
 }

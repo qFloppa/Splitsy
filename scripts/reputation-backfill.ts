@@ -68,7 +68,7 @@ if (!registrar) throw new Error("Circle is not configured in .env.local");
 
 const publicClient = createPublicClient({
   chain: arcTestnet,
-  transport: http(process.env.NEXT_PUBLIC_ARC_TESTNET_RPC_URL ?? "https://rpc.testnet.arc.network"),
+  transport: http(process.env.NEXT_PUBLIC_ARC_TESTNET_RPC_URL ?? "https://rpc.testnet.arc.io"),
 });
 
 // Circle wallet id for an address we control — looked up by address, NOT via
