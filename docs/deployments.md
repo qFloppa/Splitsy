@@ -43,7 +43,7 @@ git push origin main:testnet
 | Branch | `main` | `testnet` |
 | `NEXT_PUBLIC_ARC_NETWORK` | `mainnet` | unset → testnet |
 | Chain | Arc 5042 | Arc Testnet 5042002 |
-| RPC | `rpc.mainnet.arc.io` | `rpc.testnet.arc.network` |
+| RPC | `rpc.mainnet.arc.io` | `rpc.testnet.arc.io` |
 | Explorer | `explorer.arc.io` | `testnet.arcscan.app` |
 | `WALLET_PROVIDER` | `privy` | `privy` |
 | `WALLET_UI` | `privy` | `privy` |

@@ -47,7 +47,7 @@ an unset variable all land on testnet, where being wrong is free
 |---|---|---|
 | `NEXT_PUBLIC_ARC_NETWORK` | unset, or anything but `mainnet` | `mainnet` |
 | Chain id | `5042002` | `5042` |
-| RPC | `https://rpc.testnet.arc.network` | `https://rpc.mainnet.arc.io` |
+| RPC | `https://rpc.testnet.arc.io` | `https://rpc.mainnet.arc.io` |
 | Explorer | `https://testnet.arcscan.app` | `https://explorer.arc.io` |
 | USDC | `0x3600…0000` | `0x3600…0000` (the same) |
 | Money | test USDC, no value | real USDC |
@@ -133,7 +133,7 @@ does and what its absence means. The ones worth naming here:
 ```ini
 # ── which chain ─────────────────────────────────────────────────────────────
 NEXT_PUBLIC_ARC_NETWORK=            # unset → testnet; `mainnet` → Arc mainnet
-ARC_RPC_URL=https://rpc.testnet.arc.network   # optional keyed endpoint
+ARC_RPC_URL=https://rpc.testnet.arc.io   # optional keyed endpoint
 ARC_RPC_URL_MAINNET=
 
 # ── which wallet stack ──────────────────────────────────────────────────────
@@ -974,7 +974,7 @@ Everything in this table follows `NEXT_PUBLIC_ARC_NETWORK` and is resolved in
 | Gateway Wallet | `0x0077777d7EBA4688BDeF3E311b846F25870A19B9` | `0x77777777Dcc4d5A8B6E418Fd04D8997ef11000eE` |
 | Gateway Minter | `0x0022222ABE238Cc2C7Bb1f21003F0a260052475B` | `0x2222222d7164433c4C09B0b0D809a9b52C04C205` |
 | Gateway API | `https://gateway-api-testnet.circle.com/v1` | `https://gateway-api.circle.com/v1` |
-| RPC | `https://rpc.testnet.arc.network` | `https://rpc.mainnet.arc.io` |
+| RPC | `https://rpc.testnet.arc.io` | `https://rpc.mainnet.arc.io` |
 | Explorer | `https://testnet.arcscan.app` | `https://explorer.arc.io` |
 | ERC-8004 IdentityRegistry | `0x8004A818BFB912233c491871b3d84c89A494BD9e` | `0x8004A169FB4a3325136EB29fA0ceB6D2e539a432` |
 | ERC-8004 ReputationRegistry | `0x8004B663056A597Dffe9eCcC1965A193B7388713` | `0x8004BAa17C55a88189AE136b182e5fdA19dE9b63` |

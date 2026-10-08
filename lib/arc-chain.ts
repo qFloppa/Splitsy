@@ -86,7 +86,9 @@ export const ARC_PROFILES: Record<ArcNetwork, ArcProfile> = {
     network: "testnet",
     chain: arcTestnet,
     chainId: 5042002,
-    rpcUrl: "https://rpc.testnet.arc.network",
+    // The endpoint Arc ran before 2026-10-08 (rpc.testnet.arc.network) answers
+    // 403 now. Verified live: this one serves chain id 0x4cef52.
+    rpcUrl: "https://rpc.testnet.arc.io",
     explorerUrl: "https://testnet.arcscan.app",
     usdcAddress: "0x3600000000000000000000000000000000000000",
     gatewayWallet: "0x0077777d7EBA4688BDeF3E311b846F25870A19B9",
@@ -110,9 +112,28 @@ export const ARC_PROFILES: Record<ArcNetwork, ArcProfile> = {
  */
 export function resolveArcProfile(network: string | undefined, rpcOverride?: string): ArcProfile {
   const base = ARC_PROFILES[network === "mainnet" ? "mainnet" : "testnet"];
+  const rpcUrl = rpcOverride || base.rpcUrl;
   // Spread rather than return `base` directly: callers must not be able to
   // mutate the shared table out from under twenty other modules.
-  return { ...base, rpcUrl: rpcOverride || base.rpcUrl };
+  //
+  // The chain is rebuilt when the RPC is overridden, for the same reason the
+  // spread exists: a viem client built with a bare http() reads its URL off
+  // the CHAIN object (chain.rpcUrls.default.http[0]), not this rpcUrl, and
+  // wallet_addEthereumChain hands the browser the same list. A chain that kept
+  // the table's endpoint while the profile carried an override silently sent
+  // every such client to the public RPC — which is how a deployment with a
+  // keyed endpoint still read the retired public one.
+  return {
+    ...base,
+    rpcUrl,
+    // Rebuild only when they disagree, so the no-override mainnet profile still
+    // hands out the exact `arcMainnet` object (a shared identity other modules
+    // may rely on).
+    chain:
+      base.chain.rpcUrls.default.http[0] === rpcUrl
+        ? base.chain
+        : { ...base.chain, rpcUrls: { default: { http: [rpcUrl] } } },
+  };
 }
 
 // Which network, decided once, before anything derived from it is read.
