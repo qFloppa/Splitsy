@@ -2414,7 +2414,7 @@ USDC                0x3600000000000000000000000000000000000000`}</pre>
                 <p>
                   The list below is the engineering one, written for a reader who already knows what these terms
                   mean. The same guarantees in plain words — and an honest account of what could still go wrong —
-                  are on <Link href="/security">the Safety page</Link>.
+                  are on <Link href="/safety">the Safety page</Link>.
                 </p>
                 <ul>
                   <li>Users explicitly approve USDC spend before contracts can pull funds.</li>

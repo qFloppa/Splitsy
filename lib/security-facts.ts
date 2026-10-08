@@ -1,7 +1,7 @@
 import { formatUnits } from "viem";
 
 /**
- * The two HandleEscrow bounds, as a sentence on /security can print them.
+ * The two HandleEscrow bounds, as a sentence on /safety can print them.
  *
  * Both are immutable constructor arguments with no setter, so the page reads them
  * off the live contract rather than repeating the deploy script's defaults — the

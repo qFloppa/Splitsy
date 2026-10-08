@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { describeDailyCeiling, describeHoldWindow } from "./security-facts.ts";
 
-// The /security page prints both of these as promises to a reader deciding
+// The /safety page prints both of these as promises to a reader deciding
 // whether to trust the escrow with money. A units mistake here is the same class
 // of bug scripts/deploy-handle-escrow.ts documents having already shipped once —
 // a ceiling of 2000 base units ($0.002) typed where 2000 USDC was meant — except

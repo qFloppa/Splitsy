@@ -2764,7 +2764,7 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
               {/* Not a tab: it leaves the app. Same mark as a filter on the
                   dashboard's rail, which is the register for everything here that
                   doesn't change which tab you are reading. */}
-              <Link className="iou-provider bill-toggle" href="/security">
+              <Link className="iou-provider bill-toggle" href="/safety">
                 Safety
               </Link>
               <Link className="iou-provider bill-toggle" href="/docs">

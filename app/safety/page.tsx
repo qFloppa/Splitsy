@@ -25,7 +25,7 @@ export const metadata: Metadata = {
   description:
     "How Splitsy's contracts protect your money, in plain English: no owner, no pause, no way to empty them, how money held for someone with no wallet works, and what could still go wrong.",
   openGraph: {
-    title: "Splitsy Security — nobody can move your money, not even us",
+    title: "Splitsy Safety — nobody can move your money, not even us",
     description:
       "No owner, no admin, no pause button, no withdraw-all. What the contracts guarantee, how escrow works for someone who hasn't joined yet, and an honest list of what could still go wrong.",
   },

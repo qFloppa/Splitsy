@@ -656,7 +656,7 @@ export async function getEscrowBalanceOnchain(
 }
 
 /**
- * The escrow's two immutable bounds, for the sentences /security prints about
+ * The escrow's two immutable bounds, for the sentences /safety prints about
  * them: how long a deposit stays releasable, and the rolling 24h release ceiling.
  *
  * READ LIVE RATHER THAN REPEATED, because both are constructor arguments with no

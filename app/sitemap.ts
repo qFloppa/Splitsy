@@ -18,7 +18,7 @@ export default function sitemap(): MetadataRoute.Sitemap {
       priority: 0.9,
     },
     {
-      url: `${BASE_URL}/security`,
+      url: `${BASE_URL}/safety`,
       lastModified,
       changeFrequency: "monthly",
       priority: 0.8,
