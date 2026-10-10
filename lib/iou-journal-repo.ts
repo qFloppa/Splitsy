@@ -130,8 +130,8 @@ export async function listIousForWallets(wallets: string[], limit = 200): Promis
  */
 export async function getDepositStanding(
   pairs: { escrowAddress: string; depositId: string }[],
-): Promise<Map<string, { status: string; releaseTxHash: string | null }>> {
-  const out = new Map<string, { status: string; releaseTxHash: string | null }>();
+): Promise<Map<string, { status: string; releaseTxHash: string | null; provider: string | null }>> {
+  const out = new Map<string, { status: string; releaseTxHash: string | null; provider: string | null }>();
   const client = createSupabaseServerClient();
   if (!client || pairs.length === 0) return out;
 
@@ -143,9 +143,12 @@ export async function getDepositStanding(
   const filter = safe
     .map((p) => `and(escrow_address.eq.${p.escrowAddress.toLowerCase()},deposit_id.eq.${p.depositId})`)
     .join(",");
+  // `provider` comes back for the archive: an escrowed IOU has no wallet to
+  // resolve an identity from — that is what escrow is for — and this row is the
+  // only place that records which namespace the handle belongs to.
   const { data, error } = await client
     .from("escrow_deposits")
-    .select("escrow_address, deposit_id, status, release_tx_hash")
+    .select("escrow_address, deposit_id, status, release_tx_hash, provider")
     .or(filter);
   if (error) throw new Error(`Failed to read escrow deposits: ${error.message}`);
 
@@ -153,6 +156,7 @@ export async function getDepositStanding(
     out.set(`${String(r.escrow_address).toLowerCase()}:${r.deposit_id}`, {
       status: String(r.status),
       releaseTxHash: r.release_tx_hash === null ? null : String(r.release_tx_hash),
+      provider: r.provider === null ? null : String(r.provider),
     });
   }
   return out;

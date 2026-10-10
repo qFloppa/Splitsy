@@ -13,6 +13,7 @@
 // reports the newest payment and the total that landed. The first of those is
 // findable from the row itself (the archive orders by created_at) and the second
 // is the sum — neither needs every leg listed.
+import { personHandle } from "./dashboard-aggregate.ts";
 
 /** What one row of the journal holds, as the repo reads it back. */
 export type IouJournalRow = {
@@ -48,7 +49,7 @@ export type ArchiveInput = {
   /** billId → payment legs, for the bills that were paid. */
   payments: Map<string, BillPayments>;
   /** Keyed `${escrow_address}:${deposit_id}` — see depositKey. Both sides lowercase. */
-  deposits: Map<string, { status: string; releaseTxHash: string | null }>;
+  deposits: Map<string, { status: string; releaseTxHash: string | null; provider: string | null }>;
   /**
    * address → the social identity that owns it, keyed lowercase.
    *
@@ -167,10 +168,19 @@ export function archiveRows(input: ArchiveInput): ArchiveRow[] {
     if (j.status === "escrowed") {
       const deposit = input.deposits.get(depositKey(j.escrowAddress, j.escrowDepositId));
       if (!deposit) continue; // no record of the deposit: nothing landed, so nothing to show
+      // AN ESCROWED IOU HAS NO WALLET TO RESOLVE — that is what escrow is for —
+      // so the address lookup can never name it. The deposit row can: it
+      // recorded the provider when the money went in (see
+      // schema-escrow-deposits.sql), which is the one fact the journal's label
+      // cannot carry. The handle still comes from that label, because the
+      // deposit normalizes its own copy to lowercase and "@qFloppa" is how its
+      // owner writes it.
+      const named = personHandle(j.counterpartyLabel, deposit.provider);
       rows.push({
         id: j.id,
         direction: "i-owe",
         ...who(j),
+        ...(named ? { handle: named, provider: deposit.provider } : {}),
         note: j.note,
         amountUsd: usd(j.amountUsdc),
         at,
