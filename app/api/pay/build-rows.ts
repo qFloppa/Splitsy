@@ -1,3 +1,8 @@
+// The naming rule lives in lib/dashboard-aggregate.ts, next to the treasury
+// view's copy of the same question — relative, with the extension, because this
+// file is run directly by `node --test`.
+import { personHandle } from "../../../lib/dashboard-aggregate.ts";
+
 export type PayRow = {
   address: string;
   // The name for a row that has no social identity: the creation-time snapshot
@@ -22,12 +27,6 @@ export type PayRow = {
 };
 
 type ParticipantRead = { owed: bigint; paid: bigint; exists: boolean };
-
-// The providers that name a PERSON. A "wallet" row's label is a positional form
-// default ("Payer 3") which names a row in someone else's form, not a person, so
-// it never becomes a handle — the same rule lib/dashboard-aggregate.ts's
-// counterpartyLabel applies to the treasury view.
-const SOCIAL_PROVIDERS = new Set(["x", "discord", "email"]);
 
 function shorten(address: string): string {
   return `${address.slice(0, 6)}…${address.slice(-4)}`;
@@ -74,10 +73,10 @@ export function buildPayRows({
     const remaining = read.owed > read.paid ? read.owed - read.paid : 0n;
 
     // A snapshot label is the only name a participant who has never signed in
-    // has, so it still has to produce a tag — stripped back to a bare handle,
-    // because the snapshot stored the prefixed form.
-    const snapshotHandle =
-      snapshotLabel && SOCIAL_PROVIDERS.has(snapshotProvider ?? "") ? snapshotLabel.replace(/^@/, "") : null;
+    // has, so it still has to produce a tag — stripped back to a bare handle
+    // (the snapshot stored the prefixed form) and only for the providers that
+    // name a person. See personHandle.
+    const snapshotHandle = personHandle(snapshotLabel, snapshotProvider);
 
     rows.push({
       address,

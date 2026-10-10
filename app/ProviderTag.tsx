@@ -1,6 +1,7 @@
 "use client";
 
 import { Mail, Wallet } from "lucide-react";
+import { useEffect, useState } from "react";
 import { ARC_EXPLORER } from "@/lib/arc-explorer";
 import { providerDisplay, type ProviderPerson } from "@/lib/provider-display";
 import type { AccountProvider } from "@/lib/types";
@@ -103,32 +104,96 @@ export function ProviderTag({ person, size }: { person: ProviderPerson; size?: n
   const d = providerDisplay(person);
   const href = person.address ? `${ARC_EXPLORER}/address/${person.address}` : d.profileUrl;
 
-  const inner = (
-    <>
+  if (!href) return <ProviderChip person={person} size={size} />;
+
+  return (
+    <a
+      className="ptag"
+      href={href}
+      onClick={(e) => e.stopPropagation()}
+      rel="noreferrer"
+      target="_blank"
+      // The address is what the link opens, so it is also what the tooltip
+      // should say — the handle is already on screen.
+      title={person.address ?? undefined}
+    >
       <ProviderAvatar person={person} size={size} />
       <span className="ptag-handle">
         {d.prefix}
         {d.label}
       </span>
-    </>
+    </a>
   );
+}
 
-  if (href) {
-    return (
-      <a
-        className="ptag"
-        href={href}
-        onClick={(e) => e.stopPropagation()}
-        rel="noreferrer"
-        target="_blank"
-        // The address is what the link opens, so it is also what the tooltip
-        // should say — the handle is already on screen.
-        title={person.address ?? undefined}
-      >
-        {inner}
-      </a>
-    );
-  }
+// The same chip with nothing to click.
+//
+// Used where the tag sits INSIDE a control: the IOU ledger's rows are recall
+// buttons, and an <a> inside a <button> is invalid markup that swallows both
+// gestures — the same reason that row's transaction link had to move out of the
+// button it was in. ProviderTag falls back to this whenever it has no address
+// and no public profile to open.
+export function ProviderChip({ person, size }: { person: ProviderPerson; size?: number | string }) {
+  const d = providerDisplay(person);
+  return (
+    <span className="ptag">
+      <ProviderAvatar person={person} size={size} />
+      <span className="ptag-handle">
+        {d.prefix}
+        {d.label}
+      </span>
+    </span>
+  );
+}
 
-  return <span className="ptag">{inner}</span>;
+// Who an address is, when the address belongs to somebody who has signed in.
+export type Who = { handle: string; provider: string; avatarUrl: string | null };
+
+// The registry only knows addresses — a bill's splitter reads back as hex, and
+// that is all a surface reading the chain directly was ever told, so "collected
+// by" named even a signed-in X account by its wallet. /api/identity resolves
+// those addresses against the users table (the same lookup getUsersByWallets
+// does for the pay page).
+//
+// THE LAST RESOLVED PEOPLE ARE KEPT on failure: an unresolvable address is the
+// common case (a counterparty who never signed in), not an error state, and a
+// fetch failure must not blank names already on screen. 401s are ordinary too —
+// a wallet-only user has no session, sees addresses as today, and the map just
+// stays empty.
+export function useWho(addresses: readonly string[]): Record<string, Who> {
+  const [people, setPeople] = useState<Record<string, Who>>({});
+
+  const key = addresses.join(",").toLowerCase();
+  useEffect(() => {
+    if (!key) return;
+    let active = true;
+    fetch(`/api/identity?addresses=${key}`)
+      .then((res) => (res.ok ? res.json() : Promise.reject(new Error(String(res.status)))))
+      .then((data) => {
+        if (active) setPeople(data.people ?? {});
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, [key]);
+
+  return people;
+}
+
+// One address as the person who owns it — or as the wallet itself, when they
+// have never signed in. The address stays reachable either way: both forms link
+// to it on the explorer, and the wallet form keeps the shortened hex that was
+// there before anyone was named.
+export function WhoTag({ who, address, size }: { who?: Who; address: string; size?: number | string }) {
+  return (
+    <ProviderTag
+      person={
+        who
+          ? { provider: who.provider as AccountProvider, handle: who.handle, avatarUrl: who.avatarUrl, address }
+          : { provider: "wallet", handle: address, address }
+      }
+      size={size}
+    />
+  );
 }

@@ -18,7 +18,21 @@ export type StatusFunnel = {
   created: number; partiallyPaid: number; fullyPaid: number;
 };
 
-export type Counterparty = { label: string; bucket: IdentityBucket; volumeUsdc: string; billCount: number };
+// One counterparty of a bill I created. The identity travels as its PARTS —
+// address, bare handle, provider (via `bucket`), avatar — so the panel can draw
+// the same identity tag every other surface draws, and link it to the wallet on
+// Arc. `label` is the same identity as prose, for the places a tag cannot go
+// (an aria-label, a sentence); `handle` is null for anyone with no social
+// identity, which is the one question the panel asks before tagging a row.
+export type Counterparty = {
+  address: string; // lowercase 0x
+  label: string;
+  handle: string | null;
+  avatarUrl: string | null;
+  bucket: IdentityBucket;
+  volumeUsdc: string;
+  billCount: number;
+};
 
 export type AgingBuckets = { d0_7Usdc: string; d8_30Usdc: string; d30plusUsdc: string };
 
@@ -34,7 +48,11 @@ export type RecurringHealth = {
 // billId; there is no on-chain way to net them away.
 export type TreasuryPosition = {
   counterparty: string;      // lowercase 0x address
-  label: string;             // handle if known, else the preimage label, else the address
+  label: string;             // the handle as its platform writes it, else the address
+  // The identity's parts, for the tag — see Counterparty above. Null handle =
+  // nobody has claimed this wallet, so the row is named by its address.
+  handle: string | null;
+  avatarUrl: string | null;
   bucket: IdentityBucket;
   theyOweMeUsdc: string;
   iOweThemUsdc: string;

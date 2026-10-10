@@ -25,6 +25,7 @@ const input = (over: Partial<ArchiveInput> = {}): ArchiveInput => ({
   bills: new Map(),
   payments: new Map(),
   deposits: new Map(),
+  people: new Map(),
   ...over,
 });
 
@@ -75,12 +76,12 @@ test("an escrowed settle is in-flight until its deposit is released", () => {
   const key = depositKey("0xESC", "9");
   assert.equal(key, "0xesc:9", "the key lowercases, matching escrow_deposits");
 
-  const open = new Map([[key, { status: "open", releaseTxHash: null }]]);
+  const open = new Map([[key, { status: "open", releaseTxHash: null, provider: null }]]);
   const [pending] = archiveRows(input({ journal: [escrowed], deposits: open }));
   assert.equal(pending.outcome, "in-flight");
   assert.equal(pending.txHash, null, "nothing released, so nothing to link");
 
-  const released = new Map([[key, { status: "released", releaseTxHash: "0xrelease" }]]);
+  const released = new Map([[key, { status: "released", releaseTxHash: "0xrelease", provider: null }]]);
   const [done] = archiveRows(input({ journal: [escrowed], deposits: released }));
   assert.equal(done.outcome, "settled");
   assert.equal(done.txHash, "0xrelease");
@@ -89,6 +90,33 @@ test("an escrowed settle is in-flight until its deposit is released", () => {
 test("an escrowed settle with no deposit row at all shows nothing", () => {
   const escrowed = row({ status: "escrowed", escrowAddress: "0xesc", escrowDepositId: "9" });
   assert.equal(archiveRows(input({ journal: [escrowed] })).length, 0);
+});
+
+test("an escrowed settle is named from its deposit, the only record of the namespace", () => {
+  // No wallet exists for this person — that is why the money is in escrow — so
+  // the address lookup every other row uses cannot answer here. The deposit
+  // recorded the provider when the money went in.
+  const escrowed = row({
+    status: "escrowed",
+    escrowAddress: "0xesc",
+    escrowDepositId: "9",
+    counterpartyAddress: null,
+    counterpartyLabel: "@dani",
+  });
+  const deposits = new Map([
+    [depositKey("0xesc", "9"), { status: "open", releaseTxHash: null, provider: "discord" }],
+  ]);
+  const [waiting] = archiveRows(input({ journal: [escrowed], deposits }));
+  // The handle keeps the label's casing (the deposit lowercases its own copy),
+  // and the provider is what stops this reading as "@dani" on Discord.
+  assert.deepEqual([waiting.handle, waiting.provider], ["dani", "discord"]);
+  assert.equal(waiting.address, null, "there is no wallet to link — that is the point of escrow");
+
+  // A deposit row from before the provider was read back: the label stands alone
+  // rather than being tagged with a guessed namespace.
+  const blank = new Map([[depositKey("0xesc", "9"), { status: "open", releaseTxHash: null, provider: null }]]);
+  const [plain] = archiveRows(input({ journal: [escrowed], deposits: blank }));
+  assert.deepEqual([plain.handle, plain.provider, plain.label], [null, null, "@dani"]);
 });
 
 test("the archive reads newest first, and is stable when two share a timestamp", () => {
@@ -117,12 +145,31 @@ test("an unparseable timestamp sorts last rather than producing NaN", () => {
   assert.equal(rows[1].at, 0);
 });
 
+test("a resolved counterparty travels as the parts of an identity, else just its label", () => {
+  const known = row({ id: "k", counterpartyAddress: "0xBBB", counterpartyLabel: "@dani" });
+  // A Discord IOU: the journal stored "@dani" because that is what the composer
+  // had, and the provider only comes back with the address lookup — which is the
+  // whole reason the archive resolves people rather than trusting the label.
+  const [tagged] = archiveRows(
+    input({
+      journal: [known],
+      people: new Map([["0xbbb", { handle: "dani", provider: "discord", avatarUrl: null }]]),
+    }),
+  );
+  assert.deepEqual([tagged.handle, tagged.provider, tagged.address], ["dani", "discord", "0xBBB"]);
+
+  // Nobody behind the address: the stored label is the only name this row has,
+  // and no provider is invented for it.
+  const [plain] = archiveRows(input({ journal: [row({ counterpartyAddress: null })] }));
+  assert.deepEqual([plain.handle, plain.provider, plain.label], [null, null, "@dani"]);
+});
+
 test("the total counts what landed and excludes what is still in flight", () => {
   const escrowed = row({ id: "e", status: "escrowed", escrowAddress: "0xesc", escrowDepositId: "9" });
   const rows = archiveRows(
     input({
       journal: [row({ id: "a", amountUsdc: "10.500000" }), escrowed],
-      deposits: new Map([[depositKey("0xesc", "9"), { status: "open", releaseTxHash: null }]]),
+      deposits: new Map([[depositKey("0xesc", "9"), { status: "open", releaseTxHash: null, provider: null }]]),
     }),
   );
   const totals = archiveTotals(rows);

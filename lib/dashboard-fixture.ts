@@ -42,13 +42,16 @@ export const DEMO_DASHBOARD: DashboardData = {
     { scope: "one_time", created: 14, partiallyPaid: 4, fullyPaid: 8 },
     { scope: "recurring", created: 2, partiallyPaid: 1, fullyPaid: 0 },
   ],
+  // Identities as their parts, the same way the live route sends them: a bare
+  // handle plus its provider, so the panel tags each row and only the two
+  // wallet-only rows fall back to an address.
   topCounterparties: [
-    { label: "@satoshi", bucket: "x", volumeUsdc: "88.5", billCount: 4 },
-    { label: "alice@example.com", bucket: "email", volumeUsdc: "74.25", billCount: 3 },
-    { label: "vitalik#4242", bucket: "discord", volumeUsdc: "61", billCount: 3 },
-    { label: "@naomi", bucket: "x", volumeUsdc: "48", billCount: 2 },
-    { label: "0x9f3a…c21b", bucket: "wallet", volumeUsdc: "41.25", billCount: 2 },
-    { label: "0x1c88…7de0", bucket: "unknown", volumeUsdc: "30", billCount: 1 },
+    { address: "0x3f1e5d7c9b8a06f4e2d1c0b9a8f7e6d5c4b3a291", label: "@satoshi", handle: "satoshi", avatarUrl: null, bucket: "x", volumeUsdc: "88.5", billCount: 4 },
+    { address: "0x8c7b6a5948372615d4c3b2a1908f7e6d5c4b3a20", label: "alice@example.com", handle: "alice@example.com", avatarUrl: null, bucket: "email", volumeUsdc: "74.25", billCount: 3 },
+    { address: "0x1d2c3b4a59687706f5e4d3c2b1a09f8e7d6c5b4a", label: "vitalik", handle: "vitalik", avatarUrl: null, bucket: "discord", volumeUsdc: "61", billCount: 3 },
+    { address: "0x6e5d4c3b2a19087f6e5d4c3b2a19087f6e5d4c3b", label: "@naomi", handle: "naomi", avatarUrl: null, bucket: "x", volumeUsdc: "48", billCount: 2 },
+    { address: "0x9f3a0b1c2d3e4f5061728394a5b6c7d8e9f0c21b", label: "0x9f3a0b1c2d3e4f5061728394a5b6c7d8e9f0c21b", handle: null, avatarUrl: null, bucket: "wallet", volumeUsdc: "41.25", billCount: 2 },
+    { address: "0x1c88f0e1d2c3b4a5968778695a4b3c2d1e0f7de0", label: "0x1c88f0e1d2c3b4a5968778695a4b3c2d1e0f7de0", handle: null, avatarUrl: null, bucket: "unknown", volumeUsdc: "30", billCount: 1 },
   ],
   aging: {
     d0_7Usdc: "52.4",
@@ -92,6 +95,8 @@ export const DEMO_DASHBOARD: DashboardData = {
       {
         counterparty: "0x9f3c2b1a7d6e5048392a1b0c4d5e6f7089abcdef",
         label: "@dev",
+        handle: "dev",
+        avatarUrl: null,
         bucket: "x",
         theyOweMeUsdc: "0",
         iOweThemUsdc: "43.75",
@@ -100,7 +105,11 @@ export const DEMO_DASHBOARD: DashboardData = {
       },
       {
         counterparty: "0x2e4f6a8c0b1d3f5709a8b7c6d5e4f3a2b1c0d9e8",
-        label: "@carla",
+        // No "@": a Discord username doesn't carry one, which is the whole
+        // reason an identity travels as its parts rather than a finished label.
+        label: "carla",
+        handle: "carla",
+        avatarUrl: null,
         bucket: "discord",
         theyOweMeUsdc: "18.4",
         iOweThemUsdc: "0",
@@ -110,6 +119,8 @@ export const DEMO_DASHBOARD: DashboardData = {
       {
         counterparty: "0x7a1b2c3d4e5f60718293a4b5c6d7e8f901234567",
         label: "sam@example.com",
+        handle: "sam@example.com",
+        avatarUrl: null,
         bucket: "email",
         theyOweMeUsdc: "7",
         iOweThemUsdc: "0",

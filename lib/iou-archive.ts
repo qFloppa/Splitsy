@@ -13,6 +13,7 @@
 // reports the newest payment and the total that landed. The first of those is
 // findable from the row itself (the archive orders by created_at) and the second
 // is the sum — neither needs every leg listed.
+import { personHandle } from "./dashboard-aggregate.ts";
 
 /** What one row of the journal holds, as the repo reads it back. */
 export type IouJournalRow = {
@@ -48,7 +49,18 @@ export type ArchiveInput = {
   /** billId → payment legs, for the bills that were paid. */
   payments: Map<string, BillPayments>;
   /** Keyed `${escrow_address}:${deposit_id}` — see depositKey. Both sides lowercase. */
-  deposits: Map<string, { status: string; releaseTxHash: string | null }>;
+  deposits: Map<string, { status: string; releaseTxHash: string | null; provider: string | null }>;
+  /**
+   * address → the social identity that owns it, keyed lowercase.
+   *
+   * The journal stores the counterparty as a FINISHED STRING ("@dani", or a
+   * shortened address) because that is what the composer had in hand, and a
+   * string cannot say which platform it came from — so an archived row could
+   * never be tagged from the journal alone. The address can: resolved against
+   * the users table it yields the handle, the provider and the avatar. A row
+   * whose counterparty never signed in simply keeps its stored label.
+   */
+  people: Map<string, { handle: string; provider: string; avatarUrl: string | null }>;
 };
 
 // An archived IOU, as the client renders it. Strings and numbers only — bigint
@@ -57,6 +69,15 @@ export type ArchiveRow = {
   id: string;
   direction: "i-owe" | "owes-me";
   label: string;
+  /**
+   * The counterparty as the parts of an identity, when they could be resolved:
+   * a bare handle, the raw provider, the avatar. All null for a row we can only
+   * name by its stored label — `label` is then the only name it has.
+   */
+  handle: string | null;
+  provider: string | null;
+  avatarUrl: string | null;
+  address: string | null;
   note: string;
   amountUsd: number;
   /** Unix seconds, 0 when the journal row's timestamp could not be parsed. */
@@ -100,6 +121,20 @@ function usd(v: string): number {
 export function archiveRows(input: ArchiveInput): ArchiveRow[] {
   const rows: ArchiveRow[] = [];
 
+  // Who a row names, as far as it can be resolved. The stored label stays the
+  // fallback — it is the only name a counterparty who never signed in has, and
+  // guessing a provider for it would put an "@" on Discord names and emails.
+  const who = (j: IouJournalRow) => {
+    const person = j.counterpartyAddress ? input.people.get(j.counterpartyAddress.toLowerCase()) : undefined;
+    return {
+      label: j.counterpartyLabel,
+      handle: person?.handle ?? null,
+      provider: person?.provider ?? null,
+      avatarUrl: person?.avatarUrl ?? null,
+      address: j.counterpartyAddress,
+    };
+  };
+
   for (const j of input.journal) {
     const at = seconds(j.createdAt);
 
@@ -115,7 +150,7 @@ export function archiveRows(input: ArchiveInput): ArchiveRow[] {
       rows.push({
         id: j.id,
         direction: "owes-me",
-        label: j.counterpartyLabel,
+        ...who(j),
         note: j.note,
         amountUsd: usd(j.amountUsdc),
         // The payment is the more useful date, and the fallback is the claim:
@@ -133,10 +168,19 @@ export function archiveRows(input: ArchiveInput): ArchiveRow[] {
     if (j.status === "escrowed") {
       const deposit = input.deposits.get(depositKey(j.escrowAddress, j.escrowDepositId));
       if (!deposit) continue; // no record of the deposit: nothing landed, so nothing to show
+      // AN ESCROWED IOU HAS NO WALLET TO RESOLVE — that is what escrow is for —
+      // so the address lookup can never name it. The deposit row can: it
+      // recorded the provider when the money went in (see
+      // schema-escrow-deposits.sql), which is the one fact the journal's label
+      // cannot carry. The handle still comes from that label, because the
+      // deposit normalizes its own copy to lowercase and "@qFloppa" is how its
+      // owner writes it.
+      const named = personHandle(j.counterpartyLabel, deposit.provider);
       rows.push({
         id: j.id,
         direction: "i-owe",
-        label: j.counterpartyLabel,
+        ...who(j),
+        ...(named ? { handle: named, provider: deposit.provider } : {}),
         note: j.note,
         amountUsd: usd(j.amountUsdc),
         at,
@@ -154,7 +198,7 @@ export function archiveRows(input: ArchiveInput): ArchiveRow[] {
       rows.push({
         id: j.id,
         direction: "i-owe",
-        label: j.counterpartyLabel,
+        ...who(j),
         note: j.note,
         amountUsd: usd(j.amountUsdc),
         at,

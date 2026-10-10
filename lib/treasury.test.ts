@@ -187,14 +187,16 @@ test("labels and identity buckets come from the identity map, else the address",
           ],
         },
       ],
-      identities: { "0xalice": { label: "@alice", provider: "x" } },
+      identities: { "0xalice": { handle: "alice", provider: "x", avatarUrl: null } },
     }),
   );
 
   const byAddr = new Map(plan.positions.map((p) => [p.counterparty, p]));
   assert.equal(byAddr.get("0xalice")!.label, "@alice");
+  assert.equal(byAddr.get("0xalice")!.handle, "alice", "the tag gets the bare handle, never the prefixed one");
   assert.equal(byAddr.get("0xalice")!.bucket, "x");
   assert.equal(byAddr.get("0xstranger")!.label, "0xstranger");
+  assert.equal(byAddr.get("0xstranger")!.handle, null, "no handle is what makes a row read as an address");
   assert.equal(byAddr.get("0xstranger")!.bucket, "unknown");
 });
 
@@ -218,8 +220,8 @@ test("a non-social label is discarded — the address is the only real identifie
       identities: {
         // "Payer 1" is HomeClient's positional form default for an address row,
         // not a name — it must never stand in for the address.
-        "0xpayer": { label: "Payer 1", provider: null },
-        "0xraw": { label: "my hardware wallet", provider: "wallet" },
+        "0xpayer": { handle: "Payer 1", provider: null, avatarUrl: null },
+        "0xraw": { handle: "my hardware wallet", provider: "wallet", avatarUrl: null },
       },
     }),
   );
@@ -227,6 +229,33 @@ test("a non-social label is discarded — the address is the only real identifie
   const byAddr = new Map(plan.positions.map((p) => [p.counterparty, p]));
   assert.equal(byAddr.get("0xpayer")!.label, "0xpayer");
   assert.equal(byAddr.get("0xraw")!.label, "0xraw");
+  // And neither is tagged: a tag claims to name a person.
+  assert.equal(byAddr.get("0xpayer")!.handle, null);
+  assert.equal(byAddr.get("0xraw")!.handle, null);
+});
+
+test("a Discord name keeps its own grammar — no leading @, which a label used to bake in", () => {
+  const plan = buildTreasury(
+    input({
+      created: [
+        {
+          billId: "1",
+          totalOwed: 0n,
+          dueDate: 0n,
+          escrowUntilFull: false,
+          totalPaid: 0n,
+          claimed: 0n,
+          participants: [{ addr: "0xdani", owed: 2n * USDC, paid: 0n }],
+        },
+      ],
+      identities: { "0xdani": { handle: "dani", provider: "discord", avatarUrl: "https://cdn/x.png" } },
+    }),
+  );
+
+  const [position] = plan.positions;
+  assert.equal(position.label, "dani");
+  assert.equal(position.avatarUrl, "https://cdn/x.png");
+  assert.equal(position.bucket, "discord");
 });
 
 test("shouldPayLeg honours the selection whitelist and skips my own bills", () => {

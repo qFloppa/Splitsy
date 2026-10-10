@@ -88,4 +88,27 @@ test("a social label survives and still names the counterparty", () => {
 
   assert.equal(data.topCounterparties[0].label, "@alice");
   assert.equal(data.topCounterparties[0].bucket, "x");
+  // And it travels as its parts, so the panel can tag the person and link the
+  // tag to their wallet: a bare handle, and the address the row was keyed by.
+  assert.equal(data.topCounterparties[0].handle, "alice");
+  assert.equal(data.topCounterparties[0].address, "0xaaa");
+});
+
+test("a live identity beats the bill's creation-time snapshot label", () => {
+  const data = buildDashboard({
+    nowSeconds: 1_700_000_000, myWallet: "0xme",
+    created: [
+      { billId: 1n, totalOwed: 2_000000n, totalPaid: 0n, claimed: 0n, participants: [
+          { addr: "0xAAA", owed: 2_000000n, paid: 0n },
+        ], labels: ["@alice"], providers: ["x"], createdAtSeconds: 1_699_000_000 },
+    ],
+    owed: [], recipientTabs: [], shortfallCountByTab: {},
+    reputation: { avgScore: 0, count: 0, lateCount: 0, points: [] },
+    // Signed in on Discord since that bill was made — and a Discord username
+    // carries no "@", which is what a pre-composed label got wrong.
+    identities: { "0xaaa": { handle: "dani", provider: "discord", avatarUrl: "https://cdn/d.png" } },
+  });
+
+  const [top] = data.topCounterparties;
+  assert.deepEqual([top.label, top.handle, top.bucket, top.avatarUrl], ["dani", "dani", "discord", "https://cdn/d.png"]);
 });

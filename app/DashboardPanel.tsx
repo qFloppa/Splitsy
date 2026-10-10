@@ -51,8 +51,8 @@ import {
 } from "@/lib/dashboard-types";
 import { ARC_EXPLORER } from "@/lib/arc-explorer";
 import { providerDisplay } from "@/lib/provider-display";
-import type { IdentityProvider } from "@/lib/types";
-import { ProviderIcon } from "./ProviderTag";
+import type { AccountProvider, IdentityProvider } from "@/lib/types";
+import { ProviderIcon, ProviderTag } from "./ProviderTag";
 import { payErrorMessage, walletPost } from "./signed-send";
 import { PosterFact, PosterHero, SectionHead, legendOf, revealMotion, sectionMotion, type Step } from "./SpecCard";
 
@@ -82,10 +82,41 @@ const fig = (v: string | number) => num(v).toLocaleString(undefined, { maximumFr
 // careful type.
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
-// A counterparty arrives as a label with no address beside it (see Counterparty
-// in lib/dashboard-types.ts), so "is this a person or a raw address" is a question
-// about the label itself.
-const isAddress = (s: string) => /^0x[0-9a-fA-F]{40}$/.test(s);
+// A counterparty arrives as the PARTS of an identity (see Counterparty in
+// lib/dashboard-types.ts), so "is this a person or a raw address" is answered by
+// whether a handle came back — not by pattern-matching the label, which is what
+// this tab used to do and which read a legitimately address-shaped name wrong.
+//
+// One row, named: the identity tag everywhere else draws, or the address as a
+// monospace explorer link when nobody has claimed that wallet.
+function PartyName({
+  address,
+  bucket,
+  handle,
+  avatarUrl,
+}: {
+  address: string;
+  bucket: IdentityBucket;
+  handle: string | null;
+  avatarUrl: string | null;
+}) {
+  if (handle) {
+    return (
+      <ProviderTag person={{ provider: bucket as AccountProvider, handle, avatarUrl, address }} />
+    );
+  }
+  return (
+    <a
+      className="bill-rank-address"
+      href={`${ARC_EXPLORER}/address/${address}`}
+      rel="noreferrer"
+      target="_blank"
+      title={address}
+    >
+      {shortAddr(address)}
+    </a>
+  );
+}
 
 // weekStart buckets are epoch-aligned 7-day windows (Thursday-anchored, NOT ISO
 // Monday weeks) — format the date plainly, never "week of Monday…".
@@ -939,27 +970,12 @@ function BreakdownsSection({
           <div className="bill-ranks">
             {filtered.topCounterparties.map((c, i) => {
               const volume = num(c.volumeUsdc);
-              // No handle behind the address means the address IS the identity —
-              // so it stays readable as one, and opens the explorer.
-              const anonymous = isAddress(c.label);
               const pct = share(volume, rankTotal);
               return (
-                <div className="bill-rank" key={`${c.label}-${i}`}>
+                <div className="bill-rank" key={c.address}>
                   <div className="bill-payer-line">
                     <span className="bill-payer-target">
-                      {anonymous ? (
-                        <a
-                          className="bill-rank-address"
-                          href={`${ARC_EXPLORER}/address/${c.label}`}
-                          rel="noreferrer"
-                          target="_blank"
-                          title={c.label}
-                        >
-                          {shortAddr(c.label)}
-                        </a>
-                      ) : (
-                        c.label
-                      )}
+                      <PartyName address={c.address} avatarUrl={c.avatarUrl} bucket={c.bucket} handle={c.handle} />
                     </span>
                     <span className="bill-payer-share">{usd(volume)}</span>
                   </div>
@@ -968,11 +984,11 @@ function BreakdownsSection({
                     style={meterStyle(
                       rankMax > 0 ? volume / rankMax : 0,
                       i,
-                      `var(--chart-identity-${anonymous ? "wallet" : c.bucket})`,
+                      `var(--chart-identity-${c.handle ? c.bucket : "wallet"})`,
                     )}
                   />
                   <div className="bill-payer-meta">
-                    <span>{anonymous ? BUCKET_LABEL.wallet : BUCKET_LABEL[c.bucket]}</span>
+                    <span>{c.handle ? BUCKET_LABEL[c.bucket] : BUCKET_LABEL.wallet}</span>
                     <span>{plural(c.billCount, "bill")}</span>
                     {pct ? <span>{pct} of this filter</span> : null}
                   </div>
@@ -1478,28 +1494,20 @@ function TreasurySection({
                 const owe = num(p.iOweThemUsdc);
                 const theyOwe = num(p.theyOweMeUsdc);
                 const ticked = owe > 0 && !excluded.has(p.counterparty);
-                // No social identity → the address IS the name (see
-                // lib/treasury.ts). Render it as a monospace explorer link so
-                // "who is this?" is one click away instead of a dead end.
-                const anonymous = p.label === p.counterparty;
-                const name = anonymous ? shortAddr(p.counterparty) : p.label;
+                // The prose name, for the one control that can only hold text —
+                // the row itself is tagged. A position with no handle behind it
+                // is named by its address (see lib/treasury.ts), shortened here.
+                const name = p.handle ? p.label : shortAddr(p.counterparty);
                 return (
                   <div className="bill-payer" key={p.counterparty}>
                     <div className="bill-payer-line">
                       <span className="bill-payer-target">
-                        {anonymous ? (
-                          <a
-                            className="bill-rank-address"
-                            href={`${ARC_EXPLORER}/address/${p.counterparty}`}
-                            rel="noreferrer"
-                            target="_blank"
-                            title={p.counterparty}
-                          >
-                            {name}
-                          </a>
-                        ) : (
-                          name
-                        )}
+                        <PartyName
+                          address={p.counterparty}
+                          avatarUrl={p.avatarUrl}
+                          bucket={p.bucket}
+                          handle={p.handle}
+                        />
                       </span>
                       <span className="bill-payer-share">
                         <span className="bill-currency">{rowNet < 0 ? "−$" : "+$"}</span>
@@ -1507,7 +1515,7 @@ function TreasurySection({
                       </span>
                     </div>
                     <div className="bill-payer-meta">
-                      <span>{anonymous ? BUCKET_LABEL.wallet : BUCKET_LABEL[p.bucket]}</span>
+                      <span>{p.handle ? BUCKET_LABEL[p.bucket] : BUCKET_LABEL.wallet}</span>
                       {theyOwe > 0 ? <span>owes you {usd(theyOwe)}, unpaid</span> : null}
                       {owe > 0 ? (
                         <span>
