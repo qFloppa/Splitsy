@@ -25,6 +25,7 @@ const input = (over: Partial<ArchiveInput> = {}): ArchiveInput => ({
   bills: new Map(),
   payments: new Map(),
   deposits: new Map(),
+  people: new Map(),
   ...over,
 });
 
@@ -115,6 +116,25 @@ test("an unparseable timestamp sorts last rather than producing NaN", () => {
     ["ok", "bad"],
   );
   assert.equal(rows[1].at, 0);
+});
+
+test("a resolved counterparty travels as the parts of an identity, else just its label", () => {
+  const known = row({ id: "k", counterpartyAddress: "0xBBB", counterpartyLabel: "@dani" });
+  // A Discord IOU: the journal stored "@dani" because that is what the composer
+  // had, and the provider only comes back with the address lookup — which is the
+  // whole reason the archive resolves people rather than trusting the label.
+  const [tagged] = archiveRows(
+    input({
+      journal: [known],
+      people: new Map([["0xbbb", { handle: "dani", provider: "discord", avatarUrl: null }]]),
+    }),
+  );
+  assert.deepEqual([tagged.handle, tagged.provider, tagged.address], ["dani", "discord", "0xBBB"]);
+
+  // Nobody behind the address: the stored label is the only name this row has,
+  // and no provider is invented for it.
+  const [plain] = archiveRows(input({ journal: [row({ counterpartyAddress: null })] }));
+  assert.deepEqual([plain.handle, plain.provider, plain.label], [null, null, "@dani"]);
 });
 
 test("the total counts what landed and excludes what is still in flight", () => {

@@ -40,9 +40,20 @@ export type IouPlan =
 export type IouIdentity = { provider?: string; handle?: string; signerAddress?: string | null } | null;
 
 // One row of the ledger under the composer — the same sentence, small.
+//
+// The counterparty travels as the PARTS of an identity, never a finished name:
+// `provider` + a bare `handle` is what lib/provider-display.ts needs to decide
+// whether this person's platform writes a leading "@", and the avatar can only
+// be drawn if it is carried. A row with no social identity behind it names the
+// wallet itself — provider "wallet", handle the address — so every row is
+// somebody rather than sometimes a string. `label` is that same identity as
+// prose, for the sentence the row is read back into.
 export type IouLedgerRow = {
   id: string;
   label: string;
+  provider: AccountProvider;
+  handle: string;
+  avatarUrl: string | null;
   direction: IouDirection;
   amountUsd: number;
   payBillIds: string[];
@@ -280,8 +291,21 @@ export function askBody(plan: IouPlan): {
 // arrives netted per counterparty, so the sign of `netUsdc` IS the direction —
 // the same grammar as the composer, one line smaller. A fully netted
 // counterparty (net 0) has nothing left to state, so it drops out.
+//
+// A position with no handle is a wallet nobody has claimed, and it is named as
+// one: the address becomes the handle of a "wallet" identity, which is what
+// renders it as shortened hex behind a wallet mark rather than as a 42-character
+// string in the middle of a sentence.
 export function ledgerRows(
-  positions: { counterparty: string; label: string; netUsdc: string; payBillIds: string[] }[],
+  positions: {
+    counterparty: string;
+    label: string;
+    handle: string | null;
+    avatarUrl: string | null;
+    bucket: string;
+    netUsdc: string;
+    payBillIds: string[];
+  }[],
 ): IouLedgerRow[] {
   const rows: IouLedgerRow[] = [];
   for (const p of positions) {
@@ -290,6 +314,9 @@ export function ledgerRows(
     rows.push({
       id: p.counterparty,
       label: p.label,
+      provider: p.handle ? (p.bucket as AccountProvider) : "wallet",
+      handle: p.handle ?? p.counterparty,
+      avatarUrl: p.avatarUrl,
       direction: net > 0 ? "owes-me" : "i-owe",
       amountUsd: Math.abs(net),
       payBillIds: p.payBillIds,

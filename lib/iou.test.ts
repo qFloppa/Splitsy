@@ -193,8 +193,8 @@ test("an empty note falls back to the sentence so the bill isn't blank downstrea
 
 test("the ledger reads direction from the sign of the netted position", () => {
   const rows = ledgerRows([
-    { counterparty: "0xaaa", label: "@sam", netUsdc: "18.50", payBillIds: [] },
-    { counterparty: "0xbbb", label: "@kai", netUsdc: "-7.00", payBillIds: ["3"] },
+    { counterparty: "0xaaa", label: "@sam", handle: "sam", avatarUrl: null, bucket: "x", netUsdc: "18.50", payBillIds: [] },
+    { counterparty: "0xbbb", label: "@kai", handle: "kai", avatarUrl: null, bucket: "x", netUsdc: "-7.00", payBillIds: ["3"] },
   ]);
   assert.deepEqual(
     rows.map((r) => [r.label, r.direction, r.amountUsd]),
@@ -207,18 +207,51 @@ test("the ledger reads direction from the sign of the netted position", () => {
 
 test("a fully netted counterparty drops out of the ledger", () => {
   const rows = ledgerRows([
-    { counterparty: "0xaaa", label: "@sam", netUsdc: "0", payBillIds: [] },
-    { counterparty: "0xbbb", label: "@kai", netUsdc: "0.001", payBillIds: [] },
-    { counterparty: "0xccc", label: "@lee", netUsdc: "not-a-number", payBillIds: [] },
+    { counterparty: "0xaaa", label: "@sam", handle: "sam", avatarUrl: null, bucket: "x", netUsdc: "0", payBillIds: [] },
+    { counterparty: "0xbbb", label: "@kai", handle: "kai", avatarUrl: null, bucket: "x", netUsdc: "0.001", payBillIds: [] },
+    { counterparty: "0xccc", label: "@lee", handle: "lee", avatarUrl: null, bucket: "x", netUsdc: "not-a-number", payBillIds: [] },
   ]);
   assert.equal(rows.length, 0, "nothing left to state, and sub-cent dust isn't a debt");
 });
 
 test("the ledger net is signed: positive means you're up", () => {
   const rows = ledgerRows([
-    { counterparty: "0xaaa", label: "@sam", netUsdc: "18.50", payBillIds: [] },
-    { counterparty: "0xbbb", label: "@kai", netUsdc: "-7.00", payBillIds: [] },
+    { counterparty: "0xaaa", label: "@sam", handle: "sam", avatarUrl: null, bucket: "x", netUsdc: "18.50", payBillIds: [] },
+    { counterparty: "0xbbb", label: "@kai", handle: "kai", avatarUrl: null, bucket: "x", netUsdc: "-7.00", payBillIds: [] },
   ]);
   assert.equal(ledgerNet(rows), 11.5);
   assert.equal(ledgerNet([]), 0);
+});
+
+test("a row carries the parts of an identity, and an unclaimed wallet names itself", () => {
+  const [tagged, anon] = ledgerRows([
+    {
+      counterparty: "0xaaa",
+      label: "dani",
+      handle: "dani",
+      avatarUrl: "https://cdn.example/dani.png",
+      bucket: "discord",
+      netUsdc: "9",
+      payBillIds: [],
+    },
+    // Nobody has claimed this wallet: no handle, so the address becomes the
+    // handle of a "wallet" identity rather than being dropped.
+    {
+      counterparty: "0xbbb2c3d4e5f60718293a4b5c6d7e8f9012345678",
+      label: "0xbbb2c3d4e5f60718293a4b5c6d7e8f9012345678",
+      handle: null,
+      avatarUrl: null,
+      bucket: "unknown",
+      netUsdc: "-4",
+      payBillIds: [],
+    },
+  ]);
+
+  // The provider travels raw, so provider-display decides the "@" — a Discord
+  // name must not acquire one on its way to the ledger.
+  assert.deepEqual(
+    [tagged.provider, tagged.handle, tagged.avatarUrl],
+    ["discord", "dani", "https://cdn.example/dani.png"],
+  );
+  assert.deepEqual([anon.provider, anon.handle], ["wallet", "0xbbb2c3d4e5f60718293a4b5c6d7e8f9012345678"]);
 });

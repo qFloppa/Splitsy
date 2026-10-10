@@ -10,7 +10,7 @@ import {
 import { listRecipientTabsForWalletsOnchain } from "@/lib/recurring-read";
 import { getOnchainBillPreimages } from "@/lib/onchain-bill-preimage-repo";
 import { getReputationSummaryForWallets } from "@/lib/reputation-repo";
-import { buildDashboard, type CreatedBill, type OwedBill } from "@/lib/dashboard-aggregate";
+import { buildDashboard, personHandle, type CreatedBill, type OwedBill } from "@/lib/dashboard-aggregate";
 import { DEMO_DASHBOARD } from "@/lib/dashboard-fixture";
 import type { DashboardData } from "@/lib/dashboard-types";
 import { buildTreasury, type TreasuryCreatedBill, type TreasuryOwedBill, type CounterpartyIdentity } from "@/lib/treasury";
@@ -182,22 +182,33 @@ export async function GET(request: Request) {
     }];
   });
 
-  // Labels keyed LOWERCASE — buildTreasury lowercases chain addresses before
-  // looking this map up, and chain reads return checksummed hex, so a mixed-case
-  // key would silently fall back to the raw address / "unknown" bucket.
+  // Identities keyed LOWERCASE — buildTreasury and buildDashboard both lowercase
+  // chain addresses before looking this map up, and chain reads return
+  // checksummed hex, so a mixed-case key would silently fall back to the raw
+  // address / "unknown" bucket.
+  //
   // A preimage names the participants of a bill I created (index-aligned with
   // participantList, but possibly SHORTER on pre-migration rows — hence the
   // optional index); the users table names anyone with a social wallet. The users
   // row wins: it is the live handle, a preimage label is a creation-time snapshot.
+  //
+  // WHAT TRAVELS IS THE PARTS OF AN IDENTITY, never a finished "@handle": this
+  // map used to carry `label: "@" + user.handle`, which is wrong for two of the
+  // three providers the app supports and threw the avatar away before any
+  // component could ask for it. personHandle strips a snapshot label back to a
+  // bare handle, and only for the providers that name a person — so a positional
+  // form default ("Payer 3") still reads as an address row.
   const identities: Record<string, CounterpartyIdentity> = {};
   bills.forEach((bill, bi) => {
     if (!bill) return;
     const preimage = preimageMap.get(createdIds[bi]);
     bill.participantList.forEach((addr, k) => {
-      const label = preimage?.participantLabels?.[k];
-      if (!label) return;
+      const provider = preimage?.participantProviders?.[k] ?? null;
+      const handle = personHandle(preimage?.participantLabels?.[k], provider);
       const key = addr.toLowerCase();
-      if (!identities[key]) identities[key] = { label, provider: preimage?.participantProviders?.[k] ?? null };
+      // The provider is kept even with no handle: it is what buckets an
+      // address row as "wallet" rather than "unknown".
+      if (!identities[key] && (handle || provider)) identities[key] = { handle, provider, avatarUrl: null };
     });
   });
   const counterpartyAddresses = [
@@ -206,7 +217,11 @@ export async function GET(request: Request) {
   ];
   // Overwrites (not `if (!identities[key])`) so the live handle beats the snapshot.
   for (const [addr, user] of await getUsersByWallets(counterpartyAddresses)) {
-    identities[addr.toLowerCase()] = { label: `@${user.handle}`, provider: user.provider };
+    identities[addr.toLowerCase()] = {
+      handle: user.handle,
+      provider: user.provider,
+      avatarUrl: user.avatarUrl,
+    };
   }
 
   const treasury = buildTreasury({
@@ -224,6 +239,9 @@ export async function GET(request: Request) {
     owed,
     recipientTabs,
     shortfallCountByTab,
+    // The same map the treasury view reads, so "who you split with most" names
+    // people the same way "who really owes whom" does.
+    identities,
     reputation: {
       avgScore: reputationSummary.avgScore ?? 0, // null for no history
       count: reputationSummary.count,

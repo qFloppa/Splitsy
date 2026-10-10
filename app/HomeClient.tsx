@@ -104,6 +104,7 @@ import {
 } from "@/lib/snapsplit";
 import { newShareToken } from "@/lib/pay-link";
 import { providerDisplay } from "@/lib/provider-display";
+import { useWho, WhoTag } from "./ProviderTag";
 import { ReputationBadge } from "./ReputationBadge";
 import type { AccountProvider, IdentityProvider } from "@/lib/types";
 import type { TreasurySettleSelection } from "@/lib/dashboard-types";
@@ -3798,6 +3799,9 @@ function BillActivityDetail({ debt }: { debt: BillSplitDebt }) {
     status: "idle" | "loading" | "ready" | "error";
     data?: BillActivity;
   }>({ status: "loading" });
+  // One address, asked for only when the card is open — the whole component
+  // mounts on expand, so this is not a fetch per row of the history list.
+  const who = useWho(useMemo(() => [debt.splitter.toLowerCase()], [debt.splitter]));
 
   useEffect(() => {
     let active = true;
@@ -3856,14 +3860,14 @@ function BillActivityDetail({ debt }: { debt: BillSplitDebt }) {
                 </div>
                 <div>
                   <p className="history-detail-label">Splitter</p>
-                  <a
-                    className="history-tx-link mt-1 inline-block"
-                    href={`${ARC_EXPLORER}/address/${getAddress(debt.splitter)}`}
-                    rel="noreferrer"
-                    target="_blank"
-                  >
-                    {shortAddress(getAddress(debt.splitter))}
-                  </a>
+                  {/* Who collected this bill, not just which wallet did. The
+                      registry read behind this card knows addresses only, which
+                      is the same gap the settle deck's "collected by" row had —
+                      so it asks the same resolver. An unclaimed wallet keeps the
+                      shortened hex that was here before. */}
+                  <p className="mt-1">
+                    <WhoTag address={getAddress(debt.splitter)} who={who[debt.splitter.toLowerCase()]} />
+                  </p>
                 </div>
               </div>
 

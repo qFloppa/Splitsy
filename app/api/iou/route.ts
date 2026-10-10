@@ -3,6 +3,7 @@ import { archiveRows, archiveTotals } from "@/lib/iou-archive";
 import { getDepositStanding, insertIou, listIousForWallets } from "@/lib/iou-journal-repo";
 import { getSessionUser } from "@/lib/session";
 import { getSlotWalletsForUser } from "@/lib/pending-wallets-repo";
+import { getUsersByWallets } from "@/lib/users-repo";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -76,14 +77,31 @@ export async function GET(request: Request) {
   ]);
 
   const standing = new Map<string, { totalOwed: bigint; totalPaid: bigint }>();
+  // The counterparty of an ask is on chain, in the bill the journal names: an
+  // IOU bill has exactly one participant, and that participant is the debtor.
+  // Worth reading off here because the journal's own counterparty_address is
+  // null for every ask written before the composer started sending it — without
+  // this the oldest half of the archive could never be tagged.
+  const askCounterparties = new Map<string, string>();
   bills.forEach((bill, i) => {
     // A null is an unreadable bill, not an unpaid one — left out entirely, which
     // lib/iou-archive reads as silence and keeps out of the archive.
     if (!bill) return;
     standing.set(billIds[i], { totalOwed: bill.totalOwed, totalPaid: bill.totalPaid });
+    if (bill.participantList.length === 1) askCounterparties.set(billIds[i], bill.participantList[0]);
   });
 
-  const rows = archiveRows({ journal, bills: standing, payments, deposits });
+  // Who those addresses are. Display-only enrichment over the same lookup the
+  // pay page and the settle deck use, and it answers with an empty map rather
+  // than throwing — a Supabase hiccup costs handles, not the archive.
+  const addresses = journal.map((j) => j.counterpartyAddress ?? (j.billId ? askCounterparties.get(j.billId) : null));
+  const people = await getUsersByWallets(addresses.filter((a): a is string => Boolean(a)));
+
+  // The resolved address is written back onto the row, so the archive can both
+  // tag the person and link the tag to their wallet on Arc.
+  const resolved = journal.map((j, i) => ({ ...j, counterpartyAddress: addresses[i] ?? null }));
+
+  const rows = archiveRows({ journal: resolved, bills: standing, payments, deposits, people });
   const totals = archiveTotals(rows);
   return Response.json({ rows, settledUsd: totals.settledUsd, count: totals.count });
 }

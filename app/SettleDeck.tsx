@@ -15,8 +15,7 @@ import {
   type SocialDebt,
 } from "@/lib/settle-items";
 import { bridgeSourceChains, type BridgeSourceChain } from "@/lib/appkit-bridge";
-import { ARC_EXPLORER } from "@/lib/arc-explorer";
-import { ProviderAvatar, ProviderTag } from "./ProviderTag";
+import { useWho, WhoTag } from "./ProviderTag";
 import { useBillVerification } from "./BillVerification";
 import type { BillRunState, ProgressFlow } from "./HomeClient";
 
@@ -103,64 +102,9 @@ function runningFlow(deck: SettleDeckHandlers, id: string): ProgressFlow | null 
   return flow && flow.subjectKey === id && flow.status === "running" ? flow : null;
 }
 
-// Who an address is, when the address belongs to somebody who has signed in.
-//
-// The registry only knows addresses — a bill's splitter reads back as hex, and
-// that is all the settle deck was ever told, so "collected by" named even a
-// signed-in X account by its wallet. /api/identity resolves the address against
-// the users table (the same lookup getUsersByWallets does for the pay page).
-//
-// NULL RATHER THAN ABSENT on failure, and the effect keeps the LAST resolved
-// people: an unresolvable address is the common case (a counterparty who never
-// signed in), not an error state, and a fetch failure must not blank names the
-// deck was already showing. 401s are ordinary too — a wallet-only user has no
-// session, sees addresses as today, and the map just stays empty.
-function useWho(addresses: readonly string[]): Record<string, { handle: string; provider: string; avatarUrl: string | null }> {
-  const [people, setPeople] = useState<Record<string, { handle: string; provider: string; avatarUrl: string | null }>>({});
-
-  const key = addresses.join(",").toLowerCase();
-  useEffect(() => {
-    if (!key) return;
-    let active = true;
-    fetch(`/api/identity?addresses=${key}`)
-      .then((res) => (res.ok ? res.json() : Promise.reject(new Error(String(res.status)))))
-      .then((data) => {
-        if (active) setPeople(data.people ?? {});
-      })
-      .catch(() => {});
-    return () => {
-      active = false;
-    };
-  }, [key]);
-
-  return people;
-}
-
-// One entry of the aside, as the person who owns it rather than hex — or as hex,
-// when they have never signed in. The address stays reachable either way: the
-// tag links to it on the explorer, and the wallet row it falls back to already
-// linked there before this component existed.
-function WhoRow({ who, address }: { who: { handle: string; provider: string; avatarUrl: string | null } | undefined; address: string }) {
-  if (who) {
-    return (
-      <ProviderTag
-        person={{
-          provider: who.provider as "x" | "discord" | "email",
-          handle: who.handle,
-          avatarUrl: who.avatarUrl,
-          address,
-        }}
-      />
-    );
-  }
-  const wallet = { provider: "wallet" as const, handle: address };
-  return (
-    <a className="ptag" href={`${ARC_EXPLORER}/address/${address}`} rel="noreferrer" target="_blank" title={address}>
-      <ProviderAvatar person={wallet} />
-      <span className="ptag-handle">{short(address)}</span>
-    </a>
-  );
-}
+// Who an address is, when the address belongs to somebody who has signed in —
+// the hook and the row both live in ./ProviderTag now, because the bill-history
+// panel's "Splitter" line asks the same question of the same registry read.
 
 export default function SettleDeck({
   header,
@@ -625,7 +569,7 @@ function WalletDebtBody({
           {settled ? " · paid in full" : debt.paid > 0n ? ` · ${usd(debt.paid)} paid` : ""}
         </AsideRow>
         <AsideRow label="collected by">
-          <WhoRow address={debt.splitter} who={people[debt.splitter.toLowerCase()]} />
+          <WhoTag address={debt.splitter} who={people[debt.splitter.toLowerCase()]} />
         </AsideRow>
         <AsideRow label={settled ? "paid from" : "paying from"}>{short(debt.account)}</AsideRow>
         {debt.escrowUntilFull ? (

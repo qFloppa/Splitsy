@@ -9,7 +9,7 @@
 // exposure per counterparty. The executable saving is transaction batching
 // (one approve for the summed amount instead of one per bill) — which is what
 // grossTxCount/payLegCount report. Do not restate it as fewer USDC moved.
-import { bucketForProvider, counterpartyLabel, unitsToUsdc } from "./dashboard-aggregate.ts";
+import { bucketForProvider, counterpartyLabel, personHandle, unitsToUsdc, type CounterpartyIdentity } from "./dashboard-aggregate.ts";
 import type { TreasuryPlan, TreasuryPosition } from "./dashboard-types.ts";
 
 export type TreasuryCreatedBill = {
@@ -29,7 +29,9 @@ export type TreasuryOwedBill = {
   myPaid: bigint;
 };
 
-export type CounterpartyIdentity = { label: string; provider: string | null };
+// Re-exported because this is where callers of buildTreasury reach for it; the
+// type itself lives next to the naming rule that reads it.
+export type { CounterpartyIdentity };
 
 export type TreasuryInput = {
   myWallets: string[]; // every wallet the viewer controls; case-insensitive
@@ -87,7 +89,12 @@ export function buildTreasury(input: TreasuryInput): TreasuryPlan {
     return {
       counterparty,
       // Same naming rule as topCounterparties — see counterpartyLabel.
-      label: counterpartyLabel(identity?.label, identity?.provider, counterparty),
+      label: counterpartyLabel(identity?.handle, identity?.provider, counterparty),
+      // The parts behind that name, so the panel can tag the person instead of
+      // printing a string. Gated by personHandle: a wallet account's "handle" is
+      // its own address, which is a row named by its address, not a tag.
+      handle: personHandle(identity?.handle, identity?.provider),
+      avatarUrl: identity?.avatarUrl ?? null,
       bucket: bucketForProvider(identity?.provider),
       theyOweMeUsdc: unitsToUsdc(v.theyOweMe),
       iOweThemUsdc: unitsToUsdc(v.iOweThem),

@@ -49,6 +49,17 @@ export type ArchiveInput = {
   payments: Map<string, BillPayments>;
   /** Keyed `${escrow_address}:${deposit_id}` — see depositKey. Both sides lowercase. */
   deposits: Map<string, { status: string; releaseTxHash: string | null }>;
+  /**
+   * address → the social identity that owns it, keyed lowercase.
+   *
+   * The journal stores the counterparty as a FINISHED STRING ("@dani", or a
+   * shortened address) because that is what the composer had in hand, and a
+   * string cannot say which platform it came from — so an archived row could
+   * never be tagged from the journal alone. The address can: resolved against
+   * the users table it yields the handle, the provider and the avatar. A row
+   * whose counterparty never signed in simply keeps its stored label.
+   */
+  people: Map<string, { handle: string; provider: string; avatarUrl: string | null }>;
 };
 
 // An archived IOU, as the client renders it. Strings and numbers only — bigint
@@ -57,6 +68,15 @@ export type ArchiveRow = {
   id: string;
   direction: "i-owe" | "owes-me";
   label: string;
+  /**
+   * The counterparty as the parts of an identity, when they could be resolved:
+   * a bare handle, the raw provider, the avatar. All null for a row we can only
+   * name by its stored label — `label` is then the only name it has.
+   */
+  handle: string | null;
+  provider: string | null;
+  avatarUrl: string | null;
+  address: string | null;
   note: string;
   amountUsd: number;
   /** Unix seconds, 0 when the journal row's timestamp could not be parsed. */
@@ -100,6 +120,20 @@ function usd(v: string): number {
 export function archiveRows(input: ArchiveInput): ArchiveRow[] {
   const rows: ArchiveRow[] = [];
 
+  // Who a row names, as far as it can be resolved. The stored label stays the
+  // fallback — it is the only name a counterparty who never signed in has, and
+  // guessing a provider for it would put an "@" on Discord names and emails.
+  const who = (j: IouJournalRow) => {
+    const person = j.counterpartyAddress ? input.people.get(j.counterpartyAddress.toLowerCase()) : undefined;
+    return {
+      label: j.counterpartyLabel,
+      handle: person?.handle ?? null,
+      provider: person?.provider ?? null,
+      avatarUrl: person?.avatarUrl ?? null,
+      address: j.counterpartyAddress,
+    };
+  };
+
   for (const j of input.journal) {
     const at = seconds(j.createdAt);
 
@@ -115,7 +149,7 @@ export function archiveRows(input: ArchiveInput): ArchiveRow[] {
       rows.push({
         id: j.id,
         direction: "owes-me",
-        label: j.counterpartyLabel,
+        ...who(j),
         note: j.note,
         amountUsd: usd(j.amountUsdc),
         // The payment is the more useful date, and the fallback is the claim:
@@ -136,7 +170,7 @@ export function archiveRows(input: ArchiveInput): ArchiveRow[] {
       rows.push({
         id: j.id,
         direction: "i-owe",
-        label: j.counterpartyLabel,
+        ...who(j),
         note: j.note,
         amountUsd: usd(j.amountUsdc),
         at,
@@ -154,7 +188,7 @@ export function archiveRows(input: ArchiveInput): ArchiveRow[] {
       rows.push({
         id: j.id,
         direction: "i-owe",
-        label: j.counterpartyLabel,
+        ...who(j),
         note: j.note,
         amountUsd: usd(j.amountUsdc),
         at,

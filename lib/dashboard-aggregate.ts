@@ -2,6 +2,7 @@
 // DashboardData out. No I/O, no clock (nowSeconds is passed in), no Date.now().
 // All USDC math happens here in 6-dp base-unit bigints; decimal strings leave
 // through unitsToUsdc at the boundary. Tested by dashboard-aggregate.test.ts.
+import { providerDisplay } from "./provider-display.ts";
 import {
   IDENTITY_BUCKETS,
   type AgingBuckets,
@@ -30,18 +31,48 @@ export function bucketForProvider(p: string | null | undefined): IdentityBucket 
   return (IDENTITY_BUCKETS as string[]).includes(p ?? "") ? (p as IdentityBucket) : "unknown";
 }
 
-// How to name a counterparty. A label is only a NAME when it came from a social
-// identity (X / Discord / email). Labels on address rows are positional form
-// defaults — "Payer 1", from HomeClient's bill builder — which name a row in
-// someone else's form, not a person, and collide across every bill ever made.
-// For those the address is the only real identifier, so return it.
+// Who a counterparty is, as the PARTS of an identity rather than a finished
+// name: a bare handle, the raw provider, and the avatar when we have one. Keyed
+// by lowercase address wherever one of these maps appears.
+//
+// NEVER A PRE-COMPOSED "@handle". Which providers wear a leading "@" is
+// lib/provider-display.ts's one rule, and it can only apply it to a bare handle —
+// a composed label read a Discord user as "@dani" and an email one as
+// "@sam@mail.com" on every surface that passed one through.
+export type CounterpartyIdentity = {
+  handle: string | null;
+  provider: string | null;
+  avatarUrl: string | null;
+};
+
+// The bare handle inside a name, or null when that name doesn't belong to a
+// PERSON. A label on an address row is a positional form default — "Payer 1",
+// from HomeClient's bill builder — which names a row in someone else's form, not
+// a person, and collides across every bill ever made. So it never becomes a
+// handle, and the address stays the only real identifier.
+//
+// The "@" is stripped rather than trusted: a creation-time snapshot label stored
+// the prefixed form, and re-prefixing it downstream is what put an "@" on
+// Discord usernames and email addresses.
+export function personHandle(
+  handle: string | null | undefined,
+  provider: string | null | undefined,
+): string | null {
+  const bucket = bucketForProvider(provider);
+  return handle && bucket !== "unknown" && bucket !== "wallet" ? handle.replace(/^@/, "") : null;
+}
+
+// How to name a counterparty in prose: their handle as their own platform writes
+// it, or — for anyone without a social identity — the address itself.
 export function counterpartyLabel(
-  label: string | null | undefined,
+  handle: string | null | undefined,
   provider: string | null | undefined,
   addr: string,
 ): string {
-  const bucket = bucketForProvider(provider);
-  return label && bucket !== "unknown" && bucket !== "wallet" ? label : addr;
+  const bare = personHandle(handle, provider);
+  if (!bare) return addr;
+  const d = providerDisplay({ provider: bucketForProvider(provider) as "x" | "discord" | "email", handle: bare });
+  return `${d.prefix}${d.label}`;
 }
 
 export type CreatedBill = {
@@ -67,6 +98,12 @@ export type DashboardInput = {
   recipientTabs: { address: string; claimable: bigint; settlementCount: bigint; maxSettlements: bigint }[];
   shortfallCountByTab: Record<string, number>;
   reputation: { avgScore: number; count: number; lateCount: number; points: { at: string; score: number }[] };
+  // Who the counterparty addresses belong to NOW, keyed lowercase. Optional
+  // because it is the one thing here that took a database read to learn: the
+  // route resolves it and passes it in, so this module stays I/O-free. A live
+  // row wins over a bill's creation-time snapshot label — the snapshot is what
+  // the creator typed then, the users row is the handle as it is today.
+  identities?: Record<string, CounterpartyIdentity>;
 };
 
 const max0 = (v: bigint) => (v < 0n ? 0n : v);
@@ -153,14 +190,26 @@ export function buildDashboard(input: DashboardInput): Omit<DashboardData, "trea
   // same person can be labelled differently on two bills, and — worse — two
   // strangers both land on "Payer 1", which a label-keyed map would silently
   // merge into one row with their volumes added together.
-  const parties = new Map<string, { label: string; bucket: IdentityBucket; volume: bigint; billCount: number }>();
+  //
+  // The ADDRESS IS CARRIED OUT with the row, so the client can both tag the
+  // person and link the tag to their wallet on Arc. It used to be dropped here,
+  // which left the panel asking "does this label look like an address?" to
+  // decide whether a row named anybody.
+  const parties = new Map<string, Counterparty & { volume: bigint }>();
   for (const bill of created) {
     bill.participants.forEach((p, i) => {
       const addr = p.addr.toLowerCase();
+      const live = input.identities?.[addr];
+      const provider = live?.provider ?? bill.providers[i];
+      const handle = personHandle(live?.handle ?? bill.labels[i], provider);
       const slot = parties.get(addr) ?? {
-        label: counterpartyLabel(bill.labels[i], bill.providers[i], addr),
-        bucket: bucketForProvider(bill.providers[i]),
+        address: addr,
+        label: counterpartyLabel(handle, provider, addr),
+        handle,
+        avatarUrl: live?.avatarUrl ?? null,
+        bucket: bucketForProvider(provider),
         volume: 0n,
+        volumeUsdc: "0",
         billCount: 0,
       };
       slot.volume += p.owed;
@@ -171,7 +220,7 @@ export function buildDashboard(input: DashboardInput): Omit<DashboardData, "trea
   const topCounterparties: Counterparty[] = [...parties.values()]
     .sort((a, b) => (b.volume > a.volume ? 1 : b.volume < a.volume ? -1 : 0))
     .slice(0, 8)
-    .map((v) => ({ label: v.label, bucket: v.bucket, volumeUsdc: unitsToUsdc(v.volume), billCount: v.billCount }));
+    .map(({ volume, ...v }) => ({ ...v, volumeUsdc: unitsToUsdc(volume) }));
 
   // Aging of outstanding creator-side debt. Unknown creation time (0) is
   // treated as oldest — it can only understate freshness, never overstate it.

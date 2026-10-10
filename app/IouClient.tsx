@@ -47,7 +47,7 @@ import { archiveTotals, type ArchiveRow } from "@/lib/iou-archive";
 import { providerDisplay } from "@/lib/provider-display";
 import type { AccountProvider, IdentityProvider } from "@/lib/types";
 import { arcWalletClient } from "@/lib/wagmi";
-import { DISCORD_PATH } from "./ProviderTag";
+import { DISCORD_PATH, ProviderChip, ProviderTag } from "./ProviderTag";
 import { payErrorMessage, walletPost } from "./signed-send";
 
 type Me = { id: string; provider?: AccountProvider | null; handle: string; walletAddress: string | null };
@@ -91,7 +91,18 @@ type RailResult = {
   tx: TxRef;
   escrowed?: boolean;
   warning?: string;
-  journal?: { registryAddress?: string; billId?: string; escrowAddress?: string; escrowDepositId?: string };
+  journal?: {
+    registryAddress?: string;
+    billId?: string;
+    escrowAddress?: string;
+    escrowDepositId?: string;
+    // The wallet the handle resolved to. The label alone cannot be tagged — it
+    // is a finished string with no provider attached — so the archive names an
+    // IOU's counterparty by resolving this address against the users table.
+    // Absent on the escrow rails: there is no wallet yet, which is why the
+    // money is in escrow.
+    counterpartyAddress?: string;
+  };
 };
 
 const reduced = () => window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
@@ -534,6 +545,13 @@ export default function IouClient({ onReceipts }: { onReceipts: () => void }) {
       // row off the page, and it is what the dashboard's own rows will show once
       // the bill is indexed.
       label: provider === "wallet" ? targetName(plan) : `${display.prefix}${plan.handle}`,
+      // The identity as its parts, so this row is tagged exactly like the server
+      // rows it will be replaced by. No avatar to hand over: providerDisplay
+      // resolves one from the handle for X and email, which is what the composer
+      // above is already showing.
+      provider,
+      handle: plan.handle,
+      avatarUrl: null,
       direction: draft.direction,
       amountUsd: plan.amountUsd,
       payBillIds: [],
@@ -807,7 +825,10 @@ export default function IouClient({ onReceipts }: { onReceipts: () => void }) {
     if (!outcome.ok) throw new Error(spendError(outcome.error, "Transfer failed."));
     // Circle answers before the transfer mines, so the hash arrives later — the
     // row links itself once it does rather than holding the whole commit up.
-    return { tx: outcome.data.txId ? { pending: waitForCircleTxUrl(outcome.data.txId as string) } : null };
+    return {
+      tx: outcome.data.txId ? { pending: waitForCircleTxUrl(outcome.data.txId as string) } : null,
+      journal: { counterpartyAddress: to },
+    };
   }
 
   // The same ask, signed in the user's own wallet instead of their Splitsy one.
@@ -865,7 +886,11 @@ export default function IouClient({ onReceipts }: { onReceipts: () => void }) {
       tx: { url: explorerTxUrl(created.hash) },
       // The preimage register needs the same two values the server rail sends, so
       // they are reported the same way — see RailResult.journal.
-      journal: { registryAddress: BILL_SPLIT_REGISTRY_ADDRESS, billId: created.billId.toString() },
+      journal: {
+        registryAddress: BILL_SPLIT_REGISTRY_ADDRESS,
+        billId: created.billId.toString(),
+        counterpartyAddress: to,
+      },
     };
   }
 
@@ -915,7 +940,7 @@ export default function IouClient({ onReceipts }: { onReceipts: () => void }) {
     if (to.toLowerCase() === wallet.account.toLowerCase()) throw new Error("That handle is your own wallet.");
     await ensureBillSplitWalletOnArc(wallet);
     const receipt = await transferArcUsdc({ ...wallet, to, amount });
-    return { tx: { url: explorerTxUrl(receipt.transactionHash) } };
+    return { tx: { url: explorerTxUrl(receipt.transactionHash) }, journal: { counterpartyAddress: to } };
   }
 
   // Hang the explorer link on the row this transaction became. A pending hash
@@ -950,6 +975,9 @@ export default function IouClient({ onReceipts }: { onReceipts: () => void }) {
       // Whose wallet signed — the archive is scoped to it, and the route takes the
       // address from the session for a social user and from this for a browser one.
       signerAddress: signer === "wallet" ? walletAddress : socialAddress,
+      // A wallet target IS its address, so this one needs no rail to report it.
+      // Spread after, so a rail that resolved a handle to a wallet wins.
+      counterpartyAddress: provider === "wallet" ? plan.handle : undefined,
       ...done.journal,
     };
     const post = (txHash: string | null) =>
@@ -1390,6 +1418,12 @@ export default function IouClient({ onReceipts }: { onReceipts: () => void }) {
             // the same IOU. The "not recorded — don't resend" row offering a
             // resend was the sharpest version of that.
             const recallable = !row.label.includes("…") && state !== "pending" && !state?.startsWith("escrow");
+            // The tag, with nothing to click: this row IS a button, and an <a>
+            // inside one is invalid markup that swallows both gestures — the
+            // same reason the transaction link had to move out of it.
+            const who = (
+              <ProviderChip person={{ provider: row.provider, handle: row.handle, avatarUrl: row.avatarUrl }} />
+            );
             return (
               // A div, not a button: the tx link is interactive content, and
               // nesting that inside a button is invalid and untappable. The
@@ -1402,7 +1436,7 @@ export default function IouClient({ onReceipts }: { onReceipts: () => void }) {
                   onClick={recallRow}
                   type="button"
                 >
-                  {mine ? `I owe ${row.label}` : `${row.label} owes me`}
+                  {mine ? <>I owe {who}</> : <>{who} owes me</>}
                   {state === "escrowed" ? (
                     // In place of the note, not beside it: where the money is
                     // matters more right now than what it was for, and the note
@@ -1448,6 +1482,22 @@ export default function IouClient({ onReceipts }: { onReceipts: () => void }) {
           </div>
           {archive.map((row) => {
             const { day, month } = stubDate(row.at);
+            // Tagged when the journal's counterparty address resolved to
+            // somebody; otherwise the stored label is the only name this receipt
+            // has, and guessing a provider for it would put an "@" on Discord
+            // names and email addresses (see ArchiveInput.people).
+            const who = row.handle ? (
+              <ProviderTag
+                person={{
+                  provider: row.provider as AccountProvider,
+                  handle: row.handle,
+                  avatarUrl: row.avatarUrl,
+                  address: row.address,
+                }}
+              />
+            ) : (
+              row.label
+            );
             return (
               <div className="iou-archive-row" data-archive-row={row.id} key={row.id}>
                 <span aria-hidden className="iou-stub-date">
@@ -1456,7 +1506,7 @@ export default function IouClient({ onReceipts }: { onReceipts: () => void }) {
                 </span>
                 <div className="iou-stub-body">
                   <p className="iou-stub-line">
-                    {row.direction === "i-owe" ? `I owed ${row.label}` : `${row.label} owed me`}
+                    {row.direction === "i-owe" ? <>I owed {who}</> : <>{who} owed me</>}
                     {row.note ? <span className="iou-stub-note"> · {row.note}</span> : null}
                   </p>
                   {row.txHash ? (

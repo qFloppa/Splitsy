@@ -4,22 +4,46 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { typableAmount } from "@/lib/iou";
 import type { IdentityProvider } from "@/lib/types";
-import { providerDisplay } from "@/lib/provider-display";
+import { ProviderTag } from "@/app/ProviderTag";
 
 // Shapes returned by GET /api/bills (Supabase nested selects).
+//
+// A person arrives as the PARTS of an identity — provider, bare handle, the
+// avatar when the sign-in gave us one — because which providers wear a leading
+// "@" is lib/provider-display.ts's rule and it can only apply it to a bare
+// handle. The debtor's `users` row exists only once they have signed in; until
+// then the debt's own snapshot columns are the only name they have.
+type Person = { provider?: IdentityProvider; handle: string; avatar_url?: string | null } | null;
 type IOwe = {
   id: string;
   amount_usdc: string;
   status: string;
-  bill: { merchant: string | null; creator: { provider?: IdentityProvider; handle: string } | null } | null;
+  bill: { merchant: string | null; creator: Person } | null;
 };
 type OwedToMe = {
   id: string;
   merchant: string | null;
   total_usdc: string;
-  debts: { id: string; debtor_provider?: IdentityProvider; debtor_handle: string; amount_usdc: string; status: string }[];
+  debts: {
+    id: string;
+    debtor_provider?: IdentityProvider;
+    debtor_handle: string;
+    debtor: Person;
+    amount_usdc: string;
+    status: string;
+  }[];
 };
 type Row = { provider: IdentityProvider; handle: string; amount: string };
+
+// A Supabase row's snake_case into the tag's own shape. No address: this page
+// reads the app-side bills table, which records who a debt is against rather
+// than which wallet pays it — so the tag links to the person's public profile
+// where there is one, instead of to Arc.
+const personOf = (p: NonNullable<Person>) => ({
+  provider: p.provider,
+  handle: p.handle,
+  avatarUrl: p.avatar_url ?? null,
+});
 
 export default function BillsPage() {
   const [iOwe, setIOwe] = useState<IOwe[]>([]);
@@ -188,12 +212,13 @@ export default function BillsPage() {
         ) : (
           iOwe.map((d) => (
             <div key={d.id} style={cardStyle}>
+              {/* A plain inline span, not a flex row: `.ptag` is inline-flex and
+                  baseline-aligned, so it sits inside the sentence rather than
+                  needing a row of its own — and the colon in the debtor rows
+                  below stays attached to the amount it introduces. */}
               <span>
                 {d.bill?.merchant ?? "Bill"} — to{" "}
-                {(() => {
-                  const c = providerDisplay({ provider: d.bill?.creator?.provider, handle: d.bill?.creator?.handle });
-                  return `${c.prefix}${c.label}`;
-                })()}
+                {d.bill?.creator ? <ProviderTag person={personOf(d.bill.creator)} /> : "someone"}
               </span>
               <span style={{ display: "flex", alignItems: "center", gap: "0.75rem" }}>
                 <strong>{d.amount_usdc} USDC</strong>
@@ -222,15 +247,18 @@ export default function BillsPage() {
               <strong>
                 {b.merchant ?? "Bill"} — {b.total_usdc} USDC
               </strong>
-              {b.debts.map((debt) => {
-                const p = providerDisplay({ provider: debt.debtor_provider, handle: debt.debtor_handle });
-                return (
-                  <span key={debt.id} style={{ fontSize: "0.85rem", opacity: 0.8 }}>
-                    {p.prefix}
-                    {p.label}: {debt.amount_usdc} {debt.status === "paid" ? "✓ paid" : debt.status === "settling" ? "⏳ settling" : "· pending"}
-                  </span>
-                );
-              })}
+              {b.debts.map((debt) => (
+                <span key={debt.id} style={{ fontSize: "0.85rem", opacity: 0.8 }}>
+                  {/* The live users row wins over the debt's creation-time
+                      snapshot — it is the handle as it is now — and it is also
+                      the only side that carries an avatar. */}
+                  <ProviderTag
+                    person={personOf(debt.debtor ?? { provider: debt.debtor_provider, handle: debt.debtor_handle })}
+                  />
+                  : {debt.amount_usdc}{" "}
+                  {debt.status === "paid" ? "✓ paid" : debt.status === "settling" ? "⏳ settling" : "· pending"}
+                </span>
+              ))}
             </div>
           ))
         )}
@@ -250,6 +278,10 @@ const inputStyle: React.CSSProperties = {
 const cardStyle: React.CSSProperties = {
   display: "flex",
   justifyContent: "space-between",
+  // A gap as well as space-between: the row's two halves touch once the name is
+  // long enough to fill the card, and a tagged name is wider than the bare
+  // handle that used to sit here.
+  gap: "0.75rem",
   padding: "0.75rem 1rem",
   border: "1px solid var(--border)",
   borderRadius: 10,

@@ -8892,3 +8892,31 @@ a.ptag:hover .ptag-handle {
 .pay-creator .ptag {
   color: var(--pay-poster-fg);
 }
+
+/* ── The tag everywhere else a person is named ────────────────────────────────
+
+   Four more surfaces, one rule each, and both halves of that rule are about not
+   imposing: a tag inherits the weight of the line it lands in, and its circle is
+   sized in `em` so it scales with type that runs with the viewport. The
+   component only ever sets the variable — see "the geometry lives HERE" above.
+
+   The dashboard's counterparty rows (both the ranking and the net-settlement
+   positions) are set in Clash at weight 300, where the tag's own 600 made the
+   name heavier than the figure beside it. The IOU ledger and its receipts are
+   the same type one register down. The bill-history detail grid is the one
+   fixed-size surface of the four, so it takes a pixel diameter. */
+:is(.bill-payer-target, .iou-row, .iou-stub-line) :is(.ptag, .ptag-handle) {
+  font-weight: inherit;
+}
+
+.bill-payer-target .ptag-avatar {
+  --ptag-size: 0.62em;
+}
+
+:is(.iou-row, .iou-stub-line) .ptag-avatar {
+  --ptag-size: 0.8em;
+}
+
+.history-detail-grid .ptag-avatar {
+  --ptag-size: 15px;
+}
