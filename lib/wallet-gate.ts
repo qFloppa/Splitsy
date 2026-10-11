@@ -37,6 +37,31 @@ export const json = (body: unknown, status = 200) => Response.json(body, { statu
 // OFF, because the failure direction is permanent.
 export const claimEnabled = (): boolean => process.env.WALLET_CLAIM_ENABLED === "true";
 
+// THE UNLOCK, ON ITS OWN, for the routes that need that one check and not the
+// rest of walletGate below.
+//
+// Returns a 403 to hand straight back, or null to carry on. Every spending route
+// has carried its own four-line copy of this since there were two of them, and
+// that is exactly how /api/onchain-bills/create and /api/recurring/create came
+// to sign transactions from a user's wallet on nothing but a session cookie:
+// nothing about writing a new route made the check come with it. One line is
+// harder to leave out than four, and lib/wallet-gate.test.ts now fails if a
+// route that can make the server sign leaves it out anyway.
+//
+// `user` is passed in rather than read here, because every caller has already
+// loaded it to decide whether there is anyone to refuse — and because the answer
+// is specifically "is THIS user's wallet unlocked", not "is some wallet".
+export async function requireWalletUnlocked(user: { id: string }): Promise<Response | null> {
+  const secret = process.env.SESSION_SECRET ?? "";
+  const unlockToken = (await cookies()).get(WALLET_UNLOCK_COOKIE)?.value ?? "";
+  if (verifyWalletUnlock(unlockToken, secret, Date.now()) !== user.id) {
+    // "locked" is a SENTINEL, not prose: app/signed-send.ts's payErrorMessage
+    // turns it into the sentence that tells the user where the wallet button is.
+    return Response.json({ error: "locked" }, { status: 403 });
+  }
+  return null;
+}
+
 export type WalletGate =
   | { error: Response }
   | {
