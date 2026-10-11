@@ -8231,6 +8231,8 @@ mark.doc-mark {
   border: 1px solid var(--pay-poster-rule);
   background: var(--pay-poster-bg);
   overflow: hidden;
+  /* The containing block for the arc that runs while the wallet is being made. */
+  position: relative;
   transition: border-color var(--dur-1) var(--ease-out);
 }
 
@@ -8238,6 +8240,75 @@ mark.doc-mark {
 
 .wallet-hail:hover, .wallet-hail:focus-visible { color: var(--pay-poster-fg); }
 .wallet-hail:is(:hover, :focus-visible) .wallet-hail-mark { border-color: currentColor; }
+
+/* ── The wallet that does not exist yet ───────────────────────────────────────
+   A social login's wallet is created in the browser a few seconds after the
+   login lands (lib/wallet-stage.ts), and this trigger is the only part of the
+   app on screen while that happens. It used to look exactly like a finished
+   wallet: same word, same ring, and a panel behind it with no address in it.
+
+   So the waiting state is stated three times over, in three registers — the word
+   says it, the ring takes the accent, and an arc runs around the avatar. Three
+   because they fail differently: the word carries the state for a screen reader
+   and for `prefers-reduced-motion`, the ring is what a glance catches, and the
+   arc is the only one of them that says the wait is live rather than stuck. */
+.wallet-hail[data-pending] { color: var(--accent); }
+
+.wallet-hail[data-pending] .wallet-hail-word {
+  /* Flat ground is not enough behind a line this long on a busy route, and the
+     accent word on the page's own colour can land under 3:1 on the blooms. A
+     tint of the accent under it is both the legibility fix and the badge the
+     state deserves. */
+  background: color-mix(in srgb, var(--accent) 14%, var(--background));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 34%, transparent);
+}
+
+.wallet-hail[data-pending] .wallet-hail-mark {
+  border-color: color-mix(in srgb, var(--accent) 55%, transparent);
+}
+
+/* The arc. A conic gradient masked to a 2px ring, turning once a second — the
+   avatar's own rim used as the spinner, so the trigger grows no second element
+   and the account stays the thing you see. */
+.wallet-hail[data-pending] .wallet-hail-mark::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: conic-gradient(
+    from 0deg,
+    transparent 0 58%,
+    color-mix(in srgb, var(--accent) 35%, transparent) 76%,
+    var(--accent) 97%,
+    transparent 100%
+  );
+  mask-image: radial-gradient(farthest-side, transparent calc(100% - 2.5px), #000 calc(100% - 2px));
+  animation: wallet-wait-arc 1.05s linear infinite;
+}
+
+/* Past a minute the wallet is not on its way any more — the token exchange has
+   failed and the panel offers a reload instead. The arc stops with it: a ring
+   that keeps turning after the thing it tracks has stopped is the lie this whole
+   state exists to remove. */
+.wallet-hail[data-pending="late"] { color: var(--warning-text); }
+
+.wallet-hail[data-pending="late"] .wallet-hail-word {
+  background: color-mix(in srgb, var(--warning-text) 14%, var(--background));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--warning-text) 34%, transparent);
+}
+
+.wallet-hail[data-pending="late"] .wallet-hail-mark {
+  border-color: color-mix(in srgb, var(--warning-text) 60%, transparent);
+}
+
+.wallet-hail[data-pending="late"] .wallet-hail-mark::after {
+  background: none;
+  animation: none;
+}
+
+@keyframes wallet-wait-arc {
+  to { transform: rotate(1turn); }
+}
 
 /* The head rail, and the only part of the panel that drags — framer-motion's
    dragListener is off and this starts it by hand. The old panel put `drag` on the
@@ -8590,11 +8661,35 @@ mark.doc-mark {
   vertical-align: -0.1em;
 }
 
+/* The ceremony of waiting for a wallet (app/XAuthControl.tsx:WaitingGate), which
+   is .flow-step's list at panel scale. The vocabulary is borrowed whole — step
+   name, hint, and the rule that sweeps under the live one — so all this adds is
+   the measure: .flow-steps is spaced for a dialog two to three times this wide,
+   where that top margin is air under a 3rem title rather than a gap under a caps
+   label. */
+.wallet-steps {
+  margin-top: 0.85rem;
+}
+
+.wallet-steps .flow-step + .flow-step { margin-top: 0.25rem; }
+
+.wallet-steps .flow-step-hint {
+  margin: 0.2rem 0 0.4rem;
+  font-size: 0.76rem;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .wallet-hail,
   .wallet-hail-mark,
   .wallet-x,
   .wallet-line { transition: none; }
+
+  /* The arc stops but does not go: a static ring on the avatar's rim is still the
+     glance-level signal, and the word beside it is the one that actually says
+     what is happening. Same bargain .flow-step makes with its sweeping rule. */
+  .wallet-hail[data-pending] .wallet-hail-mark::after {
+    animation: none;
+  }
 }
 
 /* ── The sign-in poster (/signin/email) ───────────────────────────────────────

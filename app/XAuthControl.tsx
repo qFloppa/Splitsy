@@ -8,6 +8,7 @@ import { readArcUsdcBalance, billUnitsToUsdc } from "@/lib/bill-split-contracts"
 import { parseAmount, typableAmount } from "@/lib/iou";
 import { providerDisplay } from "@/lib/provider-display";
 import type { AccountProvider } from "@/lib/types";
+import { walletStage } from "@/lib/wallet-stage";
 import ExportTab, { WalletMore } from "./ExportTab";
 import { ProviderIcon } from "./ProviderTag";
 import { privyLogout } from "./privy-signer";
@@ -48,6 +49,18 @@ const TABS: { id: Tab; label: string }[] = [
   { id: "receive", label: "receive" },
   { id: "history", label: "history" },
 ];
+
+// THE PANEL WAITS BY ITSELF rather than telling the user to refresh. A wallet
+// being created in the browser lands in the row a round trip later (see
+// lib/wallet-stage.ts), so the only thing between a new user and their wallet is
+// asking again — every 2.5s, for a minute, and only while there is no address.
+//
+// A MINUTE AND THEN IT STOPS. Privy's wallet arrives in seconds; a minute of
+// nothing means the token exchange in app/PrivyShell.tsx failed, and that is not
+// a thing more polling fixes. The panel says so and offers the reload, because a
+// spinner that spins forever is the lie this change exists to remove.
+const WAIT_EVERY_MS = 2_500;
+const WAIT_TRIES = 24;
 
 // "USDC" is a word here, not the seeklogo PNG this panel used to inline eight
 // times. Every other surface in the app already says it as text — this file was
@@ -103,6 +116,10 @@ export default function XAuthControl() {
   // the panel opens so the unlock gate is the first thing a locked user sees —
   // unlocking here is what lets Pay/Claim buttons elsewhere go through.
   const [unlocked, setUnlocked] = useState<boolean | null>(null);
+  // How many times /api/me has answered "no wallet yet". Only ever read as "has
+  // it been a minute", which is what turns the waiting screen from a promise into
+  // an offer to reload.
+  const [waited, setWaited] = useState(0);
   // Only the head rail drags. See .wallet-grip: with `drag` on the whole pane a
   // pointer-down in the amount field moved the window instead of typing, and the
   // `select-none` that came with it meant the address could not be selected by
@@ -126,22 +143,31 @@ export default function XAuthControl() {
 
   useEffect(() => {
     let active = true;
-    fetch("/api/me")
-      .then((r) => r.json())
-      .then((data: { user: Me | null; walletUi?: string }) => {
-        if (active) {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    // One read, and another in 2.5s for as long as the row still names no wallet.
+    // `attempt` rides along rather than being read off state, so the chain cannot
+    // double up if a render lands mid-flight.
+    const read = (attempt: number) =>
+      fetch("/api/me")
+        .then((r) => r.json())
+        .then((data: { user: Me | null; walletUi?: string }) => {
+          if (!active) return;
           setMe(data.user);
           setPrivyUi(data.walletUi === "privy");
-        }
-      })
-      .catch(() => {
-        if (active) setMe(null);
-      })
-      .finally(() => {
-        if (active) setLoading(false);
-      });
+          if (!data.user || walletStage(data.user, data.walletUi === "privy") !== "waiting") return;
+          setWaited(attempt + 1);
+          if (attempt + 1 < WAIT_TRIES) timer = setTimeout(() => read(attempt + 1), WAIT_EVERY_MS);
+        })
+        .catch(() => {
+          if (active) setMe(null);
+        })
+        .finally(() => {
+          if (active) setLoading(false);
+        });
+    void read(0);
     return () => {
       active = false;
+      clearTimeout(timer);
     };
   }, []);
 
@@ -238,22 +264,37 @@ export default function XAuthControl() {
     return null;
   }
 
+  // Which of the three screens this account gets, and — when it is the wait —
+  // whether the wait has gone on long enough to stop being normal.
+  const stage = walletStage(me, privyUi);
+  const stalled = waited >= WAIT_TRIES;
+
   return (
     <>
       {/* The trigger: the word that names the control, and the avatar that says
           whose it is. The old version was a blue-ringed circle carrying a wallet
-          glyph badge that re-said "wallet" a second time over the first. */}
+          glyph badge that re-said "wallet" a second time over the first.
+
+          IT SAYS WHEN THE WALLET ISN'T THERE YET, because this is the only part
+          of the app a new user sees during those seconds and it used to look
+          exactly like a finished one. The word swaps, the ring lights and an arc
+          runs around the avatar — three signals so the state survives both a
+          glance and `prefers-reduced-motion`, which keeps the first two. */}
       <motion.button
         type="button"
         onClick={() => setOpen((o) => !o)}
-        aria-label="Open your wallet"
+        aria-label={stage === "waiting" ? "Your wallet is being set up" : "Open your wallet"}
         aria-expanded={open}
+        aria-busy={stage === "waiting" ? true : undefined}
+        data-pending={stage === "waiting" ? (stalled ? "late" : "") : undefined}
         className="wallet-hail"
         initial={{ opacity: 0, y: 8 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.42, ease: [0.22, 1, 0.36, 1] }}
       >
-        <span className="wallet-hail-word">wallet</span>
+        <span className="wallet-hail-word">
+          {stage === "waiting" ? (stalled ? "wallet · not ready" : "wallet · setting up…") : "wallet"}
+        </span>
         <span className="wallet-hail-mark">
           {me.avatarUrl ? (
             // eslint-disable-next-line @next/next/no-img-element
@@ -341,7 +382,7 @@ export default function XAuthControl() {
                 />
               ) : hasPin === true && unlocked === false ? (
                 <UnlockGate onUnlocked={() => setUnlocked(true)} />
-              ) : !me.walletAddress && me.custodian === "Privy" && !privyUi ? (
+              ) : stage === "setup" ? (
                 // AFTER the PIN gates, because provisioning requires the unlock
                 // cookie. Privy only: /api/wallet/provision answers 404 on the
                 // Circle stack, where the wallet is minted at login because its
@@ -351,9 +392,17 @@ export default function XAuthControl() {
                 // there: the wallet is Privy's embedded one, created at login and
                 // recorded by /api/auth/privy, so a password-and-passkey form
                 // would be asking the user to make keys for a wallet that already
-                // has one. A wallet that is briefly missing falls through to the
-                // info tab, which says it is being created.
+                // has one. That case is the WaitingGate below instead — which is
+                // the distinction lib/wallet-stage.ts exists to draw.
                 <WalletSetupGate me={me} onDone={onWalletReady} />
+              ) : stage === "waiting" ? (
+                // The panel's WHOLE content while the wallet is being made, for
+                // the same reason the gates above are: there is nothing else true
+                // to show. It used to fall through to the working wallet — a tab
+                // rail over an em dash, and "refresh in a moment" — which is a
+                // product that looks broken at the one moment it is explaining
+                // itself to someone for the first time.
+                <WaitingGate stalled={stalled} />
               ) : (
                 <>
                   {/* The figure, once. It used to be printed twice — a caption
@@ -469,7 +518,7 @@ export default function XAuthControl() {
                             </a>
                           </div>
                         ) : (
-                          <p className="wallet-note">Your wallet is being created — refresh in a moment.</p>
+                          <p className="wallet-note">Your wallet is still being set up.</p>
                         )}
                       </>
                     ) : tab === "send" ? (
@@ -790,6 +839,71 @@ function UnlockGate({ onUnlocked }: { onUnlocked: () => void }) {
   );
 }
 
+// THE WAIT, SHOWN — the panel's whole content for the few seconds between a
+// social login and the wallet that login creates.
+//
+// Privy builds the embedded wallet in the browser after authentication, so for
+// those seconds there is no address to copy and nothing to send. The user can
+// neither hurry it nor do anything about it, which leaves the panel one honest
+// job: name the step that is running, and say when it has gone on too long.
+//
+// IT BORROWS THE BRIDGE DIALOG'S CEREMONY (.flow-step — a numbered step, a
+// spinner on the live one, a rule that sweeps while it runs) rather than
+// inventing a loader. It is the same kind of screen: a few seconds of work
+// happening somewhere else, in steps that can be named. So this adds no new
+// motion vocabulary to the app, only the handful of rules a 352px column needs
+// that a dialog-width one does not.
+//
+// AND IT STOPS PROMISING AFTER A MINUTE. The wallet arrives in seconds; past
+// that the token exchange has failed (app/XAuthControl's WAIT_TRIES, and the
+// deliberately un-retried catch in app/PrivyShell.tsx), and the useful thing to
+// hand someone is the reload — not an arc that spins until they give up.
+function WaitingGate({ stalled }: { stalled: boolean }) {
+  // 01 is already done wherever this renders: /api/me answered with a user, so
+  // the session exists. 02 is the one being waited on. 03 is what it buys.
+  const steps = [
+    { label: "signed in", state: "done", hint: "your account is linked" },
+    {
+      label: "wallet keys",
+      state: stalled ? "error" : "active",
+      hint: stalled ? "this should have arrived by now" : "being created in this browser",
+    },
+    { label: "ready to pay", state: "pending", hint: "balance, send and receive" },
+  ] as const;
+
+  return (
+    <div className="wallet-band" aria-busy={stalled ? undefined : true}>
+      <Label>{stalled ? "wallet not ready" : "setting up your wallet"}</Label>
+      <p className="wallet-note" data-tone={stalled ? "warn" : undefined} role="status">
+        {stalled
+          ? "Your wallet hasn't come through. Nothing is lost and no money has moved — reloading asks for it again."
+          : "Making the wallet that will hold your USDC. A few seconds, and nothing for you to do — this panel fills itself in."}
+      </p>
+      <ol className="flow-steps wallet-steps">
+        {steps.map((step, index) => (
+          <li className="flow-step" data-state={step.state} key={step.label}>
+            <div className="flow-step-line">
+              <span className="settle-label">
+                {String(index + 1).padStart(2, "0")} · {step.label}
+              </span>
+              {step.state === "active" ? (
+                <Loader2 aria-hidden className="flow-step-spin animate-spin" size={13} />
+              ) : null}
+            </div>
+            <p className="flow-step-hint">{step.hint}</p>
+            <div className="flow-step-rule" />
+          </li>
+        ))}
+      </ol>
+      {stalled ? (
+        <button type="button" onClick={() => window.location.reload()} className="settle-action">
+          reload ›
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
 // The export tab for an EMBEDDED wallet, which is a different thing from
 // app/ExportTab.tsx even though it wears the same word.
 //
@@ -851,7 +965,9 @@ function PrivyExportTab({ address }: { address: string }) {
 }
 
 function ReceiveTab({ address, copied, onCopy }: { address: string | null; copied: boolean; onCopy: () => void }) {
-  if (!address) return <p className="wallet-note">Your wallet is being created — refresh in a moment.</p>;
+  // Unreachable in the panel, which gates on the address with WaitingGate before
+  // any tab renders — kept because the prop's type still admits null.
+  if (!address) return <p className="wallet-note">Your wallet is still being set up.</p>;
   return (
     <div>
       <div className="iou-rail">
