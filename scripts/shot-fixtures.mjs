@@ -200,6 +200,45 @@ const hail = `
   <span class="wallet-hail-mark"><span class="wallet-initial">a</span></span>
 </button>`;
 
+// Lucide's Loader2, which the live step spins. Static here, as everything in a
+// screenshot is.
+const LOADER =
+  '<svg class="flow-step-spin" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>';
+
+// THE WAIT FOR A WALLET THAT DOES NOT EXIST YET, which is the hardest state in
+// this file to catch for real: it lasts a few seconds, once, on a brand-new
+// account — and it is the first thing that account's owner sees. Both ends of it
+// are here, the live wait and the minute-later giving up, panel and trigger.
+const waitStep = (n, label, state, hint) => `
+<li class="flow-step" data-state="${state}">
+  <div class="flow-step-line">
+    <span class="settle-label">${n} · ${label}</span>
+    ${state === "active" ? LOADER : ""}
+  </div>
+  <p class="flow-step-hint">${hint}</p>
+  <div class="flow-step-rule"></div>
+</li>`;
+
+const waitingGate = (stalled) => `
+  <p class="settle-label">${stalled ? "wallet not ready" : "setting up your wallet"}</p>
+  <p class="wallet-note"${stalled ? ' data-tone="warn"' : ""}>${
+    stalled
+      ? "Your wallet hasn't come through. Nothing is lost and no money has moved — reloading asks for it again."
+      : "Making the wallet that will hold your USDC. A few seconds, and nothing for you to do — this panel fills itself in."
+  }</p>
+  <ol class="flow-steps wallet-steps">
+    ${waitStep("01", "signed in", "done", "your account is linked")}
+    ${waitStep("02", "wallet keys", stalled ? "error" : "active", stalled ? "this should have arrived by now" : "being created in this browser")}
+    ${waitStep("03", "ready to pay", "pending", "balance, send and receive")}
+  </ol>
+  ${stalled ? '<button class="settle-action" type="button">reload ›</button>' : ""}`;
+
+const waitingHail = (stalled) => `
+<button class="wallet-hail" type="button" data-pending="${stalled ? "late" : ""}" aria-busy="${!stalled}">
+  <span class="wallet-hail-word">wallet · ${stalled ? "not ready" : "setting up…"}</span>
+  <span class="wallet-hail-mark"><img src="/splitsy.png" alt=""></span>
+</button>`;
+
 export default {
   // Hosted on /disclaimer rather than /app: the panel needs nothing from the page
   // but the fonts, the theme tokens and the backdrop, and /app is a heavy wagmi
@@ -212,6 +251,18 @@ export default {
 
   "signin-email": { url: "/signin/email", selector: ".iou-page", inject: "" },
 
+  // Same board, the two waiting states: the panel while the wallet is being made
+  // and after it has taken too long, each with the trigger that goes with it.
+  "wallet-waiting": {
+    url: "/disclaimer",
+    selector: "#shot-host",
+    inject: asBoard(
+      panel("", waitingGate(false), true) +
+        panel("", waitingGate(true), true) +
+        waitingHail(false) +
+        waitingHail(true),
+    ),
+  },
   "bill-live": { selector: ".bill-live", inject: atTop(billLive) },
 
   "verify-ok": {
