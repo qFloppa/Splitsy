@@ -7,6 +7,7 @@ import { billMetadataHash } from "@/lib/bill-metadata";
 import { encodeCreateBill } from "@/lib/registry-calldata";
 import { userSignedLeg, type UserSignedBody } from "@/lib/user-signed";
 import { executeContract, InsufficientFundsError } from "@/lib/wallet-provider";
+import { requireWalletUnlocked } from "@/lib/wallet-gate";
 import { REGISTRY_ADDRESS, getBillOnchain, getBillIdsForSplitterOnchain } from "@/lib/arc-read";
 import { publishOnchainBillPreimage } from "@/lib/onchain-bill-preimage-repo";
 import { isShareToken } from "@/lib/pay-link";
@@ -31,6 +32,12 @@ export async function POST(request: Request) {
   if (!user.circle_wallet_id || !user.wallet_address) {
     return Response.json({ error: "Your wallet isn't provisioned yet. Log in again." }, { status: 409 });
   }
+  // Creating a bill costs this user's gas and puts their wallet's name on a
+  // registry entry, so it is an action on their wallet and takes the same PIN
+  // every other one does. It was missing here: a session alone could write bills
+  // from a locked wallet, which is the one thing the unlock exists to stop.
+  const locked = await requireWalletUnlocked(user);
+  if (locked) return locked;
 
   const body = (await request.json().catch(() => null)) as {
     merchant?: unknown; currency?: unknown; total?: unknown;

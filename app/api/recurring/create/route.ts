@@ -3,6 +3,7 @@ import { resolveParticipants } from "@/lib/wallet-resolve";
 import { encodeCreateTab } from "@/lib/registry-calldata";
 import { userSignedLeg, type UserSignedBody } from "@/lib/user-signed";
 import { executeContract, InsufficientFundsError } from "@/lib/wallet-provider";
+import { requireWalletUnlocked } from "@/lib/wallet-gate";
 import {
   RECURRING_TAB_FACTORY_ADDRESS,
   getNextTabIdOnchain,
@@ -29,6 +30,11 @@ export async function POST(request: Request) {
   if (!user.circle_wallet_id || !user.wallet_address) {
     return Response.json({ error: "Your wallet isn't provisioned yet. Log in again." }, { status: 409 });
   }
+  // Deploying a tab spends this user's gas and makes their wallet its recipient,
+  // so it takes the same PIN as every other action on that wallet — the sibling
+  // claim and authorize routes have always asked for it, and this one did not.
+  const locked = await requireWalletUnlocked(user);
+  if (locked) return locked;
 
   const body = (await request.json().catch(() => null)) as {
     intervalSeconds?: unknown;

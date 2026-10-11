@@ -1024,7 +1024,12 @@ export default function IouClient({ onReceipts }: { onReceipts: () => void }) {
     // lock discovered after the sentence has flown into the ledger reads as a
     // failure the user caused. A browser wallet has no lock to check: the
     // extension asks at signing time, which is the same gate.
-    if (plan.kind === "settle" && signer === "social") {
+    //
+    // BOTH DIRECTIONS, not just a settle. An ask is createBill signed by the
+    // user's own wallet, and /api/onchain-bills/create asks for the PIN like
+    // every other route that signs — it just used not to, so this check did not
+    // either.
+    if (signer === "social") {
       const pin = await fetch("/api/wallet/pin")
         .then((r) => r.json())
         .catch(() => ({}));

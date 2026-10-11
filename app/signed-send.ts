@@ -272,6 +272,13 @@ export function forgetClaimStatus(): void {
 // they pressed — and meant a new sentinel had to be remembered in eight places.
 // Anything else is already a message and passes through untouched.
 export function payErrorMessage(error: string): string {
+  // The server's refusal when the wallet has not been unlocked this session. It
+  // reached three panels as the bare word "locked" because each of them was
+  // expected to write its own ternary for it — and the one that forgot (the
+  // bills tab) showed the sentinel to the user.
+  if (error === "locked") {
+    return "Unlock your wallet first — the wallet button, bottom right.";
+  }
   if (error === "unlock_owner_key") {
     return "This wallet is yours — open the wallet panel and enter your export password to sign payments.";
   }
