@@ -13,10 +13,22 @@
 //
 // Mounted only when WALLET_UI names Privy (decided on the server, in
 // app/layout.tsx). Off, none of this is even fetched.
-import { getEmbeddedConnectedWallet, PrivyProvider, useExportWallet, usePrivy, useSignTransaction, useWallets } from "@privy-io/react-auth";
+import { getEmbeddedConnectedWallet, PrivyProvider, useCreateWallet, useExportWallet, usePrivy, useSignTransaction, useWallets } from "@privy-io/react-auth";
 import { useEffect, useRef, useState } from "react";
 import { ARC } from "@/lib/arc-chain";
+import { bridgeAction } from "@/lib/privy-bridge";
 import { forgetSigner, markPrivyUi, rememberAuth, rememberSigner, toPrivyTransaction } from "./privy-signer";
+
+// How long the bridge keeps working at it: a pass every 2.5s for a minute. Same
+// window app/XAuthControl.tsx waits for a wallet in, because they are waiting for
+// the same thing — when the loop gives up, that panel is what says so.
+const PASS_EVERY_MS = 2_500;
+const PASSES = 24;
+// Creating the wallet is asked for at most twice. It either works, or it throws
+// because the user already has one (both leave `hasWallet` true on the next
+// pass), or Privy is refusing — and a loop that asks twenty-four times for a key
+// pair is a loop that mints wallets by accident.
+const CREATE_TRIES = 2;
 
 // Which theme the app is currently in, for the one consumer that cannot read CSS:
 // Privy takes its background as a prop and generates its whole palette from it.
@@ -42,9 +54,10 @@ function useThemeAttribute(): "light" | "dark" {
 // them "take something only a Privy hook can give and put it where plain code can
 // read it".
 function PrivyBridge() {
-  const { ready, authenticated, getAccessToken, login, logout } = usePrivy();
+  const { ready, authenticated, user, getAccessToken, login, logout } = usePrivy();
   const { signTransaction } = useSignTransaction();
   const { exportWallet } = useExportWallet();
+  const { createWallet } = useCreateWallet();
   const { wallets } = useWallets();
 
   // Rendered only when WALLET_UI=privy, so its presence IS the flag. Set during
@@ -57,6 +70,15 @@ function PrivyBridge() {
 
   const embedded = getEmbeddedConnectedWallet(wallets);
   const address = embedded?.address ?? null;
+
+  // Whether PRIVY says this user has an embedded wallet at all — which is a
+  // different question from `address` above. That one is "has this tab connected
+  // it yet", and it is null for a few seconds on every page load; this is read
+  // off Privy's own record of the account, so "no wallet" here means there is
+  // genuinely nothing to connect and somebody has to make one.
+  const hasWallet = (user?.linkedAccounts ?? []).some(
+    (a) => a.type === "wallet" && a.connectorType === "embedded" && a.chainType === "ethereum",
+  );
 
   useEffect(() => {
     if (!address) {
@@ -94,18 +116,14 @@ function PrivyBridge() {
     return forgetSigner;
   }, [address, signTransaction]);
 
-  // Trade the Privy login for a Splitsy session, and point the user's row at the
-  // embedded wallet once Privy has one.
+  // Trade the Privy login for a Splitsy session, make the embedded wallet if
+  // Privy has not, and point the user's row at it. One loop, because the three
+  // are one job and they do not happen at the same moment.
   //
-  // BOTH JOBS IN ONE EFFECT, KEYED ON THE ADDRESS, because they do not happen at
-  // the same moment and the first version assumed they did. `createOnLogin` builds
-  // the wallet in the BROWSER after authentication, so the exchange that fires the
-  // instant `authenticated` flips true reaches a Privy user with no wallet yet —
-  // the session is created, the row's wallet stays null, and the panel sits on
-  // "your wallet is being created" forever, because a guard that skipped the
-  // exchange whenever a session existed meant it never asked again. Depending on
-  // `address` is what makes it ask again: the effect re-runs when the wallet
-  // appears.
+  // WHAT IT DOES AND WHY IT IS A LOOP is recorded with the measurements in
+  // lib/privy-bridge.ts — two brand-new signups, one whose wallet Privy reported
+  // three seconds late and one whose wallet it did not make for nineteen minutes.
+  // The rules live there, pure and tested; this effect is the hands.
   //
   // The server verifies the token itself and maps it onto the `users` row this
   // person already has (lib/privy-identity.ts); nothing sent from here is
@@ -114,59 +132,94 @@ function PrivyBridge() {
   // getSessionUser() are untouched, which is the reason for doing it this way
   // rather than teaching every route to read a Privy token.
   //
-  // THE ROW MUST NAME THE WALLET THE BROWSER ACTUALLY HOLDS, which is a stricter
-  // test than "the row names a wallet" and the reason this is not a one-shot. An
-  // EXISTING Splitsy account arrives here with an address already — the one from
-  // the stack it used before — and skipping those left the row pointing at a
-  // wallet this browser cannot sign for. The server then prepared a transaction
-  // for the old wallet, Privy signed with the embedded one, and broadcastSigned
-  // refused it: "Signature recovers to 0x… , not 0x…". Nothing moved, but nothing
-  // worked either, and the message was internal. Existing accounts getting a NEW
-  // embedded wallet at a NEW address is the settled behaviour (plan, 2026-09-12),
-  // so a row that disagrees is a row to repoint, not a reason to stop.
+  // THE EXCHANGE IS IDEMPOTENT, which is what makes retrying it safe: it upserts
+  // the same row under the same key and writes the wallet only when Privy reports
+  // one (app/api/auth/privy/route.ts).
   //
-  // THE RELOAD IS CONDITIONAL ON SOMETHING HAVING CHANGED, which is what keeps it
-  // from becoming a loop: a signed-in user whose wallet Privy has not created
-  // asks, is told `walletAddress: null`, and stops. Reloading on a bare `ok` would
-  // reload, ask again, get the same answer and reload again. It is what an OAuth
-  // redirect used to do, and every panel reads /api/me on mount.
-  const syncing = useRef(false);
+  // THE LATEST FACTS COME THROUGH A REF rather than through the dependency array.
+  // Keying the effect on `address` is what the old version did, and a wallet that
+  // arrived while a request was in flight was then swallowed by the mutex that
+  // kept two exchanges from overlapping: the re-run was the only notification,
+  // and it was spent. A loop that re-reads on every pass cannot miss a signal.
+  const latest = useRef({ address, hasWallet });
   useEffect(() => {
-    if (!ready || !authenticated || syncing.current) return;
-    syncing.current = true;
+    latest.current = { address, hasWallet };
+  }, [address, hasWallet]);
+
+  // A generation counter rather than a mutex. Only the newest run may act: a
+  // mutex that said "one at a time" would be held by a run the cleanup had
+  // already abandoned — which is exactly what React's development double-mount
+  // does on every page load, and the second mount would then find the bridge
+  // "busy" forever and do nothing at all.
+  const run = useRef(0);
+  useEffect(() => {
+    if (!ready || !authenticated) return;
+    const id = ++run.current;
+    const live = () => run.current === id;
     void (async () => {
       try {
+        // What the page loaded with. Only used to decide whether a reload is owed
+        // — every other panel read /api/me on mount, and a row that has changed
+        // under them is a header still offering sign-in to someone signed in.
         const me = await fetch("/api/me")
           .then((r) => r.json())
           .then((d: { user: { walletAddress: string | null } | null }) => d.user);
-        const already = me?.walletAddress?.toLowerCase() ?? null;
-        // Signed in AND the row already names the wallet this browser is holding:
-        // nothing to do. When the address is not known yet the exchange still
-        // runs — the server reads it from Privy itself — and the reload guard
-        // below is what stops that from repeating pointlessly.
-        if (me && already && address && already === address.toLowerCase()) return;
+        const pageRowWallet = me?.walletAddress?.toLowerCase() ?? null;
+        let rowWallet = pageRowWallet;
+        let creates = 0;
 
-        const accessToken = await getAccessToken();
-        if (!accessToken) return;
-        const res = await fetch("/api/auth/privy", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ accessToken }),
-        });
-        if (!res.ok) return;
-        const body = (await res.json().catch(() => ({}))) as { walletAddress?: string | null };
-        const linked = body.walletAddress?.toLowerCase() ?? null;
-        if (!me || (linked && linked !== already)) window.location.reload();
+        for (let pass = 0; pass < PASSES && live(); pass++) {
+          const action = bridgeAction({
+            hasWallet: latest.current.hasWallet,
+            browserWallet: latest.current.address,
+            rowWallet,
+            pageRowWallet,
+            pageHadSession: Boolean(me),
+          });
+
+          if (action === "settled") return;
+          if (action === "reload") {
+            window.location.reload();
+            return;
+          }
+
+          if (action === "create-wallet") {
+            // Give up rather than ask forever: without a wallet there is nothing
+            // to link, and app/XAuthControl.tsx's panel is already saying so.
+            if (creates++ >= CREATE_TRIES) return;
+            // Throws if the user turns out to have one already — which is the
+            // happy answer, and the next pass reads it off `user.linkedAccounts`.
+            await createWallet().catch(() => {});
+          } else if (action === "exchange") {
+            const accessToken = await getAccessToken();
+            if (accessToken) {
+              const res = await fetch("/api/auth/privy", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ accessToken }),
+              });
+              if (res.ok) {
+                const body = (await res.json().catch(() => ({}))) as { walletAddress?: string | null };
+                rowWallet = body.walletAddress?.toLowerCase() ?? rowWallet;
+              }
+            }
+          }
+          // "wait" does nothing at all: the next pass re-reads `latest` and the
+          // tab will have connected its wallet by then.
+
+          await new Promise((r) => setTimeout(r, PASS_EVERY_MS));
+        }
       } catch {
-        // Left as it was rather than retried. A failed exchange is visible — the
-        // header still offers sign-in, or the panel still says the wallet is on its
-        // way — and a retry loop against a server that is refusing is worse than a
-        // reload the user can do themselves.
-      } finally {
-        syncing.current = false;
+        // Swallowed deliberately: the pass that threw is one of up to twenty-four,
+        // and the panel says what the user can see for themselves. What must not
+        // happen is an unhandled rejection taking the bridge down with it.
       }
     })();
-  }, [ready, authenticated, address, getAccessToken]);
+    // `address` and `hasWallet` are deliberately absent from the deps: they are
+    // read through `latest` on every pass, and listing them would restart the
+    // loop — which is the bug this shape exists to remove.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ready, authenticated]);
 
   return null;
 }

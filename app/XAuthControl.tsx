@@ -53,14 +53,15 @@ const TABS: { id: Tab; label: string }[] = [
 // THE PANEL WAITS BY ITSELF rather than telling the user to refresh. A wallet
 // being created in the browser lands in the row a round trip later (see
 // lib/wallet-stage.ts), so the only thing between a new user and their wallet is
-// asking again — every 2.5s, for a minute, and only while there is no address.
+// asking again — every 2.5s, for 75s, and only while there is no address.
 //
-// A MINUTE AND THEN IT STOPS. Privy's wallet arrives in seconds; a minute of
-// nothing means the token exchange in app/PrivyShell.tsx failed, and that is not
-// a thing more polling fixes. The panel says so and offers the reload, because a
-// spinner that spins forever is the lie this change exists to remove.
+// OUTLASTS THE BRIDGE ON PURPOSE. app/PrivyShell.tsx works at this for a minute
+// — creating the wallet if Privy did not, re-asking the exchange while Privy's
+// own record catches up — and a panel that gave up first would say "not ready"
+// over a wallet that was about to arrive. When this does give up, the bridge
+// really has stopped, and the reload below is what restarts it.
 const WAIT_EVERY_MS = 2_500;
-const WAIT_TRIES = 24;
+const WAIT_TRIES = 30;
 
 // "USDC" is a word here, not the seeklogo PNG this panel used to inline eight
 // times. Every other surface in the app already says it as text — this file was
@@ -854,10 +855,11 @@ function UnlockGate({ onUnlocked }: { onUnlocked: () => void }) {
 // motion vocabulary to the app, only the handful of rules a 352px column needs
 // that a dialog-width one does not.
 //
-// AND IT STOPS PROMISING AFTER A MINUTE. The wallet arrives in seconds; past
-// that the token exchange has failed (app/XAuthControl's WAIT_TRIES, and the
-// deliberately un-retried catch in app/PrivyShell.tsx), and the useful thing to
-// hand someone is the reload — not an arc that spins until they give up.
+// AND IT STOPS PROMISING WHEN THE BRIDGE HAS. Measured on two live signups
+// (lib/privy-bridge.ts), Privy made one wallet in under a second and another
+// nineteen minutes later — so past the bridge's own window the honest thing to
+// hand someone is the reload, which restarts it, rather than an arc that spins
+// until they give up.
 function WaitingGate({ stalled }: { stalled: boolean }) {
   // 01 is already done wherever this renders: /api/me answered with a user, so
   // the session exists. 02 is the one being waited on. 03 is what it buys.
