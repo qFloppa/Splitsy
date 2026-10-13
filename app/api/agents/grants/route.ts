@@ -183,6 +183,14 @@ export async function GET(request: Request) {
     agentAddress: (await resolveAgentAddress().catch(() => null))?.toLowerCase() ?? null,
     // Where BILL money comes from. Not a chain fact — it lives only here.
     moneyMode: rules?.moneyMode ?? defaultMoneyMode(walletProviderName()),
+    // The ceiling the panel does NOT set: the enclave policy attached to the
+    // agent wallet refuses a single payment over this, whatever the figures above
+    // say. Privy stack only (Circle wallets have no policy) and null when it
+    // cannot be read, which the panel treats as "say nothing" rather than "no
+    // limit". Imported here rather than at the top so a Circle deployment never
+    // loads the Privy module for a label.
+    enclaveCapUsdc:
+      walletProviderName() === "privy" ? await (await import("@/lib/privy-wallet")).agentTxCapUsdc() : null,
     onchain,
   });
 }

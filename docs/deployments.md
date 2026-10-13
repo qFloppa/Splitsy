@@ -723,7 +723,7 @@ tables created elsewhere. `schema-mainnet.sql` was generated from this project's
 live schema and describes the end state directly, in one idempotent file.
 
 **No data is copied across.** Every pre-existing user gets a new wallet at a new
-address regardless (see §7 of `docs/mainnet-launch-checklist.md`), so carrying
+address regardless (see §8 of `docs/mainnet-launch-checklist.md`), so carrying
 rows over would only import wallet addresses that cannot be signed for on
 mainnet. Nothing in the new project must be able to name a wallet that lives in
 the old one — that is the same rule as above, from the other direction.

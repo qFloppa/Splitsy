@@ -4,6 +4,7 @@ import { WaitForTransactionReceiptTimeoutError } from "viem";
 import {
   GAS_RESERVE_USDC,
   LOG_CHUNK,
+  capFromPolicy,
   claimLanded,
   fateFromReads,
   isNonceCollision,
@@ -203,6 +204,51 @@ test("only the agent wallet carries the enclave policy", () => {
   // A pay wallet is only ever spent on a request the user made, so it gets no cap.
   const pay = withEnv(env, () => walletSpec("pay:twitter", "i"));
   assert.deepEqual(pay.additional_signers, [{ signer_id: "q-1" }]);
+});
+
+// The figure the agents panel prints, and clamps its per-bill ceiling to. It is
+// read back out of Privy rather than configured a second time, so this parse is
+// the only thing between the live policy and a form promising more than the
+// enclave will ever sign. BigInt takes hex or decimal, so it does not matter
+// which form Privy echoes back.
+test("the enclave cap is the lowest denied amount in the policy", () => {
+  // The shape scripts/privy-policy.ts creates: one chain-id ALLOW and two DENY
+  // amount rules at one cap. 0x2faf080 is 50 USDC in 6-decimal base units.
+  const policy = {
+    rules: [
+      {
+        action: "ALLOW",
+        conditions: [{ field_source: "ethereum_transaction", field: "chain_id", operator: "eq", value: "5042" }],
+      },
+      {
+        action: "DENY",
+        conditions: [
+          { field: "to", operator: "eq", value: "0x3600000000000000000000000000000000000000" },
+          { field: "transfer.amount", operator: "gt", value: "0x2faf080" },
+        ],
+      },
+      { action: "DENY", conditions: [{ field: "payDebtFor.amount", operator: "gt", value: "0x2faf080" }] },
+    ],
+  };
+  assert.equal(capFromPolicy(policy), 50);
+
+  // A chain-id ALLOW is not a ceiling, and nor is the `to` equality beside the
+  // cap: only a `gt` on a decoded amount is. Null is "cannot say", which the
+  // panel renders as silence — the one answer that cannot overstate the limit.
+  assert.equal(capFromPolicy({ rules: [policy.rules[0]] }), null);
+  assert.equal(capFromPolicy({ rules: [] }), null);
+
+  // The LOWEST wins, because any one of them refuses the signature on its own.
+  // Reading the transfer rule by name would print 50 while payDebtFor stopped at
+  // 10, which is a form lying in the direction that costs a failed payment.
+  const mixed = {
+    rules: [
+      policy.rules[1],
+      // 0x989680 is 10 USDC.
+      { action: "DENY", conditions: [{ field: "payDebtFor.amount", operator: "gt", value: "0x989680" }] },
+    ],
+  };
+  assert.equal(capFromPolicy(mixed), 10);
 });
 
 test("an unset quorum fails the mint instead of minting an unowned wallet", () => {

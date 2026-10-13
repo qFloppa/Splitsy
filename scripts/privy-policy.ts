@@ -31,12 +31,23 @@
 //
 // Each run creates a NEW policy; nothing here edits or deletes an old one.
 //
-// Run: npm run privy:policy           (the default cap)
+// ONE POLICY PER NETWORK, and the deny-by-default is what makes that strict: the
+// chain id is a condition on the only ALLOW rule, so a policy built for testnet
+// refuses EVERY signature on mainnet and the agent wallet can sign nothing at all.
+// Which network a run builds for comes from NEXT_PUBLIC_ARC_NETWORK — the same
+// switch the app reads (lib/arc-chain.ts) — and is printed above the id, because
+// the two policies are otherwise indistinguishable in the dashboard and the wrong
+// one fails closed on the money path rather than loudly at the paste.
+//
+// Run: npm run privy:policy           (the default cap, testnet)
 //      npm run privy:policy -- 10     (10 USDC per transaction)
+//      NEXT_PUBLIC_ARC_NETWORK=mainnet npm run privy:policy -- 25
+// A variable set on the command line wins over --env-file, so the last form needs
+// no edit to .env.local.
 // Then paste the printed id into .env.local as PRIVY_AGENT_POLICY_ID.
 import { PrivyClient } from "@privy-io/node";
 import { erc20Abi, numberToHex, parseUnits } from "viem";
-import { arcTestnet } from "viem/chains";
+import { ARC } from "../lib/arc-chain.ts";
 import { REGISTRY_CALL_ABI } from "../lib/registry-calldata.ts";
 import { ARC_USDC } from "../lib/x402/constants.ts";
 
@@ -67,10 +78,13 @@ const privy = new PrivyClient({ appId, appSecret });
 const policy = await privy.policies().create({
   chain_type: "ethereum",
   version: "1.0",
-  name: `Splitsy agent wallet — ${capUsdc} USDC per transaction`,
+  // Privy refuses a name of 50 characters or more, so this is abbreviated rather
+  // than descriptive: "Splitsy agent wallet (mainnet) — 50 USDC per transaction"
+  // is 56 and answers 400 invalid_policy_format. The rules below carry the detail.
+  name: `Splitsy agent (${ARC.network}) — ${capUsdc} USDC per tx`,
   rules: [
     {
-      name: "Sign only Arc Testnet transactions",
+      name: `Sign only Arc ${ARC.network} transactions`,
       method: "eth_signTransaction",
       action: "ALLOW",
       conditions: [
@@ -78,7 +92,7 @@ const policy = await privy.policies().create({
           field_source: "ethereum_transaction",
           field: "chain_id",
           operator: "eq",
-          value: String(arcTestnet.id),
+          value: String(ARC.chainId),
         },
       ],
     },
@@ -114,11 +128,16 @@ const policy = await privy.policies().create({
   ],
 });
 
+console.log(`network     ${ARC.network} (chain ${ARC.chainId})`);
 console.log(`policy      ${policy.id}`);
 console.log(`cap         ${capUsdc} USDC per transaction (${cap} base units)`);
 for (const rule of policy.rules) {
   console.log(`rule        ${rule.action.padEnd(5)} ${rule.method}  ${rule.name}`);
 }
-console.log("\nPaste this into .env.local:");
+// Named per network, because the generic advice is wrong half the time: a mainnet
+// policy in a local .env.local pins every agent wallet this machine mints to chain
+// 5042, and they then refuse to sign on testnet — the same failure as a testnet
+// policy on mainnet, pointing the other way.
+console.log(`\nPaste this into ${ARC.network === "mainnet" ? "Vercel → Production" : ".env.local"}:`);
 console.log(`  PRIVY_AGENT_POLICY_ID=${policy.id}`);
 console.log("\nIt is attached at wallet creation, so agent wallets that already exist carry no policy.");

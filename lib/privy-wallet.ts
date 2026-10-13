@@ -829,6 +829,60 @@ export const walletSpec = (namespace: string, idempotencyKey: string) => ({
   idempotency_key: idempotencyKey,
 });
 
+// ── The ceiling, read back out of the policy ───────────────────────────────────
+//
+// WHY READ IT RATHER THAN CONFIGURE THE FIGURE TWICE. The agent's caps panel used
+// to tell the user the agent's balance was the only hard limit, which stopped
+// being true the moment an enclave policy existed — and all this deployment holds
+// is PRIVY_AGENT_POLICY_ID, an opaque id. A second variable carrying the NUMBER
+// would be a copy of the one figure whose entire job is to disagree with our own
+// code when our own code is wrong, and copies drift: the chain id pinned in
+// scripts/privy-policy.ts was exactly that bug, found on the way to mainnet.
+//
+// THE SMALLEST `gt` AMOUNT ACROSS EVERY DENY RULE, not the transfer rule by name.
+// The policy denies a bare `transfer` and a `payDebtFor` over the same figure
+// today, but a later rule carrying a LOWER one is still a ceiling the user can
+// hit, and naming a single rule would quietly overstate what the enclave allows.
+// 6 decimals because a policy amount is USDC base units, as on chain.
+//
+// Typed structurally rather than against the SDK's `Policy`, so the test can hand
+// it the shape scripts/privy-policy.ts creates without building an API object.
+export function capFromPolicy(policy: {
+  rules: { action: string; conditions: { field?: string; operator: string; value: string | string[] }[] }[];
+}): number | null {
+  const amounts = policy.rules
+    .filter((rule) => rule.action === "DENY")
+    .flatMap((rule) => rule.conditions)
+    .flatMap((condition) =>
+      condition.operator === "gt" && (condition.field ?? "").endsWith(".amount") && typeof condition.value === "string"
+        ? [BigInt(condition.value)]
+        : [],
+    );
+  if (amounts.length === 0) return null;
+  return Number(formatUnits(amounts.reduce((low, next) => (next < low ? next : low)), 6));
+}
+
+// Cached because the figure changes only when somebody edits the policy, and
+// every load of the agents panel would otherwise spend a Privy round trip on a
+// label. A FAILURE IS NOT CACHED: a transient error must not freeze "cannot say"
+// into a long-lived serverless instance for the rest of its life.
+let agentCap: number | null | undefined;
+
+/** The enclave's per-transaction ceiling on the agent wallet, or null if unknown. */
+export async function agentTxCapUsdc(): Promise<number | null> {
+  const policyId = process.env.PRIVY_AGENT_POLICY_ID;
+  if (!policyId) return null;
+  if (agentCap !== undefined) return agentCap;
+  try {
+    agentCap = capFromPolicy(await privy().policies().get(policyId));
+  } catch {
+    // This is a label on a form, so an unreachable Privy must leave the rest of
+    // the panel alone. Null reads as "we cannot say", never as "no limit".
+    return null;
+  }
+  return agentCap;
+}
+
 // Arc refuses an eth_getLogs range wider than 9k blocks ("requested range too
 // large") and caps one response at 20k logs, so a wallet's history is a walk
 // backwards in chunks and not a single call.

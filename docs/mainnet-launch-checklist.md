@@ -189,7 +189,71 @@ key to its cap.
 
 ---
 
-## 4. Money-path smoke test, on mainnet, with small amounts
+## 4. Privy
+
+The dashboard needs **one** change. The thing that breaks silently is the enclave
+policy, and it is not in the dashboard at all.
+
+- [ ] The production domain is in the Privy app's **allowed origins**
+      (Configuration → App settings → Domains): `https://splitsy.xyz` *and*
+      `https://www.splitsy.xyz`, with `http://localhost:3000` removed. An origin
+      that is not listed may not use the app id from a browser, and the failure
+      shows up only on the apex — every test on `testnet.splitsy.xyz` still passes.
+      Check it in a clean browser on the live host: press Sign in and expect
+      Privy's modal, not nothing.
+- [ ] `PRIVY_AGENT_POLICY_ID` in Production names a policy built for **chain
+      5042**. The policy is deny-by-default and the chain id is a condition on its
+      only ALLOW rule, so a testnet policy on mainnet refuses *every* agent
+      signature — autopay stops dead rather than overspending, which is the safe
+      direction and still an outage. Build it with:
+
+      ```bash
+      NEXT_PUBLIC_ARC_NETWORK=mainnet npm run privy:policy -- 25
+      # first line must read:  network     mainnet (chain 5042)
+      ```
+
+- [ ] That id is in Production **before the first mainnet agent wallet is minted**.
+      A policy attaches at creation only (`walletSpec`, `lib/privy-wallet.ts`) and
+      there is no backfill, so an agent minted before it is uncapped for life with
+      `decideAutopay` as its only ceiling. Check after the first mint: the wallet's
+      page in the Privy dashboard lists the policy.
+- [ ] Which Privy app Production uses is a **decision**, not an inherited value.
+      The same app as testnet keeps every user's embedded wallet at the address
+      they already have — the keys are chain-agnostic. A new app gives everyone a
+      new address and needs its own app secret, key quorum, authorization key and
+      policy. `PRIVY_APP_ID` is read on the server and handed to the client as a
+      prop (`app/layout.tsx`), so changing it needs no rebuild, unlike every
+      `NEXT_PUBLIC_*`.
+- [ ] `PRIVY_KEY_QUORUM_ID` and `PRIVY_AUTHORIZATION_PRIVATE_KEY` belong to the app
+      in `PRIVY_APP_ID`. A mismatch still creates wallets and only fails at the
+      first signature, so §5's first smoke item is the check. Privy cannot recover
+      a lost authorization key: back it up before launch, not after.
+- [ ] **Nothing to configure for the chain**, so do not go looking for it. Networks
+      are code here (`supportedChains: [ARC.chain]`, `app/PrivyShell.tsx`), and
+      Privy never broadcasts on Arc — it signs, this app broadcasts
+      (`lib/privy-wallet.ts`). Session length and HttpOnly cookies are irrelevant
+      for the same kind of reason: `POST /api/auth/privy` trades the Privy token
+      for Splitsy's own cookie once, at login.
+
+Not blockers, but cheaper to do before anyone is watching:
+
+- [ ] Privy's modal still says **"Arc Testnet"** on mainnet (`loginMessage`,
+      `app/PrivyShell.tsx`). One line of code, and the first thing a user reads at
+      sign-in.
+- [ ] Own OAuth credentials for X, Discord and Google (Login methods → socials,
+      redirect `https://auth.privy.io/api/v1/oauth/callback`). Privy's shared
+      defaults work; they just put Privy's name on the consent screen instead of
+      Splitsy's. These three can be swapped after launch — Apple, LinkedIn and
+      TikTok cannot once users exist, so add either of those with your own
+      credentials from the start or not at all.
+- [ ] MFA (passkey or authenticator) on the Privy app. Privy's own security
+      checklist presses for it wherever login is OAuth or email OTP, because
+      account access is wallet access. Splitsy's PIN already gates spending, which
+      is why this is a judgement call and not a gate.
+
+---
+
+## 5. Money-path smoke test, on mainnet, with small amounts
 
 Do these in order against the real deployment before announcing. Each one
 exercises a different signer.
@@ -213,7 +277,7 @@ exercises a different signer.
 
 ---
 
-## 5. Sessions and revocation
+## 6. Sessions and revocation
 
 - [ ] Sign in, then sign out, then replay the old cookie. It must be rejected —
       that is `sessions_valid_from` working. If it still authenticates, the
@@ -229,7 +293,7 @@ exercises a different signer.
 
 ---
 
-## 6. Agent NFTs
+## 7. Agent NFTs
 
 - [ ] Mint one agent on mainnet and **look at the image**. The network stamp now
       reads from `ARC.network`, but NFT images are immutable once minted — a
@@ -239,13 +303,15 @@ exercises a different signer.
 
 ---
 
-## 7. Known and accepted, going in
+## 8. Known and accepted, going in
 
 State these now so they are decisions rather than discoveries.
 
-- **Existing users get a new wallet at a new address.** Unavoidable — Circle has
-  no Arc mainnet. The old Supabase project stays as a record. **Announce before
-  the flip**, not after.
+- **Existing users get a new wallet at a new address.** Unavoidable for anyone who
+  arrived on the Circle stack — Circle has no Arc mainnet. Whether a *testnet
+  Privy* user keeps their address depends on the app-id decision in §4: the same
+  Privy app hands back the same embedded wallet, a new one does not. The old
+  Supabase project stays as a record. **Announce before the flip**, not after.
 - **A compromised attester key can misdirect held escrow and slot refunds.** No
   pause, no rotation, no key revocation. Mitigation is depositor `reclaim()` plus
   redeploy. The documented upgrade is moving the key into a TEE, worth doing once
@@ -268,7 +334,7 @@ State these now so they are decisions rather than discoveries.
 
 ---
 
-## 8. After the flip
+## 9. After the flip
 
 - [ ] `X-Robots-Tag: noindex` on `testnet.splitsy.xyz` — an indexed testnet host
       beside a real-money apex is a page someone pays into by mistake. Four lines

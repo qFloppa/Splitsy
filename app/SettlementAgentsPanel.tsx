@@ -25,7 +25,9 @@
 //
 // FUNDED MODE ONLY. The agent settles out of ITS OWN balance — the one the user
 // tops up in 01 — so the hard ceiling is what it holds, and the caps here are
-// enforced by Splitsy before it spends rather than by a contract.
+// enforced by Splitsy before it spends rather than by a contract. On the Privy
+// stack there is one more, enforced by neither: `enclaveCapUsdc`, the policy's
+// per-transaction cap, which this panel reports and clamps to but cannot raise.
 // Mandate mode, where the agent instead pulls the user's own USDC under
 // AutopayMandate.sol, is still whole in the backend (lib/autopay.ts,
 // app/api/agents/autopay/route.ts, the contract, the PUT that can still write
@@ -190,6 +192,11 @@ type GrantsResponse = {
   provider: string;
   mandateAddress: string | null;
   agentAddress: string | null;
+  // The one ceiling this form does not set: the wallet provider's enclave refuses
+  // a single payment over it, so a "ceiling per bill" above it is a promise the
+  // signature will break. Null on the Circle stack and whenever it cannot be
+  // read, and the difference does not matter here — both mean "say nothing".
+  enclaveCapUsdc: number | null;
   // Keyed by LOWERCASE address. wagmi hands you a checksummed one, so always
   // lowercase before indexing — with noUncheckedIndexedAccess off, tsc will not
   // warn you that the miss types as a hit.
@@ -774,6 +781,10 @@ export default function SettlementAgentsPanel({ onState }: { onState?: (state: A
   // Left over from the mandate flow on the linked wallet, and revocable below.
   const staleMandate = linkedFacts?.enabled ?? false;
   const balanceUsdc = agentBalance;
+  // The enclave's per-transaction ceiling, which this form reports but cannot
+  // set. Null means the deployment has no policy or Privy could not be reached —
+  // either way the page stays quiet about it rather than guessing a number.
+  const enclaveCapUsdc = server?.enclaveCapUsdc ?? null;
   // What the revealed top-up would send, mirroring fundAgent's own parse so the
   // "it would hold" figure cannot disagree with what the transfer does. Junk
   // reads as 0 rather than NaN — the transfer refuses it either way, and a
@@ -1091,7 +1102,18 @@ export default function SettlementAgentsPanel({ onState }: { onState?: (state: A
             <PosterCell
               decimal
               label="Ceiling per bill"
-              onBlur={() => save(grant)}
+              // Clamped to the enclave's own ceiling on the way out, the same way
+              // the score field below clamps to 100. A figure above it is one the
+              // wallet provider refuses at signing time, so the honest place to
+              // say no is this field — not a payment that fails days later on a
+              // bill the user thought was covered. Unknown cap, no clamp.
+              onBlur={() =>
+                save(
+                  enclaveCapUsdc === null
+                    ? grant
+                    : { ...grant, maxPerBillUsdc: Math.min(enclaveCapUsdc, grant.maxPerBillUsdc) },
+                )
+              }
               onChange={(value) => setGrant({ ...grant, maxPerBillUsdc: Number(value) || 0 })}
               prefix="$"
               value={String(grant.maxPerBillUsdc)}
@@ -1333,11 +1355,16 @@ export default function SettlementAgentsPanel({ onState }: { onState?: (state: A
           {/* Said rather than implied, and said every time. The ceilings above
               are ours to enforce, so the page must not let anyone believe a
               contract is holding them: the agent's balance is the only number
-              the chain bounds. */}
+              the chain bounds. The enclave cap is the one exception and is named
+              as one — it is not ours, not a contract, and not raisable from here,
+              so "the hard limit is the balance" is only true below it. */}
           <p className="bill-options-hint">
             Splitsy holds these ceilings and checks them before your agent spends — they are not enforced by a
             contract, so the hard limit is the ${balanceUsdc.toFixed(2)} it holds: it can never pay out more than you
             have sent it.
+            {enclaveCapUsdc !== null
+              ? ` One ceiling is not ours: your wallet provider refuses any single payment over $${enclaveCapUsdc.toFixed(2)} inside the hardware that holds the key, whatever these figures say.`
+              : ""}
             {agentWallet?.otherAgent
               ? ` And they hold for ${short(agentWallet.address ?? "")} only — your other agent runs under the rules stored on its own account.`
               : ""}
