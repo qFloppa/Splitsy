@@ -4,9 +4,10 @@ import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { Mail } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect } from "react";
 import { useAccount, useAccountEffect } from "wagmi";
 import { isStaleWalletSession, SESSION_ENDED_EVENT } from "@/lib/agent-link";
+import type { WalletSession } from "@/lib/wallet-session";
 import { privyLogin } from "./privy-signer";
 
 // Single header entry point for all sign-in methods — collapses the four
@@ -25,31 +26,17 @@ import { privyLogin } from "./privy-signer";
 const ITEM_CLASS =
   "flex cursor-pointer items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm font-medium text-[var(--text)] no-underline outline-none transition data-[highlighted]:bg-[var(--surface-muted)]";
 
-export default function SignInMenu() {
-  const [me, setMe] = useState<{ provider?: string | null; handle: string } | null | undefined>(undefined);
+export default function SignInMenu({ session }: { session: WalletSession }) {
+  // The account, from the server, with the page (lib/wallet-session.ts). This
+  // control used to fetch /api/me from a mount effect and render NOTHING until it
+  // answered — so a signed-out visitor got no sign-in button, and a signed-in one
+  // got no account control, for as long as the app took to hydrate and ask.
+  const me = session.user;
   // Whether Privy's modal is the door on this deployment (WALLET_UI). Read from
   // the server alongside the session, so signed-out visitors get the right one —
   // which is exactly when it matters.
-  const [privyUi, setPrivyUi] = useState(false);
+  const privyUi = session.walletUi === "privy";
   const { address } = useAccount();
-
-  useEffect(() => {
-    let active = true;
-    fetch("/api/me")
-      .then((r) => r.json())
-      .then((d: { user: { provider?: string | null; handle: string } | null; walletUi?: string }) => {
-        if (active) {
-          setMe(d.user);
-          setPrivyUi(d.walletUi === "privy");
-        }
-      })
-      .catch(() => {
-        if (active) setMe(null);
-      });
-    return () => {
-      active = false;
-    };
-  }, []);
 
   // Drop a wallet session the browser no longer backs, and say so out loud.
   //
@@ -104,7 +91,6 @@ export default function SignInMenu() {
     if (address) void reconcile({ connected: true, address });
   }, [address, reconcile]);
 
-  if (me === undefined) return null; // still loading
   // Signed in SOCIALLY — the floating wallet widget is that account's control, so
   // a second one here would be a duplicate. A wallet session falls through to the
   // dropdown instead: holding keys is not the same as having a social login, and

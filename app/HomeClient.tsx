@@ -28,6 +28,7 @@ import { DiscordIcon, XIcon } from "@/components/landing/ProviderIcons";
 import BillVerification from "./BillVerification";
 import WalletMark from "./WalletMark";
 import XAuthControl from "./XAuthControl";
+import type { WalletSession } from "@/lib/wallet-session";
 import SignInMenu from "./SignInMenu";
 import XHistoryPanel from "./XHistoryPanel";
 import DashboardPanel from "./DashboardPanel";
@@ -305,7 +306,15 @@ const RECORD_STEPS: Record<"handle" | "wallet" | "empty", Step> = {
   empty: { index: "05", kicker: "Records", title: "Nothing has settled yet" },
 };
 
-export default function HomeClient({ testCycleEnabled = false }: { testCycleEnabled?: boolean }) {
+export default function HomeClient({
+  testCycleEnabled = false,
+  walletSession,
+}: {
+  testCycleEnabled?: boolean;
+  // The signed-in account, read on the server (lib/wallet-session.ts) so the two
+  // header controls below render in the first paint instead of after a round trip.
+  walletSession: WalletSession;
+}) {
   // IOU is where you land: an amount and a name is the shortest thing the app
   // does, and it reads as a page rather than a form. Bills is one tap away.
   //
@@ -2771,7 +2780,7 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
               <Link className="iou-provider bill-toggle" href="/docs">
                 Docs
               </Link>
-              <SignInMenu />
+              <SignInMenu session={walletSession} />
               <WalletMark />
               <button
                 aria-label={`Switch to ${theme === "light" ? "dark" : "light"} mode`}
@@ -3658,7 +3667,7 @@ export default function HomeClient({ testCycleEnabled = false }: { testCycleEnab
       {progressFlow && !(activeTab === "settle" && progressFlow.subjectKey) ? (
         <ProgressModal flow={progressFlow} onClose={closeFlow} />
       ) : null}
-      <XAuthControl />
+      <XAuthControl session={walletSession} />
     </main>
   );
 }

@@ -152,11 +152,21 @@ function PrivyBridge() {
   // does on every page load, and the second mount would then find the bridge
   // "busy" forever and do nothing at all.
   const run = useRef(0);
+  // What the user sees while the bridge works, in the ONE window where nothing
+  // else can say anything. The login happens in Privy's modal over a page that
+  // was rendered signed-out, so until the exchange lands the header still shows
+  // "Sign in" and there is no wallet trigger — the modal closes onto a page that
+  // looks exactly as it did before, which is the moment people assume the app is
+  // broken. Deliberately NOT shown when the page already had a session: there
+  // the wallet trigger is on screen and says this itself (app/XAuthControl.tsx),
+  // and two chips saying the same thing is worse than one.
+  const [signingIn, setSigningIn] = useState(false);
   useEffect(() => {
     if (!ready || !authenticated) return;
     const id = ++run.current;
     const live = () => run.current === id;
     void (async () => {
+      let reloading = false;
       try {
         // What the page loaded with. Only used to decide whether a reload is owed
         // — every other panel read /api/me on mount, and a row that has changed
@@ -167,6 +177,7 @@ function PrivyBridge() {
         const pageRowWallet = me?.walletAddress?.toLowerCase() ?? null;
         let rowWallet = pageRowWallet;
         let creates = 0;
+        if (!me && live()) setSigningIn(true);
 
         for (let pass = 0; pass < PASSES && live(); pass++) {
           const action = bridgeAction({
@@ -179,6 +190,9 @@ function PrivyBridge() {
 
           if (action === "settled") return;
           if (action === "reload") {
+            // Left on screen on purpose: the page is leaving, and clearing it
+            // first would put the blank back for the length of a page load.
+            reloading = true;
             window.location.reload();
             return;
           }
@@ -213,6 +227,8 @@ function PrivyBridge() {
         // Swallowed deliberately: the pass that threw is one of up to twenty-four,
         // and the panel says what the user can see for themselves. What must not
         // happen is an unhandled rejection taking the bridge down with it.
+      } finally {
+        if (!reloading && live()) setSigningIn(false);
       }
     })();
     // `address` and `hasWallet` are deliberately absent from the deps: they are
@@ -221,7 +237,15 @@ function PrivyBridge() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ready, authenticated]);
 
-  return null;
+  // The chip, where the wallet trigger will be, so the two read as one thing
+  // handing over to the other. It takes .wallet-hail's own pending skin (the
+  // accent pill, globals.css) rather than inventing a second loader.
+  if (!signingIn) return null;
+  return (
+    <div className="wallet-hail" data-pending="" role="status" aria-live="polite">
+      <span className="wallet-hail-word">signing you in…</span>
+    </div>
+  );
 }
 
 export default function PrivyShell({ appId, nonce }: { appId: string; nonce?: string }) {

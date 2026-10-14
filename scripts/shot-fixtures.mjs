@@ -233,6 +233,13 @@ const waitingGate = (stalled) => `
   </ol>
   ${stalled ? '<button class="settle-action" type="button">reload ›</button>' : ""}`;
 
+// The chip the Privy bridge puts up while it trades a fresh login for a session
+// (app/PrivyShell.tsx) — the same pending skin with no account to show yet.
+const signingIn = `
+<div class="wallet-hail" data-pending="" role="status">
+  <span class="wallet-hail-word">signing you in…</span>
+</div>`;
+
 const waitingHail = (stalled) => `
 <button class="wallet-hail" type="button" data-pending="${stalled ? "late" : ""}" aria-busy="${!stalled}">
   <span class="wallet-hail-word">wallet · ${stalled ? "not ready" : "setting up…"}</span>
@@ -260,7 +267,8 @@ export default {
       panel("", waitingGate(false), true) +
         panel("", waitingGate(true), true) +
         waitingHail(false) +
-        waitingHail(true),
+        waitingHail(true) +
+        signingIn,
     ),
   },
   "bill-live": { selector: ".bill-live", inject: atTop(billLive) },

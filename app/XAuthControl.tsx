@@ -7,14 +7,17 @@ import { ARC_EXPLORER, waitForCircleTxUrl } from "@/lib/arc-explorer";
 import { readArcUsdcBalance, billUnitsToUsdc } from "@/lib/bill-split-contracts";
 import { parseAmount, typableAmount } from "@/lib/iou";
 import { providerDisplay } from "@/lib/provider-display";
-import type { AccountProvider } from "@/lib/types";
 import { walletStage } from "@/lib/wallet-stage";
+import type { WalletSession, WalletSessionUser } from "@/lib/wallet-session";
 import ExportTab, { WalletMore } from "./ExportTab";
 import { ProviderIcon } from "./ProviderTag";
 import { privyLogout } from "./privy-signer";
 import { signedSend, walletPost, type SignedSendResult } from "./signed-send";
 
-type Me = { id: string; provider?: AccountProvider | null; providerUserId?: string | null; handle: string; name: string | null; avatarUrl: string | null; walletAddress: string | null; custodian?: "Circle" | "Privy" };
+// The account, in the shape the server hands over with the page and /api/me
+// answers with. One declaration rather than two that have to agree
+// (lib/wallet-session.ts).
+type Me = WalletSessionUser;
 type Tab = "info" | "send" | "receive" | "history" | "export";
 
 // What GET /api/wallet/export answers, read here for a second purpose: the SEND
@@ -100,13 +103,12 @@ function Label({ children }: { children: React.ReactNode }) {
   return <p className="settle-label">{children}</p>;
 }
 
-export default function XAuthControl() {
-  const [me, setMe] = useState<Me | null>(null);
+export default function XAuthControl({ session }: { session: WalletSession }) {
+  const [me, setMe] = useState<Me | null>(session.user);
   // Whether Privy's own UI is what this deployment asks users to approve in. From
-  // the server (WALLET_UI, via /api/me) rather than from a NEXT_PUBLIC copy, so
-  // the panel and the routes can never disagree about which world they are in.
-  const [privyUi, setPrivyUi] = useState(false);
-  const [loading, setLoading] = useState(true);
+  // the server (WALLET_UI) rather than from a NEXT_PUBLIC copy, so the panel and
+  // the routes can never disagree about which world they are in.
+  const [privyUi, setPrivyUi] = useState(session.walletUi === "privy");
   const [open, setOpen] = useState(false);
   const [balance, setBalance] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
@@ -142,35 +144,32 @@ export default function XAuthControl() {
     return () => window.removeEventListener("keydown", onKey);
   }, [open]);
 
+  // ASK AGAIN WHILE A WALLET IS ON ITS WAY, and only then. The account itself
+  // arrived with the page, so there is nothing to fetch on mount — but a row that
+  // names no wallet yet is one the bridge (app/PrivyShell.tsx) is still working
+  // on, and this is how the panel notices it land.
+  //
+  // One timer per answer rather than a loop: each read sets `me`, which re-runs
+  // this, which schedules the next — and the first condition that stops being
+  // true stops the chain. `waited` is what caps it.
   useEffect(() => {
-    let active = true;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    // One read, and another in 2.5s for as long as the row still names no wallet.
-    // `attempt` rides along rather than being read off state, so the chain cannot
-    // double up if a render lands mid-flight.
-    const read = (attempt: number) =>
-      fetch("/api/me")
+    if (!me || waited >= WAIT_TRIES || walletStage(me, privyUi) !== "waiting") return;
+    const timer = setTimeout(() => {
+      void fetch("/api/me")
         .then((r) => r.json())
         .then((data: { user: Me | null; walletUi?: string }) => {
-          if (!active) return;
           setMe(data.user);
           setPrivyUi(data.walletUi === "privy");
-          if (!data.user || walletStage(data.user, data.walletUi === "privy") !== "waiting") return;
-          setWaited(attempt + 1);
-          if (attempt + 1 < WAIT_TRIES) timer = setTimeout(() => read(attempt + 1), WAIT_EVERY_MS);
         })
         .catch(() => {
-          if (active) setMe(null);
+          // Keep the account the page was rendered with: a failed poll is a
+          // failed poll, not a sign-out, and dropping `me` here would blank the
+          // control the user is looking at.
         })
-        .finally(() => {
-          if (active) setLoading(false);
-        });
-    void read(0);
-    return () => {
-      active = false;
-      clearTimeout(timer);
-    };
-  }, []);
+        .finally(() => setWaited((n) => n + 1));
+    }, WAIT_EVERY_MS);
+    return () => clearTimeout(timer);
+  }, [me, privyUi, waited]);
 
   // Whether the user has chosen a wallet PIN yet, and whether the wallet is
   // currently unlocked. Until a PIN exists, the panel shows nothing but the
@@ -261,7 +260,7 @@ export default function XAuthControl() {
   // wallet is an implementation detail to someone who already holds their own
   // keys: they never funded it and nothing routes them to it. SignInMenu shows
   // their address and the way out instead.
-  if (loading || !me || me.provider === "wallet") {
+  if (!me || me.provider === "wallet") {
     return null;
   }
 
@@ -289,7 +288,19 @@ export default function XAuthControl() {
         aria-busy={stage === "waiting" ? true : undefined}
         data-pending={stage === "waiting" ? (stalled ? "late" : "") : undefined}
         className="wallet-hail"
-        initial={{ opacity: 0, y: 8 }}
+        // NO ENTRY ANIMATION, and that is the whole point of the server-rendered
+        // session. `initial={{opacity: 0}}` is painted into the HTML by
+        // framer-motion, so this control would have arrived invisible and waited
+        // for JavaScript to fade it in — which is the three-second blank it was
+        // just taken out of. A control that is part of the page does not announce
+        // itself; `initial={false}` starts it at the animate state.
+        //
+        // ponytail: visible before it is interactive, so a click in the first
+        // moment of a cold load does nothing until React hydrates. The window is
+        // the page's own hydration and the alternative was showing nothing at
+        // all; if it ever matters, the fix is a hydration flag on the label, not
+        // hiding the control again.
+        initial={false}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.42, ease: [0.22, 1, 0.36, 1] }}
       >

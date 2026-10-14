@@ -8310,6 +8310,24 @@ mark.doc-mark {
   to { transform: rotate(1turn); }
 }
 
+/* The bridge's own chip (app/PrivyShell.tsx), up while a fresh login is traded
+   for a session. It is this control's pending skin with NO account in it yet —
+   there is no avatar to carry the arc above, so the live mark is a dot in the
+   pill instead: .app-network's gesture, its size, its keyframes. `:only-child`
+   is what tells the two apart, since the trigger always has its mark beside the
+   word. */
+.wallet-hail[data-pending] > .wallet-hail-word:only-child::after {
+  content: "";
+  display: inline-block;
+  width: 0.34rem;
+  height: 0.34rem;
+  margin-left: 0.5rem;
+  vertical-align: 0.08em;
+  border-radius: 999px;
+  background: currentColor;
+  animation: app-live 2.8s var(--ease-out) infinite;
+}
+
 /* The head rail, and the only part of the panel that drags — framer-motion's
    dragListener is off and this starts it by hand. The old panel put `drag` on the
    whole pane, which meant a pointer-down on the address or in the amount field

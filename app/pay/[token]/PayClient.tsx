@@ -8,6 +8,7 @@ import { useAccount } from "wagmi";
 import { getWalletClient, switchChain, writeContract, waitForTransactionReceipt } from "wagmi/actions";
 import { ARC } from "@/lib/arc-chain";
 import { formatUnits } from "viem";
+import type { WalletSession } from "@/lib/wallet-session";
 import SignInMenu from "@/app/SignInMenu";
 import WalletMark from "@/app/WalletMark";
 import XAuthControl from "@/app/XAuthControl";
@@ -167,9 +168,10 @@ function Who({ person, fallback }: { person: Person; fallback?: string }) {
 // per instance, so two of them would drift apart on the first toggle.
 function PayFrame({
   children,
+  session,
   setTheme,
   theme,
-}: Pick<ReturnType<typeof useTheme>, "setTheme" | "theme"> & { children: ReactNode }) {
+}: Pick<ReturnType<typeof useTheme>, "setTheme" | "theme"> & { children: ReactNode; session: WalletSession }) {
   return (
     <div className="pay-frame">
       <header className="app-masthead z-30">
@@ -200,7 +202,7 @@ function PayFrame({
                 <Link className="iou-provider bill-toggle" href="/docs">
                   Docs
                 </Link>
-                <SignInMenu />
+                <SignInMenu session={session} />
                 <WalletMark />
                 <button
                   aria-label={`Switch to ${theme === "light" ? "dark" : "light"} mode`}
@@ -239,7 +241,7 @@ function PayVoid({ children, label, title }: { children?: ReactNode; label: stri
   );
 }
 
-export default function PayClient({ token }: { token: string }) {
+export default function PayClient({ token, walletSession }: { token: string; walletSession: WalletSession }) {
   const { theme, setTheme } = useTheme();
   const account = useAccount();
   const [bill, setBill] = useState<Bill | null>(null);
@@ -276,7 +278,7 @@ export default function PayClient({ token }: { token: string }) {
 
   if (loadError === "not_found") {
     return (
-      <PayFrame setTheme={setTheme} theme={theme}>
+      <PayFrame session={walletSession} setTheme={setTheme} theme={theme}>
         <PayVoid label="No such bill" title="This link doesn't open a bill">
           <p className="pay-fine">It may have been mistyped, or the bill was created without a share link.</p>
           <Link className="settle-action" href="/">
@@ -289,7 +291,7 @@ export default function PayClient({ token }: { token: string }) {
 
   if (loadError) {
     return (
-      <PayFrame setTheme={setTheme} theme={theme}>
+      <PayFrame session={walletSession} setTheme={setTheme} theme={theme}>
         <PayVoid label="Arc unreachable" title="Couldn't reach Arc">
           <p className="pay-fine">The bill exists, but its live balances couldn&apos;t be read just now.</p>
           <button className="settle-action" onClick={() => void load()} type="button">
@@ -302,7 +304,7 @@ export default function PayClient({ token }: { token: string }) {
 
   if (!bill) {
     return (
-      <PayFrame setTheme={setTheme} theme={theme}>
+      <PayFrame session={walletSession} setTheme={setTheme} theme={theme}>
         <main className="pay-void">
           {/* The same mark a signing row shows, at the scale of the whole page —
               a caps line, not a lone spinner on an empty screen. */}
@@ -642,7 +644,7 @@ export default function PayClient({ token }: { token: string }) {
 
   return (
     <>
-      <PayFrame setTheme={setTheme} theme={theme}>
+      <PayFrame session={walletSession} setTheme={setTheme} theme={theme}>
         <main className="pay-shell">
         <aside className="pay-poster" data-settled={bill.settled}>
           <div>
@@ -854,7 +856,7 @@ export default function PayClient({ token }: { token: string }) {
         </div>
       )}
 
-      <XAuthControl />
+      <XAuthControl session={walletSession} />
     </>
   );
 }
