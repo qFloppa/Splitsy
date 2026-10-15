@@ -7,6 +7,7 @@ import WagmiProviders from "./WagmiProviders";
 import { HeroBackground } from "@/components/ui/hero-background";
 import { SiteFooter } from "@/components/SiteFooter";
 import { walletUiName } from "@/lib/wallet-provider";
+import { ARC_LABEL, forArcNetwork } from "@/lib/arc-chain";
 
 // Self-hosted via next/font: no external requests, no layout shift. The CSS
 // font stacks in globals.css lead with these variables and keep the old
@@ -23,13 +24,21 @@ const clashDisplay = localFont({
 });
 
 const siteUrl = "https://splitsy.xyz";
-const siteDescription =
-  "Experimental demo for scanning receipts, splitting shared costs, and settling test USDC payments on Arc Testnet. Test network only — no real funds.";
+// The words follow the switch like every other network-dependent fact (see
+// ARC_LABEL in lib/arc-chain.ts), and these are the copies search engines and
+// link unfurls cache — so a mainnet build whose <meta> still said "test network
+// only, no real funds" would keep handing out that reassurance from Google and
+// every Slack preview long after the site itself stopped making it.
+const siteTitle = `Splitsy — split bills on ${ARC_LABEL}`;
+const siteDescription = forArcNetwork(
+  "Scan receipts, split shared costs, and settle USDC payments on Arc. Real USDC on a live network — experimental software, payments cannot be reversed.",
+  "Experimental demo for scanning receipts, splitting shared costs, and settling test USDC payments on Arc Testnet. Test network only — no real funds.",
+);
 
 export const metadata: Metadata = {
   metadataBase: new URL(siteUrl),
   title: {
-    default: "Splitsy — split bills on Arc Testnet",
+    default: siteTitle,
     template: "%s · Splitsy",
   },
   description: siteDescription,
@@ -42,8 +51,7 @@ export const metadata: Metadata = {
     "split bills",
     "receipt scanner",
     "USDC",
-    "Arc Testnet",
-    "testnet",
+    ...forArcNetwork<string[]>(["Arc", "stablecoin payments"], ["Arc Testnet", "testnet"]),
     "expense splitting",
     "web3 demo",
   ],
@@ -58,14 +66,14 @@ export const metadata: Metadata = {
   openGraph: {
     type: "website",
     siteName: "Splitsy",
-    title: "Splitsy — split bills on Arc Testnet",
+    title: siteTitle,
     description: siteDescription,
     url: siteUrl,
     images: [{ url: "/splitsy.png", alt: "Splitsy" }],
   },
   twitter: {
     card: "summary_large_image",
-    title: "Splitsy — split bills on Arc Testnet",
+    title: siteTitle,
     description: siteDescription,
     images: ["/splitsy.png"],
   },

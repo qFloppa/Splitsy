@@ -7,6 +7,8 @@ import gsap from "gsap";
 import { ArrowRight } from "lucide-react";
 import SplitType from "split-type";
 
+import { ARC_LABEL } from "@/lib/arc-chain";
+
 import { MagneticButton } from "./MagneticButton";
 
 // The three facts a visitor needs before they will scroll, set as the app's own
@@ -104,7 +106,7 @@ export function Hero() {
     <section aria-labelledby="hero-heading" className="lp-measure relative">
       <div className="flex flex-col items-start justify-center pt-14 pb-[clamp(2rem,1rem+2.5vw,4rem)] sm:pt-20 lg:pt-24">
         <span className="settle-label app-network" ref={stampRef}>
-          Arc Testnet · live
+          {ARC_LABEL} · live
         </span>
         <h1 className="lp-display lp-hero-headline mt-5" id="hero-heading" ref={headlineRef}>
           {/* The S is the logo, inked for the ground it sits on. Both files ship

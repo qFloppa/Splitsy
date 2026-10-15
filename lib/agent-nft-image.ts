@@ -7,7 +7,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import * as fontkit from "fontkit";
 import sharp from "sharp";
-import { ARC } from "./arc-chain.ts";
+import { ARC_LABEL } from "./arc-chain.ts";
 
 const SIZE = 1254; // template is 1254×1254; the band below y≈1050 is clear
 
@@ -16,9 +16,9 @@ const SIZE = 1254; // template is 1254×1254; the band below y≈1050 is clear
 // literally, so a mainnet deployment minted NFTs stamped with the wrong network —
 // and an NFT image is immutable once minted, so every one of them would have
 // stayed wrong forever with no way to correct it short of re-minting every agent.
-// Coming from ARC.network means the stamp cannot disagree with the chain the
+// Coming from ARC_LABEL means the stamp cannot disagree with the chain the
 // registration actually landed on.
-const NETWORK_LABEL = ARC.network === "mainnet" ? "ARC" : "ARC TESTNET";
+const NETWORK_LABEL = ARC_LABEL.toUpperCase();
 
 let cachedFont: fontkit.Font | null = null;
 let cachedTemplate: Buffer | null = null;

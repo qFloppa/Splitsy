@@ -144,20 +144,22 @@ repo reads one.
 is false, and the job-market half of autopay is off. Not an error — that is what
 "off" is designed to read as.
 
-**x402 batching cannot run on Arc mainnet at all, and this one is not a
-variable.** `@circle-fin/x402-batching` ships exactly one Arc entry,
-`arcTestnet`; its `GATEWAY_DOMAINS` table lists mainnet chains and no `arc`. So
+**x402 batching now runs on Arc mainnet, and used not to.**
+`@circle-fin/x402-batching` shipped exactly one Arc entry, `arcTestnet`, and its
+`GATEWAY_DOMAINS` table listed mainnet chains and no `arc` — so
 `getSettlerGateway()` (`lib/settler.ts`) and `getScoutGateway()`
-(`lib/scout/wallet.ts`) **throw** when the switch is `mainnet`, rather than
-batching real-money nanopayments on testnet. Scout is therefore off on mainnet,
-and the Settler cannot buy reviews.
+(`lib/scout/wallet.ts`) **threw** when the switch was `mainnet`, rather than
+batching real-money nanopayments onto testnet. **3.5.0 added `arc` to both
+tables** (verified against the installed package), so both now pass
+`ARC.x402Chain` straight through and Scout follows the deployment. Scout is no
+longer off on mainnet and the Settler can buy reviews there.
 
-The refusal is scoped to the **Gateway client only**, not to `getSettler()` or
-`getScout()`. The Settler's other two jobs work on mainnet — it signs contract
-writes through viem (`settlerWrite`), and its address is what a mandate names —
-so mandate-mode settlement is unaffected. An earlier revision of this work
-refused all three and would have taken mandate-mode settlement down on mainnet
-over a nanopayment SDK gap.
+The refusal that remains is scoped to the **Gateway client only**, not to
+`getSettler()` or `getScout()`. The Settler's other two jobs always worked on
+mainnet — it signs contract writes through viem (`settlerWrite`), and its address
+is what a mandate names — so mandate-mode settlement was never affected. An
+earlier revision of this work refused all three and would have taken mandate-mode
+settlement down on mainnet over a nanopayment SDK gap.
 
 That money-mode row is the server's answer for a save that does not name a mode
 (`defaultMoneyMode()`, `lib/autopay.ts:175`), not what accounts are on. The

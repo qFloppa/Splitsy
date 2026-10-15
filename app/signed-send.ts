@@ -14,6 +14,7 @@ import { decodeFunctionData, erc20Abi, formatUnits } from "viem";
 import { ARC_USDC_ADDRESS } from "@/lib/recurring-contracts";
 import { ownerKeyFor } from "./session-owner-key";
 import { privyUiActive, signerOrNull, type PreparedPlan } from "./privy-signer";
+import { ARC_LABEL, USDC_LABEL } from "@/lib/arc-chain";
 
 export type SignedSendResult =
   | { ok: true; data: Record<string, unknown> }
@@ -155,7 +156,7 @@ function decodedAmount(plan: PreparedPlan): { amount: string; isApprove: boolean
 function paymentSummary(url: string, plan: PreparedPlan): { description: string; action: string } {
   const label =
     Object.entries(PAYMENT_LABEL).find(([prefix]) => url.startsWith(prefix))?.[1] ??
-    { description: "Approve this Splitsy payment on Arc Testnet.", action: "Payment" };
+    { description: `Approve this Splitsy payment on ${ARC_LABEL}.`, action: "Payment" };
   const decoded = decodedAmount(plan);
   if (!decoded) return label;
   // AN APPROVE IS A CEILING, NOT A PAYMENT, and saying "12 USDC" for one would be
@@ -285,7 +286,7 @@ export function payErrorMessage(error: string): string {
   if (error === "privy_signer_missing") {
     return "Your wallet isn't connected yet — sign in with Privy, then try this payment again.";
   }
-  if (error === "insufficient_funds") return "Your wallet needs more test USDC to cover this.";
+  if (error === "insufficient_funds") return `Your wallet needs more ${USDC_LABEL} to cover this.`;
   return error;
 }
 

@@ -3,19 +3,22 @@
 import { ArrowUpRight } from "lucide-react";
 
 import { PRICES } from "@/lib/x402/pricing";
-import { ARC } from "@/lib/arc-chain";
+import { ARC, ARC_LABEL, forArcNetwork } from "@/lib/arc-chain";
 
 import { useReveal } from "./useReveal";
 
 type Tech = {
   key: string;
-  origin: "Arc" | "Circle" | "ERC standard";
+  origin: "Arc" | "Circle" | "Privy" | "ERC standard";
   name: string;
   description: string;
   proof: string;
   href: string;
   linkLabel: string;
 };
+
+/** `0x0077…19B9`, for the proof column. Four lines of site-contracts, not worth the server-only import. */
+const short = (address: string) => `${address.slice(0, 6)}…${address.slice(-4)}`;
 
 // Every claim below is checked against the code and the official docs — this
 // section is the "receipts" for the infrastructure, so keep it that way.
@@ -25,8 +28,8 @@ const STACK: Tech[] = [
     origin: "Arc",
     name: "Arc — the settlement chain",
     description:
-      "The EVM Layer 1 purpose-built for stablecoin finance. Splitsy's bill registry and recurring tabs are Solidity contracts on Arc Testnet, and every payment settles with deterministic sub-second finality — one confirmation, no reorgs.",
-    proof: "chainId 5042002 · finality < 1s · Malachite BFT",
+      `The EVM Layer 1 purpose-built for stablecoin finance. Splitsy's bill registry and recurring tabs are Solidity contracts on ${ARC_LABEL}, and every payment settles with deterministic sub-second finality — one confirmation, no reorgs.`,
+    proof: `chainId ${ARC.chainId} · finality < 1s · Malachite BFT`,
     href: "https://docs.arc.io/arc-chain",
     linkLabel: "docs.arc.io",
   },
@@ -56,7 +59,7 @@ const STACK: Tech[] = [
     name: "Gateway batched settlement",
     description:
       "The facilitator verifies each authorization and settles net positions in bulk, paying gas once per batch instead of once per payment. That is what makes a half-cent API call worth charging for at all.",
-    proof: "GatewayWalletBatched v1 · 0x0077…19B9",
+    proof: `GatewayWalletBatched v1 · ${short(ARC.gatewayWallet)}`,
     href: "https://developers.circle.com/gateway/nanopayments/concepts/batched-settlement",
     linkLabel: "developers.circle.com",
   },
@@ -71,31 +74,31 @@ const STACK: Tech[] = [
     linkLabel: "docs.arc.io",
   },
   {
-    key: "circle-wallets",
-    origin: "Circle",
-    name: "Developer-Controlled Wallets",
+    key: "privy-wallets",
+    origin: "Privy",
+    name: "Embedded wallets",
     description:
-      "Sign in with X, Discord, Google, or email and Splitsy provisions a Circle smart-contract wallet on Arc — no seed phrase, no extension. Payments are contract executions signed through Circle's wallet API.",
-    proof: `accountType: "SCA" · ${ARC.dcwBlockchain}`,
-    href: "https://developers.circle.com/wallets/dev-controlled",
-    linkLabel: "developers.circle.com",
+      "Sign in with X, Discord, Google, or email and Splitsy mints you a wallet on Arc — no seed phrase, no extension, nothing to install. You own it: every payment is confirmed in Privy's own prompt, which names the figure decoded out of the bytes you are signing, and you can take the private key out whenever you want.",
+    proof: "EOA · amount decoded from calldata · exportable key",
+    href: "https://docs.privy.io/wallets/overview",
+    linkLabel: "docs.privy.io",
   },
   {
-    key: "aa",
-    origin: "ERC standard",
-    name: "ERC-4337 + ERC-1967",
+    key: "privy-policy",
+    origin: "Privy",
+    name: "Enclave spend ceilings",
     description:
-      "Each Circle wallet deploys as an ERC-1967 proxy over Circle's modular smart-account implementation and transacts as ERC-4337 user operations — it's why Arcscan labels Splitsy wallets ERC1967Proxy.",
-    proof: "ERC1967Proxy → circle_6900_singleowner_v3",
-    href: "https://developers.circle.com/wallets/account-types",
-    linkLabel: "developers.circle.com",
+      "An agent's wallet is the same kind of wallet, with a policy attached inside Privy's TEE. The ceiling is enforced where the key is signed, not by Splitsy's servers — so a bug on our side cannot talk the agent into spending more than you allowed.",
+    proof: "TEE policy · per-tx cap · per-network rules",
+    href: "https://docs.privy.io/controls/policies/overview",
+    linkLabel: "docs.privy.io",
   },
   {
     key: "cctp",
     origin: "Circle",
     name: "CCTP v2 bridging",
     description:
-      "When someone's USDC sits on another chain, Splitsy pulls it in with Circle's native burn-and-mint protocol via App Kit — from six testnet chains, no wrapped assets, no third-party bridge.",
+      `When someone's USDC sits on another chain, Splitsy pulls it in with Circle's native burn-and-mint protocol via App Kit — from six ${forArcNetwork("", "testnet ")}chains, no wrapped assets, no third-party bridge.`,
     proof: "approve → burn → attest → mint",
     href: "https://developers.circle.com/cctp",
     linkLabel: "developers.circle.com",
@@ -154,11 +157,11 @@ export function SectionStack() {
           </span>
         </div>
         <h2 className="lp-display-lg mt-4 max-w-4xl" data-reveal="lead" id="stack-heading">
-          Built on Circle. <span className="lp-headline-accent">Settled on Arc.</span>
+          No mock rails. <span className="lp-headline-accent">Settled on Arc.</span>
         </h2>
         <p className="lp-lede mt-5 max-w-2xl" data-reveal="lead">
-          No mock rails under the demo — Circle&apos;s wallet and transfer infrastructure composed with
-          Arc&apos;s stablecoin-native chain and open Ethereum standards.
+          Nothing under the demo is a stub — Privy&apos;s wallets and Circle&apos;s transfer
+          infrastructure composed with Arc&apos;s stablecoin-native chain and open Ethereum standards.
         </p>
 
         <ul className="lp-rows bill-poster-body list-none p-0">

@@ -55,6 +55,7 @@ import type { AccountProvider, IdentityProvider } from "@/lib/types";
 import { ProviderIcon, ProviderTag } from "./ProviderTag";
 import { payErrorMessage, walletPost } from "./signed-send";
 import { PosterFact, PosterHero, SectionHead, legendOf, revealMotion, sectionMotion, type Step } from "./SpecCard";
+import { ARC_LABEL } from "@/lib/arc-chain";
 
 type RangeKey = "7d" | "30d" | "90d" | "all";
 // Which of the user's wallet identities the dashboard reports on. "all" unions
@@ -1367,7 +1368,7 @@ function TreasurySection({
           const funds = outcome.data ?? {};
           setNote(
             outcome.error === "insufficient_funds" && funds.neededUsdc
-              ? `Not enough USDC: this needs ${usd(funds.neededUsdc as number)} but your wallet has ${usd(funds.availableUsdc as number)} available (collections included). Top up on Arc Testnet.`
+              ? `Not enough USDC: this needs ${usd(funds.neededUsdc as number)} but your wallet has ${usd(funds.availableUsdc as number)} available (collections included). Top up on ${ARC_LABEL}.`
               : payErrorMessage(outcome.error),
           );
           return;

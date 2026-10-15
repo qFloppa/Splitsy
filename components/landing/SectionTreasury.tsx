@@ -52,7 +52,8 @@ export function SectionTreasury() {
         </h2>
         <p className="lp-lede mt-5 max-w-2xl" data-reveal="lead">
           Every share you owe and are owed collapses into one net figure per person. Settling fires them as
-          a batch — one atomic transaction on a Circle wallet instead of an approve and a payment per bill.
+          a batch — a single <code>settle()</code> carrying every claim and every payment, instead of an
+          approve and a payment per bill.
         </p>
 
         <ol className="bill-contents list-none">

@@ -63,7 +63,7 @@ const SERVICES: Service[] = [
       "Returns every bill a debtor's on-chain mandate could pay right now — with creator reputation scores and hash-verification status.",
     params: "?debtor=0x… (wallet address)",
     response: "mandate · bills[] · mandateAddress",
-    useCases: ["Circle Agent Wallet autopay", "debtor-side bill management"],
+    useCases: ["agent-wallet autopay", "debtor-side bill management"],
     suffix: [
       <Cm key="q0" c="// Response" />,
       <span key="q1"><K c="const" /> {"{ mandate, bills }"} = <K c="await" /> res.json();</span>,

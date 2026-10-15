@@ -42,7 +42,7 @@ import { ChevronDown } from "lucide-react";
 import { AnimatePresence, motion } from "framer-motion";
 import { useAccount, useSignMessage } from "wagmi";
 import { createPublicClient, http } from "viem";
-import { ARC } from "@/lib/arc-chain";
+import { ARC, USDC_LABEL } from "@/lib/arc-chain";
 import { ARC_EXPLORER } from "@/lib/arc-explorer";
 import { arcWalletClient } from "@/lib/wagmi";
 import { assertReceiptSuccess } from "@/lib/bill-split-contracts";
@@ -430,7 +430,7 @@ export default function SettlementAgentsPanel({ onState }: { onState?: (state: A
       if (!res.ok) {
         fail(
           body.error === "insufficient_funds"
-            ? "Your wallet needs a little test USDC to cover the gas for this."
+            ? `Your wallet needs a little ${USDC_LABEL} to cover the gas for this.`
             : (body.error ?? "Could not save your rules."),
         );
         load(); // pull the server's truth back rather than leaving a lie on screen
@@ -701,7 +701,7 @@ export default function SettlementAgentsPanel({ onState }: { onState?: (state: A
         setMandateTone("error");
         setMandateMessage(
           body.error === "insufficient_funds"
-            ? "Your wallet needs a little test USDC to cover the gas for this."
+            ? `Your wallet needs a little ${USDC_LABEL} to cover the gas for this.`
             : (body.error ?? "Could not update the mandate."),
         );
         return;

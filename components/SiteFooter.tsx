@@ -4,6 +4,7 @@ import { ArrowUpRight } from "lucide-react";
 import { ARC_EXPLORER } from "@/lib/arc-explorer";
 import { unstable_cache } from "next/cache";
 import { siteContracts } from "@/lib/site-contracts";
+import { ARC, ARC_LABEL, USDC_LABEL } from "@/lib/arc-chain";
 
 // The site's colophon — the block a printed spec sheet ends with, stating what
 // the thing is and the details you would need to check it.
@@ -113,7 +114,9 @@ export async function SiteFooter() {
               <ArrowUpRight aria-hidden className="lp-row-out self-center" size={11} />
             </a>
           </nav>
-          <span className="settle-label">Arc Testnet · Test USDC</span>
+          <span className="settle-label">
+            {ARC_LABEL} · {USDC_LABEL}
+          </span>
         </div>
 
         {/* The one part of this footer that is not boilerplate, so it is only
@@ -157,12 +160,28 @@ export async function SiteFooter() {
               linked in the row directly below this paragraph, so printing it in
               full here spent four lines under every route to say what a reader
               who cares is one click from reading properly. What stays is the part
-              that has to be read without clicking: it is testnet, and the money
-              is not money. */}
+              that has to be read without clicking: which network this is, and
+              whether the money is money.
+
+              BOTH BRANCHES ARE A WARNING, which is why this is a branch and not
+              two labels assembled from ARC_LABEL. On testnet the thing to say is
+              that nothing is at stake; on mainnet it is the opposite sentence,
+              and "test USDC only, no real funds" left standing there would be a
+              false reassurance printed under every route on the site. */}
           <p className="site-footer-disclaimer">
-            Experimental demo on <strong>Arc Testnet</strong> — test USDC only,{" "}
-            <strong>no real funds</strong>. An independent project, not affiliated with any brand named
-            on this site.
+            {ARC.network === "mainnet" ? (
+              <>
+                Experimental software on <strong>Arc</strong> — real USDC, <strong>real money</strong>, and
+                payments that cannot be reversed. An independent project, not affiliated with any brand
+                named on this site.
+              </>
+            ) : (
+              <>
+                Experimental demo on <strong>Arc Testnet</strong> — test USDC only,{" "}
+                <strong>no real funds</strong>. An independent project, not affiliated with any brand named
+                on this site.
+              </>
+            )}
           </p>
           {/* Beside the disclaimer rather than under it: the paragraph leaves the
               right half of the measure empty, which is exactly the width these

@@ -15,7 +15,7 @@
 // app/layout.tsx). Off, none of this is even fetched.
 import { getEmbeddedConnectedWallet, PrivyProvider, useCreateWallet, useExportWallet, usePrivy, useSignTransaction, useWallets } from "@privy-io/react-auth";
 import { useEffect, useRef, useState } from "react";
-import { ARC } from "@/lib/arc-chain";
+import { ARC, ARC_LABEL } from "@/lib/arc-chain";
 import { bridgeAction } from "@/lib/privy-bridge";
 import { forgetSigner, markPrivyUi, rememberAuth, rememberSigner, toPrivyTransaction } from "./privy-signer";
 
@@ -268,7 +268,7 @@ export default function PrivyShell({ appId, nonce }: { appId: string; nonce?: st
           accentColor: theme === "dark" ? "#62a8f1" : "#2775ca",
           logo: "/splitsy.png",
           landingHeader: "Sign in to Splitsy",
-          loginMessage: "Split bills and settle in USDC on Arc Testnet.",
+          loginMessage: `Split bills and settle in USDC on ${ARC_LABEL}.`,
           // No external-wallet buttons in the login modal. A browser wallet signs
           // in through /api/auth/wallet and keeps its own keys — offering it here
           // too would be a second door to a different kind of account.

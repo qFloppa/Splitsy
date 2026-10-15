@@ -3,6 +3,8 @@
 import { useEffect, useRef } from "react";
 import gsap from "gsap";
 
+import { ARC_LABEL, MONEY_NOTE } from "@/lib/arc-chain";
+
 import { BrowserFrame } from "./BrowserFrame";
 import { DemoStage } from "./demo/DemoStage";
 import { useReveal } from "./useReveal";
@@ -68,7 +70,7 @@ export function DemoSection() {
           normal flow so the pinned frame is all product. */}
       <div className="lp-measure bill-poster-body" data-demo-pin>
         <div ref={frameRef} style={{ transformStyle: "preserve-3d" }}>
-          <BrowserFrame label="splitsy.xyz/app" note="Arc Testnet · no real funds">
+          <BrowserFrame label="splitsy.xyz/app" note={`${ARC_LABEL} · ${MONEY_NOTE}`}>
             <DemoStage />
           </BrowserFrame>
         </div>

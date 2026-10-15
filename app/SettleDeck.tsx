@@ -18,6 +18,7 @@ import { bridgeSourceChains, type BridgeSourceChain } from "@/lib/appkit-bridge"
 import { useWho, WhoTag } from "./ProviderTag";
 import { useBillVerification } from "./BillVerification";
 import type { BillRunState, ProgressFlow } from "./HomeClient";
+import { ARC_LABEL } from "@/lib/arc-chain";
 
 // The handlers and shared state every section reads. Bundled rather than
 // threaded one prop at a time — four kinds of section want overlapping subsets
@@ -310,7 +311,7 @@ function Section({
       {/* A lone item gets no counter — snap chrome on a single card is noise. */}
       <div className="settle-rail">
         <span>{total > 1 ? `${String(index + 1).padStart(2, "0")} / ${String(total).padStart(2, "0")}` : ""}</span>
-        <span>arc testnet</span>
+        <span>{ARC_LABEL.toLowerCase()}</span>
       </div>
       {/* Decorative: every settled body says the same word in prose below. */}
       {settled ? (

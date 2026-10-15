@@ -5,6 +5,7 @@ import gsap from "gsap";
 import { Check, ExternalLink, TriangleAlert } from "lucide-react";
 
 import { ARC_EXPLORER } from "@/lib/arc-explorer";
+import { ARC_LABEL } from "@/lib/arc-chain";
 import { resolveLedger, SCRIPTED_LEDGER, type LedgerTiles } from "@/lib/landing-ledger";
 
 import {
@@ -252,9 +253,10 @@ export function AgentStage() {
       <p className="sr-only">
         Animated walkthrough of an agent payment. Scout, an autonomous agent, checks that the uploaded
         receipt is legible and that its daily budget can cover the call. It requests Splitsy&apos;s OCR
-        endpoint, receives an HTTP 402 Payment Required challenge quoting {OCR_PRICE} in USDC on Arc
-        Testnet, signs an offchain EIP-3009 authorization instead of sending a transaction, and retries.
-        Circle Gateway verifies and settles the payment, and the endpoint returns the parsed bill. The
+        endpoint, receives an HTTP 402 Payment Required challenge quoting {OCR_PRICE} in USDC on{" "}
+        {ARC_LABEL}, signs an offchain EIP-3009 authorization instead of sending a transaction, and
+        retries. Circle Gateway verifies and settles the payment, and the endpoint returns the parsed
+        bill. The
         first parse scores 0.62 confidence, below the {THRESHOLD} threshold, so Scout pays a second time
         for a higher-quality parse and keeps the better of the two. Finally it buys a foreign-exchange
         rate to convert the total to USD, spending {TOTAL_SPEND} in all.

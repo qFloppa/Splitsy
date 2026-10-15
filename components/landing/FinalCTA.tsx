@@ -3,6 +3,8 @@
 import Link from "next/link";
 import { ArrowRight } from "lucide-react";
 
+import { ARC_LABEL, MONEY_NOTE } from "@/lib/arc-chain";
+
 import { MagneticButton } from "./MagneticButton";
 import { useReveal } from "./useReveal";
 
@@ -27,7 +29,7 @@ export function FinalCTA() {
             </Link>
           </MagneticButton>
           <span className="settle-label" data-reveal="item">
-            Arc Testnet · no real funds · nothing to install
+            {ARC_LABEL} · {MONEY_NOTE} · nothing to install
           </span>
         </div>
       </div>

@@ -7,8 +7,11 @@ from a wallet you get by signing in with X, Discord, Google, or an email code.
 
 **It runs on Arc Testnet with test USDC.** One variable
 (`NEXT_PUBLIC_ARC_NETWORK=mainnet`) moves a deployment to Arc mainnet; nothing in
-this repo asserts that flip has happened, and it has not. See
-[Networks](#networks).
+this repo asserts that flip has happened, and it has not. Every network-dependent
+*word* on the site follows the same switch as the addresses — `ARC_LABEL`,
+`USDC_LABEL` and `MONEY_NOTE` in `lib/arc-chain.ts` — so the flip changes "Arc
+Testnet · no real funds" into "Arc · real USDC" everywhere at once rather than
+leaving the risk disclosure behind. See [Networks](#networks).
 
 What it does:
 
@@ -68,17 +71,18 @@ configured" and refuses on (`isBillRegistryConfigured()`,
 `isHandleEscrowConfigured()`, `isMandateConfigured()`). Quietly using a testnet
 address on chain 5042 is the exact failure that rule exists to stop.
 
-Two things mainnet does not have, and neither is a bug:
+One thing mainnet does not have, and it is not a bug:
 
 - **ERC-8183 `AgenticCommerce` is absent**, so `NEXT_PUBLIC_AGENTIC_COMMERCE_ADDRESS`
   stays unset there, `isJobsConfigured()` is false, and the job-market half of
   autopay is off.
-- **x402 batching cannot run on Arc mainnet at all**, and this one is not a
-  variable: `@circle-fin/x402-batching` ships exactly one Arc entry, `arcTestnet`.
-  So `getScoutGateway()` and `getSettlerGateway()` throw when the switch is
-  `mainnet` rather than batching real-money nanopayments on a test chain. Scout is
-  off on mainnet and the Settler cannot buy reviews; mandate-mode settlement,
-  which signs through viem, is unaffected.
+
+**x402 batching used to be the second one, and no longer is.**
+`@circle-fin/x402-batching` shipped exactly one Arc entry, `arcTestnet`, so
+`getScoutGateway()` and `getSettlerGateway()` refused on mainnet rather than
+batching real-money nanopayments onto a test chain. Version 3.5.0 added `arc` to
+both `CHAIN_CONFIGS` and `GATEWAY_DOMAINS`, so the chain now follows
+`ARC.x402Chain` and Scout runs on whichever network the deployment is on.
 
 ERC-8004 **is** live on both networks, at different addresses, and is opt-in on
 both (see [Payment Reputation](#payment-reputation-erc-8004)).

@@ -59,6 +59,10 @@ function signingFlow(finalData, { legs = 1, cancelAt = -1 } = {}) {
       };
       if (id === "./session-owner-key") return { ownerKeyFor: () => null };
       if (id === "@/lib/recurring-contracts") return { ARC_USDC_ADDRESS: payer };
+      // The sandbox resolves no path aliases, and the wallet prompt's sentences
+      // name the network (lib/arc-chain.ts). Testnet's words, which is what an
+      // unset NEXT_PUBLIC_ARC_NETWORK selects everywhere else under `node --test`.
+      if (id === "@/lib/arc-chain") return { ARC_LABEL: "Arc Testnet", USDC_LABEL: "test USDC" };
       assert.equal(id, "viem");
       return require(id);
     },

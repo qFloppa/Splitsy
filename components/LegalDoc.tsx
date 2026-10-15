@@ -3,6 +3,7 @@ import { ArrowRight } from "lucide-react";
 import type { ReactNode } from "react";
 
 import { Nav } from "@/components/landing/Nav";
+import { ARC_LABEL, USDC_LABEL, forArcNetwork } from "@/lib/arc-chain";
 
 // The shell both legal documents are set in.
 //
@@ -176,7 +177,7 @@ export function LegalDoc({
               <h2 className="settle-label" id="doc-next">
                 Read next
               </h2>
-              <span className="bill-poster-fact">Arc Testnet · test USDC only</span>
+              <span className="bill-poster-fact">{ARC_LABEL} · {USDC_LABEL}{forArcNetwork("", " only")}</span>
             </div>
             <div className="doc-prose">{colophon}</div>
             <div className="bill-poster-foot">

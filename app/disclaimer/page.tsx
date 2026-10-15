@@ -1,15 +1,29 @@
 import Link from "next/link";
 
 import { LegalDoc, type LegalClause } from "@/components/LegalDoc";
+import { ARC, ARC_LABEL, forArcNetwork } from "@/lib/arc-chain";
+import { walletProviderName } from "@/lib/wallet-provider";
 
 // Render at request time so the nonce-based CSP (see proxy.ts) is applied to
 // this page's framework scripts.
 export const dynamic = "force-dynamic";
 
+// THE TWO FACTS THIS PAGE TURNS ON, both read from the running deployment rather
+// than typed in. A disclaimer that describes the wrong network or the wrong
+// custody model is not a stale page, it is a false statement about somebody's
+// money — in the direction that reassures, which is the dangerous one.
+//
+// walletProviderName() is server-only and this is a server component, so no
+// NEXT_PUBLIC twin is needed and nothing here reaches the browser bundle.
+const ON_MAINNET = ARC.network === "mainnet";
+const ON_PRIVY = walletProviderName() === "privy";
+
 export const metadata = {
   title: "Disclaimer & acknowledgments",
-  description:
+  description: forArcNetwork(
+    "Splitsy is experimental software on Arc. It moves real USDC, is not affiliated with any referenced brand, and is not financial advice.",
     "Splitsy is an experimental demo on Arc Testnet. It uses test USDC only, involves no real funds, is not affiliated with any referenced brand, and is not financial advice.",
+  ),
   alternates: { canonical: "/disclaimer" },
   robots: { index: true, follow: true },
 };
@@ -34,21 +48,34 @@ const CLAUSES: LegalClause[] = [
     ),
   },
   {
+    // The id stays "testnet" on both networks on purpose: nothing in the repo
+    // links to #testnet, but an anchor that has been live is a URL somebody may
+    // hold, and a dead fragment is worse than an oddly-named live one.
     id: "testnet",
-    title: "Testnet only — no real funds",
+    title: ON_MAINNET ? "Real funds — payments are final" : "Testnet only — no real funds",
     body: (
       <>
-        <p>
-          Splitsy operates exclusively on <strong>Arc Testnet</strong>. All balances, payments, and recurring
-          tabs use <strong>test USDC</strong>, which has <strong>no monetary value</strong> and cannot be
-          redeemed for real money. Never send mainnet assets, real USDC, or real funds to any address shown in
-          this app.
-        </p>
+        {ON_MAINNET ? (
+          <p>
+            Splitsy operates on <strong>Arc</strong>, a live network. All balances, payments, and recurring tabs
+            use <strong>real USDC</strong>. Payments are <strong>final and cannot be reversed</strong> — not by
+            the recipient, not by us. Send only what you can afford to lose, and check every address before you
+            confirm: a share paid to the wrong one is gone.
+          </p>
+        ) : (
+          <p>
+            Splitsy operates exclusively on <strong>Arc Testnet</strong>. All balances, payments, and recurring
+            tabs use <strong>test USDC</strong>, which has <strong>no monetary value</strong> and cannot be
+            redeemed for real money. Never send mainnet assets, real USDC, or real funds to any address shown in
+            this app.
+          </p>
+        )}
         <aside className="doc-note">
           <span className="settle-label">Onchain actions are irreversible</span>
           <p>
-            Transactions you sign are broadcast to a public test blockchain and cannot be undone. Always review
-            every wallet prompt — the amount, the contract, and the network — before approving.
+            Transactions you sign are broadcast to a public {forArcNetwork("", "test ")}blockchain and cannot be
+            undone. Always review every wallet prompt — the amount, the contract, and the network — before
+            approving.
           </p>
         </aside>
       </>
@@ -111,17 +138,29 @@ const CLAUSES: LegalClause[] = [
         </li>
         <li>
           If you connect a <strong>browser wallet</strong> instead, that wallet signs every action and Splitsy
-          never holds its keys. If you sign in with a provider above, a{" "}
-          <strong>Circle test-USDC wallet</strong> is created for your identity and operated on your behalf on
-          Arc Testnet — appropriate here because all funds are valueless test USDC.
+          never holds its keys. If you sign in with a provider above, a wallet is created for your identity on{" "}
+          {ARC_LABEL}
+          {ON_PRIVY ? (
+            <>
+              {" "}
+              by <strong>Privy</strong>. You own it: every payment is confirmed in Privy&apos;s own prompt, and
+              you can export the private key and take the wallet with you.
+            </>
+          ) : (
+            <>
+              {" "}
+              by <strong>Circle</strong> and operated on your behalf, gated by a PIN you set.
+            </>
+          )}
         </li>
         <li>
           Receipt images you upload are sent to the server only to perform optical character recognition (OCR)
           and are not persisted after processing.
         </li>
         <li>
-          Wallet addresses, amounts, and bill metadata submitted on-chain are written to a public test
-          blockchain and are inherently visible to anyone — do not include sensitive personal information.
+          Wallet addresses, amounts, and bill metadata submitted on-chain are written to a public{" "}
+          {forArcNetwork("", "test ")}blockchain and are inherently visible to anyone — do not include sensitive
+          personal information.
         </li>
         <li>
           Paying an on-chain bill in full records a{" "}
@@ -164,17 +203,29 @@ export default function DisclaimerPage() {
       }
       eyebrow="Legal & transparency"
       glance={[
-        { label: "Status", value: "Experimental demo" },
-        { label: "Network", value: "Arc Testnet" },
-        { label: "Funds", value: "Test USDC only — no real value" },
+        { label: "Status", value: "Experimental software" },
+        { label: "Network", value: ARC_LABEL },
+        {
+          label: "Funds",
+          value: forArcNetwork("Real USDC — payments are final", "Test USDC only — no real value"),
+        },
         { label: "Affiliation", value: "Independent project" },
       ]}
       lede={
-        <>
-          Splitsy is an independent, experimental demo. It runs on <strong>Arc Testnet</strong> with test USDC
-          that has no monetary value, involves <strong>no real funds</strong>, and is not affiliated with any of
-          the brands or networks it interoperates with. Please read the clauses below before using it.
-        </>
+        ON_MAINNET ? (
+          <>
+            Splitsy is an independent, experimental project. It runs on <strong>Arc</strong> with{" "}
+            <strong>real USDC</strong>, payments it makes <strong>cannot be reversed</strong>, and it is not
+            affiliated with any of the brands or networks it interoperates with. Please read the clauses below
+            before using it.
+          </>
+        ) : (
+          <>
+            Splitsy is an independent, experimental demo. It runs on <strong>Arc Testnet</strong> with test USDC
+            that has no monetary value, involves <strong>no real funds</strong>, and is not affiliated with any
+            of the brands or networks it interoperates with. Please read the clauses below before using it.
+          </>
+        )
       }
       sibling={{ href: "/legal", label: "Terms & Privacy" }}
       title={

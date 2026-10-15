@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { Turnstile, type TurnstileInstance } from "@marsidev/react-turnstile";
+import { ARC_LABEL } from "@/lib/arc-chain";
 
 // Dedicated Email-OTP sign-in flow (its own page, not a header popup). Two steps:
 // enter email → enter the 6-digit code. On success /api/auth/email/verify sets
@@ -117,7 +118,7 @@ export default function EmailSignInForm() {
     <main className="iou-page" data-signin>
       <div className="iou-rail">
         <Link href="/app">← splitsy</Link>
-        <span className="iou-rail-end">sign in · arc testnet</span>
+        <span className="iou-rail-end">sign in · {ARC_LABEL.toLowerCase()}</span>
       </div>
 
       <div className="iou-composer" data-revealed={revealed === null ? undefined : revealed}>

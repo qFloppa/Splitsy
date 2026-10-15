@@ -1,5 +1,6 @@
 import { PRICES } from "@/lib/x402/pricing";
 import { CONFIDENCE_THRESHOLD } from "@/lib/scout/decide";
+import { ARC, ARC_LABEL } from "@/lib/arc-chain";
 
 // Prices and the confidence gate are IMPORTED, never restated. This page must
 // not be able to advertise a price the seller does not charge, and the two
@@ -53,8 +54,8 @@ export const ACTS: Act[] = [
       { kind: "res", text: "402 Payment Required" },
       { kind: "note", text: "PAYMENT-REQUIRED (base64)" },
       { kind: "field", text: "scheme", value: '"exact"' },
-      { kind: "field", text: "network", value: '"eip155:5042002"', note: "Arc Testnet" },
-      { kind: "field", text: "asset", value: "0x3600…0000", note: "USDC" },
+      { kind: "field", text: "network", value: `"${ARC.caip2}"`, note: ARC_LABEL },
+      { kind: "field", text: "asset", value: `${ARC.usdcAddress.slice(0, 6)}…${ARC.usdcAddress.slice(-4)}`, note: "USDC" },
       { kind: "field", text: "amount", value: '"5000"', note: OCR_PRICE },
       { kind: "field", text: "maxTimeoutSeconds", value: "608400" },
       { kind: "field", text: "extra.name", value: '"GatewayWalletBatched"' },

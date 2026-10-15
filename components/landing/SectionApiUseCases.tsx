@@ -17,7 +17,7 @@ const CAPABILITIES = [
     Icon: ListChecks,
     title: "Settle bills hands-free",
     description:
-      "Connect a Circle Agent Wallet and your bills pay themselves. The agent " +
+      "Point an agent wallet at your on-chain mandate and your bills pay themselves. The agent " +
       "checks what you owe, reviews for fraud, and settles in USDC while you sleep.",
     tag: "Autopay",
   },

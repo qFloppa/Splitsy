@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { CHAIN_CONFIGS, GATEWAY_DOMAINS } from "@circle-fin/x402-batching/client";
-import { ARC_PROFILES, forArcNetwork, resolveArcProfile } from "./arc-chain.ts";
+import { ARC_LABEL, ARC_PROFILES, MONEY_NOTE, USDC_LABEL, forArcNetwork, resolveArcProfile } from "./arc-chain.ts";
 
 // The whole point of the module. Every one of these used to be a separate
 // `process.env.ARC_TESTNET_* ?? "<a testnet value>"` at 24 call sites, so a
@@ -177,6 +177,38 @@ test("a mainnet deployment never falls back to the testnet slot", async () => {
     assert.equal(reloaded.ARC.network, "mainnet");
     assert.equal(reloaded.forArcNetwork("main-value", "test-value"), "main-value");
     assert.equal(reloaded.forArcNetwork(undefined, "test-value"), undefined);
+  } finally {
+    delete process.env.NEXT_PUBLIC_ARC_NETWORK;
+  }
+});
+
+// THE WORDS FOLLOW THE SWITCH, which is what ~90 hand-typed "Arc Testnet" and
+// "test USDC" strings across app/ and components/ did not do before these three
+// constants replaced them. Pinned in both directions because each one is wrong in
+// a different way: "Arc Testnet" on a live network understates the risk, and
+// "no real funds" there is an outright false reassurance printed under every
+// route on the site.
+test("the network's name and the money's status follow the switch", async () => {
+  assert.equal(ARC_LABEL, "Arc Testnet");
+  assert.equal(USDC_LABEL, "test USDC");
+  assert.equal(MONEY_NOTE, "no real funds");
+
+  process.env.NEXT_PUBLIC_ARC_NETWORK = "mainnet";
+  try {
+    // Through a variable, like the test above: an inline specifier makes tsc try
+    // to resolve the cache-busting query as a real module path.
+    const fresh = "./arc-chain.ts?mainnet-labels";
+    const reloaded = await import(fresh);
+    assert.equal(reloaded.ARC_LABEL, "Arc");
+    assert.equal(reloaded.USDC_LABEL, "USDC");
+    assert.equal(reloaded.MONEY_NOTE, "real USDC");
+    // The one phrase that must never survive the flip, wherever it is assembled.
+    assert.ok(
+      ![reloaded.ARC_LABEL, reloaded.USDC_LABEL, reloaded.MONEY_NOTE].some((label) =>
+        /testnet|no real funds/i.test(label),
+      ),
+      "a mainnet build must print no testnet wording",
+    );
   } finally {
     delete process.env.NEXT_PUBLIC_ARC_NETWORK;
   }

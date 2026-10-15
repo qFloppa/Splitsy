@@ -49,6 +49,7 @@ import type { AccountProvider, IdentityProvider } from "@/lib/types";
 import { arcWalletClient } from "@/lib/wagmi";
 import { DISCORD_PATH, ProviderChip, ProviderTag } from "./ProviderTag";
 import { payErrorMessage, walletPost } from "./signed-send";
+import { ARC_LABEL } from "@/lib/arc-chain";
 
 type Me = { id: string; provider?: AccountProvider | null; handle: string; walletAddress: string | null };
 
@@ -1247,7 +1248,7 @@ export default function IouClient({ onReceipts }: { onReceipts: () => void }) {
         <button onClick={onReceipts} type="button">
           ← receipts
         </button>
-        <span className="iou-rail-end">arc testnet</span>
+        <span className="iou-rail-end">{ARC_LABEL.toLowerCase()}</span>
       </div>
 
       <div className="iou-composer" data-revealed={revealed === null ? undefined : revealed}>

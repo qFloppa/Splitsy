@@ -3,10 +3,28 @@ import { ArrowUpRight } from "lucide-react";
 import type { ReactNode } from "react";
 
 import { ARC_EXPLORER } from "@/lib/arc-explorer";
+import { ARC, ARC_LABEL, USDC_LABEL, forArcNetwork } from "@/lib/arc-chain";
+import { siteContracts } from "@/lib/site-contracts";
+import { bridgeSourceChains } from "@/lib/appkit-bridge";
 import { Nav } from "@/components/landing/Nav";
 
 import { DocsRail } from "./DocsRail";
 import { PARTS, SECTIONS, section } from "./sections";
+
+// Arc's ERC-8004 predeploys, which are the CHAIN's addresses rather than this
+// deployment's configuration — so unlike the contracts in §Deployment they are
+// written here rather than read from siteContracts(). Both pairs verified on
+// chain, see docs/deployments.md. They are a pair and not a single value because
+// a reference table that prints the testnet pair under an "Arc" heading on a
+// mainnet build is a wrong address wearing a checkable link.
+const IDENTITY_8004 = {
+  mainnet: "0x8004A169FB4a3325136EB29fA0ceB6D2e539a432",
+  testnet: "0x8004A818BFB912233c491871b3d84c89A494BD9e",
+};
+const REPUTATION_8004 = {
+  mainnet: "0x8004BAa17C55a88189AE136b182e5fdA19dE9b63",
+  testnet: "0x8004B663056A597Dffe9eCcC1965A193B7388713",
+};
 
 // The reference document.
 //
@@ -259,9 +277,12 @@ export default function DocsPage() {
           <dl className="bill-contents doc-glance">
             {[
               { label: "Primary asset", value: "USDC" },
-              { label: "Network", value: "Arc Testnet · test USDC only" },
+              { label: "Network", value: `${ARC_LABEL} · ${USDC_LABEL}${forArcNetwork("", " only")}` },
               { label: "Payment types", value: "IOUs, one-time bills and recurring tabs" },
-              { label: "Cross-chain payment", value: "Circle Gateway (Avalanche, Base, Ethereum → Arc)" },
+              {
+                label: "Cross-chain payment",
+                value: `Circle Gateway (${bridgeSourceChains.length} chains → Arc)`,
+              },
             ].map((fact) => (
               <div className="bill-cell" key={fact.label}>
                 <dt className="settle-label">{fact.label}</dt>
@@ -284,7 +305,8 @@ export default function DocsPage() {
                 Contents
               </h2>
               <span className="bill-poster-fact">
-                <b>{SECTIONS.length}</b> sections in <b>{PARTS.length}</b> parts · Arc Testnet · test USDC only
+                <b>{SECTIONS.length}</b> sections in <b>{PARTS.length}</b> parts · {ARC_LABEL} · {USDC_LABEL}
+                {forArcNetwork("", " only")}
               </span>
             </div>
 
@@ -476,7 +498,7 @@ export default function DocsPage() {
                 <p>
                   Splitsy lets you split a bill with anyone by their <strong>handle or email</strong> — even before they have ever
                   opened the app. You sign in with <strong>X, Discord, Google, or a one-time email code</strong>, and each method
-                  gives you a ready-to-use USDC wallet on Arc Testnet, so a debtor never has to install a browser wallet, hold a
+                  gives you a ready-to-use USDC wallet on {ARC_LABEL}, so a debtor never has to install a browser wallet, hold a
                   seed phrase, or understand gas to pay what they owe. This section explains exactly what data is used, how the
                   wallet is created, and why Splitsy makes the choices it does.
                 </p>
@@ -622,9 +644,17 @@ export default function DocsPage() {
                   ]}
                 />
                 <p>
-                  Because Splitsy runs on <strong>Arc Testnet with test USDC that has no monetary value</strong>, neither
-                  choice carries financial risk today. That is also why the comparison is worth reading rather than glossing:
-                  it is the decision a real-money deployment turns on.
+                  {forArcNetwork(
+                    <>
+                      This deployment is on <strong>Arc with real USDC</strong>, so the comparison above is not academic:
+                      it is the decision this deployment has already made, and the money it moves is real.
+                    </>,
+                    <>
+                      Because this deployment runs on <strong>Arc Testnet with test USDC that has no monetary value</strong>,
+                      neither choice carries financial risk today. That is also why the comparison is worth reading rather
+                      than glossing: it is the decision a real-money deployment turns on.
+                    </>,
+                  )}
                 </p>
 
                 <Subhead>Two rails for a debt</Subhead>
@@ -668,7 +698,8 @@ export default function DocsPage() {
                 <Note title="What Splitsy stores about you">
                   Only your provider identity (an id/handle, or email for Google/email sign-in), display name, avatar URL, wallet
                   address, and — on a deployment that uses PIN-gated sends — a salted hash of that PIN. No tokens in the browser,
-                  and no provider content beyond your basic profile. Everything you can pay or be paid is test USDC on Arc Testnet.
+                  and no provider content beyond your basic profile. Everything you can pay or be paid is {USDC_LABEL} on{" "}
+                  {ARC_LABEL}.
                 </Note>
               </Section>
 
@@ -1220,18 +1251,18 @@ export default function DocsPage() {
                   <em> &quot;Paid N bills in full on Arc · 97/100 timeliness&quot;</em>.
                 </p>
                 <Table
-                  head={["Registry", "Arc Testnet address", "Role"]}
+                  head={["Registry", `${ARC_LABEL} address`, "Role"]}
                   rows={[
                     [
                       <code key="r">IdentityRegistry</code>,
-                      <code key="a">0x8004A818BFB912233c491871b3d84c89A494BD9e</code>,
+                      <code key="a">{forArcNetwork(IDENTITY_8004.mainnet, IDENTITY_8004.testnet)}</code>,
                       <>
                         Mints one ERC-721 identity NFT per payer wallet via <code>register(metadataURI)</code>; the tokenId is the payer&apos;s <em>agent id</em>.
                       </>,
                     ],
                     [
                       <code key="r">ReputationRegistry</code>,
-                      <code key="a">0x8004B663056A597Dffe9eCcC1965A193B7388713</code>,
+                      <code key="a">{forArcNetwork(REPUTATION_8004.mainnet, REPUTATION_8004.testnet)}</code>,
                       <>
                         Stores each payment&apos;s score via <code>giveFeedback(agentId, score, …, feedbackHash)</code>.
                       </>,
@@ -1447,10 +1478,15 @@ export default function DocsPage() {
                   Arc has a test network and a live one, and a Splitsy deployment runs on exactly one of them. Which one is a
                   single setting, and everything that follows from it — chain id, RPC, explorer, USDC address, the two Gateway
                   contracts — is resolved from that one answer rather than configured value by value. This deployment is on{" "}
-                  <strong>Arc Testnet</strong>, where USDC is test USDC and has no monetary value.
+                  <strong>{ARC_LABEL}</strong>
+                  {forArcNetwork(", where USDC is real money", ", where USDC is test USDC and has no monetary value")}.
                 </p>
                 <Table
-                  head={["", "Arc Testnet (here)", "Arc mainnet"]}
+                  head={[
+                    "",
+                    `Arc Testnet${forArcNetwork("", " (here)")}`,
+                    `Arc mainnet${forArcNetwork(" (here)", "")}`,
+                  ]}
                   rows={[
                     ["Chain id", <code key="v">5042002</code>, <code key="v">5042</code>],
                     ["Explorer", "testnet.arcscan.app", "explorer.arc.io"],
@@ -1472,7 +1508,7 @@ export default function DocsPage() {
                       title: "Circle Gateway",
                       body: (
                         <>
-                          Pay from <strong>any supported chain</strong> (on testnet: Avalanche Fuji, Base Sepolia, Ethereum Sepolia) and
+                          Pay from <strong>any supported chain</strong> ({bridgeSourceChains.map((c) => c.label).join(", ")}) and
                           settle on Arc. Two-step flow: sign an EIP-712 burn intent on the source chain (gas-free), then execute the mint
                           transaction on Arc. No bridge UI, no waiting — native USDC moves chain-to-chain in seconds.
                         </>
@@ -1576,7 +1612,7 @@ export default function DocsPage() {
                 <Subhead>Funding your agent</Subhead>
                 <p>
                   The <strong>Fund</strong> button sits next to the agent&apos;s balance on the settlement-agents panel.
-                  Whichever route you use, it is an ordinary inbound USDC transfer on Arc Testnet — there is no special
+                  Whichever route you use, it is an ordinary inbound USDC transfer on {ARC_LABEL} — there is no special
                   deposit contract, and you can verify the balance yourself on{" "}
                   <a href={ARC_EXPLORER}>Arcscan</a>.
                 </p>
@@ -1588,7 +1624,7 @@ export default function DocsPage() {
                       <>
                         Your wallet signs a USDC <code>transfer</code> to the agent&apos;s address. Splitsy waits for the receipt and checks it succeeded.
                       </>,
-                      "A wallet connected on Arc Testnet with USDC.",
+                      `A wallet connected on ${ARC_LABEL} with USDC.`,
                     ],
                     [
                       "From your Splitsy wallet",
@@ -1597,7 +1633,7 @@ export default function DocsPage() {
                     ],
                     [
                       "From anywhere else",
-                      "Send USDC to the agent’s address from any wallet or faucet. Nothing in the app needs to know.",
+                      `Send USDC to the agent’s address from any wallet${forArcNetwork("", " or faucet")}. Nothing in the app needs to know.`,
                       "Just the address, shown on the card and linked to the explorer.",
                     ],
                   ]}
@@ -1622,7 +1658,7 @@ export default function DocsPage() {
                 <Subhead>Three agents on every job</Subhead>
                 <p>
                   The settlement itself is not a single hidden server call. It is an ERC-8183 job on the already-deployed{" "}
-                  <code>AgenticCommerce</code> contract on Arc Testnet, with three <strong>distinct</strong> wallets in three
+                  <code>AgenticCommerce</code> contract on {ARC_LABEL}, with three <strong>distinct</strong> wallets in three
                   roles, so no agent ever grades its own work:
                 </p>
                 <Table
@@ -1960,7 +1996,7 @@ export default function DocsPage() {
                         <>
                           Scout calls <code>/api/ocr</code>. The endpoint answers{" "}
                           <code>402 Payment Required</code> with a <code>PAYMENT-REQUIRED</code> header quoting the
-                          terms: scheme <code>exact</code>, network <code>eip155:5042002</code> (Arc Testnet), the USDC
+                          terms: scheme <code>exact</code>, network <code>{ARC.caip2}</code> ({ARC_LABEL}), the USDC
                           asset, and the amount in atomic units (<code>5000</code> = $0.005).
                         </>
                       ),
@@ -2032,15 +2068,15 @@ export default function DocsPage() {
                 <p>
                   Scout does not use a wallet like yours. It holds a dedicated server-side account on Arc whose{" "}
                   <strong>only</strong> job is signing x402 payment authorizations — deliberately separate from every user
-                  wallet, and funded with a small amount of test USDC deposited into Circle&apos;s Gateway so its payments can
-                  be batched. Batching is also what limits Scout to the test network: the SDK it pays through has no Arc
-                  mainnet support, so a mainnet deployment runs with Scout switched off rather than paying real USDC on a
-                  test chain.
+                  wallet, and funded with a small amount of {USDC_LABEL} deposited into Circle&apos;s Gateway so its
+                  payments can be batched. The batching SDK had no Arc mainnet support for a while, which pinned Scout to
+                  the test network; since <code>@circle-fin/x402-batching</code> 3.5.0 added Arc, Scout follows whichever
+                  network the deployment is on.
                 </p>
                 <p>
                   It is also registered as an agent on the same{" "}
                   <strong>ERC-8004 IdentityRegistry</strong> that gives payers their reputation NFTs (
-                  <code>0x8004A818BFB912233c491871b3d84c89A494BD9e</code>), via{" "}
+                  <code>{forArcNetwork(IDENTITY_8004.mainnet, IDENTITY_8004.testnet)}</code>), via{" "}
                   <code>register(metadataURI)</code>. That means the agent that scanned your receipt has a
                   publicly checkable identity: the scan result shows{" "}
                   <em>&quot;scanned by agent 0x… — see its onchain identity&quot;</em> and links straight to{" "}
@@ -2336,11 +2372,15 @@ export default function DocsPage() {
                     ],
                   ]}
                 />
-                <Subhead>The live Arc Testnet deployment</Subhead>
-                <pre className="doc-code">{`BillSplitRegistry   0x8e30ca7f7347854629619aec68bd29d7ebedbd48
-HandleEscrow        0x4F22222942448D7Fc96DDF505e1e28edaF0957C7
-RecurringTabFactory 0x9Cc377C957255582BCa8084a950F52e59fB0a41E
-USDC                0x3600000000000000000000000000000000000000`}</pre>
+                <Subhead>The live {ARC_LABEL} deployment</Subhead>
+                <pre className="doc-code">
+                  {[
+                    ...siteContracts().map((c) => [c.label, c.address]),
+                    ["USDC", ARC.usdcAddress],
+                  ]
+                    .map(([label, address]) => `${label.padEnd(19)} ${address}`)
+                    .join("\n")}
+                </pre>
                 <p>
                   Every one of them is readable on the explorer, and the two addresses the app writes bills and escrow
                   deposits to are printed in the footer of every page — so what this document claims and what the running site
@@ -2435,9 +2475,20 @@ USDC                0x3600000000000000000000000000000000000000`}</pre>
                   <li>Each settlement job uses three distinct wallets for client, provider, and evaluator, so the agent that is paid for a job is never the agent that decides it was done. The evaluator re-reads the registry on chain rather than trusting the provider&apos;s claim.</li>
                 </ul>
                 <Note title="Disclaimer & acknowledgments">
-                  Splitsy is an experimental demo on Arc Testnet that uses test USDC only — no real funds — and is not
-                  affiliated with any referenced brand. See the full <Link href="/disclaimer">disclaimer and
-                  acknowledgments</Link> for testnet, trademark, privacy, and liability details.
+                  {forArcNetwork(
+                    <>
+                      Splitsy is experimental software on Arc that settles in <strong>real USDC</strong>, and it is not
+                      affiliated with any referenced brand. Payments cannot be reversed. See the full{" "}
+                      <Link href="/disclaimer">disclaimer and acknowledgments</Link> for trademark, privacy, and
+                      liability details.
+                    </>,
+                    <>
+                      Splitsy is an experimental demo on Arc Testnet that uses test USDC only — no real funds — and is
+                      not affiliated with any referenced brand. See the full{" "}
+                      <Link href="/disclaimer">disclaimer and acknowledgments</Link> for testnet, trademark, privacy,
+                      and liability details.
+                    </>,
+                  )}
                 </Note>
               </Section>
 

@@ -21,7 +21,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { ChangeEvent, DragEvent, FormEvent, ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { getAddress } from "viem";
-import { ARC } from "@/lib/arc-chain";
+import { ARC, ARC_LABEL, USDC_LABEL } from "@/lib/arc-chain";
 import { useAccount, useConnect, useDisconnect } from "wagmi";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { DiscordIcon, XIcon } from "@/components/landing/ProviderIcons";
@@ -1256,7 +1256,7 @@ export default function HomeClient({
         if (!outcome.ok) {
           setBillState("error");
           setBillMessage(outcome.error === "insufficient_funds"
-            ? "Your wallet needs more test USDC to cover the gas for creating this bill."
+            ? `Your wallet needs more ${USDC_LABEL} to cover the gas for creating this bill.`
             : payErrorMessage(outcome.error));
           return;
         }
@@ -1280,7 +1280,7 @@ export default function HomeClient({
         setBillMessage("Bill registry is not configured yet.");
         return;
       }
-      setBillMessage("Switching to Arc Testnet…");
+      setBillMessage(`Switching to ${ARC_LABEL}…`);
       await ensureBillSplitWalletOnArc(wallet);
       setBillMessage("Writing the split to Arc.");
       const result = await createBillSplit({
@@ -1343,7 +1343,7 @@ export default function HomeClient({
       status: "running",
       errorMessage: "",
       steps: [
-        { key: "switch", label: "Connect to Arc Testnet", hint: "Approve the network switch in your wallet", state: "active" },
+        { key: "switch", label: `Connect to ${ARC_LABEL}`, hint: "Approve the network switch in your wallet", state: "active" },
         { key: "approve", label: "Approve USDC", hint: "Let the bill registry move your USDC", state: "pending" },
         { key: "pay", label: "Send payment", hint: "Settle the debt on Arc with a memo", state: "pending" },
       ],
@@ -1398,7 +1398,7 @@ export default function HomeClient({
       steps: [
         { key: "approve", label: "Approve USDC", hint: `Allow CCTP to move USDC on ${source}`, state: "active" },
         { key: "bridge", label: "Bridge via CCTP", hint: "Burn on the source chain, then await Circle's attestation", state: "pending" },
-        { key: "claim", label: "Claim on Arc", hint: "Mint the bridged USDC on Arc Testnet", state: "pending" },
+        { key: "claim", label: "Claim on Arc", hint: `Mint the bridged USDC on ${ARC_LABEL}`, state: "pending" },
       ],
     });
   }
@@ -1723,7 +1723,7 @@ export default function HomeClient({
       // registry v2 is at most two: one approval, then one settle carrying every
       // claim and pay leg. A collect-only settle skips the approval entirely.
       steps: [
-        { key: "switch", label: "Connect to Arc Testnet", hint: "Approve the network switch in your wallet", state: "active" as const },
+        { key: "switch", label: `Connect to ${ARC_LABEL}`, hint: "Approve the network switch in your wallet", state: "active" as const },
         ...(payLegs.length
           ? ([{ key: "approve", label: "Approve USDC once", hint: "One approval covers every payment below", state: "pending" }] satisfies FlowStep[])
           : []),
@@ -1893,7 +1893,7 @@ export default function HomeClient({
         if (settled) {
           setFlowStep("claim", "done", { explorerUrl: event.explorerUrl });
         } else {
-          setFlowStep("claim", "active", { hint: "Minting USDC on Arc Testnet…" });
+          setFlowStep("claim", "active", { hint: `Minting USDC on ${ARC_LABEL}…` });
         }
         break;
     }
@@ -2292,7 +2292,7 @@ export default function HomeClient({
           setRecurringCreateMessageTone("error");
           setRecurringCreateMessage(
             data.error === "insufficient_funds"
-              ? "Your wallet needs more test USDC to cover the gas for creating this tab."
+              ? `Your wallet needs more ${USDC_LABEL} to cover the gas for creating this tab.`
               : (data.error ?? "Could not create the recurring tab."),
           );
           return;
@@ -2320,9 +2320,9 @@ export default function HomeClient({
       if (members.some((member) => member.toLowerCase() === wallet.account.toLowerCase())) {
         throw new Error("You can't add your own wallet as a member of your recurring tab.");
       }
-      setRecurringCreateMessage("Switching to Arc Testnet…");
+      setRecurringCreateMessage(`Switching to ${ARC_LABEL}…`);
       await ensureRecurringWalletOnArc(wallet);
-      setRecurringCreateMessage("Creating recurring tab on Arc Testnet.");
+      setRecurringCreateMessage(`Creating recurring tab on ${ARC_LABEL}.`);
       const result = await createRecurringTab({
         ...wallet,
         recipient: wallet.account,
@@ -2516,7 +2516,7 @@ export default function HomeClient({
       const approvalValue = authorizationAmount.trim() || defaultApproval;
       const amount = usdcToUnits(approvalValue);
       setRecurringState("working");
-      setRecurringMessage("Switching to Arc Testnet…");
+      setRecurringMessage(`Switching to ${ARC_LABEL}…`);
       await ensureRecurringWalletOnArc(wallet);
       setRecurringMessage("Approving the tab to collect outstanding recurring debt from your wallet.");
       await authorizeRecurringPayment({ ...wallet, tabAddress, amount });
@@ -2564,7 +2564,7 @@ export default function HomeClient({
 
     try {
       setRecurringState("working");
-      setRecurringMessage("Switching to Arc Testnet…");
+      setRecurringMessage(`Switching to ${ARC_LABEL}…`);
       await ensureRecurringWalletOnArc(wallet);
       setRecurringMessage("Revoking recurring collection approval.");
       await approveUsdc({ ...wallet, spender: tabAddress, amount: 0n });
@@ -2616,7 +2616,7 @@ export default function HomeClient({
 
     try {
       setRecurringState("working");
-      setRecurringMessage("Switching to Arc Testnet…");
+      setRecurringMessage(`Switching to ${ARC_LABEL}…`);
       await ensureRecurringWalletOnArc(wallet);
       setRecurringMessage("Claiming collected recurring funds.");
       await claimRecurringFunds({ ...wallet, tabAddress });
@@ -2737,7 +2737,7 @@ export default function HomeClient({
             {billsTab ? (
               <div className="app-strap">
                 <h1 className="settle-label app-strapline">Split bills, settle cleanly</h1>
-                <span className="settle-label app-network">Arc Testnet</span>
+                <span className="settle-label app-network">{ARC_LABEL}</span>
               </div>
             ) : null}
           </div>
@@ -2920,7 +2920,7 @@ export default function HomeClient({
                     Committed
                   </span>
                   <div className="bill-poster-marks">
-                    <span className="bill-poster-fact">Arc Testnet</span>
+                    <span className="bill-poster-fact">{ARC_LABEL}</span>
                     {/* The registry it now lives in, as evidence rather than as
                         decoration — same mono link the recurring posters use. */}
                     <a
@@ -4679,7 +4679,7 @@ function RecurringWorkspace({
                               ? `Your Arc balance is below the $${unitsToUsdc(bridgeAmount)} USDC this cycle needs. `
                               : ""}
                             CCTP V2 moves USDC from another chain to Arc in three transactions — approve, bridge, then
-                            claim on Arc Testnet. After it lands, approve the tab in 04 so the due cycle can be
+                            claim on {ARC_LABEL}. After it lands, approve the tab in 04 so the due cycle can be
                             collected.
                           </p>
                         ) : null}

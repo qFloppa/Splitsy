@@ -6,7 +6,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { useAccount } from "wagmi";
 import { getWalletClient, switchChain, writeContract, waitForTransactionReceipt } from "wagmi/actions";
-import { ARC } from "@/lib/arc-chain";
+import { ARC, ARC_LABEL } from "@/lib/arc-chain";
 import { formatUnits } from "viem";
 import type { WalletSession } from "@/lib/wallet-session";
 import SignInMenu from "@/app/SignInMenu";
@@ -194,7 +194,7 @@ function PayFrame({
                   document's heading. */}
               <div className="app-strap">
                 <p className="settle-label app-strapline">Split bills, settle cleanly</p>
-                <span className="settle-label app-network">Arc Testnet</span>
+                <span className="settle-label app-network">{ARC_LABEL}</span>
               </div>
             </div>
             <div className="app-rails">
@@ -395,7 +395,7 @@ export default function PayClient({ token, walletSession }: { token: string; wal
       // Whatever chain the payer arrived on, the registry is on Arc. Announced
       // rather than done silently: the wallet is about to raise a network prompt,
       // and an unexplained one reads as a phishing attempt.
-      setMessage("Switching to Arc Testnet…");
+      setMessage(`Switching to ${ARC_LABEL}…`);
       const walletClient = await arcWalletClient();
       const wallet = await createBillSplitWallet(walletClient);
       await ensureBillSplitWalletOnArc(wallet);
@@ -648,7 +648,7 @@ export default function PayClient({ token, walletSession }: { token: string; wal
         <main className="pay-shell">
         <aside className="pay-poster" data-settled={bill.settled}>
           <div>
-            <p className="pay-label">Bill #{bill.billId} · Arc Testnet</p>
+            <p className="pay-label">Bill #{bill.billId} · {ARC_LABEL}</p>
             <h1 className="pay-merchant">{bill.merchant || "Bill"}</h1>
             {bill.settled ? (
               <p className="pay-amount" data-settled="true">
@@ -811,7 +811,7 @@ export default function PayClient({ token, walletSession }: { token: string; wal
                   className="pay-method"
                   disabled={paying || selected.size === 0}
                   onClick={() => void payWithSplitsyWallet()}
-                  title="Splitsy wallet (Arc Testnet only) — uses your DCW wallet"
+                  title={`Splitsy wallet (${ARC_LABEL} only) — uses your Splitsy-provisioned wallet`}
                   type="button"
                 >
                   Splitsy wallet

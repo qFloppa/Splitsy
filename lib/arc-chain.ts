@@ -178,3 +178,31 @@ export const ARC = resolveArcProfile(
     process.env.ARC_RPC_URL || process.env.NEXT_PUBLIC_ARC_RPC_URL,
   ),
 );
+
+/**
+ * THE CHAIN'S NAME AND WHAT ITS MONEY IS, in the words a page prints.
+ *
+ * Every address on this site already followed the switch. The WORDS did not:
+ * ninety-odd "Arc Testnet" and "test USDC" strings were typed into app/ and
+ * components/ by hand, and they are the dangerous copy, because the testnet
+ * wording is a RISK DISCLOSURE in one direction and a FALSE REASSURANCE in the
+ * other. "No real funds" left standing on a mainnet build tells somebody their
+ * money is play money while it is not — the quiet, expensive failure this whole
+ * module exists to stop, in prose instead of in an address.
+ *
+ * Three of these, because the surfaces need three different things and nothing
+ * more: the chain, the asset, and the one-word verdict on whether the money is
+ * real. Sentences that need a whole clause rewritten (the footer disclaimer,
+ * /legal, /disclaimer, /safety) branch on `ARC.network === "mainnet"` at the
+ * point of use instead — a paragraph is not a label and must not be assembled
+ * from fragments.
+ *
+ * Build-time inlined like everything else here, so flipping
+ * NEXT_PUBLIC_ARC_NETWORK in Vercel and redeploying moves the words with the
+ * addresses rather than leaving them a release behind.
+ */
+export const ARC_LABEL = forArcNetwork("Arc", "Arc Testnet");
+/** The asset. "test USDC" is the disclosure; on mainnet it is just USDC. */
+export const USDC_LABEL = forArcNetwork("USDC", "test USDC");
+/** The verdict, for the stamps that print it beside ARC_LABEL. */
+export const MONEY_NOTE = forArcNetwork("real USDC", "no real funds");

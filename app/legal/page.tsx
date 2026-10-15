@@ -1,15 +1,26 @@
 import Link from "next/link";
 
 import { LegalDoc, type LegalClause } from "@/components/LegalDoc";
+import { ARC, ARC_LABEL, forArcNetwork } from "@/lib/arc-chain";
+import { walletProviderName } from "@/lib/wallet-provider";
 
 // Render at request time so the nonce-based CSP (see proxy.ts) is applied to
 // this page's framework scripts.
 export const dynamic = "force-dynamic";
 
+// The network and the custody model, read from the deployment — see the same two
+// constants and the same reasoning in app/disclaimer/page.tsx. This document is
+// the binding one, so a clause describing a wallet nobody is given, or a network
+// nobody is on, is the worst version of stale.
+const ON_MAINNET = ARC.network === "mainnet";
+const ON_PRIVY = walletProviderName() === "privy";
+
 export const metadata = {
   title: "Terms & Privacy",
-  description:
+  description: forArcNetwork(
+    "The combined Terms of Service and Privacy Policy for Splitsy — experimental bill-splitting software on Arc that settles in real USDC and collects only the profile from the sign-in provider you choose (X, Discord, Google, or email).",
     "The combined Terms of Service and Privacy Policy for Splitsy — an experimental bill-splitting demo on Arc Testnet that uses test USDC only and collects only the profile from the sign-in provider you choose (X, Discord, Google, or email).",
+  ),
   alternates: { canonical: "/legal" },
   robots: { index: true, follow: true },
 };
@@ -31,10 +42,19 @@ const CLAUSES: LegalClause[] = [
     body: (
       <p>
         Splitsy (&quot;we&quot;, &quot;us&quot;) provides a prototype for scanning receipts, splitting shared
-        costs, and settling <strong>test USDC</strong> payments on Arc Testnet. It is offered for demonstration
-        and educational purposes only and involves <strong>no real funds</strong>. By using Splitsy you agree to
-        this policy and to the <a href="#terms">Terms of Service</a> below. If you do not agree, please do not
-        use the app.
+        costs, and settling USDC payments on {ARC_LABEL}.{" "}
+        {ON_MAINNET ? (
+          <>
+            It is experimental software and the USDC it moves is <strong>real money</strong>.
+          </>
+        ) : (
+          <>
+            It is offered for demonstration and educational purposes only, uses <strong>test USDC</strong>, and
+            involves <strong>no real funds</strong>.
+          </>
+        )}{" "}
+        By using Splitsy you agree to this policy and to the <a href="#terms">Terms of Service</a> below. If you
+        do not agree, please do not use the app.
       </p>
     ),
   },
@@ -118,7 +138,7 @@ const CLAUSES: LegalClause[] = [
           payment status you create or that others share with you.
         </li>
         <li>
-          <strong>Onchain data</strong> — bills, debts, and payments submitted to Arc Testnet are written to a
+          <strong>Onchain data</strong> — bills, debts, and payments submitted to {ARC_LABEL} are written to a
           public blockchain and are inherently visible to anyone.
         </li>
         <li>
@@ -155,14 +175,23 @@ const CLAUSES: LegalClause[] = [
     id: "wallet",
     part: "Privacy",
     title: "Your wallet",
-    body: (
+    body: ON_PRIVY ? (
       <p>
-        On first sign-in we create a <strong>Circle developer-controlled wallet</strong> on Arc Testnet keyed to
+        On first sign-in we create a <strong>Privy embedded wallet</strong> on {ARC_LABEL} keyed to your provider
+        identity (your X or Discord id, or your email address for Google/email sign-in), so you can pay and get
+        paid in USDC with no crypto setup. It is an ordinary externally-owned account, not a contract wallet, and
+        it is <strong>yours</strong>: you confirm every payment in Privy&apos;s own prompt, and you can{" "}
+        <strong>export the private key</strong> at any time and use the wallet anywhere, with or without Splitsy.
+        Our server also holds a signing key for the wallet, so that it can carry out the payments you authorise
+        and the agent features you switch on; exporting the key does not remove that, so a wallet you want fully
+        to yourself should be moved to one you created elsewhere.
+      </p>
+    ) : (
+      <p>
+        On first sign-in we create a <strong>Circle developer-controlled wallet</strong> on {ARC_LABEL} keyed to
         your provider identity (your X or Discord id, or your email address for Google/email sign-in), so you can
-        pay and get paid in USDC with no crypto setup. Because this is a testnet demo using{" "}
-        <strong>test USDC with no monetary value</strong>, the wallet is operated server-side on your behalf.
-        Sending USDC is protected by a wallet PIN that you set. A future mainnet version would offer genuine
-        self-custody for real funds.
+        pay and get paid in USDC with no crypto setup. The wallet is operated server-side on your behalf, and
+        sending USDC is protected by a wallet PIN that you set.
       </p>
     ),
   },
@@ -213,8 +242,15 @@ const CLAUSES: LegalClause[] = [
   {
     id: "terms-testnet",
     part: "Terms",
-    title: "Experimental service — testnet only",
-    body: (
+    title: ON_MAINNET ? "Experimental service — real funds" : "Experimental service — testnet only",
+    body: ON_MAINNET ? (
+      <p>
+        Splitsy is experimental software operating on <strong>Arc</strong>, a live network. All balances,
+        payments, and tabs use <strong>real USDC</strong>. Onchain transactions are{" "}
+        <strong>irreversible</strong>: a payment sent to the wrong address, or for the wrong amount, cannot be
+        recalled by you, by the recipient, or by us. Use only funds you can afford to lose.
+      </p>
+    ) : (
       <p>
         Splitsy is a prototype for demonstration and educational purposes, operating exclusively on{" "}
         <strong>Arc Testnet</strong>. All balances, payments, and tabs use <strong>test USDC</strong>, which has{" "}
@@ -240,10 +276,17 @@ const CLAUSES: LegalClause[] = [
     title: "Wallet & PIN",
     body: (
       <p>
-        A Circle wallet is created for your account to send and receive test USDC on Arc Testnet. You set a
-        wallet PIN that is required to send funds; keep it secret. Because the Service is a testnet demo with
-        valueless test USDC, the wallet is operated on your behalf and Splitsy is not liable for any test
-        balances.
+        A wallet is created for your account to send and receive USDC on {ARC_LABEL}. You set a wallet{" "}
+        <strong>PIN</strong> that is required before anything is signed from it; keep it secret, and keep access
+        to your sign-in provider secure — whoever can sign in as you can reach the wallet.{" "}
+        {ON_PRIVY ? (
+          <>
+            You confirm each payment yourself, and you are responsible for what you confirm and for anything you
+            do with an <Link href="#wallet">exported key</Link>.
+          </>
+        ) : (
+          <>The wallet is operated on your behalf.</>
+        )}
       </p>
     ),
   },
@@ -365,10 +408,13 @@ export default function LegalPage() {
       clauses={CLAUSES}
       colophon={
         <p>
-          These terms bind you to the Service. What the Service actually <em>is</em> — an experimental testnet
-          demo, unaffiliated with any brand it names, holding no money worth holding — is set out plainly in the{" "}
-          <Link href="/disclaimer">Disclaimer &amp; acknowledgments</Link>. For privacy requests write to{" "}
-          <a href="mailto:privacy@splitsy.xyz">privacy@splitsy.xyz</a>, for security to{" "}
+          These terms bind you to the Service. What the Service actually <em>is</em> —{" "}
+          {forArcNetwork(
+            "experimental software, unaffiliated with any brand it names, moving real money on a live network",
+            "an experimental testnet demo, unaffiliated with any brand it names, holding no money worth holding",
+          )}{" "}
+          — is set out plainly in the <Link href="/disclaimer">Disclaimer &amp; acknowledgments</Link>. For
+          privacy requests write to <a href="mailto:privacy@splitsy.xyz">privacy@splitsy.xyz</a>, for security to{" "}
           <a href="mailto:security@splitsy.xyz">security@splitsy.xyz</a>, and for anything else to{" "}
           <a href="mailto:support@splitsy.xyz">support@splitsy.xyz</a>.
         </p>
@@ -378,15 +424,24 @@ export default function LegalPage() {
         { label: "We sell your data?", value: "Never" },
         { label: "Sign-in data used for", value: "Sign-in & matching only" },
         { label: "Email collected?", value: "Only with Google or email sign-in" },
-        { label: "Funds", value: "Test USDC — no real value" },
+        { label: "Funds", value: forArcNetwork("Real USDC on Arc", "Test USDC — no real value") },
       ]}
       lede={
-        <>
-          Splitsy is an independent, experimental demo on <strong>Arc Testnet</strong> using test USDC with no
-          monetary value. These combined terms and privacy policy explain the rules of using the app and exactly
-          what data it handles — in short: it collects only the basic profile from the sign-in method you choose
-          (<strong>X, Discord, Google, or email</strong>), and never posts on your behalf.
-        </>
+        ON_MAINNET ? (
+          <>
+            Splitsy is independent, experimental software on <strong>Arc</strong> settling in real USDC. These
+            combined terms and privacy policy explain the rules of using the app and exactly what data it
+            handles — in short: it collects only the basic profile from the sign-in method you choose (
+            <strong>X, Discord, Google, or email</strong>), and never posts on your behalf.
+          </>
+        ) : (
+          <>
+            Splitsy is an independent, experimental demo on <strong>Arc Testnet</strong> using test USDC with no
+            monetary value. These combined terms and privacy policy explain the rules of using the app and
+            exactly what data it handles — in short: it collects only the basic profile from the sign-in method
+            you choose (<strong>X, Discord, Google, or email</strong>), and never posts on your behalf.
+          </>
+        )
       }
       sibling={{ href: "/disclaimer", label: "Disclaimer" }}
       title={

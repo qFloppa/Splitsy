@@ -13,6 +13,7 @@ import ExportTab, { WalletMore } from "./ExportTab";
 import { ProviderIcon } from "./ProviderTag";
 import { privyLogout } from "./privy-signer";
 import { signedSend, walletPost, type SignedSendResult } from "./signed-send";
+import { ARC_LABEL, USDC_LABEL, forArcNetwork } from "@/lib/arc-chain";
 
 // The account, in the shape the server hands over with the page and /api/me
 // answers with. One declaration rather than two that have to agree
@@ -457,7 +458,7 @@ export default function XAuthControl({ session }: { session: WalletSession }) {
                     {tab === "info" ? (
                       <>
                         <p className="wallet-note">
-                          A Splitsy wallet on <b>Arc Testnet</b>, tied to <OwnHandle me={me} />. Pay and get paid in
+                          A Splitsy wallet on <b>{ARC_LABEL}</b>, tied to <OwnHandle me={me} />. Pay and get paid in
                           USDC — no crypto setup needed.
                         </p>
                         {me.walletAddress ? (
@@ -519,15 +520,23 @@ export default function XAuthControl({ session }: { session: WalletSession }) {
                                 </WalletMore>
                               </>
                             ) : null}
-                            <a
-                              href="https://faucet.circle.com"
-                              target="_blank"
-                              rel="noreferrer"
-                              className="settle-trigger wallet-out"
-                            >
-                              add test USDC
-                              <ArrowUpRight className="lp-row-out" size={13} />
-                            </a>
+                            {/* The faucet is TESTNET-ONLY, and not just stale
+                                wording on mainnet: there is no faucet for real
+                                USDC, so "add USDC" would be an outbound link to
+                                a page that cannot help. A mainnet wallet is
+                                funded by a transfer or a bridge, both of which
+                                the app already offers elsewhere. */}
+                            {forArcNetwork(null, (
+                              <a
+                                href="https://faucet.circle.com"
+                                target="_blank"
+                                rel="noreferrer"
+                                className="settle-trigger wallet-out"
+                              >
+                                add {USDC_LABEL}
+                                <ArrowUpRight className="lp-row-out" size={13} />
+                              </a>
+                            ))}
                           </div>
                         ) : (
                           <p className="wallet-note">Your wallet is still being set up.</p>
@@ -991,7 +1000,7 @@ function ReceiveTab({ address, copied, onCopy }: { address: string | null; copie
       </div>
       <p className="wallet-proof">{address}</p>
       <p className="wallet-note">
-        Share this address to receive USDC on <b>Arc Testnet</b>.
+        Share this address to receive USDC on <b>{ARC_LABEL}</b>.
       </p>
     </div>
   );
