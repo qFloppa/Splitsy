@@ -180,9 +180,22 @@ export async function POST(request: Request) {
   // every participant on the bill. The per-user AGENT is resolved inside
   // settleOne, because it is per account.
   //
-  // No Settler and no job market means autopay is OFF — the same reading an
+  // No Settler and no job market both mean autopay is OFF — the same reading an
   // unset mandate address already has. Never "settle without the job".
-  const settler = isSettlerConfigured() && isJobsConfigured() ? getSettler().address : null;
+  //
+  // TWO FACTS, TWO REASONS. These used to collapse into one `null`, and every
+  // skip it produced was logged as `agent_wallet_unavailable` — which is false
+  // whenever the job market is the thing missing, and false in the direction
+  // that costs the reader the most: their agent's wallet is fine, so the slug
+  // sends them to top up a balance that was never the problem. It is the live
+  // state on Arc mainnet, where Arc has not deployed ERC-8183 at all
+  // (docs/deployments.md), so EVERY autopay row on a mainnet deployment named
+  // the wrong cause. The panel maps the new slug to a sentence that says what is
+  // actually absent and that no user action fixes it.
+  const settlerReady = isSettlerConfigured();
+  const jobsReady = isJobsConfigured();
+  const settler = settlerReady && jobsReady ? getSettler().address : null;
+  const noSettlerReason = jobsReady ? "agent_wallet_unavailable" : "job_market_unavailable";
   // The origin the Settler buys its reviews on, mirroring scoutBaseUrl: a real
   // 402 round trip against this app, not an in-process call.
   const baseUrl = process.env.NEXT_PUBLIC_BASE_URL ?? new URL(request.url).origin;
@@ -198,6 +211,7 @@ export async function POST(request: Request) {
 
     const outcome = await settleOne({
       settler,
+      noSettlerReason,
       billId,
       debtor: address,
       userId,
@@ -237,6 +251,8 @@ const JOB_TTL_SECONDS = 3600n;
 
 async function settleOne(input: {
   settler: `0x${string}` | null;
+  /** Which fact made `settler` null, so the skip row names the real cause. */
+  noSettlerReason: "agent_wallet_unavailable" | "job_market_unavailable";
   billId: bigint;
   debtor: `0x${string}`;
   userId: string;
@@ -247,7 +263,7 @@ async function settleOne(input: {
   creatorScore: number | null;
   baseUrl: string;
 }): Promise<Outcome | null> {
-  const { billId, debtor, userId, settler } = input;
+  const { billId, debtor, userId, settler, noSettlerReason } = input;
   const billKey = billId.toString();
 
   const [rules, mandate, participant, spendable] = await Promise.all([
@@ -400,8 +416,8 @@ async function settleOne(input: {
   if (!decision.pay) return { debtor, decision: "skip", reason: decision.reason, amountUsdc: 0 };
 
   if (!settler) {
-    await releaseSpend(billKey, debtor, "agent_wallet_unavailable");
-    return { debtor, decision: "skip", reason: "agent_wallet_unavailable", amountUsdc: 0 };
+    await releaseSpend(billKey, debtor, noSettlerReason);
+    return { debtor, decision: "skip", reason: noSettlerReason, amountUsdc: 0 };
   }
 
   const user = await getUserById(userId);

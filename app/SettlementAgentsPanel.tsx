@@ -42,7 +42,7 @@ import { ChevronDown } from "lucide-react";
 import { AnimatePresence, motion } from "framer-motion";
 import { useAccount, useSignMessage } from "wagmi";
 import { createPublicClient, http } from "viem";
-import { ARC, USDC_LABEL } from "@/lib/arc-chain";
+import { ARC, USDC_LABEL, forArcNetwork } from "@/lib/arc-chain";
 import { ARC_EXPLORER } from "@/lib/arc-explorer";
 import { arcWalletClient } from "@/lib/wagmi";
 import { assertReceiptSuccess } from "@/lib/bill-split-contracts";
@@ -191,6 +191,7 @@ type GrantsResponse = {
   handle: string;
   provider: string;
   mandateAddress: string | null;
+  jobsConfigured: boolean;
   agentAddress: string | null;
   // The one ceiling this form does not set: the wallet provider's enclave refuses
   // a single payment over it, so a "ceiling per bill" above it is a promise the
@@ -222,6 +223,10 @@ type ReasonSlug =
   | "agent_out_of_funds"
   | "agent_wallet_unavailable"
   | "agent_unfunded"
+  // Not a fault of this account's: Arc's ERC-8183 job contract is absent on
+  // this network, so the ceremony autopay settles through cannot be opened.
+  // Split out of agent_wallet_unavailable, which it was misreported as.
+  | "job_market_unavailable"
   | "job_failed"
   | "tx_failed";
 
@@ -241,6 +246,7 @@ const REASONS: Record<ReasonSlug, string> = {
   agent_out_of_funds: "The agent wallet is empty",
   agent_wallet_unavailable: "The agent wallet is unavailable",
   agent_unfunded: "Your agent's balance is too low — top it up and the next bill will settle",
+  job_market_unavailable: "This network has no job market for the agent to settle through — nothing you can fix",
   job_failed: "The on-chain job could not be completed, so nothing was paid",
   tx_failed: "The payment transaction failed",
 };
@@ -364,6 +370,17 @@ export default function SettlementAgentsPanel({ onState }: { onState?: (state: A
   // back from the same row rather than from the chain.
   const armed = grant?.enabled ?? false;
   const grantedCount = mandates.filter((m) => m.authorized).length;
+
+  // AND CAN IT, ON THIS NETWORK AT ALL? A separate question from `armed`, and it
+  // outranks it: autopay settles by opening an ERC-8183 job, Arc has not deployed
+  // that contract on mainnet, and the route refuses to settle without one rather
+  // than skipping the accountability record. So an armed account on a deployment
+  // without it is armed at nothing.
+  //
+  // Defaults to TRUE while the response is still in flight, so the warning never
+  // flashes on a load that was about to say everything is fine — the same
+  // direction every other optional field here defaults.
+  const jobsConfigured = server?.jobsConfigured ?? true;
 
   // Reported up so the masthead's contents rail can light the sections that are
   // live. Above the early returns, where every hook has to be — a signed-out tab
@@ -843,8 +860,20 @@ export default function SettlementAgentsPanel({ onState }: { onState?: (state: A
             <>
               {/* The one fact this tab exists to answer, in words as well as in
                   the rule above — a hairline is not a state a reader can hear. */}
-              <span className="settle-label" data-tone={armed ? "ok" : undefined}>
-                {armed ? "armed · it can spend now" : "idle"}
+              {/* Three states, not two. "idle" and "armed" are both answers to
+                  a question this deployment can act on; the third says the
+                  question does not apply here, and it has to outrank "armed"
+                  because an account armed without a job market is armed at
+                  nothing. Toned warn rather than ok for the same reason. */}
+              <span
+                className="settle-label"
+                data-tone={!jobsConfigured ? "warn" : armed ? "ok" : undefined}
+              >
+                {!jobsConfigured
+                  ? "unavailable on this network"
+                  : armed
+                    ? "armed · it can spend now"
+                    : "idle"}
               </span>
               {agentWallet?.tokenId ? (
                 <a
@@ -1392,6 +1421,41 @@ export default function SettlementAgentsPanel({ onState }: { onState?: (state: A
             </p>
           ) : null}
 
+          {/* Said FIRST and said whatever else is true, because it is the one
+              line on this poster that no setting above can act on. Modelled on
+              the empty-balance hint below — name what will not happen, and name
+              the slug the trail will record, so the two agree.
+
+              The MIDDLE sentence is per-network because the two cases are not
+              the same news and one wording cannot serve both: on testnet this is
+              a deployment that has not been pointed at Arc's contract, and
+              telling the reader to wait would be wrong; on mainnet there is no
+              contract to point at, and telling them an operator can fix it would
+              be wrong. An earlier draft interpolated the network name into a
+              single sentence and rendered "Arc Testnet has none — Arc deploys it
+              on testnet only", which is nonsense in exactly the place a reader
+              goes looking for the cause. */}
+          {jobsConfigured ? null : (
+            <p className="bill-options-hint" data-tone="warn">
+              Autopay settles by opening a job on Arc&rsquo;s ERC-8183 contract, and{" "}
+              {forArcNetwork(
+                <>
+                  Arc mainnet has none: Arc does not deploy that contract there, so there is nothing an operator
+                  can switch on and autopay is off on this network for now.
+                </>,
+                <>
+                  this deployment has none configured — an operator sets{" "}
+                  <span className="mono">NEXT_PUBLIC_AGENTIC_COMMERCE_ADDRESS</span> to Arc&rsquo;s deployment to
+                  turn it on.
+                </>,
+              )}{" "}
+              Splitsy will not settle without the job, because that job IS the record of who was paid for what, so
+              nothing here will fire and the trail below records every attempt as{" "}
+              <span className="mono">job_market_unavailable</span>. Your collect mandates, dunning and netting
+              below are unaffected.
+            </p>
+          )}
+
           {armed && balanceUsdc <= 0 ? (
             <p className="bill-options-hint">
               Armed with an empty balance: nothing will settle until you top the agent up, and until then the trail
@@ -1477,7 +1541,17 @@ export default function SettlementAgentsPanel({ onState }: { onState?: (state: A
               poster: the ceiling the agent will apply today, out of what it
               actually holds. */}
           <div className="bill-poster-foot">
-            <button className="settle-action" disabled={saving} onClick={() => save({ ...grant, enabled: !armed })} type="button">
+            {/* Disarming stays available with no job market — somebody armed
+                before the deployment moved networks must be able to turn it
+                off — but arming does not: it would take a funding step and, in
+                mandate mode, a real on-chain signature, for a ceremony that
+                cannot be opened. */}
+            <button
+              className="settle-action"
+              disabled={saving || (!jobsConfigured && !armed)}
+              onClick={() => save({ ...grant, enabled: !armed })}
+              type="button"
+            >
               {saving ? "saving…" : armed ? "disarm autopay" : "arm autopay"} ›
             </button>
             <div className="bill-poster-total" data-tone={armed && balanceUsdc <= 0 ? "warn" : undefined}>

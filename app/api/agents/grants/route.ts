@@ -34,6 +34,7 @@ import {
 import { executeContract, InsufficientFundsError, walletProviderName } from "@/lib/wallet-provider";
 import { encodeApprove, encodeExecuteBatch, encodeRevokeMandate, encodeSetMandate } from "@/lib/registry-calldata";
 import { getSettler, isSettlerConfigured } from "@/lib/settler";
+import { isJobsConfigured } from "@/lib/erc8183";
 import { ARC } from "@/lib/arc-chain";
 
 export const runtime = "nodejs";
@@ -168,6 +169,18 @@ export async function GET(request: Request) {
     handle: user.handle,
     provider: user.provider,
     mandateAddress: isMandateConfigured() ? MANDATE_ADDRESS : null,
+    // WHETHER THE JOB MARKET THIS DEPLOYMENT NEEDS EXISTS HERE. Arc's ERC-8183
+    // AgenticCommerce contract is a predeploy we consume, not one we ship, and it
+    // is absent on Arc mainnet (docs/deployments.md) — so autopay cannot run at
+    // all there: the route refuses to settle without opening a job for it, which
+    // is the accountability record the whole ceremony exists for.
+    //
+    // Reported so the panel can say so BEFORE someone arms autopay and funds an
+    // agent for a feature that will never fire. Without it, the only signal was a
+    // skip row appearing the first time a bill came due — and it named the wrong
+    // cause until this commit. Collections, dunning and netting are unaffected,
+    // so the panel scopes the notice to section 01 rather than the tab.
+    jobsConfigured: isJobsConfigured(),
     // The SAME resolver the DCW path signs with, not a bare read of the env var.
     // A browser wallet signs its own mandate, so this response is the only place
     // it can learn which agent to name — and reading the env var alone made that

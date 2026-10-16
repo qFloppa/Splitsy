@@ -180,3 +180,36 @@ test("stepsFromLogs orders the ceremony by block, keeps only this job, drops the
 test("jobIdFromLogs returns null when the receipt has no JobCreated", () => {
   assert.equal(jobIdFromLogs([{ address: "0x0747EEf0706327138c69792bF28Cd525089e4583", topics: ["0x00"], data: "0x" }]), null);
 });
+
+// THE PREDICATE THE AGENTS PANEL NOW HANGS ON. An unset address means "no job
+// market", which reads as autopay OFF — and since autopay will not settle
+// without opening a job, it is the whole feature, not a degraded version of it.
+// That is the live state on Arc mainnet, where Arc deploys no ERC-8183 contract.
+//
+// Pinned because the two read paths must answer from the PREDICATE and never
+// from the chain: a getLogs or a getJob aimed at the zero address does not fail
+// usefully, it fails as an RPC error on a path whose honest answer is "there is
+// nothing here". The fresh import is the only way to reach that state — the
+// module reads the address once, at evaluation.
+test("an unset job contract is 'no job market', and the read paths say so without touching the chain", async () => {
+  const saved = process.env.NEXT_PUBLIC_AGENTIC_COMMERCE_ADDRESS;
+  delete process.env.NEXT_PUBLIC_AGENTIC_COMMERCE_ADDRESS;
+  try {
+    const fresh = "./erc8183.ts?jobs-unconfigured";
+    const off = await import(fresh);
+    assert.equal(off.isJobsConfigured(), false);
+    // Both short-circuit, so neither needs an RPC to be reachable to pass.
+    assert.deepEqual(await off.getJobTrail(1n, `0x${"11".repeat(32)}`), []);
+    assert.equal(await off.getJobOnchain(1n), null);
+  } finally {
+    if (saved === undefined) delete process.env.NEXT_PUBLIC_AGENTIC_COMMERCE_ADDRESS;
+    else process.env.NEXT_PUBLIC_AGENTIC_COMMERCE_ADDRESS = saved;
+  }
+});
+
+// And configured is configured, so the test above is pinning a switch rather
+// than a module that always answers false.
+test("a configured job contract is a job market", async () => {
+  const { isJobsConfigured } = await import("./erc8183.ts");
+  assert.equal(isJobsConfigured(), true);
+});

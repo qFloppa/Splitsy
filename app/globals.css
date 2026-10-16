@@ -5864,6 +5864,17 @@ select.settle-trigger option {
   color: var(--pay-poster-dim);
 }
 
+/* A hint about something the reader cannot act on, which is the one kind that
+   must not read as dim small print — the agents poster uses it for "this network
+   has no job market", where every setting above it is moot. Full strength rather
+   than --warning-text on the body copy: a paragraph of warning colour is a
+   banner, and this system does not draw banners. The rule carries the tone. */
+.bill-options-hint[data-tone="warn"] {
+  color: var(--pay-poster-fg);
+  border-top: 1px solid var(--warning-text);
+  padding-top: 0.7rem;
+}
+
 /* ── The app header, in the poster's voice ────────────────────────────────────
    The last of the spec-sheet system lived up here. A glass band with a border
    under it, a bordered pill rail with a filled black pill for the live tab, a
