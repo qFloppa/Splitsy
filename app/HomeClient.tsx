@@ -2821,6 +2821,7 @@ export default function HomeClient({
           setPartialPayments={setPartialPayments}
           signedIn={Boolean(me?.walletAddress || registryReadAddress)}
           socialDebts={socialDebts}
+          socialWallet={socialWalletAddress}
           splitterBills={splitterBills}
           walletDebts={activeWalletDebts}
         />

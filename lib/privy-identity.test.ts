@@ -111,6 +111,7 @@ test("the embedded Ethereum wallet is picked out, and a linked browser wallet is
     type: "wallet",
     connector_type: "embedded",
     chain_type: "ethereum",
+    wallet_index: 0,
     address: "0x2222222222222222222222222222222222222222",
     id: "wal_abc",
   };
@@ -120,6 +121,22 @@ test("the embedded Ethereum wallet is picked out, and a linked browser wallet is
   });
   assert.equal(privyEmbeddedWallet([injected]), null);
   assert.equal(privyEmbeddedWallet([]), null);
+});
+
+// 101@splitsy.xyz, 2026-10-16: HD index 0 and index 1, a second apart. The row has
+// to name the wallet the browser signs with (lib/privy-bridge.ts primaryWallet),
+// and that is index 0 whatever order Privy lists them in.
+test("with two embedded wallets the row gets HD index 0, in either order", () => {
+  const at = (wallet_index: number, id: string): PrivyLinkedAccount => ({
+    type: "wallet",
+    connector_type: "embedded",
+    chain_type: "ethereum",
+    wallet_index,
+    address: `0x${String(wallet_index + 1).repeat(40)}`,
+    id,
+  });
+  assert.equal(privyEmbeddedWallet([at(1, "second"), at(0, "first")])?.walletId, "first");
+  assert.equal(privyEmbeddedWallet([at(0, "first"), at(1, "second")])?.walletId, "first");
 });
 
 // ── Which row a login lands on ────────────────────────────────────────────────

@@ -3,7 +3,7 @@
 // name the wallet yet must keep asking rather than asking once.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { bridgeAction, type BridgeFacts } from "./privy-bridge.ts";
+import { bridgeAction, CREATE_AFTER_PASSES, primaryWallet, type BridgeFacts } from "./privy-bridge.ts";
 
 const WALLET = "0x01485281B357ac42F081162eD6D041DccB8eB33B";
 
@@ -13,11 +13,33 @@ const facts = (over: Partial<BridgeFacts> = {}): BridgeFacts => ({
   rowWallet: WALLET.toLowerCase(),
   pageRowWallet: WALLET.toLowerCase(),
   pageHadSession: true,
+  pass: CREATE_AFTER_PASSES,
   ...over,
 });
 
 test("no wallet on the Privy user: make one", () => {
   assert.equal(bridgeAction(facts({ hasWallet: false, browserWallet: null, rowWallet: null })), "create-wallet");
+});
+
+// 101@ and 102@splitsy.xyz, 2026-10-16: `authenticated` flips before createOnLogin
+// has finished, and Privy's own "already has a wallet" guard reads the same lagging
+// user — so asking on the first pass minted HD index 1 a second after index 0.
+test("no wallet on the first passes: leave it to createOnLogin rather than mint a second", () => {
+  const noWallet = { hasWallet: false, browserWallet: null, rowWallet: null };
+  for (let pass = 0; pass < CREATE_AFTER_PASSES; pass++) {
+    assert.equal(bridgeAction(facts({ ...noWallet, pass })), "wait");
+  }
+  assert.equal(bridgeAction(facts({ ...noWallet, pass: CREATE_AFTER_PASSES })), "create-wallet");
+});
+
+// The same two accounts: Privy's useWallets() lists newest-connected first, so "the
+// first embedded wallet" signed with index 1 while the row named index 0, and every
+// payment was refused as signed by a different wallet.
+test("the signing wallet is HD index 0, not whichever Privy lists first", () => {
+  const w = (walletIndex: number, address: string) => ({ walletClientType: "privy", connectorType: "embedded", walletIndex, address });
+  assert.equal(primaryWallet([w(1, "0xnewer"), w(0, "0xfirst")])?.address, "0xfirst");
+  assert.equal(primaryWallet([{ walletClientType: "metamask", connectorType: "injected", walletIndex: 0, address: "0xext" }]), null);
+  assert.equal(primaryWallet([]), null);
 });
 
 // noway2@splitsy.xyz: signed in at 11:19:59, Privy made the wallet at 11:39:10.

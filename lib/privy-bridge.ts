@@ -41,7 +41,31 @@ export type BridgeFacts = {
   // still offering sign-in to someone who is signed in.
   pageRowWallet: string | null;
   pageHadSession: boolean;
+  // How many passes the loop has made. Only wallet creation reads it — see below.
+  pass: number;
 };
+
+// createOnLogin's head start, in passes (2.5s each). `authenticated` flips BEFORE
+// createOnLogin has finished, and Privy's own "already has a wallet" guard reads
+// the same lagging user record — so asking on the first pass does not throw, it
+// mints HD index 1 beside index 0. Measured 2026-10-16: 101@ and 102@splitsy.xyz,
+// index 0 at login +1s, index 1 at +2s. Pages that load already signed in, where
+// createOnLogin never fires, wait this long for their wallet and no longer.
+// ponytail: a head start, not a signal. A createOnLogin slower than this still
+// doubles up — harmless now that both sides pick index 0. Gate on useLogin's
+// onComplete, which fires after createOnLogin's wallet, if strays ever matter.
+export const CREATE_AFTER_PASSES = 2;
+
+// The wallet this tab signs with: HD index 0, the one privyEmbeddedWallet
+// (lib/privy-identity.ts) links to the row. NOT Privy's getEmbeddedConnectedWallet,
+// which takes the first embedded wallet in useWallets() — sorted newest-connected
+// first, so a user with two signs with the newer one and every payment is refused
+// as "signed by a different wallet".
+export function primaryWallet<W extends { walletClientType: string; connectorType: string; walletIndex?: number | null }>(
+  wallets: readonly W[],
+): W | null {
+  return wallets.find((w) => w.walletClientType === "privy" && w.connectorType === "embedded" && w.walletIndex === 0) ?? null;
+}
 
 export type BridgeAction =
   // Ask Privy to make the embedded wallet. Nothing else can help this user.
@@ -50,7 +74,8 @@ export type BridgeAction =
   // wallet Privy reports. Idempotent, which is what makes retrying it safe.
   | "exchange"
   // Nothing to do THIS pass, and not finished either: the tab has not connected
-  // the wallet yet, so the one comparison that matters cannot be made.
+  // the wallet yet, so the one comparison that matters cannot be made — or there
+  // is no wallet and createOnLogin still has its head start to make one.
   | "wait"
   // The row and the browser agree, and the rest of the app is holding a stale
   // answer. One reload, now that it cannot interrupt anything.
@@ -59,12 +84,12 @@ export type BridgeAction =
   | "settled";
 
 export function bridgeAction(facts: BridgeFacts): BridgeAction {
-  const { hasWallet, browserWallet, rowWallet, pageRowWallet, pageHadSession } = facts;
+  const { hasWallet, browserWallet, rowWallet, pageRowWallet, pageHadSession, pass } = facts;
   const row = rowWallet?.toLowerCase() ?? null;
   const browser = browserWallet?.toLowerCase() ?? null;
   const page = pageRowWallet?.toLowerCase() ?? null;
 
-  if (!hasWallet) return "create-wallet";
+  if (!hasWallet) return pass < CREATE_AFTER_PASSES ? "wait" : "create-wallet";
   if (!row) return "exchange";
   // THE ROW MUST NAME THE WALLET THE BROWSER HOLDS, which is stricter than "the
   // row names a wallet" and the reason an existing account arriving on this stack

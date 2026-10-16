@@ -36,6 +36,10 @@ export type SettleDeckHandlers = {
   paySocialDebt: (debt: SocialDebt) => void;
   bridgeForDebt: (debt: OwnedDebt, source: BridgeSourceChain) => void;
   progressFlow: ProgressFlow | null;
+  // The signed-in user's own wallet, which every "social" row is paid FROM — a
+  // slot row included: its debtor is the handle's slot, but the money is
+  // payDebtFor out of this wallet (app/api/onchain-bills/[billId]/pay).
+  socialWallet: string | null;
 };
 
 export type SettleDeckProps = SettleDeckHandlers & {
@@ -572,7 +576,9 @@ function WalletDebtBody({
         <AsideRow label="collected by">
           <WhoTag address={debt.splitter} who={people[debt.splitter.toLowerCase()]} />
         </AsideRow>
-        <AsideRow label={settled ? "paid from" : "paying from"}>{short(debt.account)}</AsideRow>
+        <AsideRow label={settled ? "paid from" : "paying from"}>
+          {short(debt.via === "social" ? (deck.socialWallet ?? debt.account) : debt.account)}
+        </AsideRow>
         {debt.escrowUntilFull ? (
           <p className="settle-meta" style={{ marginTop: 0 }}>
             All or nothing — the bill holds every payment until the group is square.

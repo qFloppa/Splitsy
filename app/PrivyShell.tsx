@@ -13,10 +13,10 @@
 //
 // Mounted only when WALLET_UI names Privy (decided on the server, in
 // app/layout.tsx). Off, none of this is even fetched.
-import { getEmbeddedConnectedWallet, PrivyProvider, useCreateWallet, useExportWallet, usePrivy, useSignTransaction, useWallets } from "@privy-io/react-auth";
+import { PrivyProvider, useCreateWallet, useExportWallet, usePrivy, useSignTransaction, useWallets } from "@privy-io/react-auth";
 import { useEffect, useRef, useState } from "react";
 import { ARC, ARC_LABEL } from "@/lib/arc-chain";
-import { bridgeAction } from "@/lib/privy-bridge";
+import { bridgeAction, primaryWallet } from "@/lib/privy-bridge";
 import { forgetSigner, markPrivyUi, rememberAuth, rememberSigner, toPrivyTransaction } from "./privy-signer";
 
 // How long the bridge keeps working at it: a pass every 2.5s for a minute. Same
@@ -68,7 +68,7 @@ function PrivyBridge() {
   markPrivyUi();
   rememberAuth({ login, logout, exportWallet });
 
-  const embedded = getEmbeddedConnectedWallet(wallets);
+  const embedded = primaryWallet(wallets);
   const address = embedded?.address ?? null;
 
   // Whether PRIVY says this user has an embedded wallet at all — which is a
@@ -186,6 +186,7 @@ function PrivyBridge() {
             rowWallet,
             pageRowWallet,
             pageHadSession: Boolean(me),
+            pass,
           });
 
           if (action === "settled") return;
@@ -201,8 +202,9 @@ function PrivyBridge() {
             // Give up rather than ask forever: without a wallet there is nothing
             // to link, and app/XAuthControl.tsx's panel is already saying so.
             if (creates++ >= CREATE_TRIES) return;
-            // Throws if the user turns out to have one already — which is the
-            // happy answer, and the next pass reads it off `user.linkedAccounts`.
+            // Throws if Privy's user record already shows a wallet — the happy
+            // answer, read off `user.linkedAccounts` next pass. It does NOT throw
+            // while that record lags, which is why bridgeAction waits first.
             await createWallet().catch(() => {});
           } else if (action === "exchange") {
             const accessToken = await getAccessToken();

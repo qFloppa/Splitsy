@@ -37,6 +37,7 @@ export type PrivyLinkedAccount = {
   // wallet
   connector_type?: string;
   chain_type?: string;
+  wallet_index?: number | null;
   id?: string | null;
 };
 
@@ -119,11 +120,17 @@ export function privyProfile(accounts: readonly PrivyLinkedAccount[]): PrivyProf
 // and nothing links the two (lib/privy-wallet.ts pregenerateWallet). This reads
 // the embedded wallet of whichever user it is handed; it is the pre-mint's own
 // user at creation, and the real login's user afterwards.
+//
+// HD INDEX 0, NOT THE FIRST ONE LISTED. A user can hold more than one embedded
+// wallet — 1zz@, 101@ and 102@splitsy.xyz each got an index 1 a second after index
+// 0 (lib/privy-bridge.ts CREATE_AFTER_PASSES) — and the browser signs with index 0
+// (primaryWallet, beside it). The row must name that one, or every payment the
+// server prepares is signed by a different wallet and refused.
 export function privyEmbeddedWallet(
   accounts: readonly PrivyLinkedAccount[],
 ): { walletId: string; address: string } | null {
   for (const a of accounts) {
-    if (a.type === "wallet" && a.connector_type === "embedded" && a.chain_type === "ethereum" && a.id && a.address) {
+    if (a.type === "wallet" && a.connector_type === "embedded" && a.chain_type === "ethereum" && a.wallet_index === 0 && a.id && a.address) {
       return { walletId: a.id, address: a.address };
     }
   }
