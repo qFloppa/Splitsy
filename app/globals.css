@@ -1088,13 +1088,13 @@ input[type="number"],
   animation: flow-backdrop-in var(--dur-2) var(--ease-out) both;
 }
 
-/* RainbowKit's connect modal sits at z-index 2147483646, so any dialog that can
-   open RainbowKit (such as the welcome panel) must sit below it. The welcome
-   panel is the only .flow-panel that opens RainbowKit, so this override is
-   scoped to it rather than lowering the whole .flow-panel / .flow-backdrop
-   stack and potentially breaking other dialogs. */
+/* RainbowKit's connect modal sits at z-index 2147483646 and Privy's modal sits
+   around 999999, so the welcome panel must sit below both. The welcome panel is
+   the only .flow-panel that opens these modals, so this override is scoped to
+   it rather than lowering the whole .flow-panel / .flow-backdrop stack and
+   potentially breaking other dialogs. */
 .welcome-panel ~ .flow-backdrop {
-  z-index: 2147483640;
+  z-index: 999989;
 }
 
 .flow-panel {
@@ -9065,7 +9065,7 @@ a.ptag:hover .ptag-handle {
    app does not prefer one identity to the other — so an asymmetry between the
    columns would be arguing with the copy. */
 .welcome-panel {
-  z-index: 2147483641;
+  z-index: 999990;
   border-top-color: var(--accent);
 }
 
