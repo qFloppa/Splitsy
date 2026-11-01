@@ -1097,6 +1097,10 @@ input[type="number"],
   z-index: 999989;
 }
 
+.welcome-panel {
+  z-index: 999990;
+}
+
 .flow-panel {
   position: fixed;
   left: 50%;
