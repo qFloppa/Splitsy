@@ -9044,3 +9044,74 @@ a.ptag:hover .ptag-handle {
 .history-detail-grid .ptag-avatar {
   --ptag-size: 15px;
 }
+
+/* ── The first-visit welcome panel ─────────────────────────────────────────────
+   It borrows .flow-panel wholesale — same ground, same border-top rule, same
+   entrance — because two floating panels in one app should not each have their
+   own idea of what a floating panel is. What it adds is the two doors and the
+   dismissal.
+
+   The doors are a 2×1 grid that collapses to a column, and they are EQUAL: same
+   width, same heading, same control. That is the whole message of the panel — the
+   app does not prefer one identity to the other — so an asymmetry between the
+   columns would be arguing with the copy. */
+.welcome-panel { border-top-color: var(--accent); }
+
+.welcome-doors {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: clamp(1.1rem, 0.7rem + 1.4vw, 2rem);
+  margin-top: clamp(1.4rem, 1rem + 1.4vw, 2.1rem);
+}
+
+@media (max-width: 34rem) {
+  .welcome-doors { grid-template-columns: minmax(0, 1fr); }
+}
+
+.welcome-door { display: flex; flex-direction: column; align-items: flex-start; }
+.welcome-door > .bill-poster-note { margin: 0.4rem 0 0.9rem; }
+/* The control stays at the foot of its column, so two doors of unequal copy still
+   present their buttons on one line. */
+.welcome-door > :last-child { margin-top: auto; }
+
+/* The four social providers on one row under the door's note — the same marks and
+   the same words the header's menu uses (app/SignInProviders.tsx). They wrap
+   rather than shrink, because a provider's name is not something to abbreviate. */
+.welcome-providers {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.35rem 1.1rem;
+  margin-top: auto;
+}
+
+/* A control in this panel's rail register is a word with a rule, not a box — so
+   the anchors take .iou-provider .bill-toggle like every other one in the app,
+   and only their inner gap and ink need setting. */
+.welcome-providers .iou-provider {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  color: color-mix(in srgb, var(--pay-poster-fg) 82%, var(--pay-poster-bg));
+}
+
+/* The X. Small and quiet until reached: the panel is an invitation, and a loud
+   dismiss in the corner makes it read as an interruption instead. */
+.welcome-close {
+  border: 0;
+  background: none;
+  padding: 0.2rem 0.1rem;
+  cursor: pointer;
+  font-size: 0.95rem;
+  line-height: 1;
+  color: var(--pay-poster-dim);
+  transition: color var(--dur-1) var(--ease-out);
+}
+
+.welcome-close:hover,
+.welcome-close:focus-visible { color: var(--accent-strong); }
+.welcome-close:focus-visible { outline: 1px solid currentColor; outline-offset: 0.35em; }
+
+/* The foot's status line is empty most of the time, and an empty flex item still
+   claims the gap — so it only takes its space when there is something to say. */
+.welcome-panel .bill-poster-msg:empty { flex: 0 0 auto; }

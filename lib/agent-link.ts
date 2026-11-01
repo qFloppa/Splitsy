@@ -88,6 +88,36 @@ export async function verifySigninSignature(input: {
   });
 }
 
+// The client half of the sign-in above: ask the wallet for that signature, trade
+// it for a session. Shared by the Agents tab and the first-visit dialog, which
+// both have to turn a CONNECTED wallet into an ACCOUNT — connecting alone has no
+// session behind it, and two copies of this ceremony would be two places to get
+// the message or the endpoint wrong.
+//
+// Resolves rather than throws, because both callers treat "declined" as an
+// ordinary answer to put on screen, not an exception to swallow.
+export async function walletSignIn(
+  address: string,
+  signMessage: (args: { message: string }) => Promise<string>,
+): Promise<{ ok: true; signedInAs: string | null } | { ok: false; error: string }> {
+  const message = buildSigninMessage(address, new Date().toISOString());
+  let signature: string;
+  try {
+    signature = await signMessage({ message });
+  } catch {
+    return { ok: false, error: "You declined the signature, so nothing was created." };
+  }
+  const res = await fetch("/api/auth/wallet", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ address, message, signature }),
+  }).catch(() => null);
+  if (!res) return { ok: false, error: "Could not reach Splitsy to finish signing in." };
+  const body = (await res.json().catch(() => ({}))) as { error?: string; signedInAs?: string | null };
+  if (!res.ok) return { ok: false, error: body.error ?? "Could not sign in with that wallet." };
+  return { ok: true, signedInAs: body.signedInAs ?? null };
+}
+
 // WHICH ACCOUNT a proven browser-wallet signature signs into.
 //
 // The signature is verified by the caller; this only decides whose session it

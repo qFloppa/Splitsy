@@ -30,6 +30,7 @@ import WalletMark from "./WalletMark";
 import XAuthControl from "./XAuthControl";
 import type { WalletSession } from "@/lib/wallet-session";
 import SignInMenu from "./SignInMenu";
+import WelcomeDialog from "./WelcomeDialog";
 import XHistoryPanel from "./XHistoryPanel";
 import DashboardPanel from "./DashboardPanel";
 import IouClient from "./IouClient";
@@ -2799,6 +2800,9 @@ export default function HomeClient({
 
   return (
     <main className="app-shell min-h-screen text-[var(--text)]" data-app-tab={activeTab}>
+      {/* Beside the app rather than inside a tab: it portals to <body> anyway, and
+          it has to be reachable from whichever tab the visitor landed on. */}
+      <WelcomeDialog session={walletSession} />
       {activeTab === "settle" ? null : appHeader}
 
       {/* Full-bleed by design — the poster can't live inside the padded, capped

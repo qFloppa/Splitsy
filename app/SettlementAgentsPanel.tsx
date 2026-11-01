@@ -47,7 +47,7 @@ import { ARC_EXPLORER } from "@/lib/arc-explorer";
 import { arcWalletClient } from "@/lib/wagmi";
 import { assertReceiptSuccess } from "@/lib/bill-split-contracts";
 import { ARC_USDC_ADDRESS, publicClient, usdcAbi } from "@/lib/recurring-contracts";
-import { buildLinkMessage, buildSigninMessage, SESSION_ENDED_EVENT } from "@/lib/agent-link";
+import { buildLinkMessage, SESSION_ENDED_EVENT, walletSignIn } from "@/lib/agent-link";
 import { payErrorMessage, walletPost } from "./signed-send";
 // Type-only, so nothing from the decision core is bundled into this client
 // component — it is imported to keep REASONS below exhaustive, not to run.
@@ -544,16 +544,9 @@ export default function SettlementAgentsPanel({ onState }: { onState?: (state: A
     if (!connectedAddress) return;
     setSaving(true);
     try {
-      const message = buildSigninMessage(connectedAddress, new Date().toISOString());
-      const signature = await signMessageAsync({ message });
-      const res = await fetch("/api/auth/wallet", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ address: connectedAddress, message, signature }),
-      });
-      const body = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        fail(body.error ?? "Could not sign in with that wallet.");
+      const outcome = await walletSignIn(connectedAddress, signMessageAsync);
+      if (!outcome.ok) {
+        fail(outcome.error);
         return;
       }
       // Signed into the account that had already LINKED this wallet, because that
@@ -562,7 +555,7 @@ export default function SettlementAgentsPanel({ onState }: { onState?: (state: A
       // widget all read /api/me on mount — so this is the one outcome a panel
       // re-read cannot cover. Same reload app/PrivyShell.tsx does on a session
       // change, and for the same reason.
-      if (body.signedInAs) {
+      if (outcome.signedInAs) {
         window.location.reload();
         return;
       }
