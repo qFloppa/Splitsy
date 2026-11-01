@@ -1095,10 +1095,12 @@ input[type="number"],
    potentially breaking other dialogs. */
 .welcome-panel ~ .flow-backdrop {
   z-index: 999989;
+  pointer-events: none;
 }
 
 .welcome-panel {
   z-index: 999990;
+  pointer-events: auto;
 }
 
 .flow-panel {
