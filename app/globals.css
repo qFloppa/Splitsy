@@ -1088,6 +1088,15 @@ input[type="number"],
   animation: flow-backdrop-in var(--dur-2) var(--ease-out) both;
 }
 
+/* RainbowKit's connect modal sits at z-index 2147483646, so any dialog that can
+   open RainbowKit (such as the welcome panel) must sit below it. The welcome
+   panel is the only .flow-panel that opens RainbowKit, so this override is
+   scoped to it rather than lowering the whole .flow-panel / .flow-backdrop
+   stack and potentially breaking other dialogs. */
+.welcome-panel ~ .flow-backdrop {
+  z-index: 2147483640;
+}
+
 .flow-panel {
   position: fixed;
   left: 50%;
@@ -9055,7 +9064,10 @@ a.ptag:hover .ptag-handle {
    width, same heading, same control. That is the whole message of the panel — the
    app does not prefer one identity to the other — so an asymmetry between the
    columns would be arguing with the copy. */
-.welcome-panel { border-top-color: var(--accent); }
+.welcome-panel {
+  z-index: 2147483641;
+  border-top-color: var(--accent);
+}
 
 .welcome-doors {
   display: grid;
